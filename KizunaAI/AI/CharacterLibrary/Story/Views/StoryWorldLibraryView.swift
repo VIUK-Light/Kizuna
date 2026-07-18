@@ -50,7 +50,7 @@ struct StoryWorldLibraryView: View {
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
         .task { await vm.bootstrap() }
-        .sheet(isPresented: $showCreate) {
+        .fullScreenCover(isPresented: $showCreate) {
             StoryWorldCreateView(onSaved: { _ in
                 Task { await vm.reload() }
                 showCreate = false
@@ -60,7 +60,7 @@ struct StoryWorldLibraryView: View {
             })
             .viukAdaptiveSheetSizing(minWidth: 680, minHeight: 720)
         }
-        .sheet(item: $editing) { w in
+        .fullScreenCover(item: $editing) { w in
             StoryWorldCreateView(existing: w, onSaved: { _ in
                 Task { await vm.reload() }
                 editing = nil
