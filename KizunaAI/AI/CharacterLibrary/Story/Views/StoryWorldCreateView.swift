@@ -69,6 +69,7 @@ struct StoryWorldCreateView: View {
                     settingSection
                     openingSceneSection
                     castSection
+                    relationshipSection
                     tagsSection
                     if let err = vm.saveError {
                         Text(err).font(.caption).foregroundStyle(.red)
@@ -503,6 +504,31 @@ struct StoryWorldCreateView: View {
                     set: { vm.setActiveInOpeningScene($0, for: member.characterId) }
                 ))
                 .font(.system(size: 11, weight: .medium))
+
+                Menu {
+                    ForEach(IntroductionTiming.allCases, id: \.self) { timing in
+                        Button(timing.displayName) {
+                            vm.setIntroductionTiming(timing, for: member.characterId)
+                        }
+                    }
+                } label: {
+                    Label(member.introductionTiming.displayName, systemImage: "clock")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .menuStyle(.borderlessButton)
+            }
+            TextField("この物語でのユーザーとの関係", text: Binding(
+                get: { member.relationshipToUser },
+                set: { vm.setStoryRelationshipToUser($0, for: member.characterId) }
+            ))
+            .textFieldStyle(.roundedBorder)
+            HStack(spacing: 6) {
+                Text("重要度").font(.system(size: 10)).foregroundStyle(.secondary)
+                Slider(value: Binding(
+                    get: { member.importance },
+                    set: { vm.setImportance($0, for: member.characterId) }
+                ), in: 0...1)
+                Text(String(format: "%.1f", member.importance)).font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
         .padding(8)

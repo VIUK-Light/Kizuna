@@ -60,8 +60,7 @@ final class StoryGemma31BAPIService {
         systemPrompt: String,
         userPrompt: String,
         temperature: Double = 0.72,
-        maxOutputTokens: Int = 4096,
-        responseMIMEType: String? = nil
+        maxOutputTokens: Int = 4096
     ) async throws -> String {
         guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
             throw StoryGemma31BAPIError.missingAPIKey
@@ -81,8 +80,7 @@ final class StoryGemma31BAPIService {
             generationConfig: GenerationConfig(
                 temperature: temperature,
                 topP: 0.92,
-                maxOutputTokens: maxOutputTokens,
-                responseMimeType: responseMIMEType
+                maxOutputTokens: maxOutputTokens
             )
         ))
 
@@ -178,22 +176,6 @@ final class StoryGemma31BAPIService {
         let temperature: Double
         let topP: Double
         let maxOutputTokens: Int
-        let responseMimeType: String?
-
-        enum CodingKeys: String, CodingKey {
-            case temperature
-            case topP
-            case maxOutputTokens
-            case responseMimeType
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(temperature, forKey: .temperature)
-            try container.encode(topP, forKey: .topP)
-            try container.encode(maxOutputTokens, forKey: .maxOutputTokens)
-            try container.encodeIfPresent(responseMimeType, forKey: .responseMimeType)
-        }
     }
 
     private struct GenerateContentResponse: Decodable {
