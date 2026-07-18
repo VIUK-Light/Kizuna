@@ -256,7 +256,18 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     var sourceDisplayLabel: String {
-        isUsingDefaultSource ? LocalAssistantModelProfile.defaultDownloadLabel : "カスタムURL"
+        if let selectedModelChoice {
+            return "\(selectedModelChoice.displayName) / \(selectedModelChoice.formatLabel)"
+        }
+        return isUsingDefaultSource ? LocalAssistantModelProfile.defaultDownloadLabel : "カスタムURL"
+    }
+
+    var selectedModelChoice: LocalAssistantModelChoice? {
+        LocalAssistantModelChoice.matching(sourceURL: resolvedSourceURLString)
+    }
+
+    var selectedModelDisplayName: String {
+        selectedModelChoice?.displayName ?? installedFileName ?? LocalAssistantModelProfile.internalModelName
     }
 
     var sourceHostLabel: String {
@@ -441,6 +452,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 defaults: defaults
             )
         }
+        refreshInstalledState()
     }
 
     func updateAccessToken(_ value: String) {
@@ -864,6 +876,16 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func discoverInstalledModelURL() -> URL? {
+        if let selectedModelChoice {
+            for directory in currentModelCandidateDirectories {
+                let candidate = directory.appendingPathComponent(selectedModelChoice.fileName)
+                if isAvailableInstalledModel(at: candidate) {
+                    return relocateIfNeeded(candidate)
+                }
+            }
+            return nil
+        }
+
         let storedFileName = AILegacyCompatibility.stringValue(
             primaryKey: installedFileNameKey,
             aliases: AILegacyCompatibility.localModelInstalledFileAliases,
@@ -1039,10 +1061,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
         let lowercasedPath = url.lastPathComponent.lowercased()
 #if os(iOS)
-        // iOS runs through LiteRT-LM. GGUF/bin files can be present from Mac-side
-        // installs, but treating them as installed here leaves the UI in a
-        // "saved only" state and the assistant cannot answer.
-        guard lowercasedPath.hasSuffix(".litertlm") else { return false }
+        guard lowercasedPath.hasSuffix(".gguf") || lowercasedPath.hasSuffix(".bin") || lowercasedPath.hasSuffix(".litertlm") else { return false }
 #else
         guard lowercasedPath.hasSuffix(".gguf") || lowercasedPath.hasSuffix(".bin") || lowercasedPath.hasSuffix(".litertlm") else { return false }
 #endif
@@ -1138,7 +1157,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         ]
         .compactMap { $0 }
         .first(where: { !$0.isEmpty && $0 != "/" })
-        ?? LocalAssistantModelProfile.defaultFileName
+        ?? LocalAssistantModelProfile.defaultFileName(for: resolvedSourceURLString)
 
         let destinationURL = installationDirectoryURL.appendingPathComponent(fileName)
         let expectedBytesForValidation = persistedDownloadState?.expectedBytes ?? expectedBytes
@@ -1235,13 +1254,15 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
 
         if Self.isEffectivelyDefaultSource(fallbackURL.absoluteString) {
-            return LocalAssistantModelProfile.expectedModelSizeBytes
+            return LocalAssistantModelProfile.expectedModelSizeBytes(for: fallbackURL.absoluteString)
         }
         return 0
     }
 
     private func requiredBytesForPreflight(expectedBytes: Int64) -> Int64 {
-        let baseline = expectedBytes > 0 ? expectedBytes : LocalAssistantModelProfile.expectedModelSizeBytes
+        let baseline = expectedBytes > 0
+            ? expectedBytes
+            : LocalAssistantModelProfile.expectedModelSizeBytes(for: resolvedSourceURLString)
         let dynamicMargin = max(Self.minimumFreeSpaceMarginBytes, baseline / 10)
         return baseline + dynamicMargin
     }

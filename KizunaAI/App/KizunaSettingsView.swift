@@ -31,6 +31,25 @@ struct KizunaSettingsView: View {
                         LabeledContent("モデル", value: name)
                     }
 
+                    #if os(iOS)
+                    Picker("スマホ用モデル", selection: $modelSourceURL) {
+                        ForEach(LocalAssistantModelChoice.allCases) { model in
+                            Text("\(model.displayName)（\(model.formatLabel)）")
+                                .tag(model.downloadURL)
+                        }
+                    }
+                    .disabled(modelManager.isDownloading)
+
+                    if let selected = LocalAssistantModelChoice.matching(sourceURL: modelSourceURL) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(selected.description)
+                            Text(ByteCountFormatter.string(fromByteCount: selected.expectedSizeBytes, countStyle: .file))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    #endif
+
                     TextField("モデルのダウンロードURL", text: $modelSourceURL)
                         .textContentType(.URL)
                     SecureField("Hugging Faceアクセストークン（必要な場合）", text: $modelAccessToken)

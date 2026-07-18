@@ -1,11 +1,20 @@
 #import "LocalAssistantEmbeddedRuntime.h"
 
 #import <TargetConditionals.h>
+#import <Foundation/Foundation.h>
 
 #if TARGET_OS_OSX
 #import <AppKit/AppKit.h>
-#import <Foundation/Foundation.h>
 #include "llama.h"
+#elif TARGET_OS_IOS
+#if __has_include(<llama/llama.h>)
+#include <llama/llama.h>
+#else
+#include "llama.h"
+#endif
+#endif
+
+#if TARGET_OS_OSX || TARGET_OS_IOS
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -27,7 +36,7 @@
 
 @end
 
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX || TARGET_OS_IOS
 namespace {
 
 static std::string VIUKToStdString(NSString *value) {
@@ -133,7 +142,7 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
 #endif
 
 @interface VIUKEmbeddedRuntime () {
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX || TARGET_OS_IOS
     struct llama_model *_loadedModel;
     NSString *_loadedModelPath;
     NSLock *_lock;
@@ -156,16 +165,18 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
 - (instancetype)init {
     self = [super init];
     if (self) {
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX || TARGET_OS_IOS
         _lock = [[NSLock alloc] init];
         static dispatch_once_t backendOnce;
         dispatch_once(&backendOnce, ^{
             llama_backend_init();
         });
+#if TARGET_OS_OSX
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(applicationWillTerminate:)
                                                      name:NSApplicationWillTerminateNotification
                                                    object:nil];
+#endif
 #endif
     }
     return self;
@@ -174,12 +185,14 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
 - (void)dealloc {
 #if TARGET_OS_OSX
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+#endif
+#if TARGET_OS_OSX || TARGET_OS_IOS
     [self clearCachedModel];
 #endif
 }
 
 - (void)clearCachedModel {
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX || TARGET_OS_IOS
     [_lock lock];
     if (_loadedModel != nullptr) {
         llama_model_free(_loadedModel);
@@ -203,7 +216,7 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
 #endif
 }
 
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX || TARGET_OS_IOS
 - (struct llama_model *)loadModelAtPath:(NSString *)modelPath error:(NSString * __autoreleasing *)errorMessage {
     if (_loadedModel != nullptr && [_loadedModelPath isEqualToString:modelPath]) {
         return _loadedModel;
@@ -219,10 +232,14 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
     modelParams.use_mmap = true;
     modelParams.use_mlock = false;
     modelParams.check_tensors = false;
-    // Prefer the conservative CPU path first. The previous GPU/Metal-first
-    // configuration could survive model load and then abort inside
-    // llama_decode() on some Macs.
+#if TARGET_OS_IOS
+    // iPhone uses the Metal backend from the official llama.cpp XCFramework.
+    // mmap keeps the 4bit model out of a second full in-memory copy.
+    modelParams.n_gpu_layers = 99;
+#else
+    // Keep the existing conservative Mac path.
     modelParams.n_gpu_layers = 0;
+#endif
 
     struct llama_model *model = llama_model_load_from_file(modelPath.fileSystemRepresentation, modelParams);
 
@@ -258,7 +275,11 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
     }
 
     llama_context_params contextParams = llama_context_default_params();
+#if TARGET_OS_IOS
+    const int32_t modelCtx = std::min<int32_t>(std::max<int32_t>(llama_model_n_ctx_train(model), 1024), 4096);
+#else
     const int32_t modelCtx = std::max<int32_t>(llama_model_n_ctx_train(model), 1024);
+#endif
     const int32_t reservedOutputTokens = std::max<int32_t>(static_cast<int32_t>(maxTokens) + 16, 160);
     const int32_t maxPromptTokens = std::max<int32_t>(128, modelCtx - reservedOutputTokens);
     if (static_cast<int32_t>(promptTokens.size()) > maxPromptTokens) {
@@ -280,9 +301,12 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
     contextParams.n_seq_max = 1;
     contextParams.n_threads = std::max<int32_t>(1, std::min<int32_t>(threadCount, 6));
     contextParams.n_threads_batch = 1;
-    // Prefer the more conservative CPU path first. The previous configuration
-    // could abort inside llama_decode on some Macs before we could recover.
+#if TARGET_OS_IOS
+    contextParams.offload_kqv = true;
+#else
+    // Preserve the conservative Mac path.
     contextParams.offload_kqv = false;
+#endif
     contextParams.no_perf = true;
 
     struct llama_context *ctx = llama_init_from_model(model, contextParams);
@@ -357,7 +381,7 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
 
 - (VIUKEmbeddedRuntimeResult *)performSelfCheckWithModelPath:(NSString *)modelPath
                                                    maxTokens:(NSInteger)maxTokens {
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX || TARGET_OS_IOS
     [_lock lock];
     VIUKEmbeddedRuntimeResult *result = [self generateLockedWithPrompt:@"<start_of_turn>user\nこんにちは\n<end_of_turn>\n<start_of_turn>model\n"
                                                              modelPath:modelPath
@@ -380,7 +404,7 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
                                              topP:(float)topP
                                              topK:(NSInteger)topK
                                              seed:(uint32_t)seed {
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX || TARGET_OS_IOS
     [_lock lock];
     VIUKEmbeddedRuntimeResult *result = [self generateLockedWithPrompt:prompt
                                                              modelPath:modelPath

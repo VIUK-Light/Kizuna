@@ -81,6 +81,7 @@
 		F254B500366A544EC2F7FABB /* StoryWorldDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */; };
 		F93D01B2DC86FD2DDE4B706D /* ReportRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30A31B134170D7A746DB123 /* ReportRepository.swift */; };
 		F9D425A3AF1DCB135F9DD737 /* CategoryGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CFD2FB990A38F345A5EA155 /* CategoryGroup.swift */; };
+		FB2845B98E69B7C0B47DAC01 /* LlamaCppMobile in Frameworks */ = {isa = PBXBuildFile; platformFilters = (ios, ); productRef = 19EC7EC3F26D8FC971E4D309 /* LlamaCppMobile */; };
 		FB9115302AB78D90998E55E1 /* CharacterRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05D69B4839FE122B9DEE718C /* CharacterRepository.swift */; };
 		FF358BF04BF87756CE4B881F /* SeedStoryPacks.json in Resources */ = {isa = PBXBuildFile; fileRef = 9EEA37DA62CCCFB218D48C7C /* SeedStoryPacks.json */; };
 /* End PBXBuildFile section */
@@ -161,6 +162,7 @@
 		E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIExecutionModes.swift; sourceTree = "<group>"; };
 		E98EDDBA3B31E35BEC97A9F6 /* SmallModelClassifying.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmallModelClassifying.swift; sourceTree = "<group>"; };
 		ECA3C02F943DFC138887DC5B /* ReportCharacterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportCharacterView.swift; sourceTree = "<group>"; };
+		ECC5374B7B43BBD839DBC42C /* LlamaCppMobile */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LlamaCppMobile; path = ThirdParty/LlamaCppMobile; sourceTree = SOURCE_ROOT; };
 		EF3286F28C642C691A562821 /* CharacterTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterTemplate.swift; sourceTree = "<group>"; };
 		F28EE3BFF85529E58029ECD5 /* CharacterCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterCategory.swift; sourceTree = "<group>"; };
 		F85DE09496F7B036AD13EE3A /* MockSceneAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSceneAdapters.swift; sourceTree = "<group>"; };
@@ -174,6 +176,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				797B71C3CFD48A11BA1DA3C4 /* LiteRTLM in Frameworks */,
+				FB2845B98E69B7C0B47DAC01 /* LlamaCppMobile in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -349,6 +352,7 @@
 			isa = PBXGroup;
 			children = (
 				DBEDCA0076A343951F227050 /* LiteRT-LM */,
+				ECC5374B7B43BBD839DBC42C /* LlamaCppMobile */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -501,6 +505,7 @@
 			name = KizunaAI;
 			packageProductDependencies = (
 				28CBD9BDFFE99D154131DA85 /* LiteRTLM */,
+				19EC7EC3F26D8FC971E4D309 /* LlamaCppMobile */,
 			);
 			productName = KizunaAI;
 			productReference = 9F18390C24128911008211F7 /* KizunaAI.app */;
@@ -532,6 +537,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				800A5AB0AE44956C3FBF31ED /* XCLocalSwiftPackageReference "ThirdParty/LiteRT-LM" */,
+				D0CFBCCD1F31475A8DF507F1 /* XCLocalSwiftPackageReference "ThirdParty/LlamaCppMobile" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D78DF23F0C4521CBE851F2F7 /* Products */;
@@ -695,6 +701,20 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-framework",
+					Metal,
+					"-framework",
+					Accelerate,
+				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"-framework",
+					Metal,
+					"-framework",
+					Accelerate,
+				);
 				"OTHER_LDFLAGS[sdk=macosx*]" = (
 					"$(inherited)",
 					"-lllama",
@@ -718,7 +738,7 @@
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "$(inherited) VIUK_ENABLE_LITERTLM_NATIVE USE_LITERTLM";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				"SWIFT_OBJC_BRIDGING_HEADER[sdk=macosx*]" = "KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -816,6 +836,20 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-framework",
+					Metal,
+					"-framework",
+					Accelerate,
+				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"-framework",
+					Metal,
+					"-framework",
+					Accelerate,
+				);
 				"OTHER_LDFLAGS[sdk=macosx*]" = (
 					"$(inherited)",
 					"-lllama",
@@ -839,7 +873,7 @@
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "$(inherited) VIUK_ENABLE_LITERTLM_NATIVE USE_LITERTLM";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				"SWIFT_OBJC_BRIDGING_HEADER[sdk=macosx*]" = "KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -938,9 +972,17 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "ThirdParty/LiteRT-LM";
 		};
+		D0CFBCCD1F31475A8DF507F1 /* XCLocalSwiftPackageReference "ThirdParty/LlamaCppMobile" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ThirdParty/LlamaCppMobile;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		19EC7EC3F26D8FC971E4D309 /* LlamaCppMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LlamaCppMobile;
+		};
 		28CBD9BDFFE99D154131DA85 /* LiteRTLM */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LiteRTLM;

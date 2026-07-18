@@ -11,6 +11,8 @@ options:
 packages:
   LiteRTLM:
     path: ThirdParty/LiteRT-LM
+  LlamaCppMobile:
+    path: ThirdParty/LlamaCppMobile
 
 targets:
   KizunaAI:
@@ -67,6 +69,10 @@ targets:
       - package: LiteRTLM
         destinationFilters:
           - iOS
+      - package: LlamaCppMobile
+        product: LlamaCppMobile
+        destinationFilters:
+          - iOS
     info:
       path: KizunaAI/Info.plist
       properties:
@@ -94,6 +100,7 @@ targets:
         SWIFT_APPROACHABLE_CONCURRENCY: YES
         SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
         CLANG_ENABLE_MODULES: YES
+        SWIFT_OBJC_BRIDGING_HEADER: KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h
         CLANG_WARN_DOCUMENTATION_COMMENTS: NO
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
@@ -125,7 +132,18 @@ targets:
           - Metal
           - -framework
           - Accelerate
-        "SWIFT_OBJC_BRIDGING_HEADER[sdk=macosx*]": KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h
+        "OTHER_LDFLAGS[sdk=iphoneos*]":
+          - $(inherited)
+          - -framework
+          - Metal
+          - -framework
+          - Accelerate
+        "OTHER_LDFLAGS[sdk=iphonesimulator*]":
+          - $(inherited)
+          - -framework
+          - Metal
+          - -framework
+          - Accelerate
         "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]": $(inherited) VIUK_ENABLE_LITERTLM_NATIVE USE_LITERTLM
     postBuildScripts:
       - name: Bundle Local AI Runtime
