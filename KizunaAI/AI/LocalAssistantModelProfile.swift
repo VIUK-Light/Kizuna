@@ -6,79 +6,6 @@
 */
 import Foundation
 
-enum LocalAssistantModelChoice: String, CaseIterable, Identifiable {
-    case gemma4E2BLiteRTLM
-    case viukStoryV25Q4KM
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .gemma4E2BLiteRTLM:
-            return "Gemma 4 E2B"
-        case .viukStoryV25Q4KM:
-            return "VIUK Story v2.5"
-        }
-    }
-
-    var shortDisplayName: String {
-        switch self {
-        case .gemma4E2BLiteRTLM: return "iori"
-        case .viukStoryV25Q4KM: return "VIUK Story"
-        }
-    }
-
-    var formatLabel: String {
-        switch self {
-        case .gemma4E2BLiteRTLM: return "LiteRT-LM"
-        case .viukStoryV25Q4KM: return "4bit Q4_K_M / GGUF"
-        }
-    }
-
-    var downloadURL: String {
-        switch self {
-        case .gemma4E2BLiteRTLM:
-            return "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true"
-        case .viukStoryV25Q4KM:
-            return "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF/resolve/main/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf?download=true"
-        }
-    }
-
-    var fileName: String {
-        switch self {
-        case .gemma4E2BLiteRTLM:
-            return "gemma-4-E2B-it.litertlm"
-        case .viukStoryV25Q4KM:
-            return "viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf"
-        }
-    }
-
-    var expectedSizeBytes: Int64 {
-        switch self {
-        case .gemma4E2BLiteRTLM: return 2_588_147_712
-        case .viukStoryV25Q4KM: return 3_416_118_624
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .gemma4E2BLiteRTLM:
-            return "軽さを優先したスマホ向け標準モデル"
-        case .viukStoryV25Q4KM:
-            return "VIUK Story用に調整された日本語ストーリーモデル"
-        }
-    }
-
-    static func matching(sourceURL: String) -> LocalAssistantModelChoice? {
-        guard let candidate = URL(string: sourceURL) else { return nil }
-        return allCases.first { choice in
-            guard let known = URL(string: choice.downloadURL) else { return false }
-            return candidate.host?.lowercased() == known.host?.lowercased()
-                && candidate.path == known.path
-        }
-    }
-}
-
 enum LocalAssistantModelProfile {
     struct RuntimePreset {
         let contextSize: Int
@@ -137,16 +64,6 @@ enum LocalAssistantModelProfile {
     static let legacyFolderNames = ["Gemma4E2B4bit", "Gemma4E4B4bit", "Gemma3nE4B4bit", "VIUKAItiny", "VIUK AI tiny"]
     static let expectedModelSizeBytes: Int64 = defaultExpectedModelSizeBytes
     static let minimumAcceptedModelSizeBytes: Int64 = 50 * 1024 * 1024
-
-    static func expectedModelSizeBytes(for sourceURL: String) -> Int64 {
-        LocalAssistantModelChoice.matching(sourceURL: sourceURL)?.expectedSizeBytes
-            ?? expectedModelSizeBytes
-    }
-
-    static func defaultFileName(for sourceURL: String) -> String {
-        LocalAssistantModelChoice.matching(sourceURL: sourceURL)?.fileName
-            ?? defaultFileName
-    }
 
     private static let physicalMemoryBytes = ProcessInfo.processInfo.physicalMemory
     private static let prefersAggressiveGPUOffload = physicalMemoryBytes >= 15 * 1024 * 1024 * 1024

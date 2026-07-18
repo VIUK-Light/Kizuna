@@ -210,9 +210,7 @@ private struct StoryGenerationModelPill: View {
                     localModelManager.recheckRuntimeAvailability()
                 } label: {
                     Label(
-                        localModelManager.runtimeAvailability == .checking
-                            ? "確認中..."
-                            : "\(localModelManager.selectedModelDisplayName)を起動確認",
+                        localModelManager.runtimeAvailability == .checking ? "確認中..." : "ioriを起動確認",
                         systemImage: "checkmark.seal"
                     )
                     .font(.system(size: 11.5, weight: .bold))
@@ -267,8 +265,7 @@ private struct StoryGenerationModelPill: View {
     private func modelShortDescription(_ model: StoryGenerationModel) -> String {
         switch model {
         case .e4b:
-            let format = localModelManager.selectedModelChoice?.formatLabel ?? "ローカル"
-            return "\(localModelManager.selectedModelDisplayName)（\(format)）。self-check成功後に端末内で実行します。"
+            return "ローカル iori。self-check 成功済みの時だけ端末内で実行します。"
         case .b31:
             return "Gemma4 31B API。描写、関係性の機微、場面の空気をより丁寧に出します。"
         }
@@ -332,11 +329,12 @@ private struct StorySessionChatBody: View {
     var body: some View {
         VStack(spacing: 0) {
             sceneStrip
+            kizunaStatusStrip
             Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(visibleMessages) { message in
+                        ForEach(vm.session.messages) { message in
                             messageRow(message)
                                 .id(message.id)
                         }
@@ -370,15 +368,6 @@ private struct StorySessionChatBody: View {
                 onSelect: { selectedCharacterID = $0 }
             )
             .presentationDetents([.medium, .large])
-        }
-    }
-
-    private var visibleMessages: [StoryMessage] {
-        var castTurns = Set<String>()
-        return vm.session.messages.filter { message in
-            guard case let .cast(characterID, _) = message.author else { return true }
-            let second = Int(message.createdAt.timeIntervalSince1970)
-            return castTurns.insert("\(characterID.uuidString)-\(second)").inserted
         }
     }
 
@@ -710,15 +699,11 @@ private struct StorySessionChatBody: View {
             }
         case let .cast(characterID, displayName):
             HStack(alignment: .bottom, spacing: 9) {
-                VStack(spacing: 4) {
+                characterAvatar(vm.characterIndex[characterID], fallbackName: displayName, size: 30)
+                VStack(alignment: .leading, spacing: 3) {
                     Text(displayName)
                         .font(.system(size: 10.5, weight: .bold))
                         .foregroundStyle(storyMuted)
-                        .lineLimit(1)
-                        .frame(maxWidth: 68)
-                    characterAvatar(vm.characterIndex[characterID], fallbackName: displayName, size: 34)
-                }
-                VStack(alignment: .leading, spacing: 3) {
                     Text(message.text)
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(storyText.opacity(0.82))
@@ -787,7 +772,7 @@ private struct StorySessionChatBody: View {
     }
 
     private var streamingPreview: some View {
-        HStack(alignment: .center, spacing: 9) {
+        HStack(alignment: .top, spacing: 9) {
             ZStack {
                 Circle()
                     .fill(storyPurple.opacity(0.22))
@@ -795,10 +780,25 @@ private struct StorySessionChatBody: View {
                 ProgressView()
                     .controlSize(.small)
             }
-            Text("・・・")
-                .font(.system(size: 18, weight: .bold))
-                .tracking(3)
-                .foregroundStyle(storyText.opacity(0.78))
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(storyPurple)
+                        .frame(width: 7, height: 7)
+                    Text("\(service.streamingSpeakerName ?? "キャラ") が話しています")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(storyText.opacity(0.86))
+                    Text(service.streamingStatusText.isEmpty ? "Thinking" : service.streamingStatusText)
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(storyPurple.opacity(0.32)))
+                }
+                Text(streamingPreviewText)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(storyText.opacity(0.78))
+            }
             .padding(.horizontal, 13)
             .padding(.vertical, 11)
             .background(
@@ -814,17 +814,16 @@ private struct StorySessionChatBody: View {
         .id("streaming-preview")
     }
 
+    private var streamingPreviewText: String {
+        let text = service.streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { return text }
+        return "場面とキャラの反応を組み立てています。"
+    }
+
     private var composer: some View {
         HStack(spacing: 10) {
-            TextField(
-                "",
-                text: $draft,
-                prompt: Text("相手に伝える...").foregroundStyle(storyMuted),
-                axis: .vertical
-            )
+            TextField("相手に伝える...", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .foregroundStyle(storyText)
-                .tint(.white)
                 .focused($composerFocused)
                 .lineLimit(1...4)
                 .padding(.horizontal, 13)
@@ -844,18 +843,11 @@ private struct StorySessionChatBody: View {
                 Image(systemName: service.phase == .thinking ? "stop.fill" : "paperplane.fill")
                     .font(.system(size: 14, weight: .bold))
                     .frame(width: 42, height: 42)
-                    .background(
-                        Circle().fill(
-                            service.phase == .thinking || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                ? Color.accentColor
-                                : Color.white.opacity(0.24)
-                        )
-                    )
-                    .overlay(Circle().stroke(Color.white.opacity(0.28), lineWidth: 1))
+                    .background(Circle().fill(storyPurple))
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(service.phase == .thinking ? "生成を停止" : "送信")
+            .disabled(service.phase != .thinking && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(14)
         .background(storyPanel)

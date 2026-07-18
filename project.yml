@@ -11,8 +11,6 @@ options:
 packages:
   LiteRTLM:
     path: ThirdParty/LiteRT-LM
-  LlamaCppMobile:
-    path: ThirdParty/LlamaCppMobile
 
 targets:
   KizunaAI:
@@ -69,10 +67,6 @@ targets:
       - package: LiteRTLM
         destinationFilters:
           - iOS
-      - package: LlamaCppMobile
-        product: LlamaCppMobile
-        destinationFilters:
-          - iOS
     info:
       path: KizunaAI/Info.plist
       properties:
@@ -100,7 +94,6 @@ targets:
         SWIFT_APPROACHABLE_CONCURRENCY: YES
         SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
         CLANG_ENABLE_MODULES: YES
-        SWIFT_OBJC_BRIDGING_HEADER: KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h
         CLANG_WARN_DOCUMENTATION_COMMENTS: NO
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
@@ -115,6 +108,12 @@ targets:
         "MACOSX_DEPLOYMENT_TARGET": "26.0"
         "HEADER_SEARCH_PATHS[sdk=macosx*]":
           - $(inherited)
+          - $(PROJECT_DIR)/ThirdParty/llama.cpp/include
+          - $(PROJECT_DIR)/ThirdParty/llama.cpp/ggml/include
+        "HEADER_SEARCH_PATHS[sdk=iphone*]":
+          - $(inherited)
+          - $(PROJECT_DIR)/ThirdParty/llama.cpp/ios-headers/include
+          - $(PROJECT_DIR)/ThirdParty/llama.cpp/ios-headers/ggml/include
           - $(PROJECT_DIR)/ThirdParty/llama.cpp/include
           - $(PROJECT_DIR)/ThirdParty/llama.cpp/ggml/include
         "LIBRARY_SEARCH_PATHS[sdk=macosx*]":
@@ -132,18 +131,22 @@ targets:
           - Metal
           - -framework
           - Accelerate
-        "OTHER_LDFLAGS[sdk=iphoneos*]":
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
           - $(inherited)
-          - -framework
-          - Metal
+          - $(PROJECT_DIR)/ThirdParty/llama.cpp/lib/ios-arm64
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
+          - $(inherited)
+          - $(PROJECT_DIR)/ThirdParty/llama.cpp/lib/ios-simulator-arm64
+        "OTHER_LDFLAGS[sdk=iphone*]":
+          - $(inherited)
+          - -lllama
+          - -lggml
+          - -lggml-base
+          - -lggml-cpu
           - -framework
           - Accelerate
-        "OTHER_LDFLAGS[sdk=iphonesimulator*]":
-          - $(inherited)
-          - -framework
-          - Metal
-          - -framework
-          - Accelerate
+        "SWIFT_OBJC_BRIDGING_HEADER[sdk=macosx*]": KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h
+        "SWIFT_OBJC_BRIDGING_HEADER[sdk=iphone*]": KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h
         "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]": $(inherited) VIUK_ENABLE_LITERTLM_NATIVE USE_LITERTLM
     postBuildScripts:
       - name: Bundle Local AI Runtime
