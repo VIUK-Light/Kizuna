@@ -1,6 +1,12 @@
-# VIUK 絆
+# kizuna
+Kizunaは、VIUK-Lightが掲げる「責任なるAI」という目標のもと開発された、AIとの対話を通してキャラクターとの関係や物語を育てていくアプリです。
 
-VIUK One 内の「絆AI」を独立した iOS / macOS アプリとして動かすプロジェクトです。アプリの Bundle ID は `com.viuk.KizunaAI`、表示名は「VIUK 絆」です。
+### 明るい未来へ
+依存させることが目的ではありません。
+AIへの依存問題は日々取り上げられています。しかしAIは悪なのでしょうか。AIを通じで新たな娯楽や幸せ、居場所を獲得した人も多いと思います。確かにAIへの依存は現実に大きく影響してしまいます。しかしそれを対策しようと必要以上に冷たくしてしまうと、居場所がなくなってしまうかもしれません。安全性を高めることは重要ですが高めすぎないことも重要です。
+
+#### 「過度な安全性は安全性の失敗」です。
+
 
 ## 開発環境
 
@@ -40,20 +46,7 @@ xcodebuild \
   build
 ```
 
-## 初回起動時のデータ移行
 
-macOS版の初回起動時に、VIUK One の既存データが新アプリ専用領域へコピーされます。コピー中は専用の準備画面を表示し、元データは削除しません。
-
-| データ | コピー元 | コピー先 |
-| --- | --- | --- |
-| キャラクター・物語 | `~/Library/Application Support/VIUK/CharacterLibrary` | `~/Library/Application Support/VIUK/KizunaAI/CharacterLibrary` |
-| ローカルAIモデル | `~/Library/Application Support/VIUK One/LocalModels` | `~/Library/Application Support/VIUK/KizunaAI/LocalModels` |
-
-ペルソナの会話スレッド、選択中プロフィール、物語ごとの生成モデル設定も、旧VIUK OneのUserDefaultsから新アプリへコピーされます。
-
-ローカルAIモデルが約5.1 GBある環境では、初回起動時に同程度のコピー時間と空き容量が必要になる場合があります。コピーが完了するまでアプリを終了せず、十分な空き容量を確保してください。
-
-iOSではBundle IDごとにアプリコンテナが分離されるため、旧アプリの端末内データを直接読み取れません。コードと同梱アセットは移行済みですが、iOSのユーザーデータは新規領域から開始します。
 
 ## APIキーと秘密情報
 
