@@ -1,0 +1,7 @@
+LiteRT-LM
+
+Copyright 2026 Google LLC
+
+Licensed under the Apache License, Version 2.0. The bundled Swift package was
+adapted to resolve its binary XCFramework from a local path so the standalone
+VIUK Kizuna project can build without the former VIUK One workspace.
