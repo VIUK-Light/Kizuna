@@ -30,14 +30,16 @@ enum StoryGenerationModel: String, Codable, CaseIterable, Identifiable, Hashable
 
     var displayName: String {
         switch self {
-        case .e4b: return "iori"
+        case .e4b:
+            return LocalAssistantModelManager.shared.selectedModelChoice?.shortDisplayName ?? "iori"
         case .b31: return "NAGI"
         }
     }
 
     var detailLabel: String {
         switch self {
-        case .e4b: return "iori"
+        case .e4b:
+            return LocalAssistantModelManager.shared.selectedModelChoice?.displayName ?? "iori"
         case .b31: return "NAGI"
         }
     }
@@ -45,7 +47,10 @@ enum StoryGenerationModel: String, Codable, CaseIterable, Identifiable, Hashable
     var promptHint: String {
         switch self {
         case .e4b:
-            return "VIUK AIによる独自のファインチューニングモデル。\n軽く自然な会話を楽しめる標準モデル。"
+            if LocalAssistantModelManager.shared.selectedModelChoice == .viukStoryV25Q4KM {
+                return "VIUK Story v2.5の4bitモデル。\n端末内で日本語の物語と会話を生成します。"
+            }
+            return "軽く自然な会話を楽しめるスマホ向け標準モデル。"
         case .b31:
             return "Gemma4 31B APIで長めの文脈を読み、場面・関係性・描写を丁寧に保つモデル"
         }

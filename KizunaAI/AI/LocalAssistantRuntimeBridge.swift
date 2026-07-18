@@ -8,9 +8,9 @@ import Darwin
 import Foundation
 #if os(macOS)
 import AppKit
+#endif
 
 extension VIUKEmbeddedRuntimeResult: @unchecked Sendable {}
-#endif
 
 nonisolated private func makeRuntimeDefaultGemmaAdvancedSettings() -> GemmaAdvancedSettings {
     GemmaAdvancedSettings(
@@ -712,6 +712,7 @@ final class LocalAssistantRuntimeBridge {
         bundledServerCandidateURLs.isEmpty == false
             || bundledCLICandidateURLs.isEmpty == false
             || LocalAssistantLiteRTLMRuntime.shared.isRuntimeLinked
+            || embeddedRuntimeSupported
     }
 
     var hasRecentRuntimeFailure: Bool {
@@ -1335,7 +1336,7 @@ final class BundledServerLogAggregator {
                 cachedAvailability = cachedModelPath == nil ? .modelMissing : .savedOnly
             }
         }
-#if os(macOS)
+#if os(macOS) || os(iOS)
         VIUKEmbeddedRuntime.shared().clearCachedModel()
 #endif
         terminateBundledServer()
@@ -1392,7 +1393,7 @@ final class BundledServerLogAggregator {
                     stage: .selfCheck,
                     modelPath: installedModelURL.path,
                     summary: "このiOSビルドでは現在のモデル形式を実行できません。",
-                    detail: "iOS実機のローカル実行は .litertlm モデルのみ対象です。保存済みファイルを実行可能とは表示しません。"
+                    detail: "iOS実機のローカル実行は .litertlm または .gguf モデルが対象です。"
                 )
 #else
                 return .savedOnly
@@ -1432,7 +1433,7 @@ final class BundledServerLogAggregator {
                     stage: .selfCheck,
                     modelPath: installedModelURL.path,
                     summary: "このiOSビルドでは現在のモデル形式を実行できません。",
-                    detail: "iOS実機のローカル実行は .litertlm モデルのみ対象です。保存済みファイルを実行可能とは表示しません。"
+                    detail: "iOS実機のローカル実行は .litertlm または .gguf モデルが対象です。"
                 )
 #else
                 cachedAvailability = .savedOnly
@@ -1514,7 +1515,7 @@ final class BundledServerLogAggregator {
                         self.lastRuntimeDiagnostic = diagnostic
                         self.lastRuntimeError = diagnostic.detailedMessage
                     }
-#if os(macOS)
+#if os(macOS) || os(iOS)
                     VIUKEmbeddedRuntime.shared().clearCachedModel()
 #endif
                 }
@@ -2091,7 +2092,7 @@ final class BundledServerLogAggregator {
     }
 
     private var embeddedRuntimeSupported: Bool {
-#if os(macOS)
+#if os(macOS) || os(iOS)
         return true
 #else
         return false
@@ -2124,6 +2125,10 @@ final class BundledServerLogAggregator {
 #if os(iOS)
         if modelPath?.lowercased().hasSuffix(".litertlm") == true {
             return .liteRTLM
+        }
+        if modelPath?.lowercased().hasSuffix(".gguf") == true
+            || modelPath?.lowercased().hasSuffix(".bin") == true {
+            return .embedded
         }
 #endif
 #if os(macOS)
@@ -2210,6 +2215,10 @@ final class BundledServerLogAggregator {
         if modelPath?.lowercased().hasSuffix(".litertlm") == true {
             return [.liteRTLM]
         }
+        if modelPath?.lowercased().hasSuffix(".gguf") == true
+            || modelPath?.lowercased().hasSuffix(".bin") == true {
+            return [.embedded]
+        }
         return [.unavailable]
 #endif
     }
@@ -2246,7 +2255,7 @@ final class BundledServerLogAggregator {
             return .embedded
         }
 #endif
-        return preferredRuntimeEngine
+        return preferredRuntimeEngine(forModelPath: modelPath)
     }
 
     private func shouldPreferBundledCLI(forModelPath modelPath: String?) -> Bool {
@@ -2565,7 +2574,7 @@ final class BundledServerLogAggregator {
             let result: VIUKEmbeddedRuntimeResult
             switch engine {
             case .embedded:
-#if os(macOS)
+#if os(macOS) || os(iOS)
                 result = VIUKEmbeddedRuntime.shared().performSelfCheck(withModelPath: modelPath, maxTokens: 24)
 #else
                 result = VIUKEmbeddedRuntimeResult(success: false, text: nil, errorMessage: "このプラットフォームでは埋め込み runtime を使えません。")
@@ -2744,7 +2753,7 @@ final class BundledServerLogAggregator {
                     startedAt: startedAt,
                     onUpdate: onUpdate
                 )
-#if os(macOS)
+#if os(macOS) || os(iOS)
                 let result = VIUKEmbeddedRuntime.shared().generate(
                     withPrompt: prompt,
                     modelPath: modelPath,
@@ -3374,7 +3383,7 @@ final class BundledServerLogAggregator {
                     startedAt: startedAt,
                     onUpdate: onUpdate
                 )
-#if os(macOS)
+#if os(macOS) || os(iOS)
                 let result = VIUKEmbeddedRuntime.shared().generate(
                     withPrompt: prompt,
                     modelPath: modelPath,

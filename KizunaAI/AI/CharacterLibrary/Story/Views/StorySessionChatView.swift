@@ -210,7 +210,9 @@ private struct StoryGenerationModelPill: View {
                     localModelManager.recheckRuntimeAvailability()
                 } label: {
                     Label(
-                        localModelManager.runtimeAvailability == .checking ? "確認中..." : "ioriを起動確認",
+                        localModelManager.runtimeAvailability == .checking
+                            ? "確認中..."
+                            : "\(localModelManager.selectedModelDisplayName)を起動確認",
                         systemImage: "checkmark.seal"
                     )
                     .font(.system(size: 11.5, weight: .bold))
@@ -265,7 +267,8 @@ private struct StoryGenerationModelPill: View {
     private func modelShortDescription(_ model: StoryGenerationModel) -> String {
         switch model {
         case .e4b:
-            return "ローカル iori。self-check 成功済みの時だけ端末内で実行します。"
+            let format = localModelManager.selectedModelChoice?.formatLabel ?? "ローカル"
+            return "\(localModelManager.selectedModelDisplayName)（\(format)）。self-check成功後に端末内で実行します。"
         case .b31:
             return "Gemma4 31B API。描写、関係性の機微、場面の空気をより丁寧に出します。"
         }
