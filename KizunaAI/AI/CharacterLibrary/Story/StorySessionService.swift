@@ -707,6 +707,7 @@ final class StorySessionService: ObservableObject {
 
         var firstNarration: String?
         var speeches: [String] = []
+        var speakersUsed = Set<UUID>()
 
         for line in lines {
             if line.hasPrefix("ナレーション:") || line.hasPrefix("ナレーション：") || line.hasPrefix("ナレーター:") || line.hasPrefix("ナレーター：") {
@@ -716,10 +717,10 @@ final class StorySessionService: ObservableObject {
                 continue
             }
 
-            for (_, name) in activeNames {
+            for (id, name) in activeNames {
                 if line.hasPrefix(name + ":") || line.hasPrefix(name + "：") {
                     let body = textAfterSpeakerDelimiter(line)
-                    if !body.isEmpty, speeches.count < 3 {
+                    if !body.isEmpty, speeches.count < 3, speakersUsed.insert(id).inserted {
                         speeches.append("\(name): \(body)")
                     }
                     break

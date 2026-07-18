@@ -169,12 +169,23 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 systemPrompt: systemPrompt,
                 userPrompt: brief,
                 temperature: 0.45,
-                maxOutputTokens: 8192
+                maxOutputTokens: 8192,
+                responseMIMEType: "application/json"
             )
         } catch {
-            saveError = error.localizedDescription
-            generationStatus = nil
-            return
+            generationStatus = "JSON生成を再試行中..."
+            do {
+                reply = try await StoryGemma31BAPIService.shared.generate(
+                    systemPrompt: systemPrompt,
+                    userPrompt: brief,
+                    temperature: 0.35,
+                    maxOutputTokens: 8192
+                )
+            } catch {
+                saveError = error.localizedDescription
+                generationStatus = nil
+                return
+            }
         }
 
         guard let data = Self.extractJSONObjectData(from: reply) else {
