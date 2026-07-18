@@ -75,6 +75,10 @@ struct KizunaSettingsView: View {
                                 saveSecretsAndModelSource()
                                 modelManager.resumeDownloadIfPossible()
                             }
+                            Button("最初から") {
+                                saveSecretsAndModelSource()
+                                modelManager.restartDownloadFromScratch()
+                            }
                         } else {
                             Button(modelManager.installedModelURL == nil ? "モデルをダウンロード" : "再ダウンロード") {
                                 saveSecretsAndModelSource()
@@ -88,6 +92,7 @@ struct KizunaSettingsView: View {
                         }
                         .disabled(modelManager.installedModelURL == nil || modelManager.isDownloading)
                     }
+                    .buttonStyle(.borderless)
 
                     if modelManager.installedModelURL != nil {
                         Button("ローカルモデルを削除", role: .destructive) {
