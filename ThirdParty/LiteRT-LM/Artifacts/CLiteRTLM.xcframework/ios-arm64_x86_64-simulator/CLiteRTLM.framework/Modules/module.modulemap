@@ -1,0 +1,7 @@
+framework module CLiteRTLM {
+  umbrella header "CLiteRTLM.h"
+  
+
+  export *
+  module * { export * }
+}

@@ -1,0 +1,951 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		06D0D93E289A58585617D2D9 /* SceneProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CEC45D9187A7AD9E3CF9DE4 /* SceneProtocols.swift */; };
+		0AFD028991A3FFCC665B3769 /* SafetyPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE6E2DA7A0E7BF418B6A3C7 /* SafetyPipeline.swift */; };
+		1646F9BF705069B3CABED43D /* KizunaSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */; };
+		1E1CC650E2302CB00D1DF1B2 /* ReportCharacterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA3C02F943DFC138887DC5B /* ReportCharacterView.swift */; };
+		1E8D68F6FCAF235F2B84FE19 /* MemoryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = E675C1D433A2840AB2461CFD /* MemoryRepository.swift */; };
+		1F0627CABF8181F36724081E /* Apache-2.0.txt in Resources */ = {isa = PBXBuildFile; fileRef = C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */; };
+		2B2592AAD858D3D96862FAF3 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26955C791E26219A2224961B /* AppBrand.swift */; };
+		2BEDC445F7013C3F2361CD4D /* AIExecutionModes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */; };
+		36622231CDB22D277C6DF874 /* MockMemoryAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A976D1A75B17989A4E31F /* MockMemoryAdapters.swift */; };
+		394AF1822F599F8200201257 /* CharacterCreateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001A2AFEEF6464336BE37E55 /* CharacterCreateView.swift */; };
+		39F796C9FFDF72D566506CB6 /* cpp-httplib-MIT.txt in Resources */ = {isa = PBXBuildFile; fileRef = F91A09679C3C6E56FF05DEBE /* cpp-httplib-MIT.txt */; };
+		3AAE3D8F684575A640306140 /* LocalAssistantLiteRTLMRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3802A51489C449BBE1A57390 /* LocalAssistantLiteRTLMRuntime.swift */; };
+		3D32E24129CF4698654D7E8B /* LocalJSONStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42DF56CDC0506449D306F65B /* LocalJSONStore.swift */; };
+		41E3307E2DD22AF0123D2469 /* LiteRT-LM-COPYRIGHT.txt in Resources */ = {isa = PBXBuildFile; fileRef = 38F8CC58ED1AF696296164C0 /* LiteRT-LM-COPYRIGHT.txt */; };
+		43A8E84FD2A1382EA5583EFB /* SafetyTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931AAE923FE3E950F374745E /* SafetyTypes.swift */; };
+		4565A6A62926A82BC7B8F33C /* nlohmann-json-MIT.txt in Resources */ = {isa = PBXBuildFile; fileRef = 6FDC6C52E2977CFF9CDBA98E /* nlohmann-json-MIT.txt */; };
+		46ABC746AF7251556C7FF5C9 /* CharacterMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 208B4E1949CC5B273BB335A7 /* CharacterMemory.swift */; };
+		4745C6D75CD7DB9CEB1366AF /* PersonaSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24DDE9C0180DDB8FD296DC8F /* PersonaSettings.swift */; };
+		4CEE9E96A17436D9BCE2DF8B /* CharacterDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593451968603E56D14CBBB53 /* CharacterDetailViewModel.swift */; };
+		50DDEF0B1C30C7E875D77109 /* CharacterLorebook.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06ABDB45B6FC442B7523E83 /* CharacterLorebook.swift */; };
+		57CF512E93E56951F0E19F0F /* PersonaChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */; };
+		58C8D8624FD05D256EA24B45 /* CharacterTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF3286F28C642C691A562821 /* CharacterTemplate.swift */; };
+		5F81134FC766267D7083299B /* MockSafetyCheckers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167DE9F165C1D06BC748A477 /* MockSafetyCheckers.swift */; };
+		62F2F104219552A4C29BE0A5 /* TemplateRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9498A894D7D95B93E09DA52E /* TemplateRepository.swift */; };
+		6806C6C2F3789140A5284387 /* StorySessionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69642812D805EA2FF6BFE60E /* StorySessionService.swift */; };
+		68081B3C44658315697F78EB /* MockSceneAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = F85DE09496F7B036AD13EE3A /* MockSceneAdapters.swift */; };
+		6C287F24D9865C253FCC9A6E /* StoryWorldLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F71AFE96C6DB008859AAE96 /* StoryWorldLibraryView.swift */; };
+		6C376450C4E4F0FF98C2BC9A /* AILegacyCompatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1696AB458D899AC27BB0C79B /* AILegacyCompatibility.swift */; };
+		6C5FCB334011BDED2A4374F8 /* VIUKKizunaWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E422AA1452C576610E41D436 /* VIUKKizunaWorkspaceView.swift */; };
+		6F6188E8C5974DAED7ADD712 /* CharacterDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD2D05C43FEC8B0D00124179 /* CharacterDetailView.swift */; };
+		70AD59C0680A277276B30DE1 /* PersonaConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423041EC8E5CB59368D5AF9A /* PersonaConfigView.swift */; };
+		73CA926153543CC3A95892EB /* LocalAssistantEmbeddedRuntime.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0F042DF35B061D4AD8A4AF8E /* LocalAssistantEmbeddedRuntime.mm */; };
+		75BA6E7CBE0835A208713ED6 /* KizunaUICompatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = C611D89D7CAC7F09D41C0D9A /* KizunaUICompatibility.swift */; };
+		797B71C3CFD48A11BA1DA3C4 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; platformFilters = (ios, ); productRef = 28CBD9BDFFE99D154131DA85 /* LiteRTLM */; };
+		7A008B57837C3BB36B3D5BAC /* CharacterLibrarySeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F704141DA8C5E0FCA2CBBEF /* CharacterLibrarySeed.swift */; };
+		7E43E57EAADECA6F88093220 /* SafetyProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16690F37F0845E53F9952C23 /* SafetyProtocols.swift */; };
+		84E2BB3BA295D977ABF0DCF3 /* KizunaRuntimeCompatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38C38E45DF917A9188C23AAC /* KizunaRuntimeCompatibility.swift */; };
+		84F3582F967CA23F11C0173E /* PromptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 496320007DB1F65A5462A0A2 /* PromptBuilder.swift */; };
+		869DABD7EBE6CAFDFFA95FB5 /* StoryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FD99FDA49A1F31E9B0AF2D9 /* StoryModels.swift */; };
+		8ACC310A4D09D3D8E9EF939E /* CharacterCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F28EE3BFF85529E58029ECD5 /* CharacterCategory.swift */; };
+		8AFDA9C31775F30993E618BB /* StoryGemma31BAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A67380B9E9B6A3F03A59ED67 /* StoryGemma31BAPIService.swift */; };
+		8C633EAE45E94C4520E03651 /* LocalAssistantModelProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */; };
+		8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */ = {isa = PBXBuildFile; fileRef = E98EDDBA3B31E35BEC97A9F6 /* SmallModelClassifying.swift */; };
+		8FDCB3669503DEDD95786DA0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */; };
+		982F92EFA64D2780DE84F242 /* StoryViewModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4021480B714F2F541000C5DD /* StoryViewModels.swift */; };
+		9887C1FE76FBC8C15A077800 /* StoryWorldCreateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */; };
+		99EEED1D246FEA523C1D6D17 /* CharacterLibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FB7C20DBE13F7AA0FD7580B /* CharacterLibraryViewModel.swift */; };
+		9E82C3EAA3CAC4A63F28DF02 /* MemoryProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 757985556F2B3FAB58006C1C /* MemoryProtocols.swift */; };
+		9E9BEABB879FC0BE684CD0FC /* LocalAssistantRuntimeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BDA5863DEC1401CCF59E6D2 /* LocalAssistantRuntimeBridge.swift */; };
+		A22144875F3A43E7235B2D25 /* StoryRepositories.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86221612DBCBA783CE5BB53 /* StoryRepositories.swift */; };
+		A7DA6D9F4B8699ABB6FFD715 /* LocalAssistantModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CEAFB31DF8BD30CE8BFDBAD /* LocalAssistantModelManager.swift */; };
+		A8D4FCAD3F966A5528F01DAD /* MockSmallModelClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 429F9CE21671FDDCDA893A6B /* MockSmallModelClassifier.swift */; };
+		AB26895E6CE62CB5D6C8F00D /* CharacterReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374F9636C3B27129BBD78882 /* CharacterReport.swift */; };
+		ACA8C2D8482815C911AF1FEB /* StoryPromptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90CAC8F261A72FF48E130427 /* StoryPromptBuilder.swift */; };
+		ACAA6736AD482E30480288E9 /* CharacterCreateViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB2D8A9E5A7D59CD8D67467 /* CharacterCreateViewModel.swift */; };
+		AE8CAE598F9A0600A1C14121 /* StorySessionChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD3421C167EB41A06E443C2 /* StorySessionChatView.swift */; };
+		AFE68F43AEEB0B7B36052E0C /* AIToolCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A196A347E7975CA1A50C5D8 /* AIToolCatalog.swift */; };
+		B0BDEAE6C995D61479C4A064 /* KizunaDataMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DDF61BECBE7F41CD4EAD9BA /* KizunaDataMigration.swift */; };
+		B29F5AD5678DACCCEDD9CB4B /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B4FC4F65D6C41BD6DC45E22 /* KeychainHelper.swift */; };
+		B86BE41B9AAC76DFB1A04B37 /* CharacterTemplateSeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19449F3273FBD99643962AF5 /* CharacterTemplateSeed.swift */; };
+		BEE16F7496A6844739086860 /* PlatformRuntimeStubs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05994627B55916B0A3DFAF7B /* PlatformRuntimeStubs.swift */; };
+		C08E68332DCCE111AF532344 /* CharacterProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D6B5EE85AF59633861E76A /* CharacterProfile.swift */; };
+		CD7F4B290DCF9E71F3BDDDA0 /* KizunaAIApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785139BD8175262981B598A1 /* KizunaAIApp.swift */; };
+		D7C05C6DE100F03A79A02CCC /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 1014477B6846DA3DF969C22F /* THIRD_PARTY_NOTICES.md */; };
+		D8ACCA7952AFD15E4226412B /* CharacterLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 287757A56CBE15F666DC908D /* CharacterLibraryView.swift */; };
+		DBFC9E2365F72196EF243242 /* AISecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9689ADAB0694870AC5964DFA /* AISecretStore.swift */; };
+		E0137663C598478E9EC3368D /* RelationshipGenre.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA529B4D3926130627D485BB /* RelationshipGenre.swift */; };
+		E24AF7F53F9DDDC5FF2393F1 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A29C9D8E926D83E24A952F4 /* AppTheme.swift */; };
+		E94E230B59937818E8B6E544 /* PersonaChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A2E29FC9FACB4D55183726 /* PersonaChatStore.swift */; };
+		EEC5EF2337298255BFF8AC27 /* llama.cpp-MIT.txt in Resources */ = {isa = PBXBuildFile; fileRef = C4C3DBA4298E534FF3BFA4E5 /* llama.cpp-MIT.txt */; };
+		EF3BB16A93B494602BC64DCF /* PersonaChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D9BB02D32A725EB2DA3DA6E /* PersonaChatView.swift */; };
+		F254B500366A544EC2F7FABB /* StoryWorldDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */; };
+		F93D01B2DC86FD2DDE4B706D /* ReportRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30A31B134170D7A746DB123 /* ReportRepository.swift */; };
+		F9D425A3AF1DCB135F9DD737 /* CategoryGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CFD2FB990A38F345A5EA155 /* CategoryGroup.swift */; };
+		FB9115302AB78D90998E55E1 /* CharacterRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05D69B4839FE122B9DEE718C /* CharacterRepository.swift */; };
+		FF358BF04BF87756CE4B881F /* SeedStoryPacks.json in Resources */ = {isa = PBXBuildFile; fileRef = 9EEA37DA62CCCFB218D48C7C /* SeedStoryPacks.json */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		001A2AFEEF6464336BE37E55 /* CharacterCreateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterCreateView.swift; sourceTree = "<group>"; };
+		05994627B55916B0A3DFAF7B /* PlatformRuntimeStubs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformRuntimeStubs.swift; sourceTree = "<group>"; };
+		05D69B4839FE122B9DEE718C /* CharacterRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterRepository.swift; sourceTree = "<group>"; };
+		0CEC45D9187A7AD9E3CF9DE4 /* SceneProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneProtocols.swift; sourceTree = "<group>"; };
+		0CFD2FB990A38F345A5EA155 /* CategoryGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryGroup.swift; sourceTree = "<group>"; };
+		0F042DF35B061D4AD8A4AF8E /* LocalAssistantEmbeddedRuntime.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = LocalAssistantEmbeddedRuntime.mm; sourceTree = "<group>"; };
+		0F704141DA8C5E0FCA2CBBEF /* CharacterLibrarySeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLibrarySeed.swift; sourceTree = "<group>"; };
+		1014477B6846DA3DF969C22F /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
+		16690F37F0845E53F9952C23 /* SafetyProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyProtocols.swift; sourceTree = "<group>"; };
+		167DE9F165C1D06BC748A477 /* MockSafetyCheckers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSafetyCheckers.swift; sourceTree = "<group>"; };
+		1696AB458D899AC27BB0C79B /* AILegacyCompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AILegacyCompatibility.swift; sourceTree = "<group>"; };
+		19449F3273FBD99643962AF5 /* CharacterTemplateSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterTemplateSeed.swift; sourceTree = "<group>"; };
+		1FB7C20DBE13F7AA0FD7580B /* CharacterLibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLibraryViewModel.swift; sourceTree = "<group>"; };
+		208B4E1949CC5B273BB335A7 /* CharacterMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterMemory.swift; sourceTree = "<group>"; };
+		2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaSettingsView.swift; sourceTree = "<group>"; };
+		24DDE9C0180DDB8FD296DC8F /* PersonaSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaSettings.swift; sourceTree = "<group>"; };
+		26955C791E26219A2224961B /* AppBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBrand.swift; sourceTree = "<group>"; };
+		287757A56CBE15F666DC908D /* CharacterLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLibraryView.swift; sourceTree = "<group>"; };
+		2A196A347E7975CA1A50C5D8 /* AIToolCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIToolCatalog.swift; sourceTree = "<group>"; };
+		303798654908AC5FC3B19558 /* LocalAssistantEmbeddedRuntime.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LocalAssistantEmbeddedRuntime.h; sourceTree = "<group>"; };
+		374F9636C3B27129BBD78882 /* CharacterReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterReport.swift; sourceTree = "<group>"; };
+		3802A51489C449BBE1A57390 /* LocalAssistantLiteRTLMRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantLiteRTLMRuntime.swift; sourceTree = "<group>"; };
+		38C38E45DF917A9188C23AAC /* KizunaRuntimeCompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaRuntimeCompatibility.swift; sourceTree = "<group>"; };
+		38F8CC58ED1AF696296164C0 /* LiteRT-LM-COPYRIGHT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LiteRT-LM-COPYRIGHT.txt"; sourceTree = "<group>"; };
+		3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryWorldDetailView.swift; sourceTree = "<group>"; };
+		3FD99FDA49A1F31E9B0AF2D9 /* StoryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryModels.swift; sourceTree = "<group>"; };
+		4021480B714F2F541000C5DD /* StoryViewModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryViewModels.swift; sourceTree = "<group>"; };
+		423041EC8E5CB59368D5AF9A /* PersonaConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaConfigView.swift; sourceTree = "<group>"; };
+		429F9CE21671FDDCDA893A6B /* MockSmallModelClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSmallModelClassifier.swift; sourceTree = "<group>"; };
+		42DF56CDC0506449D306F65B /* LocalJSONStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalJSONStore.swift; sourceTree = "<group>"; };
+		496320007DB1F65A5462A0A2 /* PromptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptBuilder.swift; sourceTree = "<group>"; };
+		4A29C9D8E926D83E24A952F4 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
+		593451968603E56D14CBBB53 /* CharacterDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterDetailViewModel.swift; sourceTree = "<group>"; };
+		5BDA5863DEC1401CCF59E6D2 /* LocalAssistantRuntimeBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantRuntimeBridge.swift; sourceTree = "<group>"; };
+		5CEAFB31DF8BD30CE8BFDBAD /* LocalAssistantModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantModelManager.swift; sourceTree = "<group>"; };
+		5D9BB02D32A725EB2DA3DA6E /* PersonaChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaChatView.swift; sourceTree = "<group>"; };
+		5DDF61BECBE7F41CD4EAD9BA /* KizunaDataMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaDataMigration.swift; sourceTree = "<group>"; };
+		69642812D805EA2FF6BFE60E /* StorySessionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySessionService.swift; sourceTree = "<group>"; };
+		69A2E29FC9FACB4D55183726 /* PersonaChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaChatStore.swift; sourceTree = "<group>"; };
+		6AB2D8A9E5A7D59CD8D67467 /* CharacterCreateViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterCreateViewModel.swift; sourceTree = "<group>"; };
+		6DE6E2DA7A0E7BF418B6A3C7 /* SafetyPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyPipeline.swift; sourceTree = "<group>"; };
+		6F71AFE96C6DB008859AAE96 /* StoryWorldLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryWorldLibraryView.swift; sourceTree = "<group>"; };
+		6FDC6C52E2977CFF9CDBA98E /* nlohmann-json-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "nlohmann-json-MIT.txt"; sourceTree = "<group>"; };
+		757985556F2B3FAB58006C1C /* MemoryProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryProtocols.swift; sourceTree = "<group>"; };
+		785139BD8175262981B598A1 /* KizunaAIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaAIApp.swift; sourceTree = "<group>"; };
+		79D6B5EE85AF59633861E76A /* CharacterProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterProfile.swift; sourceTree = "<group>"; };
+		7BD3421C167EB41A06E443C2 /* StorySessionChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySessionChatView.swift; sourceTree = "<group>"; };
+		7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		87FA8C1E60CADDD358A86BE8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		886D407DDE24CAF50C0D9FD6 /* LocalAssistantEmbeddedRuntime-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "LocalAssistantEmbeddedRuntime-Bridging-Header.h"; sourceTree = "<group>"; };
+		8B4FC4F65D6C41BD6DC45E22 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		8E3A976D1A75B17989A4E31F /* MockMemoryAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockMemoryAdapters.swift; sourceTree = "<group>"; };
+		90CAC8F261A72FF48E130427 /* StoryPromptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryPromptBuilder.swift; sourceTree = "<group>"; };
+		931AAE923FE3E950F374745E /* SafetyTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyTypes.swift; sourceTree = "<group>"; };
+		9498A894D7D95B93E09DA52E /* TemplateRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateRepository.swift; sourceTree = "<group>"; };
+		9689ADAB0694870AC5964DFA /* AISecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISecretStore.swift; sourceTree = "<group>"; };
+		9EEA37DA62CCCFB218D48C7C /* SeedStoryPacks.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = SeedStoryPacks.json; sourceTree = "<group>"; };
+		9F18390C24128911008211F7 /* KizunaAI.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = KizunaAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A67380B9E9B6A3F03A59ED67 /* StoryGemma31BAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryGemma31BAPIService.swift; sourceTree = "<group>"; };
+		A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryWorldCreateView.swift; sourceTree = "<group>"; };
+		AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantModelProfile.swift; sourceTree = "<group>"; };
+		C4C3DBA4298E534FF3BFA4E5 /* llama.cpp-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "llama.cpp-MIT.txt"; sourceTree = "<group>"; };
+		C611D89D7CAC7F09D41C0D9A /* KizunaUICompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaUICompatibility.swift; sourceTree = "<group>"; };
+		C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Apache-2.0.txt"; sourceTree = "<group>"; };
+		C86221612DBCBA783CE5BB53 /* StoryRepositories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryRepositories.swift; sourceTree = "<group>"; };
+		CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaChatService.swift; sourceTree = "<group>"; };
+		D06ABDB45B6FC442B7523E83 /* CharacterLorebook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLorebook.swift; sourceTree = "<group>"; };
+		D30A31B134170D7A746DB123 /* ReportRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportRepository.swift; sourceTree = "<group>"; };
+		DA529B4D3926130627D485BB /* RelationshipGenre.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelationshipGenre.swift; sourceTree = "<group>"; };
+		DBEDCA0076A343951F227050 /* LiteRT-LM */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "LiteRT-LM"; path = "ThirdParty/LiteRT-LM"; sourceTree = SOURCE_ROOT; };
+		E422AA1452C576610E41D436 /* VIUKKizunaWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VIUKKizunaWorkspaceView.swift; sourceTree = "<group>"; };
+		E675C1D433A2840AB2461CFD /* MemoryRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryRepository.swift; sourceTree = "<group>"; };
+		E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIExecutionModes.swift; sourceTree = "<group>"; };
+		E98EDDBA3B31E35BEC97A9F6 /* SmallModelClassifying.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmallModelClassifying.swift; sourceTree = "<group>"; };
+		ECA3C02F943DFC138887DC5B /* ReportCharacterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportCharacterView.swift; sourceTree = "<group>"; };
+		EF3286F28C642C691A562821 /* CharacterTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterTemplate.swift; sourceTree = "<group>"; };
+		F28EE3BFF85529E58029ECD5 /* CharacterCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterCategory.swift; sourceTree = "<group>"; };
+		F85DE09496F7B036AD13EE3A /* MockSceneAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSceneAdapters.swift; sourceTree = "<group>"; };
+		F91A09679C3C6E56FF05DEBE /* cpp-httplib-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "cpp-httplib-MIT.txt"; sourceTree = "<group>"; };
+		FD2D05C43FEC8B0D00124179 /* CharacterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterDetailView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		129303B1D8D0B532E65159BB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				797B71C3CFD48A11BA1DA3C4 /* LiteRTLM in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0129BC2780B71926432ED1B4 /* Taxonomy */ = {
+			isa = PBXGroup;
+			children = (
+				0CFD2FB990A38F345A5EA155 /* CategoryGroup.swift */,
+				F28EE3BFF85529E58029ECD5 /* CharacterCategory.swift */,
+				DA529B4D3926130627D485BB /* RelationshipGenre.swift */,
+			);
+			path = Taxonomy;
+			sourceTree = "<group>";
+		};
+		082C50DD82340060F7BCF2F2 /* Kizuna */ = {
+			isa = PBXGroup;
+			children = (
+				38C38E45DF917A9188C23AAC /* KizunaRuntimeCompatibility.swift */,
+				E422AA1452C576610E41D436 /* VIUKKizunaWorkspaceView.swift */,
+			);
+			path = Kizuna;
+			sourceTree = "<group>";
+		};
+		12B91C2835D13EF597A32F9A /* Safety */ = {
+			isa = PBXGroup;
+			children = (
+				167DE9F165C1D06BC748A477 /* MockSafetyCheckers.swift */,
+				6DE6E2DA7A0E7BF418B6A3C7 /* SafetyPipeline.swift */,
+				16690F37F0845E53F9952C23 /* SafetyProtocols.swift */,
+				931AAE923FE3E950F374745E /* SafetyTypes.swift */,
+			);
+			path = Safety;
+			sourceTree = "<group>";
+		};
+		143621F358B14B6CEF901490 /* SmallModel */ = {
+			isa = PBXGroup;
+			children = (
+				429F9CE21671FDDCDA893A6B /* MockSmallModelClassifier.swift */,
+				E98EDDBA3B31E35BEC97A9F6 /* SmallModelClassifying.swift */,
+			);
+			path = SmallModel;
+			sourceTree = "<group>";
+		};
+		1630E4D8FBC935FD5C542996 /* AI */ = {
+			isa = PBXGroup;
+			children = (
+				E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */,
+				1696AB458D899AC27BB0C79B /* AILegacyCompatibility.swift */,
+				9689ADAB0694870AC5964DFA /* AISecretStore.swift */,
+				2A196A347E7975CA1A50C5D8 /* AIToolCatalog.swift */,
+				3802A51489C449BBE1A57390 /* LocalAssistantLiteRTLMRuntime.swift */,
+				5CEAFB31DF8BD30CE8BFDBAD /* LocalAssistantModelManager.swift */,
+				AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */,
+				5BDA5863DEC1401CCF59E6D2 /* LocalAssistantRuntimeBridge.swift */,
+				CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */,
+				69A2E29FC9FACB4D55183726 /* PersonaChatStore.swift */,
+				5D9BB02D32A725EB2DA3DA6E /* PersonaChatView.swift */,
+				423041EC8E5CB59368D5AF9A /* PersonaConfigView.swift */,
+				24DDE9C0180DDB8FD296DC8F /* PersonaSettings.swift */,
+				05994627B55916B0A3DFAF7B /* PlatformRuntimeStubs.swift */,
+				4F391D637E17A5E592588556 /* CharacterLibrary */,
+				082C50DD82340060F7BCF2F2 /* Kizuna */,
+				9FCD4E645D1BCBB9645B689B /* LocalRuntimeEmbedded */,
+			);
+			path = AI;
+			sourceTree = "<group>";
+		};
+		32662BA7701871F4D47E9E6C /* Prompt */ = {
+			isa = PBXGroup;
+			children = (
+				90CAC8F261A72FF48E130427 /* StoryPromptBuilder.swift */,
+			);
+			path = Prompt;
+			sourceTree = "<group>";
+		};
+		4A59A16DAD041145F9F40D88 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				26955C791E26219A2224961B /* AppBrand.swift */,
+				4A29C9D8E926D83E24A952F4 /* AppTheme.swift */,
+				785139BD8175262981B598A1 /* KizunaAIApp.swift */,
+				5DDF61BECBE7F41CD4EAD9BA /* KizunaDataMigration.swift */,
+				2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */,
+				C611D89D7CAC7F09D41C0D9A /* KizunaUICompatibility.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		4F391D637E17A5E592588556 /* CharacterLibrary */ = {
+			isa = PBXGroup;
+			children = (
+				E9D22419740DC6C79F27E47E /* Memory */,
+				89907BE01DAD3C9C7474F2EF /* Models */,
+				BF91AE9C6560216BAC4EB51D /* Prompt */,
+				993832131E6F6FAEF576CDA2 /* Repository */,
+				12B91C2835D13EF597A32F9A /* Safety */,
+				EB2A38BEA9977F9000B7B410 /* SeedData */,
+				143621F358B14B6CEF901490 /* SmallModel */,
+				59B9C642A7C0BA5463857DF5 /* Story */,
+				0129BC2780B71926432ED1B4 /* Taxonomy */,
+				F55EE4E3CF6E0B5CB3B94214 /* ViewModels */,
+				D900450644F8AF041B905262 /* Views */,
+			);
+			path = CharacterLibrary;
+			sourceTree = "<group>";
+		};
+		55D705E8A5582DC88D346F1D /* Security */ = {
+			isa = PBXGroup;
+			children = (
+				8B4FC4F65D6C41BD6DC45E22 /* KeychainHelper.swift */,
+			);
+			path = Security;
+			sourceTree = "<group>";
+		};
+		572E9851EAF3640F8308BB1D /* SceneOrchestration */ = {
+			isa = PBXGroup;
+			children = (
+				F85DE09496F7B036AD13EE3A /* MockSceneAdapters.swift */,
+				0CEC45D9187A7AD9E3CF9DE4 /* SceneProtocols.swift */,
+			);
+			path = SceneOrchestration;
+			sourceTree = "<group>";
+		};
+		59B9C642A7C0BA5463857DF5 /* Story */ = {
+			isa = PBXGroup;
+			children = (
+				A67380B9E9B6A3F03A59ED67 /* StoryGemma31BAPIService.swift */,
+				69642812D805EA2FF6BFE60E /* StorySessionService.swift */,
+				82FAFC6915202038C60A537B /* Models */,
+				32662BA7701871F4D47E9E6C /* Prompt */,
+				62B9190B0ADD5A18080FE85C /* Repository */,
+				572E9851EAF3640F8308BB1D /* SceneOrchestration */,
+				A5B7ECF624887241D7AEB7A6 /* ViewModels */,
+				5E6EDD362DE7317D83CAE157 /* Views */,
+			);
+			path = Story;
+			sourceTree = "<group>";
+		};
+		5CFBE454BC2F21AA9A731919 /* KizunaAI */ = {
+			isa = PBXGroup;
+			children = (
+				7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */,
+				87FA8C1E60CADDD358A86BE8 /* Info.plist */,
+				1630E4D8FBC935FD5C542996 /* AI */,
+				4A59A16DAD041145F9F40D88 /* App */,
+				55D705E8A5582DC88D346F1D /* Security */,
+			);
+			path = KizunaAI;
+			sourceTree = "<group>";
+		};
+		5E6EDD362DE7317D83CAE157 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				7BD3421C167EB41A06E443C2 /* StorySessionChatView.swift */,
+				A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */,
+				3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */,
+				6F71AFE96C6DB008859AAE96 /* StoryWorldLibraryView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		62B9190B0ADD5A18080FE85C /* Repository */ = {
+			isa = PBXGroup;
+			children = (
+				C86221612DBCBA783CE5BB53 /* StoryRepositories.swift */,
+			);
+			path = Repository;
+			sourceTree = "<group>";
+		};
+		6DCE9581C0E6ED90E538F059 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				DBEDCA0076A343951F227050 /* LiteRT-LM */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		82FAFC6915202038C60A537B /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				3FD99FDA49A1F31E9B0AF2D9 /* StoryModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		89907BE01DAD3C9C7474F2EF /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				D06ABDB45B6FC442B7523E83 /* CharacterLorebook.swift */,
+				208B4E1949CC5B273BB335A7 /* CharacterMemory.swift */,
+				79D6B5EE85AF59633861E76A /* CharacterProfile.swift */,
+				374F9636C3B27129BBD78882 /* CharacterReport.swift */,
+				EF3286F28C642C691A562821 /* CharacterTemplate.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		993832131E6F6FAEF576CDA2 /* Repository */ = {
+			isa = PBXGroup;
+			children = (
+				05D69B4839FE122B9DEE718C /* CharacterRepository.swift */,
+				42DF56CDC0506449D306F65B /* LocalJSONStore.swift */,
+				E675C1D433A2840AB2461CFD /* MemoryRepository.swift */,
+				D30A31B134170D7A746DB123 /* ReportRepository.swift */,
+				9498A894D7D95B93E09DA52E /* TemplateRepository.swift */,
+			);
+			path = Repository;
+			sourceTree = "<group>";
+		};
+		9FCD4E645D1BCBB9645B689B /* LocalRuntimeEmbedded */ = {
+			isa = PBXGroup;
+			children = (
+				886D407DDE24CAF50C0D9FD6 /* LocalAssistantEmbeddedRuntime-Bridging-Header.h */,
+				303798654908AC5FC3B19558 /* LocalAssistantEmbeddedRuntime.h */,
+				0F042DF35B061D4AD8A4AF8E /* LocalAssistantEmbeddedRuntime.mm */,
+			);
+			path = LocalRuntimeEmbedded;
+			sourceTree = "<group>";
+		};
+		A5B7ECF624887241D7AEB7A6 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				4021480B714F2F541000C5DD /* StoryViewModels.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		BD79F12285A907265E03F1BF /* Licenses */ = {
+			isa = PBXGroup;
+			children = (
+				C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */,
+				F91A09679C3C6E56FF05DEBE /* cpp-httplib-MIT.txt */,
+				38F8CC58ED1AF696296164C0 /* LiteRT-LM-COPYRIGHT.txt */,
+				C4C3DBA4298E534FF3BFA4E5 /* llama.cpp-MIT.txt */,
+				6FDC6C52E2977CFF9CDBA98E /* nlohmann-json-MIT.txt */,
+			);
+			path = Licenses;
+			sourceTree = "<group>";
+		};
+		BF91AE9C6560216BAC4EB51D /* Prompt */ = {
+			isa = PBXGroup;
+			children = (
+				496320007DB1F65A5462A0A2 /* PromptBuilder.swift */,
+			);
+			path = Prompt;
+			sourceTree = "<group>";
+		};
+		D78DF23F0C4521CBE851F2F7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				9F18390C24128911008211F7 /* KizunaAI.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D900450644F8AF041B905262 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				001A2AFEEF6464336BE37E55 /* CharacterCreateView.swift */,
+				FD2D05C43FEC8B0D00124179 /* CharacterDetailView.swift */,
+				287757A56CBE15F666DC908D /* CharacterLibraryView.swift */,
+				ECA3C02F943DFC138887DC5B /* ReportCharacterView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		E936FEF38B4615B8183F68F7 = {
+			isa = PBXGroup;
+			children = (
+				1014477B6846DA3DF969C22F /* THIRD_PARTY_NOTICES.md */,
+				5CFBE454BC2F21AA9A731919 /* KizunaAI */,
+				BD79F12285A907265E03F1BF /* Licenses */,
+				6DCE9581C0E6ED90E538F059 /* Packages */,
+				D78DF23F0C4521CBE851F2F7 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E9D22419740DC6C79F27E47E /* Memory */ = {
+			isa = PBXGroup;
+			children = (
+				757985556F2B3FAB58006C1C /* MemoryProtocols.swift */,
+				8E3A976D1A75B17989A4E31F /* MockMemoryAdapters.swift */,
+			);
+			path = Memory;
+			sourceTree = "<group>";
+		};
+		EB2A38BEA9977F9000B7B410 /* SeedData */ = {
+			isa = PBXGroup;
+			children = (
+				0F704141DA8C5E0FCA2CBBEF /* CharacterLibrarySeed.swift */,
+				19449F3273FBD99643962AF5 /* CharacterTemplateSeed.swift */,
+				9EEA37DA62CCCFB218D48C7C /* SeedStoryPacks.json */,
+			);
+			path = SeedData;
+			sourceTree = "<group>";
+		};
+		F55EE4E3CF6E0B5CB3B94214 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				6AB2D8A9E5A7D59CD8D67467 /* CharacterCreateViewModel.swift */,
+				593451968603E56D14CBBB53 /* CharacterDetailViewModel.swift */,
+				1FB7C20DBE13F7AA0FD7580B /* CharacterLibraryViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		80AEE9228E44526D2B7133B0 /* KizunaAI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 933EF4F7903B4FA3E7EE1CD0 /* Build configuration list for PBXNativeTarget "KizunaAI" */;
+			buildPhases = (
+				0F62280BD82D31009E7E0D77 /* Sources */,
+				F683564E5CB867B073C05AAA /* Resources */,
+				129303B1D8D0B532E65159BB /* Frameworks */,
+				E0261590512177A92AC5483C /* Bundle Local AI Runtime */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KizunaAI;
+			packageProductDependencies = (
+				28CBD9BDFFE99D154131DA85 /* LiteRTLM */,
+			);
+			productName = KizunaAI;
+			productReference = 9F18390C24128911008211F7 /* KizunaAI.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		42749DC0BE84DB19B2BB34D8 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2610;
+				TargetAttributes = {
+					80AEE9228E44526D2B7133B0 = {
+						DevelopmentTeam = 34CN68272C;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 1BA2B5827AB536892D35D5F5 /* Build configuration list for PBXProject "KizunaAI" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = E936FEF38B4615B8183F68F7;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				800A5AB0AE44956C3FBF31ED /* XCLocalSwiftPackageReference "ThirdParty/LiteRT-LM" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = D78DF23F0C4521CBE851F2F7 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				80AEE9228E44526D2B7133B0 /* KizunaAI */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F683564E5CB867B073C05AAA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1F0627CABF8181F36724081E /* Apache-2.0.txt in Resources */,
+				8FDCB3669503DEDD95786DA0 /* Assets.xcassets in Resources */,
+				41E3307E2DD22AF0123D2469 /* LiteRT-LM-COPYRIGHT.txt in Resources */,
+				FF358BF04BF87756CE4B881F /* SeedStoryPacks.json in Resources */,
+				D7C05C6DE100F03A79A02CCC /* THIRD_PARTY_NOTICES.md in Resources */,
+				39F796C9FFDF72D566506CB6 /* cpp-httplib-MIT.txt in Resources */,
+				EEC5EF2337298255BFF8AC27 /* llama.cpp-MIT.txt in Resources */,
+				4565A6A62926A82BC7B8F33C /* nlohmann-json-MIT.txt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		E0261590512177A92AC5483C /* Bundle Local AI Runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle Local AI Runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nif [[ \"${PLATFORM_NAME:-}\" != \"macosx\" ]]; then\n  exit 0\nfi\n\nSRC_RUNTIME=\"${PROJECT_DIR}/KizunaAI/AI/LocalRuntime\"\nAPP_BUNDLE=\"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\"\nAPP_RESOURCES=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"$APP_RESOURCES\"\n\nfor FILE in llama-cli llama-server llama-cli.source-revision; do\n  cp -fX \"$SRC_RUNTIME/$FILE\" \"$APP_RESOURCES/$FILE\"\ndone\nchmod +x \"$APP_RESOURCES/llama-cli\" \"$APP_RESOURCES/llama-server\"\nxattr -cr \"$APP_BUNDLE\" 2>/dev/null || true\n\nif [[ \"${CODE_SIGNING_ALLOWED:-NO}\" == \"YES\" && -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]]; then\n  for FILE in llama-cli llama-server; do\n    /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$APP_RESOURCES/$FILE\"\n  done\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0F62280BD82D31009E7E0D77 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2BEDC445F7013C3F2361CD4D /* AIExecutionModes.swift in Sources */,
+				6C376450C4E4F0FF98C2BC9A /* AILegacyCompatibility.swift in Sources */,
+				DBFC9E2365F72196EF243242 /* AISecretStore.swift in Sources */,
+				AFE68F43AEEB0B7B36052E0C /* AIToolCatalog.swift in Sources */,
+				2B2592AAD858D3D96862FAF3 /* AppBrand.swift in Sources */,
+				E24AF7F53F9DDDC5FF2393F1 /* AppTheme.swift in Sources */,
+				F9D425A3AF1DCB135F9DD737 /* CategoryGroup.swift in Sources */,
+				8ACC310A4D09D3D8E9EF939E /* CharacterCategory.swift in Sources */,
+				394AF1822F599F8200201257 /* CharacterCreateView.swift in Sources */,
+				ACAA6736AD482E30480288E9 /* CharacterCreateViewModel.swift in Sources */,
+				6F6188E8C5974DAED7ADD712 /* CharacterDetailView.swift in Sources */,
+				4CEE9E96A17436D9BCE2DF8B /* CharacterDetailViewModel.swift in Sources */,
+				7A008B57837C3BB36B3D5BAC /* CharacterLibrarySeed.swift in Sources */,
+				D8ACCA7952AFD15E4226412B /* CharacterLibraryView.swift in Sources */,
+				99EEED1D246FEA523C1D6D17 /* CharacterLibraryViewModel.swift in Sources */,
+				50DDEF0B1C30C7E875D77109 /* CharacterLorebook.swift in Sources */,
+				46ABC746AF7251556C7FF5C9 /* CharacterMemory.swift in Sources */,
+				C08E68332DCCE111AF532344 /* CharacterProfile.swift in Sources */,
+				AB26895E6CE62CB5D6C8F00D /* CharacterReport.swift in Sources */,
+				FB9115302AB78D90998E55E1 /* CharacterRepository.swift in Sources */,
+				58C8D8624FD05D256EA24B45 /* CharacterTemplate.swift in Sources */,
+				B86BE41B9AAC76DFB1A04B37 /* CharacterTemplateSeed.swift in Sources */,
+				B29F5AD5678DACCCEDD9CB4B /* KeychainHelper.swift in Sources */,
+				CD7F4B290DCF9E71F3BDDDA0 /* KizunaAIApp.swift in Sources */,
+				B0BDEAE6C995D61479C4A064 /* KizunaDataMigration.swift in Sources */,
+				84E2BB3BA295D977ABF0DCF3 /* KizunaRuntimeCompatibility.swift in Sources */,
+				1646F9BF705069B3CABED43D /* KizunaSettingsView.swift in Sources */,
+				75BA6E7CBE0835A208713ED6 /* KizunaUICompatibility.swift in Sources */,
+				73CA926153543CC3A95892EB /* LocalAssistantEmbeddedRuntime.mm in Sources */,
+				3AAE3D8F684575A640306140 /* LocalAssistantLiteRTLMRuntime.swift in Sources */,
+				A7DA6D9F4B8699ABB6FFD715 /* LocalAssistantModelManager.swift in Sources */,
+				8C633EAE45E94C4520E03651 /* LocalAssistantModelProfile.swift in Sources */,
+				9E9BEABB879FC0BE684CD0FC /* LocalAssistantRuntimeBridge.swift in Sources */,
+				3D32E24129CF4698654D7E8B /* LocalJSONStore.swift in Sources */,
+				9E82C3EAA3CAC4A63F28DF02 /* MemoryProtocols.swift in Sources */,
+				1E8D68F6FCAF235F2B84FE19 /* MemoryRepository.swift in Sources */,
+				36622231CDB22D277C6DF874 /* MockMemoryAdapters.swift in Sources */,
+				5F81134FC766267D7083299B /* MockSafetyCheckers.swift in Sources */,
+				68081B3C44658315697F78EB /* MockSceneAdapters.swift in Sources */,
+				A8D4FCAD3F966A5528F01DAD /* MockSmallModelClassifier.swift in Sources */,
+				57CF512E93E56951F0E19F0F /* PersonaChatService.swift in Sources */,
+				E94E230B59937818E8B6E544 /* PersonaChatStore.swift in Sources */,
+				EF3BB16A93B494602BC64DCF /* PersonaChatView.swift in Sources */,
+				70AD59C0680A277276B30DE1 /* PersonaConfigView.swift in Sources */,
+				4745C6D75CD7DB9CEB1366AF /* PersonaSettings.swift in Sources */,
+				BEE16F7496A6844739086860 /* PlatformRuntimeStubs.swift in Sources */,
+				84F3582F967CA23F11C0173E /* PromptBuilder.swift in Sources */,
+				E0137663C598478E9EC3368D /* RelationshipGenre.swift in Sources */,
+				1E1CC650E2302CB00D1DF1B2 /* ReportCharacterView.swift in Sources */,
+				F93D01B2DC86FD2DDE4B706D /* ReportRepository.swift in Sources */,
+				0AFD028991A3FFCC665B3769 /* SafetyPipeline.swift in Sources */,
+				7E43E57EAADECA6F88093220 /* SafetyProtocols.swift in Sources */,
+				43A8E84FD2A1382EA5583EFB /* SafetyTypes.swift in Sources */,
+				06D0D93E289A58585617D2D9 /* SceneProtocols.swift in Sources */,
+				8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */,
+				8AFDA9C31775F30993E618BB /* StoryGemma31BAPIService.swift in Sources */,
+				869DABD7EBE6CAFDFFA95FB5 /* StoryModels.swift in Sources */,
+				ACA8C2D8482815C911AF1FEB /* StoryPromptBuilder.swift in Sources */,
+				A22144875F3A43E7235B2D25 /* StoryRepositories.swift in Sources */,
+				AE8CAE598F9A0600A1C14121 /* StorySessionChatView.swift in Sources */,
+				6806C6C2F3789140A5284387 /* StorySessionService.swift in Sources */,
+				982F92EFA64D2780DE84F242 /* StoryViewModels.swift in Sources */,
+				9887C1FE76FBC8C15A077800 /* StoryWorldCreateView.swift in Sources */,
+				F254B500366A544EC2F7FABB /* StoryWorldDetailView.swift in Sources */,
+				6C287F24D9865C253FCC9A6E /* StoryWorldLibraryView.swift in Sources */,
+				62F2F104219552A4C29BE0A5 /* TemplateRepository.swift in Sources */,
+				6C5FCB334011BDED2A4374F8 /* VIUKKizunaWorkspaceView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		3986FB621011FEA1D15D4A23 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"ARCHS[sdk=macosx*]" = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = NO;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 34CN68272C;
+				"ENABLE_APP_SANDBOX[sdk=macosx*]" = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_ARCHS[sdk=macosx*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				"HEADER_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/ThirdParty/llama.cpp/include",
+					"$(PROJECT_DIR)/ThirdParty/llama.cpp/ggml/include",
+				);
+				INFOPLIST_FILE = KizunaAI/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/ThirdParty/llama.cpp/lib/macos-arm64",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"$(inherited)",
+					"-lllama",
+					"-lggml",
+					"-lggml-base",
+					"-lggml-cpu",
+					"-lggml-metal",
+					"-lggml-blas",
+					"-framework",
+					Metal,
+					"-framework",
+					Accelerate,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.viuk.KizunaAI;
+				PRODUCT_NAME = KizunaAI;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "$(inherited) VIUK_ENABLE_LITERTLM_NATIVE USE_LITERTLM";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				"SWIFT_OBJC_BRIDGING_HEADER[sdk=macosx*]" = "KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		6FB79F1D1890F503AE528DE2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		C86082D1D94731CF85A075A7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"ARCHS[sdk=macosx*]" = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = NO;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 34CN68272C;
+				"ENABLE_APP_SANDBOX[sdk=macosx*]" = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_ARCHS[sdk=macosx*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				"HEADER_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/ThirdParty/llama.cpp/include",
+					"$(PROJECT_DIR)/ThirdParty/llama.cpp/ggml/include",
+				);
+				INFOPLIST_FILE = KizunaAI/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/ThirdParty/llama.cpp/lib/macos-arm64",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"$(inherited)",
+					"-lllama",
+					"-lggml",
+					"-lggml-base",
+					"-lggml-cpu",
+					"-lggml-metal",
+					"-lggml-blas",
+					"-framework",
+					Metal,
+					"-framework",
+					Accelerate,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.viuk.KizunaAI;
+				PRODUCT_NAME = KizunaAI;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "$(inherited) VIUK_ENABLE_LITERTLM_NATIVE USE_LITERTLM";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				"SWIFT_OBJC_BRIDGING_HEADER[sdk=macosx*]" = "KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E7691BBCD4B1BEB91DB0DB12 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1BA2B5827AB536892D35D5F5 /* Build configuration list for PBXProject "KizunaAI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E7691BBCD4B1BEB91DB0DB12 /* Debug */,
+				6FB79F1D1890F503AE528DE2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		933EF4F7903B4FA3E7EE1CD0 /* Build configuration list for PBXNativeTarget "KizunaAI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C86082D1D94731CF85A075A7 /* Debug */,
+				3986FB621011FEA1D15D4A23 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		800A5AB0AE44956C3FBF31ED /* XCLocalSwiftPackageReference "ThirdParty/LiteRT-LM" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "ThirdParty/LiteRT-LM";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		28CBD9BDFFE99D154131DA85 /* LiteRTLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LiteRTLM;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 42749DC0BE84DB19B2BB34D8 /* Project object */;
+}
