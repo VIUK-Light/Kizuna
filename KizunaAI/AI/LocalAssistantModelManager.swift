@@ -436,8 +436,22 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     func updateSourceURL(_ value: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            sourceURLString = LocalAssistantModelProfile.defaultDownloadURL
+        let nextSourceURL = Self.normalizedSourceURL(trimmed)
+        let sourceChanged = resolvedSourceURLString != nextSourceURL
+
+        if sourceChanged {
+            cancelActiveTasksWithoutResume()
+            removeIncompleteDownloadedFileIfNeeded()
+            clearPersistedDownloadState(removeResumeData: true)
+            downloadedBytes = 0
+            expectedBytes = 0
+            resetDownloadProgressMetrics()
+            lastErrorMessage = nil
+            logDownloadEvent("source_changed", detail: "file=\(URL(string: nextSourceURL)?.lastPathComponent ?? "unknown")")
+        }
+
+        sourceURLString = nextSourceURL
+        if trimmed.isEmpty || Self.isEffectivelyDefaultSource(trimmed) {
             AILegacyCompatibility.removeValue(
                 primaryKey: sourceURLKey,
                 aliases: AILegacyCompatibility.localModelSourceAliases,
@@ -693,6 +707,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return
         }
 
+        logDownloadEvent("begin", detail: "file=\(url.lastPathComponent) resume=\(resuming)")
+
         isDownloading = true
         downloadedBytes = 0
         expectedBytes = persistedDownloadState?.expectedBytes ?? 0
@@ -722,11 +738,16 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 45
         configuration.timeoutIntervalForResource = 60
+        configuration.httpAdditionalHeaders = [
+            "Accept": "application/octet-stream",
+            "Range": "bytes=0-0"
+        ]
         let session = URLSession(configuration: configuration)
 
         var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
+        request.httpMethod = "GET"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
         if shouldAttachAuthorization(to: url) {
             request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         }
@@ -739,7 +760,11 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                     if error.code == NSURLErrorCancelled {
                         return
                     }
-                    self.applyFailure(message: "配布元の確認に失敗しました。ネットワーク接続を確認して再試行してください。")
+                    self.logDownloadEvent(
+                        "preflight_error",
+                        detail: "domain=\(error.domain) code=\(error.code) message=\(error.localizedDescription)"
+                    )
+                    self.applyFailure(message: "配布元の確認に失敗しました（\(error.code)）。ネットワーク接続を確認して再試行してください。")
                     return
                 }
 
@@ -766,6 +791,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 }
 
                 let expectedBytes = self.expectedBytesFromResponse(httpResponse, fallbackURL: url)
+                self.logDownloadEvent(
+                    "preflight_ok",
+                    detail: "status=\(statusCode) bytes=\(expectedBytes) host=\(httpResponse.url?.host ?? "unknown")"
+                )
                 do {
                     try FileManager.default.createDirectory(at: self.installationDirectoryURL, withIntermediateDirectories: true)
                 } catch {
@@ -777,6 +806,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 if let freeBytes = self.availableDiskSpaceBytes(),
                    freeBytes > 0,
                    freeBytes < requiredBytes {
+                    self.logDownloadEvent(
+                        "insufficient_space",
+                        detail: "available=\(freeBytes) required=\(requiredBytes)"
+                    )
                     self.applyFailure(message: "空き容量が不足しています。モデル保存には追加の空きが必要です。")
                     return
                 }
@@ -844,6 +877,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             lastError: nil
         )
         statusMessage = resuming ? "モデルの続きをダウンロードしています" : "モデルをダウンロードしています"
+        logDownloadEvent(
+            "transfer_started",
+            detail: "file=\(preflight.suggestedFilename ?? preflight.sourceURL.lastPathComponent) bytes=\(preflight.expectedBytes) resume=\(resuming)"
+        )
         task.resume()
     }
 
@@ -1222,6 +1259,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
 
         isDownloading = false
+        logDownloadEvent("failed", detail: "resumable=\(resumable) message=\(message)")
         activeDownloadBaseBytes = 0
         resetDownloadProgressMetrics()
         lastErrorMessage = message
@@ -1242,15 +1280,26 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return parsed
         }
 
-        if let headerValue = response.value(forHTTPHeaderField: "Content-Length"),
-           let parsed = Int64(headerValue),
+        if let contentRange = response.value(forHTTPHeaderField: "Content-Range"),
+           let totalText = contentRange.split(separator: "/").last,
+           let parsed = Int64(totalText),
            parsed > 0 {
             return parsed
         }
 
+        if let headerValue = response.value(forHTTPHeaderField: "Content-Length"),
+           let parsed = Int64(headerValue),
+           parsed > 1 {
+            return parsed
+        }
+
         let expected = response.expectedContentLength
-        if expected > 0 {
+        if expected > 1 {
             return expected
+        }
+
+        if let knownModel = LocalAssistantModelChoice.matching(sourceURL: fallbackURL.absoluteString) {
+            return knownModel.expectedSizeBytes
         }
 
         if Self.isEffectivelyDefaultSource(fallbackURL.absoluteString) {
@@ -1606,8 +1655,13 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         if FileManager.default.fileExists(atPath: preservedURL.path) {
             try? FileManager.default.removeItem(at: preservedURL)
         }
-        try FileManager.default.copyItem(at: location, to: preservedURL)
+        try FileManager.default.moveItem(at: location, to: preservedURL)
         return preservedURL
+    }
+
+    private func logDownloadEvent(_ event: String, detail: String = "") {
+        let suffix = detail.isEmpty ? "" : " \(detail)"
+        print("[KizunaModelDownload] \(event)\(suffix)")
     }
 
     private func resetDownloadProgressMetrics() {
@@ -1742,6 +1796,10 @@ extension LocalAssistantModelManager: URLSessionDownloadDelegate {
         }
 
         DispatchQueue.main.async {
+            self.logDownloadEvent(
+                "transfer_finished",
+                detail: "bytes=\((try? preservedLocation.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)"
+            )
             self.finalizeDownloadedFile(tempURL: preservedLocation, response: downloadTask.response)
         }
     }
@@ -1759,6 +1817,10 @@ extension LocalAssistantModelManager: URLSessionDownloadDelegate {
             }
 
             let nsError = error as NSError
+            self.logDownloadEvent(
+                "transfer_error",
+                detail: "domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)"
+            )
             if nsError.code == NSURLErrorCancelled {
                 if self.isCancellingForResume {
                     if let resumeData = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
