@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// 独立版「VIUK 絆」から秘密情報とローカルモデルを管理する画面。
-/// APIキーとアクセストークンはKeychainにだけ保存する。
 struct KizunaSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var modelManager = LocalAssistantModelManager.shared
@@ -9,7 +7,15 @@ struct KizunaSettingsView: View {
     @State private var nagiAPIKey = ""
     @State private var modelSourceURL = ""
     @State private var modelAccessToken = ""
+    @State private var modelSourceSelection: LocalModelSourceSelection = .standard
+    @State private var selectedStandardModelURL = LocalAssistantModelProfile.defaultDownloadURL
     @State private var saveMessage: String?
+    @State private var showDeleteAlert = false
+
+    private var canDownload: Bool {
+        modelSourceSelection == .standard
+            || !modelSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         NavigationStack {
@@ -17,24 +23,60 @@ struct KizunaSettingsView: View {
                 Section("NAGI（Gemma4 31B API）") {
                     SecureField("Google AI APIキー", text: $nagiAPIKey)
                         .textContentType(.password)
-                    Text("物語テンプレート生成とNAGI会話に使います。値はKeychainにのみ保存されます。")
+
+                    Text("APIキーはKeychainに保存されます。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("APIキーを保存") {
-                        saveSecretsAndModelSource()
-                    }
                 }
 
-                Section("ローカルAIモデル（iori）") {
+                Section("ローカルAIモデル") {
                     LabeledContent("状態", value: modelManager.runtimeStatusSummary)
+
                     if let name = modelManager.installedFileName {
                         LabeledContent("モデル", value: name)
                     }
 
-                    TextField("モデルのダウンロードURL", text: $modelSourceURL)
-                        .textContentType(.URL)
-                    SecureField("Hugging Faceアクセストークン（必要な場合）", text: $modelAccessToken)
-                        .textContentType(.password)
+                    Picker("モデルの入手先", selection: $modelSourceSelection) {
+                        ForEach(LocalModelSourceSelection.allCases) { source in
+                            Label(source.title, systemImage: source.icon)
+                                .tag(source)
+                        }
+                    }
+
+                    if modelSourceSelection == .standard {
+                        Picker("標準リンク", selection: $selectedStandardModelURL) {
+                            ForEach(standardModelOptions) { option in
+                                VStack(alignment: .leading) {
+                                    Text(option.title)
+                                    Text(option.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .tag(option.url)
+                            }
+                        }
+                        if let selectedOption = standardModelOptions.first(where: {
+                            $0.url == selectedStandardModelURL
+                        }) {
+                            Text(selectedOption.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("アプリに設定された標準リンクからダウンロードします。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        TextField("Hugging FaceのファイルURL", text: $modelSourceURL)
+                            .textContentType(.URL)
+                            .autocorrectionDisabled()
+
+                        SecureField("アクセストークン（必要な場合）", text: $modelAccessToken)
+                            .textContentType(.password)
+
+                        Text("リポジトリページではなく、GGUFまたはLiteRT-LMファイルの直接ダウンロードURLを指定してください。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
                     if let progress = modelManager.progressValue {
                         ProgressView(value: progress)
@@ -45,6 +87,12 @@ struct KizunaSettingsView: View {
                     Text(modelManager.statusMessage)
                         .font(.caption)
                         .foregroundStyle(modelManager.lastErrorMessage == nil ? Color.secondary : Color.red)
+
+                    if let error = modelManager.supplementalLastErrorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
 
                     HStack {
                         if modelManager.isDownloading {
@@ -61,6 +109,7 @@ struct KizunaSettingsView: View {
                                 saveSecretsAndModelSource()
                                 modelManager.startDownload()
                             }
+                            .disabled(!canDownload)
                         }
 
                         Button("起動確認") {
@@ -72,7 +121,7 @@ struct KizunaSettingsView: View {
 
                     if modelManager.installedModelURL != nil {
                         Button("ローカルモデルを削除", role: .destructive) {
-                            modelManager.removeInstalledModel()
+                            showDeleteAlert = true
                         }
                     }
                 }
@@ -94,7 +143,7 @@ struct KizunaSettingsView: View {
                 }
             }
             .formStyle(.grouped)
-            .navigationTitle("絆の設定")
+            .navigationTitle("設定")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") { dismiss() }
@@ -106,18 +155,63 @@ struct KizunaSettingsView: View {
                 }
             }
         }
+        .alert("ローカルモデルを削除しますか？", isPresented: $showDeleteAlert) {
+            Button("削除", role: .destructive) {
+                modelManager.removeInstalledModel()
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("この操作は取り消せません。")
+        }
         .onAppear {
             nagiAPIKey = AISecretStore.shared.string(for: .gemmaWebReaderAPIKey) ?? ""
             modelSourceURL = modelManager.sourceURLString
             modelAccessToken = modelManager.accessToken
+            selectedStandardModelURL = standardModelOptions.first(where: {
+                $0.url == modelManager.resolvedSourceURLString
+            })?.url ?? LocalAssistantModelProfile.defaultDownloadURL
+            modelSourceSelection = standardModelOptions.contains(where: {
+                $0.url == modelManager.resolvedSourceURLString
+            }) ? .standard : .huggingFace
             modelManager.refreshEnvironment()
         }
     }
 
     private func saveSecretsAndModelSource() {
         AISecretStore.shared.setString(nagiAPIKey, for: .gemmaWebReaderAPIKey)
-        modelManager.updateSourceURL(modelSourceURL)
+
+        if modelSourceSelection == .standard {
+            modelManager.updateSourceURL(selectedStandardModelURL)
+        } else {
+            modelManager.updateSourceURL(modelSourceURL)
+        }
+
         modelManager.updateAccessToken(modelAccessToken)
-        saveMessage = "Keychainとモデル設定を更新しました"
+        saveMessage = "設定を保存しました"
+    }
+
+    private var standardModelOptions: [LocalAssistantModelProfile.DownloadOption] {
+        LocalAssistantModelProfile.standardDownloadOptions
+    }
+}
+
+private enum LocalModelSourceSelection: String, CaseIterable, Identifiable {
+    case standard
+    case huggingFace
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard: return "標準モデル"
+        case .huggingFace: return "Hugging Faceから選択"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .standard: return "shippingbox.fill"
+        case .huggingFace: return "arrow.down.circle"
+        }
     }
 }
