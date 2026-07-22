@@ -10,11 +10,10 @@ import SwiftUI
 struct VIUKKizunaWorkspaceView: View {
     @State private var selectedSection: KizunaWorkspaceSection = .stories
     @State private var isShowingSettings = false
+    @State private var activeStoryWorld: StoryWorld?
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
             sectionPicker
             Divider()
             sectionContent
@@ -24,80 +23,58 @@ struct VIUKKizunaWorkspaceView: View {
             KizunaSettingsView()
                 .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 680)
         }
+#if os(iOS)
+        .fullScreenCover(item: $activeStoryWorld) { world in
+            StorySessionChatView(world: world)
+        }
+#else
+        .sheet(item: $activeStoryWorld) { world in
+            StorySessionChatView(world: world)
+        }
+#endif
     }
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.50, green: 0.27, blue: 0.96),
-                                Color(red: 0.13, green: 0.63, blue: 0.78)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: "infinity.circle.fill")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 48, height: 48)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("VIUK 絆")
-                    .font(.system(size: 22, weight: .bold))
-                Text("キャラ、世界観、物語セッションをまとめた関係性アプリ")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 0)
-
-            Button {
-                isShowingSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 15, weight: .bold))
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color.primary.opacity(0.08)))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
-            .accessibilityLabel("絆の設定")
+    private var settingsButton: some View {
+        Button {
+            isShowingSettings = true
+        } label: {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: 15, weight: .bold))
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Color.primary.opacity(0.08)))
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .background(.thinMaterial)
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .accessibilityLabel("設定")
     }
 
     private var sectionPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(KizunaWorkspaceSection.allCases) { section in
-                    Button {
-                        selectedSection = section
-                    } label: {
-                        Label(section.title, systemImage: section.icon)
-                            .font(.system(size: 12, weight: .bold))
-                            .labelStyle(.titleAndIcon)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule()
-                                    .fill(selectedSection == section ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06))
-                            )
-                            .foregroundStyle(selectedSection == section ? Color.accentColor : Color.primary.opacity(0.82))
+        HStack(spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(KizunaWorkspaceSection.allCases) { section in
+                        Button {
+                            selectedSection = section
+                        } label: {
+                            Label(section.title, systemImage: section.icon)
+                                .font(.system(size: 12, weight: .bold))
+                                .labelStyle(.titleAndIcon)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule()
+                                        .fill(selectedSection == section ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06))
+                                )
+                                .foregroundStyle(selectedSection == section ? Color.accentColor : Color.primary.opacity(0.82))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            settingsButton
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
         .background(Color.appSecondaryBackground.opacity(0.18))
     }
 
@@ -105,7 +82,12 @@ struct VIUKKizunaWorkspaceView: View {
     private var sectionContent: some View {
         switch selectedSection {
         case .stories:
-            StoryWorldLibraryView()
+            StoryWorldLibraryView { world in
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    activeStoryWorld = world
+                }
+            }
         case .characters:
             CharacterLibraryView()
         case .chat:
