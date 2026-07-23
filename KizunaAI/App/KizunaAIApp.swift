@@ -2,14 +2,24 @@ import SwiftUI
 
 @main
 struct KizunaAIApp: App {
+    // アプリ内設定。未設定時は元の設計どおり日本語を標準にする。
+    @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
+
     var body: some Scene {
         WindowGroup {
             KizunaMigrationGateView()
                 .viukMacWindowFrame(minWidth: 880, minHeight: 700)
+                // SwiftUIのLocalizedStringKeyをアプリ内言語へ切り替える。
+                .environment(\.locale, selectedLocale)
         }
         #if os(macOS)
         .defaultSize(width: 1180, height: 780)
         #endif
+    }
+
+    private var selectedLocale: Locale {
+        KizunaLanguage(rawValue: languageRawValue)?.locale
+            ?? KizunaLanguage.japanese.locale
     }
 }
 

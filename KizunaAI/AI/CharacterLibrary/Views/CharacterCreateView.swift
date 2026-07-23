@@ -274,7 +274,6 @@ struct CharacterCreateView: View {
                 .frame(width: 76, height: 76)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         } else {
-            let name = vm.draft.displayName.isEmpty ? vm.draft.name : vm.draft.displayName
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(
                     LinearGradient(
@@ -285,8 +284,8 @@ struct CharacterCreateView: View {
                 )
                 .frame(width: 76, height: 76)
                 .overlay {
-                    Text(String(name.prefix(1)).isEmpty ? "?" : String(name.prefix(1)))
-                        .font(.system(size: 24, weight: .bold))
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(.white)
                 }
         }

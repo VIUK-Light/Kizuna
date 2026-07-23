@@ -1,7 +1,7 @@
 /*
 仕様:
 - 役割: 安全性判定を担うコンポーネントの Protocol 群。
-  本実装は Mock。将来 Gemma 3 270M 接続版へ差し替える。
+  入力/出力判定は既存Mock、相談分類は文脈特徴による初期実装。将来 Gemma 3 270M 接続版へ差し替える。
 - 主な型: CharacterSafetyChecking, InputSafetyChecking, OutputSafetyChecking.
 */
 
@@ -20,4 +20,9 @@ protocol InputSafetyChecking: AnyObject {
 protocol OutputSafetyChecking: AnyObject {
     /// AI 出力に対する安全性判定。
     func evaluate(_ text: String, character: CharacterProfile) async -> SafetyDecision
+}
+
+/// 会話を遮断せず、相談サポートUIを出すための分類器。
+protocol SafetyConcernClassifying: AnyObject {
+    func classify(_ text: String) async -> SafetyConcern?
 }

@@ -196,7 +196,10 @@ struct CharacterDetailView: View {
 
     private var memoriesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("覚えていること (\(vm.memories.count))")
+            sectionTitle("全体メモリー (\(vm.memories.count))")
+            Text("このキャラに紐づき、物語をまたいで使われる思い出")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(vm.memories.prefix(8)) { m in
                     HStack(alignment: .top, spacing: 6) {
@@ -344,9 +347,11 @@ struct CharacterDetailView: View {
                     .clipShape(Circle())
             )
         }
-        if let key = c.imageKey, !key.isEmpty {
+        if let key = c.imageKey,
+           !key.isEmpty,
+           let image = characterDetailPlatformImage(named: key) {
             return AnyView(
-                Image(key)
+                Image(characterDetailPlatformImage: image)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size, height: size)
@@ -354,7 +359,6 @@ struct CharacterDetailView: View {
             )
         }
         let name = c.displayName.isEmpty ? c.name : c.displayName
-        let initial = name.first.map(String.init) ?? "?"
         var sum = 0
         for s in name.unicodeScalars { sum &+= Int(s.value) }
         let hue = Double(sum % 360) / 360.0
@@ -369,8 +373,8 @@ struct CharacterDetailView: View {
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     )
                 )
-                Text(initial)
-                    .font(.system(size: size * 0.45, weight: .bold))
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.42, weight: .semibold))
                     .foregroundStyle(.white)
             }
             .frame(width: size, height: size)
@@ -382,6 +386,17 @@ struct CharacterDetailView: View {
         return NSImage(data: data)
         #elseif canImport(UIKit)
         return UIImage(data: data)
+        #else
+        return nil
+        #endif
+    }
+
+    // 未登録の画像名をSwiftUIへ渡さず、既存のイニシャル表示へフォールバックする。
+    private func characterDetailPlatformImage(named name: String) -> CharacterDetailPlatformImage? {
+        #if canImport(AppKit)
+        return NSImage(named: name)
+        #elseif canImport(UIKit)
+        return UIImage(named: name)
         #else
         return nil
         #endif

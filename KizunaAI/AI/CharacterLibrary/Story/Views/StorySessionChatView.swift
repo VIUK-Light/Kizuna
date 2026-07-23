@@ -48,6 +48,8 @@ struct StorySessionChatView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var sessionVM: StorySessionViewModel?
     @State private var loadError: String?
+    // 右上の「?」から開く、休憩提案設定の UI フレーム。
+    @State private var isShowingRestHelp = false
 
     init(world: StoryWorld, initialSessionID: UUID? = nil) {
         self.world = world
@@ -60,7 +62,7 @@ struct StorySessionChatView: View {
             header
             Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
             if let sessionVM {
-                StorySessionChatBody(vm: sessionVM)
+                StorySessionChatBody(vm: sessionVM, isShowingRestHelp: $isShowingRestHelp)
             } else if let loadError {
                 ContentUnavailableView("ストーリーを開始できません", systemImage: "exclamationmark.triangle", description: Text(loadError))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -70,6 +72,10 @@ struct StorySessionChatView: View {
             }
         }
         .background(storyCanvas.ignoresSafeArea())
+        .sheet(isPresented: $isShowingRestHelp) {
+            // UIフレーム: 詳細な説明・設定画面はここを差し替えて実装する。
+            RestBreakHelpSheetFrame()
+        }
         .task(id: world.id) {
             guard sessionVM == nil else { return }
             await detailVM.reload()
@@ -316,13 +322,17 @@ private struct StorySessionChatBody: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ObservedObject var vm: StorySessionViewModel
     @ObservedObject private var service: StorySessionService
+    @Binding var isShowingRestHelp: Bool
     @State private var draft = ""
     @State private var selectedCharacterID: UUID?
     @State private var isShowingCharacterSheet = false
+    @State private var isShowingSafetyResources = false
+    @State private var isShowingSafetyHelp = false
     @FocusState private var composerFocused: Bool
 
-    init(vm: StorySessionViewModel) {
+    init(vm: StorySessionViewModel, isShowingRestHelp: Binding<Bool>) {
         self.vm = vm
+        _isShowingRestHelp = isShowingRestHelp
         _service = ObservedObject(wrappedValue: vm.service)
     }
 
@@ -340,6 +350,9 @@ private struct StorySessionChatBody: View {
                         if service.phase == .thinking {
                             streamingPreview
                         }
+                        // 最新のキャラクター発話の後ろに、会話の一部として表示する。
+                        restSuggestionCard
+                        safetySupportCard
                     }
                     .padding(18)
                 }
@@ -355,7 +368,23 @@ private struct StorySessionChatBody: View {
                     }
                 }
                 .onChange(of: service.savedTurnRevision) { _, _ in
-                    Task { await vm.refreshAfterTurn() }
+                    // キャラクター発話の保存後にだけ、アプリ側の60分判定を行う。
+                    Task {
+                        await vm.refreshAfterTurn()
+                        await vm.evaluateRestSuggestionAfterTurn()
+                    }
+                }
+                .onChange(of: vm.restSuggestion?.id) { _, suggestionID in
+                    guard suggestionID != nil else { return }
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo("rest-suggestion-card", anchor: .bottom)
+                    }
+                }
+                .onChange(of: service.latestSafetyConcern?.id) { _, concernID in
+                    guard concernID != nil else { return }
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo("safety-support-card", anchor: .bottom)
+                    }
                 }
             }
             composer
@@ -367,6 +396,123 @@ private struct StorySessionChatBody: View {
                 onSelect: { selectedCharacterID = $0 }
             )
             .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $isShowingSafetyResources) {
+            if let concern = service.latestSafetyConcern {
+                SafetySupportSheet(concern: concern)
+            }
+        }
+        .sheet(isPresented: $isShowingSafetyHelp) {
+            SafetyConcernHelpSheetFrame()
+        }
+    }
+
+    // 休憩提案はアラートではなく、会話画面内に表示するカード。
+    // 「?」はこのカードの説明だけを開く。
+    @ViewBuilder
+    private var restSuggestionCard: some View {
+        if let suggestion = vm.restSuggestion {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("休憩提案")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(storyText)
+                        Text(suggestion.text)
+                            .font(.subheadline)
+                            .foregroundStyle(storyText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        isShowingRestHelp = true
+                    } label: {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(storyMuted)
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("story.rest.help")
+                    .accessibilityLabel("この休憩提案について")
+                }
+
+                HStack(spacing: 10) {
+                    Button("少し休む") {
+                        vm.chooseRestSuggestionBreak()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("このまま続ける") {
+                        vm.chooseRestSuggestionContinue()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(14)
+            .background(storyPanel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .id("rest-suggestion-card")
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    // 危険相談の検知は会話を止めず、本文とは別のサポートカードだけを追加する。
+    @ViewBuilder
+    private var safetySupportCard: some View {
+        if let concern = service.latestSafetyConcern {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    Label(concern.title, systemImage: concern.level == .urgent ? "exclamationmark.triangle.fill" : "heart.text.square")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(concern.level == .urgent ? .orange : storyText)
+                    Spacer(minLength: 8)
+                    Button {
+                        isShowingSafetyHelp = true
+                    } label: {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(storyMuted)
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("story.safety.help")
+                    .accessibilityLabel("この相談サポートについて")
+                }
+                Text(concern.message)
+                    .font(.subheadline)
+                    .foregroundStyle(storyText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("会話はそのまま続けられます。必要なら相談先を確認してください。")
+                    .font(.caption)
+                    .foregroundStyle(storyMuted)
+
+                HStack(spacing: 10) {
+                    Button("相談先を見る") {
+                        isShowingSafetyResources = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("閉じる") {
+                        service.dismissSafetyConcern()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(14)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .id("safety-support-card")
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -706,19 +852,18 @@ private struct StorySessionChatBody: View {
                 Spacer(minLength: 28)
             }
         case let .cast(characterID, displayName):
-            HStack(alignment: .bottom, spacing: 9) {
-                VStack(spacing: 4) {
+            HStack(alignment: .top, spacing: 10) {
+                characterAvatar(vm.characterIndex[characterID], size: 42)
+                VStack(alignment: .leading, spacing: 3) {
+                    // アイコンの隣に発話者名を置き、誰の返答かをすぐ確認できるようにする。
                     Text(displayName)
-                        .font(.system(size: 10.5, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(storyMuted)
                         .lineLimit(1)
-                        .frame(maxWidth: 68)
-                    characterAvatar(vm.characterIndex[characterID], fallbackName: displayName, size: 34)
-                }
-                VStack(alignment: .leading, spacing: 3) {
                     Text(message.text)
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(storyText.opacity(0.82))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 16)
                         .background(
@@ -729,8 +874,9 @@ private struct StorySessionChatBody: View {
                         .font(.system(size: 10))
                         .foregroundStyle(storyMuted.opacity(0.72))
                 }
-                Spacer(minLength: 80)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -741,21 +887,25 @@ private struct StorySessionChatBody: View {
     }
 
     @ViewBuilder
-    private func characterAvatar(_ character: CharacterProfile?, fallbackName: String = "?", size: CGFloat) -> some View {
+    private func characterAvatar(_ character: CharacterProfile?, size: CGFloat) -> some View {
         if let data = character?.avatarImageData, let image = storyChatPlatformImage(from: data) {
             Image(storyChatPlatformImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: size, height: size)
+                // 縦長の立ち絵を中央で切ると顔が消えるため、上端を優先して丸く切り抜く。
+                .frame(width: size, height: size, alignment: .top)
+                .clipped()
                 .clipShape(Circle())
-        } else if let key = character?.imageKey, !key.isEmpty {
-            Image(key)
+        } else if let key = character?.imageKey,
+                  !key.isEmpty,
+                  let image = storyChatPlatformImage(named: key) {
+            Image(storyChatPlatformImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: size, height: size)
+                .frame(width: size, height: size, alignment: .top)
+                .clipped()
                 .clipShape(Circle())
         } else {
-            let name = character.map { $0.displayName.isEmpty ? $0.name : $0.displayName } ?? fallbackName
             Circle()
                 .fill(
                     LinearGradient(
@@ -766,8 +916,8 @@ private struct StorySessionChatBody: View {
                 )
                 .frame(width: size, height: size)
                 .overlay(
-                    Text(String(name.prefix(1)).isEmpty ? "?" : String(name.prefix(1)))
-                        .font(.system(size: max(10, size * 0.4), weight: .bold))
+                    Image(systemName: "person.fill")
+                        .font(.system(size: max(12, size * 0.42), weight: .semibold))
                         .foregroundStyle(.white)
                 )
         }
@@ -778,6 +928,17 @@ private struct StorySessionChatBody: View {
         return NSImage(data: data)
         #elseif canImport(UIKit)
         return UIImage(data: data)
+        #else
+        return nil
+        #endif
+    }
+
+    // SwiftUIのImage("name")は未登録アセットをログに出すため、存在確認してから表示する。
+    private func storyChatPlatformImage(named name: String) -> StoryChatPlatformImage? {
+        #if canImport(AppKit)
+        return NSImage(named: name)
+        #elseif canImport(UIKit)
+        return UIImage(named: name)
         #else
         return nil
         #endif
@@ -968,15 +1129,17 @@ private struct StoryCharacterHero: View {
             Image(storyChatPlatformImage: image)
                 .resizable()
                 .scaledToFill()
-        } else if let key = character.imageKey, !key.isEmpty {
-            Image(key)
+        } else if let key = character.imageKey,
+                  !key.isEmpty,
+                  let image = storySpotlightPlatformImage(named: key) {
+            Image(storyChatPlatformImage: image)
                 .resizable()
                 .scaledToFill()
         } else {
             ZStack {
                 LinearGradient(colors: [storyPurple.opacity(0.75), Color.black.opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                Text(String(character.displayName.prefix(1)))
-                    .font(.system(size: 56, weight: .heavy))
+                Image(systemName: "person.fill")
+                    .font(.system(size: 56, weight: .semibold))
                     .foregroundStyle(.white)
             }
         }
@@ -1007,6 +1170,259 @@ private func storySpotlightPlatformImage(from data: Data) -> StoryChatPlatformIm
     #else
     return nil
     #endif
+}
+
+private func storySpotlightPlatformImage(named name: String) -> StoryChatPlatformImage? {
+    #if canImport(AppKit)
+    return NSImage(named: name)
+    #elseif canImport(UIKit)
+    return UIImage(named: name)
+    #else
+    return nil
+    #endif
+}
+
+/// 休憩提案の別画面用 SwiftUI フレーム。
+/// 実際の説明・設定 UI はこの View を差し替えて実装する。
+struct RestBreakHelpSheetFrame: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("この表示について")
+                        .font(.title2.weight(.bold))
+                    Text("休憩提案は、連続利用が長くなった時に会話画面内へ表示される案内です。会話を止めたり、強制終了したりはしません。")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("発動条件", systemImage: "clock")
+                            .font(.headline)
+                        Text("連続利用が60分に達した後、キャラクターの発言に続けて1回だけ表示されます。判定はアプリ側で行います。")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("選択肢", systemImage: "checkmark.circle")
+                            .font(.headline)
+                        Text("「少し休む」または「このまま続ける」を選べます。続ける場合も、キャラクターが短く了承して直前の会話へ戻ります。")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("再表示について", systemImage: "pause.circle")
+                            .font(.headline)
+                        Text("「このまま続ける」を選んだ場合、次の120分は再提案しません。モデルが自主的に休憩や終了を提案することもありません。")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    NavigationLink("Kizunaの安全対策") {
+                        viuk_web()
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("休憩提案について")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// 危険相談サポートカードの「？」から開く説明画面。
+struct SafetyConcernHelpSheetFrame: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("この表示について")
+                        .font(.title2.weight(.bold))
+                    Text("このカードは、会話の中に個人的な悩みや安全に関わる相談の可能性があるとアプリ側が判断した時に表示されます。診断や断定をするものではありません。")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("会話は止まりません", systemImage: "play.circle")
+                            .font(.headline)
+                        Text("物語や返答を自動的に削除・終了せず、必要な場合だけ相談先への導線を追加します。")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("相談先は任意で開けます", systemImage: "list.bullet.rectangle")
+                            .font(.headline)
+                        Text("「相談先を見る」から公的窓口などを確認できます。カードを閉じても、会話そのものは続けられます。")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("緊急時", systemImage: "exclamationmark.triangle")
+                            .font(.headline)
+                        Text("今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    NavigationLink("Kizunaの安全対策") {
+                        viuk_web()
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("相談サポートについて")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// 検知後に利用者が任意で開く相談先一覧。会話を閉じたり、自動発信したりしない。
+struct SafetySupportSheet: View {
+    let concern: SafetyConcern
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("相談先")
+                        .font(.title2.weight(.bold))
+                    Text("これは診断ではありません。今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(concern.category.displayName)
+                        .font(.headline)
+
+                    ForEach(concern.resources) { resource in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(resource.title)
+                                .font(.headline)
+                            Text(resource.detail)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let actionTitle = resource.actionTitle,
+                               let urlString = resource.urlString,
+                               let url = URL(string: urlString) {
+                                Link(actionTitle, destination: url)
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("相談先")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct viuk_web: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // 安全対策ページの位置づけを最初に明示する。
+                pageHeader(
+                    title: "責任あるAIアプリケーションと倫理",
+                    subtitle: "Kizunaの安全対策"
+                )
+
+                principleCard(
+                    title: "安全対策の基本方針",
+                    icon: "sun.max.fill",
+                    text: "KizunaとVIUK-Lightは、『責任あるAIアプリケーションと倫理』を掲げています。AIとの対話を創作・娯楽・気持ちの整理に役立てながら、人の生活や選択を支配するものにはしないことを安全対策の前提にしています。"
+                )
+
+                principleCard(
+                    title: "安全性と体験を対立させない理由",
+                    icon: "scale.3d",
+                    text: "危険を避けるために、すべての親密な会話や感情表現を機械的に止めると、キャラクターAIとしての価値や、利用者が得られる居場所まで失われます。だからKizunaは、危険度と文脈を見ながら必要な場面だけ安全な方向へ導き、通常の創作や物語はできるだけ続けられる設計を目指します。"
+                )
+
+                principleCard(
+                    title: "なぜ依存を促してはいけないのか",
+                    icon: "person.2.slash",
+                    text: "『私だけを見て』『他の人と話さないで』『アプリを閉じないで』のような誘導は、利用者の不安や孤独を利用して、現実の人間関係や判断を狭めます。短期的に利用時間が伸びても、利用者の自由・尊厳・生活を損なうため、責任あるAIの目標とは両立しません。"
+                )
+
+                principleCard(
+                    title: "過度な安全性も安全性の失敗",
+                    icon: "exclamationmark.triangle",
+                    text: "安全性は、拒否する回数を増やせば完成するものではありません。必要以上に冷たく突き放したり、キャラクター性を消したりすれば、別のかたちで利用者の体験を傷つけます。Kizunaは、危険を見逃さず、同時に過剰な制限も減らすことを安全設計の課題として扱います。"
+                )
+
+                principleCard(
+                    title: "利用者が中心であること",
+                    icon: "person.crop.circle",
+                    text: "物語の主人公や関係性をAIが勝手に決めるのではなく、利用者が選び、断り、変えられる余地を残します。キャラクターは個性を持ちますが、同意していない関係性を押し付けたり、現実の行動を決めつけたりしません。"
+                )
+
+
+                principleCard(
+                    title: "プライバシーと利用者の管理権",
+                    icon: "lock.shield",
+                    text: "親密な会話を便利さのために必要以上に集めたり、意図せず外部へ送ったりしないことを重視します。ローカルモデル、保存データ、接続先、記憶、設定を利用者が確認・変更・削除できる方向へ進めます。"
+                )
+
+                // これは固定された完成宣言ではなく、継続改善の方針。
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("完成した安全性は存在しない")
+                        .font(.headline.weight(.bold))
+                    Text("利用状況や社会の変化を見ながら、なぜ問題が起きたのか、必要以上に拒否していないか、キャラクター性と利用者の意思を守れているかを検証し続けます。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+            }
+            .padding(20)
+        }
+        .navigationTitle("Kizunaの安全対策")
+    }
+
+    // 説明ページ内の見出しを統一するための小さなUI部品。
+    private func pageHeader(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.title2.weight(.bold))
+            Text(subtitle)
+                .font(.headline)
+                .foregroundStyle(.tint)
+        }
+    }
+
+    // 目標・理由を同じカード形式で読みやすく表示する。
+    private func principleCard(title: String, icon: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(.headline.weight(.bold))
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
 }
 
 private extension View {

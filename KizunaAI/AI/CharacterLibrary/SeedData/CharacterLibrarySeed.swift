@@ -67,6 +67,12 @@ enum CharacterLibrarySeed {
                             try await sceneRepo.saveScene(repairedScene)
                         }
                     }
+                    if existingWorld.castMode != package.world.castMode {
+                        var repairedWorld = existingWorld
+                        repairedWorld.castMode = package.world.castMode
+                        repairedWorld.updatedAt = Date()
+                        try await worldRepo.saveWorld(repairedWorld)
+                    }
                 } else {
                     try await worldRepo.saveWorld(package.world)
                     for cast in package.cast {
@@ -169,6 +175,8 @@ enum CharacterLibrarySeed {
                 mood: item.story.mood,
                 characterIds: storyCharacters.map(\.id),
                 mainCharacterId: main?.id,
+                // 生成ストーリーはZeta型の単体物語を既定にする。
+                castMode: .solo,
                 isSystemProtected: true,
                 safetyRules: item.generationRules + category(from: item.story.genre).defaultSafetyRules + relationship(from: item.story.relationshipGenre).safetyRules,
                 visibility: .private
@@ -184,6 +192,10 @@ enum CharacterLibrarySeed {
                 if Set(existing.characterIds) != Set(world.characterIds) {
                     existing.characterIds = world.characterIds
                     existing.mainCharacterId = world.mainCharacterId
+                    changed = true
+                }
+                if existing.castMode != .solo {
+                    existing.castMode = .solo
                     changed = true
                 }
                 if existing.shortDescription.isEmpty {
@@ -202,7 +214,14 @@ enum CharacterLibrarySeed {
             }
 
             let existingCast = try await castRepo.fetchCast(storyWorldId: targetWorld.id)
-            let existingCastCharacterIds = Set(existingCast.map(\.characterId))
+            let expectedCharacterIds = Set(storyCharacters.map(\.id))
+            // 既存ユーザーの古いSeedでキャストIDが衝突していた場合は、
+            // この物語のキャストを一度だけ正しいIDへ張り直す。
+            let castNeedsRepair = Set(existingCast.map(\.characterId)) != expectedCharacterIds
+            if castNeedsRepair, !existingCast.isEmpty {
+                try await castRepo.deleteAllCast(storyWorldId: targetWorld.id)
+            }
+            let existingCastCharacterIds = castNeedsRepair ? Set<UUID>() : Set(existingCast.map(\.characterId))
             for (index, character) in storyCharacters.enumerated() where !existingCastCharacterIds.contains(character.id) {
                 let source = item.characters.first { $0.name == character.name || $0.displayName == character.displayName }
                 try await castRepo.saveCast(CastMember(
@@ -221,24 +240,50 @@ enum CharacterLibrarySeed {
                     isActiveInCurrentScene: source?.activeInInitialScene ?? (index == 0)
                 ))
             }
+            if world.isSoloStory {
+                for member in try await castRepo.fetchCast(storyWorldId: targetWorld.id) {
+                    let shouldBeActive = member.characterId == main?.id
+                    if member.isActiveInCurrentScene != shouldBeActive {
+                        var repairedMember = member
+                        repairedMember.isActiveInCurrentScene = shouldBeActive
+                        try await castRepo.saveCast(repairedMember)
+                    }
+                }
+            }
 
             let existingScenes = try await sceneRepo.fetchScenes(storyWorldId: targetWorld.id)
             let activeIds = item.characters.enumerated().compactMap { index, seed -> UUID? in
                 guard seed.activeInInitialScene || index == 0 else { return nil }
                 return charactersByName[seed.name]?.id ?? characterByDisplayName[seed.displayName]?.id
             }
+            let initialActiveIds = Array(activeIds.prefix(world.isSoloStory ? StoryConstants.soloActiveCharacters : StoryConstants.maxActiveCharacters))
             let scene = StoryScene(
                 storyWorldId: targetWorld.id,
                 title: item.initialScene.title,
                 location: item.initialScene.location,
                 timeOfDay: item.initialScene.timeOfDay,
                 mood: item.initialScene.mood,
-                activeCharacterIds: activeIds.isEmpty ? Array(storyCharacters.prefix(1).map(\.id)) : activeIds,
+                activeCharacterIds: initialActiveIds.isEmpty ? Array(storyCharacters.prefix(1).map(\.id)) : initialActiveIds,
                 sceneGoal: item.initialScene.sceneGoal,
                 conflict: item.initialScene.conflict,
                 summary: item.initialScene.summary
             )
-            if existingScenes.isEmpty {
+            if let existingScene = existingScenes.first {
+                // 旧キャストIDが残っている場合だけ、開始シーンの参照も張り直す。
+                if Set(existingScene.activeCharacterIds) != Set(scene.activeCharacterIds) {
+                    var repairedScene = existingScene
+                    repairedScene.title = scene.title
+                    repairedScene.location = scene.location
+                    repairedScene.timeOfDay = scene.timeOfDay
+                    repairedScene.mood = scene.mood
+                    repairedScene.activeCharacterIds = scene.activeCharacterIds
+                    repairedScene.sceneGoal = scene.sceneGoal
+                    repairedScene.conflict = scene.conflict
+                    repairedScene.summary = scene.summary
+                    repairedScene.updatedAt = Date()
+                    try await sceneRepo.saveScene(repairedScene)
+                }
+            } else {
                 try await sceneRepo.saveScene(scene)
             }
         }
@@ -1083,6 +1128,7 @@ enum CharacterLibrarySeed {
                 mood: "静か / 少し切ない / あたたかい",
                 characterIds: [ren.id, yuma.id],
                 mainCharacterId: ren.id,
+                castMode: .solo,
                 isSystemProtected: true,
                 safetyRules: [
                     "過激な恋愛表現は避ける",
@@ -1161,6 +1207,7 @@ enum CharacterLibrarySeed {
                 mood: "静か / 透明感 / やさしい / 少し切ない",
                 characterIds: [mizuki.id, hina.id],
                 mainCharacterId: mizuki.id,
+                castMode: .solo,
                 isSystemProtected: true,
                 safetyRules: [
                     "過激な恋愛表現は避ける",
@@ -1475,6 +1522,7 @@ enum CharacterLibrarySeed {
             mood: mood,
             characterIds: [main.id, support.id],
             mainCharacterId: main.id,
+            castMode: .solo,
             isSystemProtected: true,
             safetyRules: genre.defaultSafetyRules + relationship.safetyRules + [
                 "最初の行は必ず「ナレーション: 本文」",
@@ -1578,6 +1626,8 @@ enum CharacterLibrarySeed {
             mood: mood,
             characterIds: characters.map(\.id),
             mainCharacterId: characters.first?.id,
+            // この標準ワールド群は複数人で進める設計を残す。
+            castMode: .ensemble,
             isSystemProtected: true,
             safetyRules: genre.defaultSafetyRules + relationship.safetyRules + [
                 "危険な行動は具体手順ではなく、回避・相談・安全確保に寄せる",

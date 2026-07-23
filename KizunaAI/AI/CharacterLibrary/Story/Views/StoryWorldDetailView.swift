@@ -265,6 +265,7 @@ struct StoryWorldDetailView: View {
                 detailText(world.shortDescription)
             }
             detailPair("ユーザーの役割", world.userRole)
+            detailPair("物語形式", world.resolvedCastMode.displayName)
             detailPair("ムード", world.mood)
             detailPair("物語の目的", world.storyGoal)
             if !world.tags.isEmpty {
@@ -310,6 +311,10 @@ struct StoryWorldDetailView: View {
                     }
                     Text("\(messageCount)件のやり取り ・ \(vm.cast.count)人のキャスト ・ \(vm.scenes.count)シーン")
                         .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                    // この物語に閉じたメモリー件数。全体メモリーとは混ぜない。
+                    Text("物語内メモリー \(vm.storyMemories.count)件")
+                        .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
                 Spacer()
@@ -359,6 +364,9 @@ struct StoryWorldDetailView: View {
         } label: {
             VStack(alignment: .leading, spacing: 9) {
                 ZStack(alignment: .bottomLeading) {
+                    // 縦長の立ち絵を横長カードに無理にFillすると顔が中央トリミングされる。
+                    // 背景を敷いた上でFitし、顔を含む全身を見える状態にする。
+                    Color.black.opacity(0.18)
                     castImage(for: character, role: member.roleInStory)
                         .frame(maxWidth: .infinity)
                         .frame(height: 210)
@@ -419,11 +427,13 @@ struct StoryWorldDetailView: View {
            let image = storyDetailPlatformImage(from: data) {
             Image(storyDetailPlatformImage: image)
                 .resizable()
-                .scaledToFill()
-        } else if let key = character?.imageKey, !key.isEmpty {
-            Image(key)
+                .scaledToFit()
+        } else if let key = character?.imageKey,
+                  !key.isEmpty,
+                  let image = storyDetailPlatformImage(named: key) {
+            Image(storyDetailPlatformImage: image)
                 .resizable()
-                .scaledToFill()
+                .scaledToFit()
         } else {
             ZStack {
                 LinearGradient(
@@ -443,6 +453,17 @@ struct StoryWorldDetailView: View {
         return NSImage(data: data)
         #elseif canImport(UIKit)
         return UIImage(data: data)
+        #else
+        return nil
+        #endif
+    }
+
+    // 未登録の画像名をSwiftUIへ渡さず、役割アイコンへフォールバックする。
+    private func storyDetailPlatformImage(named name: String) -> StoryDetailPlatformImage? {
+        #if canImport(AppKit)
+        return NSImage(named: name)
+        #elseif canImport(UIKit)
+        return UIImage(named: name)
         #else
         return nil
         #endif
@@ -677,15 +698,17 @@ private struct StoryDetailCharacterSpotlight: View {
             Image(storyDetailPlatformImage: image)
                 .resizable()
                 .scaledToFill()
-        } else if let key = character.imageKey, !key.isEmpty {
-            Image(key)
+        } else if let key = character.imageKey,
+                  !key.isEmpty,
+                  let image = storyDetailSpotlightPlatformImage(named: key) {
+            Image(storyDetailPlatformImage: image)
                 .resizable()
                 .scaledToFill()
         } else {
             ZStack {
                 LinearGradient(colors: [Color.accentColor.opacity(0.75), Color.primary.opacity(0.24)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                Text(String(character.displayName.prefix(1)))
-                    .font(.system(size: 58, weight: .heavy))
+                Image(systemName: "person.fill")
+                    .font(.system(size: 58, weight: .semibold))
                     .foregroundStyle(.white)
             }
         }
@@ -713,6 +736,16 @@ private func storyDetailSpotlightPlatformImage(from data: Data) -> StoryDetailPl
     return NSImage(data: data)
     #elseif canImport(UIKit)
     return UIImage(data: data)
+    #else
+    return nil
+    #endif
+}
+
+private func storyDetailSpotlightPlatformImage(named name: String) -> StoryDetailPlatformImage? {
+    #if canImport(AppKit)
+    return NSImage(named: name)
+    #elseif canImport(UIKit)
+    return UIImage(named: name)
     #else
     return nil
     #endif

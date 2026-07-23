@@ -1,0 +1,457 @@
+{
+  "collection": "VIUK Story BL50",
+  "model": "gemma-4-31b-it",
+  "stories": [
+    {
+      "id": "bl-003",
+      "file": "bl-003.json",
+      "theme": "寮のルームメイトと期間限定の同居",
+      "imageKeys": [
+        "bl-003-bl-03-main-1",
+        "bl-003-bl-03-sub-1"
+      ]
+    },
+    {
+      "id": "bl-001",
+      "file": "bl-001.json",
+      "theme": "同級生の再会と初恋のやり直し",
+      "imageKeys": [
+        "bl-001-bl-reunion-main-1",
+        "bl-001-bl-reunion-sub-1"
+      ]
+    },
+    {
+      "id": "bl-005",
+      "file": "bl-005.json",
+      "theme": "幼なじみ二人の家業再建",
+      "imageKeys": [
+        "bl-005-bl-amber-main-1",
+        "bl-005-bl-amber-sub-1"
+      ]
+    },
+    {
+      "id": "bl-004",
+      "file": "bl-004.json",
+      "theme": "先輩バリスタと不器用な常連客",
+      "imageKeys": [
+        "bl-004-bl-barista-main-1",
+        "bl-004-bl-customer-sub-1"
+      ]
+    },
+    {
+      "id": "bl-007",
+      "file": "bl-007.json",
+      "theme": "冷徹な上司と新入社員の夜間プロジェクト",
+      "imageKeys": [
+        "bl-007-bl-office-main-1",
+        "bl-007-bl-office-sub-1"
+      ]
+    },
+    {
+      "id": "bl-008",
+      "file": "bl-008.json",
+      "theme": "人気俳優と無名スタイリスト",
+      "imageKeys": [
+        "bl-008-bl-actor-main-1",
+        "bl-008-bl-manager-sub-1"
+      ]
+    },
+    {
+      "id": "bl-013",
+      "file": "bl-013.json",
+      "theme": "美術館学芸員と盗難絵画の鑑定士",
+      "imageKeys": [
+        "bl-013-bl-museum-main-1",
+        "bl-013-bl-museum-sub-1"
+      ]
+    },
+    {
+      "id": "bl-012",
+      "file": "bl-012.json",
+      "theme": "刑事と記者の未解決事件",
+      "imageKeys": [
+        "bl-012-bl-det-main-1",
+        "bl-012-bl-det-sub-1"
+      ]
+    },
+    {
+      "id": "bl-006",
+      "file": "bl-006.json",
+      "theme": "会社の同期と社内コンペの相棒",
+      "imageKeys": [
+        "bl-006-bl-office-main-1",
+        "bl-006-bl-office-sub-1"
+      ]
+    },
+    {
+      "id": "bl-015",
+      "file": "bl-015.json",
+      "theme": "消防士と避難所で再会した幼なじみ",
+      "imageKeys": [
+        "bl-015-bl-fire-main-1",
+        "bl-015-bl-fire-sub-2"
+      ]
+    },
+    {
+      "id": "bl-010",
+      "file": "bl-010.json",
+      "theme": "配信者と匿名の古参視聴者",
+      "imageKeys": [
+        "bl-010-bl-streamer-main-1",
+        "bl-010-bl-streamer-sub-1"
+      ]
+    },
+    {
+      "id": "bl-017",
+      "file": "bl-017.json",
+      "theme": "料理人と味覚を失った評論家",
+      "imageKeys": [
+        "bl-017-bl-chef-main-1",
+        "bl-017-bl-critic-main-2"
+      ]
+    },
+    {
+      "id": "bl-011",
+      "file": "bl-011.json",
+      "theme": "探偵と依頼人になった元恋人",
+      "imageKeys": [
+        "bl-011-bl-det-main-1",
+        "bl-011-bl-det-sub-1"
+      ]
+    },
+    {
+      "id": "bl-020",
+      "file": "bl-020.json",
+      "theme": "スポーツトレーナーと怪我から復帰する選手",
+      "imageKeys": [
+        "bl-020-bl-swim-main-1",
+        "bl-020-bl-swim-sub-1"
+      ]
+    },
+    {
+      "id": "bl-009",
+      "file": "bl-009.json",
+      "theme": "舞台俳優と代役になった脚本家",
+      "imageKeys": [
+        "bl-009-bl-actor-main-1",
+        "bl-009-bl-manager-sub-1"
+      ]
+    },
+    {
+      "id": "bl-002",
+      "file": "bl-002.json",
+      "theme": "生徒会長と無口な副会長の秘密",
+      "imageKeys": [
+        "bl-002-bl-02-main-1",
+        "bl-002-bl-02-main-2"
+      ]
+    },
+    {
+      "id": "bl-019",
+      "file": "bl-019.json",
+      "theme": "写真家と被写体になった天文研究者",
+      "imageKeys": [
+        "bl-019-bl-astro-main-1",
+        "bl-019-bl-astro-sub-1"
+      ]
+    },
+    {
+      "id": "bl-021",
+      "file": "bl-021.json",
+      "theme": "異世界の騎士団長と召喚された外交官",
+      "imageKeys": [
+        "bl-021-bl-knight-main-1",
+        "bl-021-bl-mage-sub-1"
+      ]
+    },
+    {
+      "id": "bl-022",
+      "file": "bl-022.json",
+      "theme": "身代わり婚を選んだ王子と隣国の将軍",
+      "imageKeys": [
+        "bl-022-bl-substitute-main-1",
+        "bl-022-bl-substitute-sub-1"
+      ]
+    },
+    {
+      "id": "bl-023",
+      "file": "bl-023.json",
+      "theme": "魔法学校の研究者と落ちこぼれの天才",
+      "imageKeys": [
+        "bl-023-bl-magic-main-1",
+        "bl-023-bl-magic-sub-1"
+      ]
+    },
+    {
+      "id": "bl-024",
+      "file": "bl-024.json",
+      "theme": "竜騎士と人間の通訳官",
+      "imageKeys": [
+        "bl-024-bl-dragon-main-1",
+        "bl-024-bl-dragon-sub-1"
+      ]
+    },
+    {
+      "id": "bl-028",
+      "file": "bl-028.json",
+      "theme": "記憶を失った英雄と彼を知る従者",
+      "imageKeys": [
+        "bl-028-bl-hero-servant-main-1",
+        "bl-028-bl-hero-servant-sub-1"
+      ]
+    },
+    {
+      "id": "bl-025",
+      "file": "bl-025.json",
+      "theme": "呪いを解く薬師と呪われた貴族",
+      "imageKeys": [
+        "bl-025-bl-curse-main-1",
+        "bl-025-bl-curse-sub-1"
+      ]
+    },
+    {
+      "id": "bl-030",
+      "file": "bl-030.json",
+      "theme": "辺境の領主と王都から来た監査官",
+      "imageKeys": [
+        "bl-030-bl-border-main-1",
+        "bl-030-bl-border-sub-1"
+      ]
+    },
+    {
+      "id": "bl-031",
+      "file": "bl-031.json",
+      "theme": "宇宙船の船長と航法AIの人間化体",
+      "imageKeys": [
+        "bl-031-bl-space-ai-1",
+        "bl-031-bl-space-handler-2"
+      ]
+    },
+    {
+      "id": "bl-032",
+      "file": "bl-032.json",
+      "theme": "月面コロニーの医療技師と地球からの調査員",
+      "imageKeys": [
+        "bl-032-bl-moon-main-1",
+        "bl-032-bl-moon-sub-1"
+      ]
+    },
+    {
+      "id": "bl-016",
+      "file": "bl-016.json",
+      "theme": "医師と救急救命士の夜勤",
+      "imageKeys": [
+        "bl-016-bl-med-main-1",
+        "bl-016-bl-med-sub-1"
+      ]
+    },
+    {
+      "id": "bl-029",
+      "file": "bl-029.json",
+      "theme": "聖職者と魔王軍の元参謀",
+      "imageKeys": [
+        "bl-029-bl-priest-main-1",
+        "bl-029-bl-knight-sub-1"
+      ]
+    },
+    {
+      "id": "bl-026",
+      "file": "bl-026.json",
+      "theme": "砂漠都市の商人と護衛隊長",
+      "imageKeys": [
+        "bl-026-bl-desert-main-1",
+        "bl-026-bl-desert-sub-1"
+      ]
+    },
+    {
+      "id": "bl-014",
+      "file": "bl-014.json",
+      "theme": "書店員と毎週同じ本を買う客",
+      "imageKeys": [
+        "bl-014-bl-bookstore-main-1",
+        "bl-014-bl-bookstore-sub-1"
+      ]
+    },
+    {
+      "id": "bl-036",
+      "file": "bl-036.json",
+      "theme": "夢を共有する研究者と被験者",
+      "imageKeys": [
+        "bl-036-bl-dream-main-1",
+        "bl-036-bl-dream-sub-1"
+      ]
+    },
+    {
+      "id": "bl-035",
+      "file": "bl-035.json",
+      "theme": "終末世界の配達人と避難所の管理者",
+      "imageKeys": [
+        "bl-035-bl-apocalypse-main-1",
+        "bl-035-bl-apocalypse-sub-1"
+      ]
+    },
+    {
+      "id": "bl-038",
+      "file": "bl-038.json",
+      "theme": "港町の灯台守と帰港しない船の船長",
+      "imageKeys": [
+        "bl-038-bl-lighthouse-main-1",
+        "bl-038-bl-lighthouse-sub-1"
+      ]
+    },
+    {
+      "id": "bl-039",
+      "file": "bl-039.json",
+      "theme": "旅する劇団の座長と音響技師",
+      "imageKeys": [
+        "bl-039-bl-theater-main-1",
+        "bl-039-bl-theater-sub-1"
+      ]
+    },
+    {
+      "id": "bl-027",
+      "file": "bl-027.json",
+      "theme": "海洋国家の王子と海賊船の航海士",
+      "imageKeys": [
+        "bl-027-bl-ocean-main-1",
+        "bl-027-bl-ocean-sub-1"
+      ]
+    },
+    {
+      "id": "bl-041",
+      "file": "bl-041.json",
+      "theme": "オフィスビルの警備員と深夜の清掃員",
+      "imageKeys": [
+        "bl-041-bl-office-security-01",
+        "bl-041-bl-office-cleaner-02"
+      ]
+    },
+    {
+      "id": "bl-040",
+      "file": "bl-040.json",
+      "theme": "古書に宿る精霊と修復師",
+      "imageKeys": [
+        "bl-040-bl-spirit-main-1",
+        "bl-040-bl-assistant-main-2"
+      ]
+    },
+    {
+      "id": "bl-037",
+      "file": "bl-037.json",
+      "theme": "雪山の山小屋管理人と遭難した気象学者",
+      "imageKeys": [
+        "bl-037-bl-snow-main-1",
+        "bl-037-bl-snow-main-2"
+      ]
+    },
+    {
+      "id": "bl-033",
+      "file": "bl-033.json",
+      "theme": "時間を止められる青年と時間泥棒",
+      "imageKeys": [
+        "bl-033-bl-time-saku-main",
+        "bl-033-bl-time-ritsu-main"
+      ]
+    },
+    {
+      "id": "bl-034",
+      "file": "bl-034.json",
+      "theme": "アンドロイド整備士と廃棄予定の試作機",
+      "imageKeys": [
+        "bl-034-bl-android-main-1",
+        "bl-034-bl-android-rival-1"
+      ]
+    },
+    {
+      "id": "bl-043",
+      "file": "bl-043.json",
+      "theme": "結婚相談所のカウンセラーと恋愛嫌いの顧客",
+      "imageKeys": [
+        "bl-043-bl-counselor-main-1",
+        "bl-043-bl-rival-main-2"
+      ]
+    },
+    {
+      "id": "bl-045",
+      "file": "bl-045.json",
+      "theme": "元ライバルの共同起業と再出発",
+      "imageKeys": [
+        "bl-045-bl-amber-main-1",
+        "bl-045-bl-amber-sub-1"
+      ]
+    },
+    {
+      "id": "bl-046",
+      "file": "bl-046.json",
+      "theme": "偽装恋人契約を結んだ二人の本気",
+      "imageKeys": [
+        "bl-046-bl-fake-main-1",
+        "bl-046-bl-fake-sub-1"
+      ]
+    },
+    {
+      "id": "bl-018",
+      "file": "bl-018.json",
+      "theme": "音楽教師と路上ピアニスト",
+      "imageKeys": [
+        "bl-018-bl-music-main-1",
+        "bl-018-bl-music-sub-1"
+      ]
+    },
+    {
+      "id": "bl-048",
+      "file": "bl-048.json",
+      "theme": "失踪した親友を探す二人のバディ",
+      "imageKeys": [
+        "bl-048-bl-lost-main-kuga",
+        "bl-048-bl-lost-sub-soma"
+      ]
+    },
+    {
+      "id": "bl-047",
+      "file": "bl-047.json",
+      "theme": "秘密を共有する義兄弟ではない家族の再生",
+      "imageKeys": [
+        "bl-047-bl-secret-main-1",
+        "bl-047-bl-secret-sub-1"
+      ]
+    },
+    {
+      "id": "bl-042",
+      "file": "bl-042.json",
+      "theme": "フリーランス編集者と締切を守らない作家",
+      "imageKeys": [
+        "bl-042-bl-editor-main-writer",
+        "bl-042-bl-editor-sub-producer"
+      ]
+    },
+    {
+      "id": "bl-050",
+      "file": "bl-050.json",
+      "theme": "町の祭りを守る神職と地域おこし担当者",
+      "imageKeys": [
+        "bl-050-bl-festival-main-1",
+        "bl-050-bl-festival-sub-1"
+      ]
+    },
+    {
+      "id": "bl-049",
+      "file": "bl-049.json",
+      "theme": "過去の手紙でつながる現代と大正の青年",
+      "imageKeys": [
+        "bl-049-bl-taisho-main-1",
+        "bl-049-bl-modern-sub-1"
+      ]
+    },
+    {
+      "id": "bl-044",
+      "file": "bl-044.json",
+      "theme": "同じマンションの隣人と消えた猫探し",
+      "imageKeys": [
+        "bl-044-bl-neighbor-main-1",
+        "bl-044-bl-neighbor-sub-1"
+      ]
+    }
+  ],
+  "imagePolicy": "image prompts only; image files can be attached later"
+}

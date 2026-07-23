@@ -8,6 +8,29 @@
 import Foundation
 import Combine
 
+/// デバッグ設定から休憩提案カードの表示テストを依頼するための共有窓口。
+enum KizunaDebugOptions {
+    static let restSuggestionEnabledKey = "kizuna.debug.restSuggestion.enabled"
+    static let restSuggestionRequestKey = "kizuna.debug.restSuggestion.requestedAt"
+    static let restSuggestionRequestNotification = Notification.Name("kizuna.debug.restSuggestion.requested")
+    static let safetyConcernRequestKey = "kizuna.debug.safetyConcern.requestedAt"
+    static let safetyConcernRequestNotification = Notification.Name("kizuna.debug.safetyConcern.requested")
+
+    static func requestRestSuggestionUI() {
+        let timestamp = Date().timeIntervalSince1970
+        UserDefaults.standard.set(timestamp, forKey: restSuggestionRequestKey)
+        NSLog("[KizunaDebug] rest suggestion requested: %.3f", timestamp)
+        NotificationCenter.default.post(name: restSuggestionRequestNotification, object: nil)
+    }
+
+    static func requestSafetyConcernUI() {
+        let timestamp = Date().timeIntervalSince1970
+        UserDefaults.standard.set(timestamp, forKey: safetyConcernRequestKey)
+        NSLog("[KizunaDebug] safety concern requested: %.3f", timestamp)
+        NotificationCenter.default.post(name: safetyConcernRequestNotification, object: nil)
+    }
+}
+
 // MARK: - Library
 
 @MainActor
@@ -77,6 +100,8 @@ final class StoryWorldCreateViewModel: ObservableObject {
     @Published var draft: StoryWorld
     @Published var sceneDraft: StoryScene
     @Published private(set) var castDrafts: [CastMember] = []
+    // StoryWorld内で使うLorebook。キャラ欄ではなく物語編集画面から管理する。
+    @Published private(set) var lorebookDrafts: [StoryLorebookEntry] = []
     @Published private(set) var availableCharacters: [CharacterProfile] = []
     @Published var saveError: String? = nil
     @Published var generationBrief: String = ""
@@ -87,6 +112,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
     private let castRepo: CastRepository = LocalJSONCastRepository()
     private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
     private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
+    private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
     private let safetyPipeline = SafetyPipeline.shared
 
     init(existing: StoryWorld? = nil) {
@@ -114,6 +140,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         do {
             self.availableCharacters = try await characterRepo.fetchCharacters()
             self.castDrafts = (try? await castRepo.fetchCast(storyWorldId: draft.id)) ?? []
+            self.lorebookDrafts = (try? await lorebookRepo.fetchEntries(storyWorldId: draft.id)) ?? []
             if let firstScene = ((try? await sceneRepo.fetchScenes(storyWorldId: draft.id)) ?? []).first {
                 self.sceneDraft = firstScene
             } else if sceneDraft.title.isEmpty {
@@ -143,6 +170,29 @@ final class StoryWorldCreateViewModel: ObservableObject {
         castDrafts.append(cast)
         if !draft.characterIds.contains(profile.id) { draft.characterIds.append(profile.id) }
         if draft.mainCharacterId == nil { draft.mainCharacterId = profile.id }
+    }
+
+    // Lorebookカードを1件追加する。キーワードは空白・読点区切りで受け取る。
+    func addLorebookEntry(title: String, keywordsText: String, content: String) {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty, !cleanContent.isEmpty else { return }
+        let keywords = keywordsText
+            .split(whereSeparator: { $0 == "," || $0 == "、" || $0 == " " || $0 == "\n" })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        lorebookDrafts.append(
+            StoryLorebookEntry(
+                storyWorldId: draft.id,
+                title: cleanTitle,
+                keywords: keywords,
+                content: cleanContent
+            )
+        )
+    }
+
+    func removeLorebookEntry(id: UUID) {
+        lorebookDrafts.removeAll { $0.id == id }
     }
 
     func generateTemplateWith31BThinking() async {
@@ -229,6 +279,11 @@ final class StoryWorldCreateViewModel: ObservableObject {
 
     func setActiveInOpeningScene(_ isActive: Bool, for characterID: UUID) {
         if isActive {
+            // 単体物語の開始シーンは主役NPCだけ。別キャラを選ぶと前の選択を置き換える。
+            if draft.isSoloStory {
+                sceneDraft.activeCharacterIds = [characterID]
+                return
+            }
             guard !sceneDraft.activeCharacterIds.contains(characterID),
                   sceneDraft.activeCharacterIds.count < StoryConstants.maxActiveCharacters else { return }
             sceneDraft.activeCharacterIds.append(characterID)
@@ -285,6 +340,16 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 m.storyWorldId = world.id
                 try await castRepo.saveCast(m)
             }
+            // LorebookもWorld単位で置き換え、削除されたカードを残さない。
+            let existingLorebook = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
+            for entry in existingLorebook {
+                try? await lorebookRepo.deleteEntry(id: entry.id)
+            }
+            for entry in lorebookDrafts {
+                var value = entry
+                value.storyWorldId = world.id
+                try await lorebookRepo.saveEntry(value)
+            }
             // Opening Scene を 1 件 seed / update
             let existingScenes = (try? await sceneRepo.fetchScenes(storyWorldId: world.id)) ?? []
             var opening = sceneDraft
@@ -302,9 +367,11 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 opening.summary = world.openingScene
             }
             if opening.activeCharacterIds.isEmpty {
-                opening.activeCharacterIds = Array(castDrafts.prefix(StoryConstants.maxActiveCharacters).map(\.characterId))
+                let limit = world.isSoloStory ? StoryConstants.soloActiveCharacters : StoryConstants.maxActiveCharacters
+                opening.activeCharacterIds = Array(castDrafts.prefix(limit).map(\.characterId))
             }
-            opening.activeCharacterIds = Array(opening.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters))
+            let activeLimit = world.isSoloStory ? StoryConstants.soloActiveCharacters : StoryConstants.maxActiveCharacters
+            opening.activeCharacterIds = Array(opening.activeCharacterIds.prefix(activeLimit))
             if existingScenes.isEmpty {
                 try await sceneRepo.saveScene(opening)
             } else {
@@ -348,7 +415,16 @@ final class StoryWorldCreateViewModel: ObservableObject {
         draft.characterIds.removeAll()
         draft.mainCharacterId = nil
 
-        for generated in template.characters.prefix(4) {
+        // 指定がなければ、ユーザーと主役NPC1人だけの単体物語にする。
+        // 「群像」「複数人」などを明示した時だけ補助キャラも取り込む。
+        let wantsEnsemble = generationBrief.localizedCaseInsensitiveContains("群像")
+            || generationBrief.localizedCaseInsensitiveContains("複数人")
+            || generationBrief.localizedCaseInsensitiveContains("複数")
+            || generationBrief.localizedCaseInsensitiveContains("チーム")
+            || generationBrief.localizedCaseInsensitiveContains("仲間たち")
+        draft.castMode = wantsEnsemble ? .ensemble : .solo
+        let generatedCharacters = template.characters.prefix(wantsEnsemble ? 4 : 1)
+        for generated in generatedCharacters {
             let profile = CharacterProfile(
                 name: generated.name,
                 displayName: generated.displayName.isEmpty ? generated.name : generated.displayName,
@@ -469,7 +545,8 @@ final class StoryWorldCreateViewModel: ObservableObject {
       ]
     }
 
-    2〜4人のキャラを作る。初期シーンで同席している主要キャラは activeInInitialScene=true にしてよい。
+    原則はユーザーと主役NPC1人の物語にする。ユーザーが複数人・群像劇を明示した時だけ、補助キャラを最大3人追加する。
+    初期シーンで同席させるのは原則として主役NPC1人だけにする。
     恋愛や対立は段階的に進める。安全ルールは物語ジャンルに合わせる。
     """
 
@@ -611,12 +688,15 @@ final class StoryWorldDetailViewModel: ObservableObject {
     @Published private(set) var cast: [CastMember] = []
     @Published private(set) var scenes: [StoryScene] = []
     @Published private(set) var sessions: [StorySession] = []
+    // この物語だけに属する思い出。全体メモリーとは分けて表示・取得する。
+    @Published private(set) var storyMemories: [StoryMemory] = []
     @Published private(set) var characterIndex: [UUID: CharacterProfile] = [:]
 
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
     private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
     private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
+    private let storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository()
     private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
 
     init(world: StoryWorld) {
@@ -627,8 +707,9 @@ final class StoryWorldDetailViewModel: ObservableObject {
         async let castFetch = (try? await castRepo.fetchCast(storyWorldId: world.id)) ?? []
         async let scenesFetch = (try? await sceneRepo.fetchScenes(storyWorldId: world.id)) ?? []
         async let sessionsFetch = (try? await sessionRepo.fetchSessions(storyWorldId: world.id)) ?? []
+        async let memoriesFetch = (try? await storyMemoryRepo.fetchMemories(storyWorldId: world.id)) ?? []
         async let charsFetch = (try? await characterRepo.fetchCharacters()) ?? []
-        let (cast, scenes, sessions, chars) = await (castFetch, scenesFetch, sessionsFetch, charsFetch)
+        let (cast, scenes, sessions, memories, chars) = await (castFetch, scenesFetch, sessionsFetch, memoriesFetch, charsFetch)
         if cast.isEmpty, !world.characterIds.isEmpty {
             let repaired = defaultCastMembers(for: world, existingScenes: scenes)
             for member in repaired { try? await castRepo.saveCast(member) }
@@ -638,6 +719,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
         }
         self.scenes = scenes
         self.sessions = sessions
+        self.storyMemories = memories
         self.characterIndex = chars.reduce(into: [:]) { result, character in
             guard result[character.id] == nil else { return }
             result[character.id] = character
@@ -683,6 +765,8 @@ final class StoryWorldDetailViewModel: ObservableObject {
             try await worldRepo.deleteWorld(id: world.id)
             try await castRepo.deleteAllCast(storyWorldId: world.id)
             try await sceneRepo.deleteAllScenes(storyWorldId: world.id)
+            // 物語を削除する時は、その世界だけの思い出も一緒に削除する。
+            try await storyMemoryRepo.deleteAllMemories(storyWorldId: world.id)
         } catch {
             NSLog("[StoryDetailVM] delete failed: %@", String(describing: error))
         }
@@ -706,6 +790,15 @@ final class StoryWorldDetailViewModel: ObservableObject {
 
 // MARK: - Session (Scene chat)
 
+/// 休憩提案を表示するための UI 用データ。
+/// 生成済みの本文を保持し、同じ発動条件でモデルを二重実行しない。
+struct StoryRestSuggestion: Identifiable, Equatable {
+    let id = UUID()
+    let text: String
+    let characterID: UUID?
+    let characterName: String
+}
+
 @MainActor
 final class StorySessionViewModel: ObservableObject {
     @Published private(set) var session: StorySession
@@ -713,6 +806,8 @@ final class StorySessionViewModel: ObservableObject {
     @Published private(set) var world: StoryWorld
     @Published private(set) var cast: [CastMember] = []
     @Published private(set) var characterIndex: [UUID: CharacterProfile] = [:]
+    /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
+    @Published var restSuggestion: StoryRestSuggestion?
     @Published var generationModel: StoryGenerationModel {
         didSet {
             defaults.set(generationModel.rawValue, forKey: generationModelKey)
@@ -728,6 +823,19 @@ final class StorySessionViewModel: ObservableObject {
     private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
     private let generationModelKey: String
 
+    // 休憩提案の時計はアプリ側だけが管理する。モデルには判定を任せない。
+    private var continuousUseStartedAt = Date()
+    private var restSuggestionSuppressedUntil: Date?
+    private var isGeneratingRestSuggestion = false
+    // 同じ60分窓で専用生成を繰り返さないためのアプリ側フラグ。
+    private var restSuggestionAttempted = false
+    // アプリ内デバッグモードで、UI確認用に30秒後の提案カードを予約する。
+    private var debugRestSuggestionTask: Task<Void, Never>?
+    private var debugRestSuggestionObserver: NSObjectProtocol?
+    private var debugSafetyConcernTask: Task<Void, Never>?
+    private var debugSafetyConcernObserver: NSObjectProtocol?
+    private var debugRequestPollingTask: Task<Void, Never>?
+
     init(world: StoryWorld, session: StorySession, scene: StoryScene) {
         self.world = world
         self.session = session
@@ -736,6 +844,21 @@ final class StorySessionViewModel: ObservableObject {
         let stored = UserDefaults.standard.string(forKey: generationModelKey)
         let savedModel = stored.flatMap(StoryGenerationModel.init(rawValue:)) ?? .e4b
         self.generationModel = savedModel
+        registerDebugRestSuggestionObserver()
+        registerDebugSafetyConcernObserver()
+        startDebugRequestPolling()
+    }
+
+    deinit {
+        debugRestSuggestionTask?.cancel()
+        debugSafetyConcernTask?.cancel()
+        debugRequestPollingTask?.cancel()
+        if let debugRestSuggestionObserver {
+            NotificationCenter.default.removeObserver(debugRestSuggestionObserver)
+        }
+        if let debugSafetyConcernObserver {
+            NotificationCenter.default.removeObserver(debugSafetyConcernObserver)
+        }
     }
 
     func bootstrap() async {
@@ -746,6 +869,101 @@ final class StorySessionViewModel: ObservableObject {
         self.characterIndex = chars.reduce(into: [:]) { result, character in
             guard result[character.id] == nil else { return }
             result[character.id] = character
+        }
+        consumePendingDebugRestSuggestionRequest()
+        consumePendingDebugSafetyConcernRequest()
+    }
+
+    /// 通知を取り逃しても、Story画面が生きている間は予約キーを拾えるようにする。
+    private func startDebugRequestPolling() {
+        guard debugRequestPollingTask == nil else { return }
+        debugRequestPollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.consumePendingDebugRestSuggestionRequest()
+                self.consumePendingDebugSafetyConcernRequest()
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+    }
+
+    private func registerDebugRestSuggestionObserver() {
+        debugRestSuggestionObserver = NotificationCenter.default.addObserver(
+            forName: KizunaDebugOptions.restSuggestionRequestNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.startDebugRestSuggestionTimer()
+            }
+        }
+    }
+
+    private func consumePendingDebugRestSuggestionRequest() {
+        guard UserDefaults.standard.bool(forKey: KizunaDebugOptions.restSuggestionEnabledKey) else { return }
+        let requestedAt = UserDefaults.standard.double(forKey: KizunaDebugOptions.restSuggestionRequestKey)
+        // Storyを開くまでの時間を制限しない。設定画面から先に予約しても失わない。
+        guard requestedAt > 0, Date().timeIntervalSince1970 - requestedAt < 24 * 60 * 60 else { return }
+        UserDefaults.standard.removeObject(forKey: KizunaDebugOptions.restSuggestionRequestKey)
+        NSLog("[KizunaDebug] rest suggestion request consumed")
+        startDebugRestSuggestionTimer()
+    }
+
+    /// 設定画面のボタン押下後だけ、休憩提案カードと選択肢UIを確認する。
+    private func startDebugRestSuggestionTimer() {
+        guard UserDefaults.standard.bool(forKey: KizunaDebugOptions.restSuggestionEnabledKey) else { return }
+        guard debugRestSuggestionTask == nil else { return }
+        debugRestSuggestionTask = Task { [weak self] in
+            defer { self?.debugRestSuggestionTask = nil }
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard let self, self.restSuggestion == nil else { return }
+            UserDefaults.standard.removeObject(forKey: KizunaDebugOptions.restSuggestionRequestKey)
+            let character = self.lastSpeakingCharacter() ?? self.activeCharacters.first
+            let characterName = character.map { $0.displayName.isEmpty ? $0.name : $0.displayName } ?? "相手"
+            self.restSuggestion = StoryRestSuggestion(
+                text: "【DEBUG】休憩提案カードの表示テストです。",
+                characterID: self.characterID(for: character),
+                characterName: characterName
+            )
+            NSLog("[KizunaDebug] rest suggestion card published")
+        }
+    }
+
+    private func registerDebugSafetyConcernObserver() {
+        debugSafetyConcernObserver = NotificationCenter.default.addObserver(
+            forName: KizunaDebugOptions.safetyConcernRequestNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.startDebugSafetyConcernTimer()
+            }
+        }
+    }
+
+    private func consumePendingDebugSafetyConcernRequest() {
+        guard UserDefaults.standard.bool(forKey: KizunaDebugOptions.restSuggestionEnabledKey) else { return }
+        let requestedAt = UserDefaults.standard.double(forKey: KizunaDebugOptions.safetyConcernRequestKey)
+        // Storyを開くまでの時間を制限しない。設定画面から先に予約しても失わない。
+        guard requestedAt > 0, Date().timeIntervalSince1970 - requestedAt < 24 * 60 * 60 else { return }
+        UserDefaults.standard.removeObject(forKey: KizunaDebugOptions.safetyConcernRequestKey)
+        NSLog("[KizunaDebug] safety concern request consumed")
+        startDebugSafetyConcernTimer()
+    }
+
+    /// 設定画面のボタン押下後だけ、相談サポートカードを30秒後に表示する。
+    private func startDebugSafetyConcernTimer() {
+        guard UserDefaults.standard.bool(forKey: KizunaDebugOptions.restSuggestionEnabledKey) else { return }
+        guard debugSafetyConcernTask == nil else { return }
+        debugSafetyConcernTask = Task { [weak self] in
+            defer { self?.debugSafetyConcernTask = nil }
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            UserDefaults.standard.removeObject(forKey: KizunaDebugOptions.safetyConcernRequestKey)
+            self.service.showDebugSafetyConcern()
+            NSLog("[KizunaDebug] safety concern card published")
         }
     }
 
@@ -783,6 +1001,94 @@ final class StorySessionViewModel: ObservableObject {
         if let updated = scenes.first(where: { $0.id == scene.id }) {
             self.scene = updated
         }
+    }
+
+    /// キャラクター発話が保存された直後だけ、60 分条件をアプリ側で判定する。
+    /// 条件を満たしても、専用生成はこのメソッドから 1 回だけ呼び出す。
+    func evaluateRestSuggestionAfterTurn() async {
+        guard service.phase == .idle,
+              restSuggestion == nil,
+              !isGeneratingRestSuggestion,
+              let lastMessage = session.messages.last,
+              case .cast = lastMessage.author else { return }
+
+        let now = Date()
+        guard now.timeIntervalSince(continuousUseStartedAt) >= 60 * 60 else { return }
+        if let suppressedUntil = restSuggestionSuppressedUntil, now < suppressedUntil { return }
+        if restSuggestionSuppressedUntil != nil {
+            // 120分の抑制が終わったら、次の提案窓を開始できる。
+            restSuggestionSuppressedUntil = nil
+            restSuggestionAttempted = false
+        }
+        guard !restSuggestionAttempted else { return }
+
+        restSuggestionAttempted = true
+        isGeneratingRestSuggestion = true
+        defer { isGeneratingRestSuggestion = false }
+
+        let character = lastSpeakingCharacter() ?? activeCharacters.first
+        let characterName = character.map { $0.displayName.isEmpty ? $0.name : $0.displayName } ?? "相手"
+        guard let generatedText = await service.generateRestSuggestion(
+            character: character,
+            world: world,
+            scene: scene,
+            generationModel: generationModel
+        ) else {
+            // モデルが生成できない場合は固定文を出さず、休憩提案を表示しない。
+            // 時計を再スタートし、次の60分窓までは再生成しない。
+            continuousUseStartedAt = now
+            restSuggestionAttempted = false
+            return
+        }
+        let text = generatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        restSuggestion = StoryRestSuggestion(
+            text: text,
+            characterID: characterID(for: character),
+            characterName: characterName
+        )
+    }
+
+    /// 「少し休む」は強制終了せず、次の連続利用の時計だけを再スタートする。
+    func chooseRestSuggestionBreak() {
+        restSuggestion = nil
+        continuousUseStartedAt = Date()
+        restSuggestionSuppressedUntil = nil
+        restSuggestionAttempted = false
+    }
+
+    /// 「このまま続ける」は短い了承を 1 回だけ記録し、その後 120 分は抑制する。
+    func chooseRestSuggestionContinue() {
+        guard restSuggestion != nil else { return }
+        restSuggestion = nil
+        restSuggestionSuppressedUntil = Date().addingTimeInterval(120 * 60)
+        restSuggestionAttempted = true
+
+        guard let character = lastSpeakingCharacter() ?? activeCharacters.first,
+              let characterID = characterID(for: character) else { return }
+        let name = character.displayName.isEmpty ? character.name : character.displayName
+        Task { [weak self] in
+            guard let self else { return }
+            await self.service.addRestAcknowledgement(
+                characterID: characterID,
+                characterName: name,
+                session: self.session
+            )
+            await self.refreshAfterTurn()
+        }
+    }
+
+    private func lastSpeakingCharacter() -> CharacterProfile? {
+        for message in session.messages.reversed() {
+            guard case let .cast(characterID, _) = message.author else { continue }
+            if let character = characterIndex[characterID] { return character }
+        }
+        return nil
+    }
+
+    private func characterID(for character: CharacterProfile?) -> UUID? {
+        guard let character else { return nil }
+        return characterIndex.first(where: { $0.value.id == character.id })?.key
     }
 
     var activeCharacters: [CharacterProfile] {

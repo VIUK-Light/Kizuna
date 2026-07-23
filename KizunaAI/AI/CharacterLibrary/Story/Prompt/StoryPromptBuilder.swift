@@ -26,7 +26,11 @@ struct StoryPromptBuilder {
         recentMessages: [StoryMessage],
         userInput: String,
         generationModel: StoryGenerationModel,
-        safetyDecision: SafetyDecision?
+        safetyDecision: SafetyDecision?,
+        storyState: StoryState? = nil,
+        selectedLorebookEntries: [StoryLorebookEntry] = [],
+        selectedStoryMemories: [StoryMemory] = [],
+        userCharacterName: String? = nil
     ) -> String {
         var sections: [String] = []
 
@@ -35,12 +39,23 @@ struct StoryPromptBuilder {
             """
             あなたは下記の物語世界を進める語り手です。ユーザーは物語内の相手役です。
             返答は絆チャットとして、今の場面から自然に続く本文だけを書きます。
-            思考過程・計画・候補・前置き・自己説明は出しません。
-            発話してよい登場人物は active キャラ中心です。
-            基本は自然な相手が返し、掛け合いが場面上必要な時は2〜3人まで短く喋らせます。
+            出力言語は日本語です。英語、翻訳、内部メモ、思考過程、計画、候補、前置き、自己説明は出しません。
+            ユーザーが操作する主人公の行動・感情・台詞は、ユーザーの入力に書かれたものだけです。AIは主人公を代弁しません。
+            基本は現在の相手役であるNPC 1人が返します。場面上の反応が必要な時だけ、NPCを最大2人まで短く返します。
             場面描写は必要に応じて「ナレーション: 本文」として添えます。
             """
         )
+
+        if let userCharacterName {
+            sections.append(
+                """
+                ## ユーザー操作キャラ
+                (userCharacterName)
+                このキャラはユーザー本人です。AIは「(userCharacterName):」という発話行を絶対に生成しません。
+                ユーザーの返答が必要な場面では、ナレーションで間を残して止めます。
+                """
+            )
+        }
 
         // ── 世界観 ──
         var worldLines: [String] = []
@@ -75,6 +90,38 @@ struct StoryPromptBuilder {
         }
         sessionLines.append("累計メッセージ数: \(session.messages.count)")
         sections.append("## 物語の進行状態\n" + sessionLines.joined(separator: "\n"))
+
+        // ── 構造化されたStoryState ──
+        // 会話全文ではなく、今の状態だけを短く渡して長期整合性を保つ。
+        if let storyState {
+            var stateLines: [String] = []
+            if !storyState.location.isEmpty { stateLines.append("場所: \(storyState.location)") }
+            if !storyState.timeOfDay.isEmpty { stateLines.append("時間: \(storyState.timeOfDay)") }
+            if !storyState.mood.isEmpty { stateLines.append("ムード: \(storyState.mood)") }
+            if !storyState.weather.isEmpty { stateLines.append("天候: \(storyState.weather)") }
+            if !storyState.relationshipStage.isEmpty { stateLines.append("関係段階: \(storyState.relationshipStage)") }
+            if !storyState.activeGoals.isEmpty { stateLines.append("進行中の目的: \(storyState.activeGoals.joined(separator: " / "))") }
+            for character in storyState.characterStates.prefix(StoryConstants.maxActiveCharacters) {
+                let values = [character.mood, character.goal, character.relationship, character.innerThought]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " / ")
+                if !values.isEmpty { stateLines.append("\(character.characterName): \(values)") }
+            }
+            for item in storyState.inventory.prefix(8) {
+                let owner = item.owner.isEmpty ? "" : " [\(item.owner)]"
+                stateLines.append("所持品: \(item.name)\(owner) \(item.detail)".trimmingCharacters(in: .whitespaces))
+            }
+            if !stateLines.isEmpty { sections.append("## 現在のStoryState\n" + stateLines.joined(separator: "\n")) }
+        }
+
+        // ── キーワードに一致したLorebookだけを投入 ──
+        // 全Lorebookを毎回送らないことで、トークンと無関係な設定の混入を抑える。
+        if !selectedLorebookEntries.isEmpty {
+            let loreLines = selectedLorebookEntries.prefix(6).map { entry in
+                "- [\(entry.title)] \(entry.content.prefix(600))"
+            }
+            sections.append("## 今回有効なLorebook\n" + loreLines.joined(separator: "\n"))
+        }
 
         // ── active キャラ (詳細) ──
         if !activeCast.isEmpty {
@@ -143,7 +190,8 @@ struct StoryPromptBuilder {
             sections.append("## キャラ同士の関係 (active のみ)\n" + relationLines.joined(separator: "\n"))
         }
 
-        // ── メモリー ──
+        // ── 全体メモリー ──
+        // CharacterMemoryはキャラクターをまたいで次の物語でも使う長期記憶。
         if !selectedMemories.isEmpty {
             let mems = selectedMemories
                 .sorted { $0.importance > $1.importance }
@@ -152,9 +200,26 @@ struct StoryPromptBuilder {
                 .joined(separator: "\n")
             sections.append(
                 """
-                ## あなたが相手 (ユーザー) について覚えていること
+                ## 全体メモリー (物語をまたいで使う)
                 \(mems)
                 (明示的に「覚えてるよ」と言わず、自然に活かす)
+                """
+            )
+        }
+
+        // ── 物語内メモリー ──
+        // StoryMemoryはこのStoryWorldの出来事だけ。別の物語には注入しない。
+        if !selectedStoryMemories.isEmpty {
+            let mems = selectedStoryMemories
+                .sorted { $0.importance > $1.importance }
+                .prefix(12)
+                .map { "- [\($0.category.displayName) / \(String(format: "%.1f", $0.importance))] " + $0.text }
+                .joined(separator: "\n")
+            sections.append(
+                """
+                ## 物語内メモリー (この世界だけ)
+                \(mems)
+                (この物語の過去として自然に活かす。別の世界の出来事として扱わない)
                 """
             )
         }
@@ -199,22 +264,32 @@ struct StoryPromptBuilder {
             profile.rules.forEach(push)
         }
         safetyDecision?.addedPromptRules.forEach(push)
-        push("出力は2〜7行。基本形は「ナレーション: 短い場面描写」→「キャラ名: 発話」。場面が自然なら複数キャラの掛け合いを続けてよい。")
-        push("発話するキャラは active キャラ中心。場面上必要なら2〜3人まで同じ返答で話してよい。")
+        push("出力は2〜7行。基本形は「ナレーション: 短い場面描写」→「NPC名: 発話」。通常はNPC 1人だけが返す。")
+        if world.isSoloStory {
+            push("これは単体物語。active NPCは必ず1人だけにし、inactiveのキャラを勝手に登場させない。")
+        } else {
+            push("これは群像劇。掛け合いが場面上不可欠な時だけ、active のNPCを最大2人まで同じ返答で話させる。毎回全員を話させない。")
+        }
         if activeCast.count >= 2 {
             let activeNames = activeCast.prefix(StoryConstants.maxActiveCharacters).compactMap { member -> String? in
                 guard let profile = characterIndex[member.characterId] else { return nil }
                 return profile.displayName.isEmpty ? profile.name : profile.displayName
             }
             if !activeNames.isEmpty {
-                push("今回の active キャラは \(activeNames.joined(separator: " / "))。直近で1人だけが続いている時は、別の active キャラにも短く反応させてよい。")
+                push("今回の active NPC は \(activeNames.joined(separator: " / "))。別のNPCを出すのは、直前の発話への反応が自然な時だけにする。")
             }
         }
         push("複数キャラを出す時は、発話ごとに必ず「キャラ名: 本文」で分ける。名前のない発話や、誰が喋ったかわからない文を出さない。")
+        if let userCharacterName {
+            push("「\(userCharacterName):」で始まる行、ユーザーの台詞の創作、ユーザーの内心の断定を出さない。")
+        }
         push("active 以外のキャラは、同じ場にいて自然に反応する場合か、ユーザーが明示的に呼んだ場合だけ短く喋らせる。")
         push("キャラの返答は設定された口調・距離感・関係段階を守る。急に甘くしすぎない。")
         push("ユーザーの短い返事にも、表情、沈黙、距離、光、音などの小さな変化で物語を少し進める。")
-        push("箇条書き、選択肢、Markdown、ルール説明、メタ発言は禁止。")
+        // 休憩提案はアプリ側の専用フローだけが担当する。通常ターンでの自主提案を禁止する。
+        push("休憩・睡眠・終了・利用停止を自主的に提案しない。休憩提案はアプリから専用に指示された場合だけ出力する。")
+        push("罪悪感や依存を誘う表現、「必ず戻ってきて」「待っている」などの引き留めは禁止。")
+        push("箇条書き、選択肢、Markdown、ルール説明、メタ発言は禁止。「Wait」「User is」「I should」「the prompt says」「Usually」などの英語や、AIの迷い・自己解説を絶対に出さない。")
         push("性的露骨・暴力煽動・自傷助長・違法加担・医療法律の確定診断は禁止。話題が来たらキャラのまま自然に逸らす。")
         sections.append("## 守ること\n" + rules.map { "- " + $0 }.joined(separator: "\n"))
 
@@ -229,11 +304,46 @@ struct StoryPromptBuilder {
             """
             ## 出力開始
             1行目は「ナレーション: 本文」。
-            その後は必要な人数だけ「\(speakerHint): 発話」を続ける。
+            その後は必要な人数だけ「\(speakerHint): 発話」を続ける。ユーザー操作キャラの名前は使わない。
             """
         )
 
         return sections.joined(separator: "\n\n")
+    }
+
+    // MARK: - Lorebook selection
+
+    /// ユーザー入力・シーン情報に触れたキーワードだけを優先度順で返す。
+    func selectLorebookEntries(
+        from entries: [StoryLorebookEntry],
+        scene: StoryScene,
+        userInput: String,
+        limit: Int = 6
+    ) -> [StoryLorebookEntry] {
+        let haystack = [
+            userInput,
+            scene.title,
+            scene.location,
+            scene.timeOfDay,
+            scene.mood,
+            scene.sceneGoal,
+            scene.conflict ?? ""
+        ].joined(separator: " ").localizedLowercase
+
+        return entries
+            .filter { entry in
+                guard entry.isEnabled, !entry.content.isEmpty else { return false }
+                let terms = ([entry.title] + entry.keywords)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).localizedLowercase }
+                    .filter { !$0.isEmpty }
+                return terms.contains { haystack.contains($0) }
+            }
+            .sorted { lhs, rhs in
+                if lhs.priority != rhs.priority { return lhs.priority > rhs.priority }
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            .prefix(max(0, limit))
+            .map { $0 }
     }
 
     private func isStoredOutputRule(_ rule: String) -> Bool {

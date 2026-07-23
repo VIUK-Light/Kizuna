@@ -39,21 +39,29 @@ enum LocalAssistantModelProfile {
     #if os(iOS)
     private static let defaultInternalModelName = "VIUK Story v2.5 "
     private static let defaultCapabilitySummary = "VIUKによる物語のために開発されたモデル"
-    private static let defaultModelURL = "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF"
+    // iOSの既定値はスマホ向けGemma 4 E2B。LiteRT-LMで実行できる本体直リンク。
+    private static let defaultModelURL = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true"
     private static let platformDownloadOptions = [
         DownloadOption(
             title: "VIUK Story v2.5 GGUF",
-            url: defaultModelURL,
+            url: "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF/resolve/main/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf?download=true",
             detail: "Hugging FaceのVIUK標準モデル"
+        ),
+        DownloadOption(
+            title: "Gemma 4 E2B LiteRT-LM",
+            url: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true",
+            detail: "スマホ向けの公開Gemma 4軽量モデル。LiteRT-LMで端末内実行"
         )
     ]
     private static let defaultModelFileName = "gemma-4-E2B-it.litertlm"
     private static let defaultStorageFolderName = "Gemma4E2BLiteRTLM"
+    // Gemma 4 E2B LiteRT-LMの配布サイズ目安。
     private static let defaultExpectedModelSizeBytes: Int64 = 2_588_147_712
     #else
     private static let defaultInternalModelName = "Gemma 4 E4B 4bit"
     private static let defaultCapabilitySummary = "4bit量子化 / 推論品質重視 / コードと複数条件に強い"
-    private static let defaultModelURL = "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF"
+    // リポジトリページではなく、端末へ保存できるGGUF本体の直リンクを使う。
+    private static let defaultModelURL = "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF/resolve/main/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf?download=true"
     private static let platformDownloadOptions = [
         DownloadOption(
             title: "VIUK Story v2.5 GGUF",
@@ -66,9 +74,10 @@ enum LocalAssistantModelProfile {
             detail: "互換用のGemma 3n 4bit GGUF"
         )
     ]
-    private static let defaultModelFileName = "gemma-4-E4B-it-UD-Q4_K_XL.gguf"
+    private static let defaultModelFileName = "viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf"
     private static let defaultStorageFolderName = "Gemma4E4B4bit"
-    private static let defaultExpectedModelSizeBytes: Int64 = 5_101_713_536
+    // HF掲載のQ4_K_M（約3.42GB）を進捗表示と完成判定の目安にする。
+    private static let defaultExpectedModelSizeBytes: Int64 = 3_420_000_000
     #endif
 
     static let internalModelName = defaultInternalModelName
@@ -78,7 +87,11 @@ enum LocalAssistantModelProfile {
     static let defaultDownloadLabel = "\(internalModelName) 標準リンク"
     static let defaultDownloadURL = defaultModelURL
     static let standardDownloadOptions = platformDownloadOptions
-    static let legacyDefaultDownloadURLs = platformDownloadOptions.dropFirst().map(\.url)
+    // 以前のリポジトリページURLだけは直リンクへ移行する。Gemmaなどの
+    // alternate URLは選択肢として有効なので、旧URL扱いして上書きしない。
+    static let legacyDefaultDownloadURLs: [String] = [
+        "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF"
+    ]
     static let defaultFileName = defaultModelFileName
     static let storageFolderName = defaultStorageFolderName
     static let legacyFolderNames = ["Gemma4E2B4bit", "Gemma4E4B4bit", "Gemma3nE4B4bit", "VIUKAItiny", "VIUK AI tiny"]

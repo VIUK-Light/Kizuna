@@ -23,6 +23,14 @@ struct VIUKKizunaWorkspaceView: View {
             KizunaSettingsView()
                 .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 680)
         }
+        // 設定画面はStoryの外側にあるため、デバッグ要求時はStoryを自動で開く。
+        // これで「設定を閉じる → Storyを探す」の間に予約が消えることを防ぐ。
+        .onReceive(NotificationCenter.default.publisher(for: KizunaDebugOptions.restSuggestionRequestNotification)) { _ in
+            openDebugStory()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: KizunaDebugOptions.safetyConcernRequestNotification)) { _ in
+            openDebugStory()
+        }
 #if os(iOS)
         .fullScreenCover(item: $activeStoryWorld) { world in
             StorySessionChatView(world: world)
@@ -46,6 +54,23 @@ struct VIUKKizunaWorkspaceView: View {
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
         .accessibilityLabel("設定")
+    }
+
+    private func openDebugStory() {
+        guard activeStoryWorld == nil else { return }
+        Task { @MainActor in
+            // 設定シートのdismiss完了を待ってからStoryを表示する。
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard activeStoryWorld == nil else { return }
+            let repository = LocalJSONStoryWorldRepository()
+            // ライブラリーの初期化がまだ終わっていない起動直後でも対象を取得できるようにする。
+            await CharacterLibrarySeed.seedIfNeeded(
+                characterRepo: LocalJSONCharacterRepository(),
+                worldRepo: repository
+            )
+            guard let world = (try? await repository.fetchWorlds())?.first else { return }
+            activeStoryWorld = world
+        }
     }
 
     private var sectionPicker: some View {
@@ -88,8 +113,6 @@ struct VIUKKizunaWorkspaceView: View {
                     activeStoryWorld = world
                 }
             }
-        case .characters:
-            CharacterLibraryView()
         case .chat:
             PersonaChatView()
         }
@@ -98,7 +121,6 @@ struct VIUKKizunaWorkspaceView: View {
 
 private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
     case stories
-    case characters
     case chat
 
     var id: String { rawValue }
@@ -106,7 +128,6 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .stories: return "ストーリー"
-        case .characters: return "キャラ"
         case .chat: return "単体チャット"
         }
     }
@@ -114,7 +135,6 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .stories: return "sparkles.rectangle.stack.fill"
-        case .characters: return "person.2.crop.square.stack.fill"
         case .chat: return "bubble.left.and.bubble.right.fill"
         }
     }

@@ -1,0 +1,1333 @@
+{
+  "sourceLanguage" : "ja",
+  "strings" : {
+    "" : {
+
+    },
+    "・・・" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "..."
+          }
+        }
+      }
+    },
+    "…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "..."
+          }
+        }
+      }
+    },
+    "「%@」" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@”"
+          }
+        }
+      }
+    },
+    "「このまま続ける」を選んだ場合、次の120分は再提案しません。モデルが自主的に休憩や終了を提案することもありません。" : {
+
+    },
+    "「少し休む」または「このまま続ける」を選べます。続ける場合も、キャラクターが短く了承して直前の会話へ戻ります。" : {
+
+    },
+    "「相談先を見る」から公的窓口などを確認できます。カードを閉じても、会話そのものは続けられます。" : {
+
+    },
+    "%@ ・ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · %2$@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ ・ %2$@"
+          }
+        }
+      }
+    },
+    "%@ 人" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ people"
+          }
+        }
+      }
+    },
+    "%@ 件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ items"
+          }
+        }
+      }
+    },
+    "%@%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@%%"
+          }
+        }
+      }
+    },
+    "%@件のやり取り ・ %@人のキャスト ・ %@シーン" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ interactions · %2$@ cast · %3$@ scenes"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@件のやり取り ・ %2$@人のキャスト ・ %3$@シーン"
+          }
+        }
+      }
+    },
+    "•" : {
+
+    },
+    "2人以上のキャラを追加すると、キャラ同士の関係を設定できます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add two or more characters to define relationships between them."
+          }
+        }
+      }
+    },
+    "31B Thinkingで作ると、ここにタイトル・キャスト・初期シーンが表示されます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After generation with 31B Thinking, the title, cast, and opening scene appear here."
+          }
+        }
+      }
+    },
+    "APIキーはKeychainに保存されます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The API key is stored in the Keychain."
+          }
+        }
+      }
+    },
+    "Gemma 3n E2BはHugging Faceで利用許諾を確認したアクセストークンが必要です。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemma 3n E2B requires an access token after accepting its Hugging Face license."
+          }
+        }
+      }
+    },
+    "Hugging Faceアクセストークン（必要な場合）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face access token (if required)"
+          }
+        }
+      }
+    },
+    "Kizuna内の表示だけが切り替わります。端末全体の言語は変更しません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only Kizuna's display language changes. Your device language is not changed."
+          }
+        }
+      }
+    },
+    "VIUK 絆" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VIUK Kizuna"
+          }
+        }
+      }
+    },
+    "アプリに設定された標準リンクからダウンロードします。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Downloads from the standard link configured in the app."
+          }
+        }
+      }
+    },
+    "お知らせ" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notice"
+          }
+        }
+      }
+    },
+    "カテゴリー/関係性に基づき自動で適用される推奨ルール:" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recommended rules automatically applied based on category and relationship:"
+          }
+        }
+      }
+    },
+    "キャスト、シーン、保存済みセッションも削除対象になります。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The cast, scenes, and saved sessions will also be deleted."
+          }
+        }
+      }
+    },
+    "キャラクター: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Character: %@"
+          }
+        }
+      }
+    },
+    "キャラクターを通報" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report Character"
+          }
+        }
+      }
+    },
+    "キャラライブラリー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Character Library"
+          }
+        }
+      }
+    },
+    "キャラを作る" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create a Character"
+          }
+        }
+      }
+    },
+    "キャラを作るか選ぶと、物語の登場人物として参加します。最初の 1 名はメインキャラとして登録されます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create or choose characters to add them to the story cast. The first character becomes the main character."
+          }
+        }
+      }
+    },
+    "キャラを始める" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start a Character Chat"
+          }
+        }
+      }
+    },
+    "キャラを探す" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find a Character"
+          }
+        }
+      }
+    },
+    "キャラを追加" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Character"
+          }
+        }
+      }
+    },
+    "キャラを選ぶ" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a Character"
+          }
+        }
+      }
+    },
+    "キャラ詳細" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Character Details"
+          }
+        }
+      }
+    },
+    "キャンセル" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "このカードは、会話の中に個人的な悩みや安全に関わる相談の可能性があるとアプリ側が判断した時に表示されます。診断や断定をするものではありません。" : {
+
+    },
+    "このキャラに紐づき、物語をまたいで使われる思い出" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memories linked to this character and used across stories"
+          }
+        }
+      }
+    },
+    "このまま続ける" : {
+
+    },
+    "この世界だけ" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This World Only"
+          }
+        }
+      }
+    },
+    "この操作は取り消せません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This action cannot be undone."
+          }
+        }
+      }
+    },
+    "この物語を削除" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete This Story"
+          }
+        }
+      }
+    },
+    "この物語を続ける" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue This Story"
+          }
+        }
+      }
+    },
+    "この表示について" : {
+
+    },
+    "これは診断ではありません。今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。" : {
+
+    },
+    "これまでの流れの目印" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Story Anchors"
+          }
+        }
+      }
+    },
+    "シーン" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scene"
+          }
+        }
+      }
+    },
+    "ジャンル" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Genre"
+          }
+        }
+      }
+    },
+    "ストーリー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stories"
+          }
+        }
+      }
+    },
+    "ストーリーライブラリー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Story Library"
+          }
+        }
+      }
+    },
+    "セッションを閉じる" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close Session"
+          }
+        }
+      }
+    },
+    "タイトル" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Title"
+          }
+        }
+      }
+    },
+    "ダウンロードを再開" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resume Download"
+          }
+        }
+      }
+    },
+    "データ保存先" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data Locations"
+          }
+        }
+      }
+    },
+    "テンプレから作る" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create from Template"
+          }
+        }
+      }
+    },
+    "テンプレから始めるか、新規作成してみよう。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start from a template or create something new."
+          }
+        }
+      }
+    },
+    "ナレーション" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Narration"
+          }
+        }
+      }
+    },
+    "プリセットを選ぶと下の項目が一括で書き換わります。後から自由に調整できます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choosing a preset updates the fields below. You can adjust them later."
+          }
+        }
+      }
+    },
+    "プロンプトの末尾に追記されます。長くしすぎるとレスポンスが遅くなります。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This is appended to the prompt. Keeping it short helps response speed."
+          }
+        }
+      }
+    },
+    "ほか %@ 件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ more"
+          }
+        }
+      }
+    },
+    "メモリーも一緒に削除されます。元には戻せません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Its memories will also be deleted. This cannot be undone."
+          }
+        }
+      }
+    },
+    "モデルの入手先" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model Source"
+          }
+        }
+      }
+    },
+    "モデルをダウンロード" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download Model"
+          }
+        }
+      }
+    },
+    "モデル状態" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model Status"
+          }
+        }
+      }
+    },
+    "リポジトリページではなく、GGUFまたはLiteRT-LMファイルの直接ダウンロードURLを指定してください。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a direct download URL for a GGUF or LiteRT-LM file, not a repository page."
+          }
+        }
+      }
+    },
+    "ローカルAIモデル" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local AI Model"
+          }
+        }
+      }
+    },
+    "ローカルモデルを削除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete Local Model"
+          }
+        }
+      }
+    },
+    "一文から、すぐ動く物語を作る" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Build a playable story from one sentence"
+          }
+        }
+      }
+    },
+    "一時停止" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pause"
+          }
+        }
+      }
+    },
+    "世界観・場所・秘密などを登録すると、関連する会話の時だけAIへ渡します。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "World details, locations, and secrets are sent to the AI only when relevant."
+          }
+        }
+      }
+    },
+    "世界観から選ぶ ・ %@ 件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose by world · %@ stories"
+          }
+        }
+      }
+    },
+    "今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。" : {
+
+    },
+    "休憩提案" : {
+
+    },
+    "休憩提案は、連続利用が長くなった時に会話画面内へ表示される案内です。会話を止めたり、強制終了したりはしません。" : {
+
+    },
+    "会話はそのまま続けられます。必要なら相談先を確認してください。" : {
+
+    },
+    "会話はまだありません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No conversations yet"
+          }
+        }
+      }
+    },
+    "何を作りたい？" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What do you want to create?"
+          }
+        }
+      }
+    },
+    "保存" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save"
+          }
+        }
+      }
+    },
+    "保存して試す" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save and Try"
+          }
+        }
+      }
+    },
+    "信頼" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trust"
+          }
+        }
+      }
+    },
+    "先に「キャラライブラリー」でキャラを作ってください。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create a character in the Character Library first."
+          }
+        }
+      }
+    },
+    "全体メモリー" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Global Memories"
+          }
+        }
+      }
+    },
+    "全体メモリー (物語をまたいで使う)" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Global Memories (Across Stories)"
+          }
+        }
+      }
+    },
+    "公開状態" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visibility"
+          }
+        }
+      }
+    },
+    "初回の空気" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening Tone"
+          }
+        }
+      }
+    },
+    "初回はVIUK Oneのキャラクターとローカルモデルをコピーするため、数分かかる場合があります。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The first launch may take a few minutes while VIUK One characters and the local model are copied."
+          }
+        }
+      }
+    },
+    "初期シーン" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening Scene"
+          }
+        }
+      }
+    },
+    "利用状況や社会の変化を見ながら、なぜ問題が起きたのか、必要以上に拒否していないか、キャラクター性と利用者の意思を守れているかを検証し続けます。" : {
+
+    },
+    "削除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete"
+          }
+        }
+      }
+    },
+    "前回の途中から再開できます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can resume from where you left off."
+          }
+        }
+      }
+    },
+    "助けて" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Help"
+          }
+        }
+      }
+    },
+    "場所" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Location"
+          }
+        }
+      }
+    },
+    "場面" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scene"
+          }
+        }
+      }
+    },
+    "場面のキャラを選定中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choosing characters for the scene"
+          }
+        }
+      }
+    },
+    "安全性をチェック中…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checking safety…"
+          }
+        }
+      }
+    },
+    "完成した安全性は存在しない" : {
+
+    },
+    "実際は会話モードの基本指示 (1〜2文・記号禁止・安全ルール) と合わせて送られます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It is sent together with the conversation instructions, formatting rules, and safety rules."
+          }
+        }
+      }
+    },
+    "少し休む" : {
+
+    },
+    "応答を生成中" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generating response"
+          }
+        }
+      }
+    },
+    "思い出" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memories"
+          }
+        }
+      }
+    },
+    "思考" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thinking"
+          }
+        }
+      }
+    },
+    "押すと設定を閉じ、最初のストーリーを開いて30秒後に画面内カードを表示します。" : {
+
+    },
+    "押すと設定を閉じ、最初のストーリーを開いて30秒後に相談サポートカードを表示します。" : {
+
+    },
+    "日本語" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Japanese"
+          }
+        }
+      }
+    },
+    "標準モデル" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standard Models"
+          }
+        }
+      }
+    },
+    "標準リンク" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standard Link"
+          }
+        }
+      }
+    },
+    "物語の目的" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Story Goal"
+          }
+        }
+      }
+    },
+    "物語や返答を自動的に削除・終了せず、必要な場合だけ相談先への導線を追加します。" : {
+
+    },
+    "物語内メモリー" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Story Memories"
+          }
+        }
+      }
+    },
+    "物語内メモリー (この世界だけ)" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Story Memories (This World Only)"
+          }
+        }
+      }
+    },
+    "物語内メモリー %@件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Story Memories: %@"
+          }
+        }
+      }
+    },
+    "物語形式" : {
+
+    },
+    "現在のStoryState" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current Story State"
+          }
+        }
+      }
+    },
+    "現在のシーン" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current Scene"
+          }
+        }
+      }
+    },
+    "現在の目的" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current Objective"
+          }
+        }
+      }
+    },
+    "生成後にキャラ画像、話し方、初期シーン、進行ルールをそのまま確認して試せます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After generation, review and try the character image, speaking style, opening scene, and story rules."
+          }
+        }
+      }
+    },
+    "登場キャラ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cast"
+          }
+        }
+      }
+    },
+    "相手に伝える..." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Say something..."
+          }
+        }
+      }
+    },
+    "相手や場面を保ったまま、会話の続きを始められます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue the conversation while keeping the same character and scene."
+          }
+        }
+      }
+    },
+    "相談先" : {
+
+    },
+    "短い一文から、世界観・初期シーン・キャラ・ルールまで自動で組み立てます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Build the world, opening scene, characters, and rules from a short sentence."
+          }
+        }
+      }
+    },
+    "絆" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna"
+          }
+        }
+      }
+    },
+    "絆: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna: %@"
+          }
+        }
+      }
+    },
+    "絆のデータを準備しています" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing Kizuna data"
+          }
+        }
+      }
+    },
+    "絆ライブラリー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bond Library"
+          }
+        }
+      }
+    },
+    "絆ライブラリーを開く" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Bond Library"
+          }
+        }
+      }
+    },
+    "絆を始めましょう" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start a Bond"
+          }
+        }
+      }
+    },
+    "絆を探す" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find a Bond"
+          }
+        }
+      }
+    },
+    "絆を設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configure Bond"
+          }
+        }
+      }
+    },
+    "絆を選ぶ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a Bond"
+          }
+        }
+      }
+    },
+    "継続中の絆" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ongoing Bonds"
+          }
+        }
+      }
+    },
+    "続きから会話" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue Chat"
+          }
+        }
+      }
+    },
+    "緊張" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tension"
+          }
+        }
+      }
+    },
+    "英語" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "English"
+          }
+        }
+      }
+    },
+    "表示言語" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display Language"
+          }
+        }
+      }
+    },
+    "言語" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Language"
+          }
+        }
+      }
+    },
+    "設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings"
+          }
+        }
+      }
+    },
+    "設定を追加" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Setting"
+          }
+        }
+      }
+    },
+    "追加できるキャラがいません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No characters available to add"
+          }
+        }
+      }
+    },
+    "通報を受け付けました。ご協力ありがとうございます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your report was received. Thank you for your help."
+          }
+        }
+      }
+    },
+    "連続利用が60分に達した後、キャラクターの発言に続けて1回だけ表示されます。判定はアプリ側で行います。" : {
+
+    },
+    "進行" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Progress"
+          }
+        }
+      }
+    },
+    "重要度" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importance"
+          }
+        }
+      }
+    },
+    "閉じる" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close"
+          }
+        }
+      }
+    },
+    "開始" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start"
+          }
+        }
+      }
+    },
+    "関係性" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relationship"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

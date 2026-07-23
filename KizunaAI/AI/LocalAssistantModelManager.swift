@@ -417,7 +417,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         if message == runtimeWarningMessage {
             return nil
         }
-        if message == downloadStateSummary || classifyReadableError(message) == downloadStateSummary {
+        if message == downloadStateSummary {
             return nil
         }
         return message
@@ -425,6 +425,22 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     func updateSourceURL(_ value: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nextSourceURL = trimmed.isEmpty
+            ? LocalAssistantModelProfile.defaultDownloadURL
+            : trimmed
+
+        // 3Nなど別モデルへ切り替える時、前モデルの途中データを再利用しない。
+        if Self.normalizedSourceURL(sourceURLString) != Self.normalizedSourceURL(nextSourceURL) {
+            cancelActiveTasksWithoutResume()
+            // URLを変更しても、すでに完成しているモデル本体は残す。
+            // 起動確認の前に設定保存が呼ばれた場合でも、モデルを消さないための保護。
+            clearPersistedDownloadState(removeResumeData: true)
+            downloadedBytes = 0
+            expectedBytes = 0
+            lastErrorMessage = nil
+            downloadStatus = resolvedInstalledModelURL == nil ? .idle : .completed
+        }
+
         if trimmed.isEmpty {
             sourceURLString = LocalAssistantModelProfile.defaultDownloadURL
             AILegacyCompatibility.removeValue(
@@ -458,7 +474,11 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     func recheckRuntimeAvailability() {
         LocalAssistantRuntimeBridge.shared.clearRuntimeError()
-        refreshEnvironment()
+
+        // 環境更新を非同期に待つ前にURLを確定する。
+        // 旧実装は更新前のnilを拾い、保存済みモデルを未導入扱いにすることがあった。
+        restorePersistedDownloadState()
+        refreshInstalledState()
 
         guard let currentModelURL = installedModelURL else {
             scheduleStatusPresentationRefresh()
@@ -713,7 +733,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         let session = URLSession(configuration: configuration)
 
         var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
+        // Hugging Face/XetはHEADで配布サイズを返さないことがあるため、1バイトだけGETして確認する。
+        request.httpMethod = "GET"
+        request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
         if shouldAttachAuthorization(to: url) {
             request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
@@ -838,6 +860,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private func refreshInstalledState() {
         resolvedInstalledModelURL = discoverInstalledModelURL()
         legacyResolvedInstalledModelURL = resolvedInstalledModelURL == nil ? discoverLegacyInstalledModelURL() : nil
+        if let resolvedInstalledModelURL {
+            adoptExistingModelIfNeeded(at: resolvedInstalledModelURL)
+        }
         installedFileName = resolvedInstalledModelURL?.lastPathComponent
         installedFileSize = resolvedInstalledModelURL
             .flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }
@@ -1012,7 +1037,44 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         guard let state = persistedDownloadState else { return false }
         guard state.status != .completed else { return false }
         guard let stateFileName = stateReferencedFileName(for: state) else { return false }
-        return stateFileName == url.lastPathComponent
+        guard stateFileName == url.lastPathComponent else { return false }
+
+        // 中断状態のファイルは、保存予定サイズに届いた時だけ完成品として扱う。
+        // expectedBytes がない途中ファイルを「50MB以上あるから完成」と誤認しない。
+        guard state.expectedBytes > 1 else { return true }
+        return !isValidModelFile(at: url, expectedBytes: state.expectedBytes)
+    }
+
+    private func adoptExistingModelIfNeeded(at modelURL: URL) {
+        guard isValidModelFile(at: modelURL) else { return }
+        let fileSize = (try? modelURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        guard fileSize > 0 else { return }
+        if let previous = persistedDownloadState,
+           previous.status == .completed,
+           stateReferencedFileName(for: previous) == modelURL.lastPathComponent {
+            return
+        }
+
+        // ダウンロード済み本体を見つけたら、状態JSONを完成済みに修復する。
+        let previous = persistedDownloadState
+        let completedState = LocalAssistantDownloadState(
+            sourceURL: previous?.sourceURL ?? resolvedSourceURLString,
+            resolvedURL: previous?.resolvedURL,
+            expectedBytes: max(previous?.expectedBytes ?? 0, fileSize),
+            eTag: previous?.eTag,
+            resumeDataPath: nil,
+            status: .completed,
+            startedAt: previous?.startedAt ?? Date(),
+            updatedAt: Date(),
+            lastError: nil,
+            suggestedFilename: modelURL.lastPathComponent
+        )
+        persistDownloadState(completedState)
+        try? FileManager.default.removeItem(at: resumeDataStorageURL)
+        downloadedBytes = fileSize
+        expectedBytes = completedState.expectedBytes
+        lastErrorMessage = nil
+        downloadStatus = .completed
     }
 
     private func expectedBytesForCompletedModel(at url: URL) -> Int64? {
@@ -1056,27 +1118,33 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func applyStatusPresentation() {
-        let nextStatusMessage: String = switch displayState {
-        case .downloading:
-            if downloadStatus == .preflighting {
-                "配布元と保存先を確認しています"
-            } else if let progressValue {
-                "モデルを受信しています (\(Int(progressValue * 100))%)"
-            } else {
-                "モデルを受信しています"
+        // ダウンロード失敗時に「未導入」で上書きせず、原因を最上段へ出す。
+        let nextStatusMessage: String
+        if downloadStatus == .failed, let lastErrorMessage, !lastErrorMessage.isEmpty {
+            nextStatusMessage = classifyReadableError(lastErrorMessage)
+        } else {
+            nextStatusMessage = switch displayState {
+            case .downloading:
+                if downloadStatus == .preflighting {
+                    "配布元と保存先を確認しています"
+                } else if let progressValue {
+                    "モデルを受信しています (\(Int(progressValue * 100))%)"
+                } else {
+                    "モデルを受信しています"
+                }
+            case .resumable:
+                "前回の続きから再開できます"
+            case .checking:
+                "ローカルモデルを起動確認しています"
+            case .executable:
+                "ローカルモデルを実行できます"
+            case .savedOnly:
+                "モデルファイルは保存済みです"
+            case .recentFailure:
+                runtimeDiagnosticSummary ?? "ローカル実行の確認に失敗しました"
+            case .modelMissing:
+                hasLegacyInstalledModel ? "旧ローカルモデルを検出しました。Gemma 4 は未導入です" : "ローカルモデルは未導入です"
             }
-        case .resumable:
-            "前回の続きから再開できます"
-        case .checking:
-            "ローカルモデルを起動確認しています"
-        case .executable:
-            "ローカルモデルを実行できます"
-        case .savedOnly:
-            "モデルファイルは保存済みです"
-        case .recentFailure:
-            runtimeDiagnosticSummary ?? "ローカル実行の確認に失敗しました"
-        case .modelMissing:
-            hasLegacyInstalledModel ? "旧ローカルモデルを検出しました。Gemma 4 は未導入です" : "ローカルモデルは未導入です"
         }
 
         DispatchQueue.main.async { [weak self] in
@@ -1224,14 +1292,23 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return parsed
         }
 
+        // Range: bytes=0-0 の応答は Content-Length が「1」になる。
+        // Content-Range のスラッシュ後が本体全体のサイズなので、先に読む。
+        if let contentRange = response.value(forHTTPHeaderField: "Content-Range"),
+           let total = contentRange.split(separator: "/").last,
+           let parsed = Int64(total),
+           parsed > 1 {
+            return parsed
+        }
+
         if let headerValue = response.value(forHTTPHeaderField: "Content-Length"),
            let parsed = Int64(headerValue),
-           parsed > 0 {
+           parsed > 1 {
             return parsed
         }
 
         let expected = response.expectedContentLength
-        if expected > 0 {
+        if expected > 1 {
             return expected
         }
 
@@ -1574,9 +1651,11 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         guard let state = persistedDownloadState, let fileName = stateReferencedFileName(for: state) else { return }
         let candidate = installationDirectoryURL.appendingPathComponent(fileName)
         guard FileManager.default.fileExists(atPath: candidate.path) else { return }
-        if state.status != .completed || !isValidModelFile(at: candidate, expectedBytes: state.expectedBytes > 0 ? state.expectedBytes : nil) {
-            try? FileManager.default.removeItem(at: candidate)
-        }
+        // 保存予定サイズが分かる場合は、それを使って途中ファイルだけを掃除する。
+        // 完成済みモデルを起動確認前に消さない。
+        let expectedBytes = state.expectedBytes > 1 ? state.expectedBytes : nil
+        guard !isValidModelFile(at: candidate, expectedBytes: expectedBytes) else { return }
+        try? FileManager.default.removeItem(at: candidate)
     }
 
     private func preserveDownloadFileForFinalization(from location: URL) throws -> URL {
@@ -1759,8 +1838,9 @@ extension LocalAssistantModelManager: URLSessionDownloadDelegate {
             case NSURLErrorCannotCreateFile, NSURLErrorCannotOpenFile, NSURLErrorCannotWriteToFile:
                 if self.currentResumeDataURL(from: self.persistedDownloadState) != nil {
                     self.removeResumeData()
-                    self.lastErrorMessage = "前回の再開データが壊れていたため、最初からダウンロードし直します。"
-                    self.beginDownload(resuming: false)
+                    // 再開データの破損を理由に自動再ダウンロードしない。
+                    // ユーザーが明示的に「再開」または「再ダウンロード」を選ぶ。
+                    self.applyFailure(message: "前回の再開データを使えませんでした。再開または再ダウンロードを選択してください。", resumable: false)
                     return
                 }
                 self.applyFailure(message: "保存先ファイルを作成できませんでした。")

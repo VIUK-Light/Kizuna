@@ -23,6 +23,8 @@ final class StorySessionService: ObservableObject {
     @Published private(set) var streamingSpeakerName: String?
     @Published private(set) var streamingStatusText: String = ""
     @Published private(set) var savedTurnRevision: Int = 0
+    /// 危険な相談の可能性を検知した時だけ、会話とは別にUIへ渡す。
+    @Published private(set) var latestSafetyConcern: SafetyConcern?
 
     // DI (デフォルトは Local + Mock)
     private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
@@ -31,6 +33,10 @@ final class StorySessionService: ObservableObject {
     private let castRepo: CastRepository = LocalJSONCastRepository()
     private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
     private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
+    // Lorebookは必要な項目だけを選択してプロンプトへ渡す。
+    private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
+    // 物語内メモリーは全体メモリー(CharacterMemory)と別ストアで管理する。
+    private let storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository()
     private let safetyPipeline = SafetyPipeline.shared
     private let sceneSelector: SceneCharacterSelecting = MockSceneCharacterSelector()
     private let summarizer: SceneSummarizing = MockSceneSummarizer()
@@ -50,6 +56,8 @@ final class StorySessionService: ObservableObject {
         var lastTurnProgress: String?
         var lastSceneSummary: String?
         var unresolvedHooks: [String]?
+        // 本文とは別にAIが返す、今回の状態差分。
+        var storyState: StoryStatePatch?
     }
 
     /// 入口: ユーザー発話を送る。session/scene は呼び出し側で確定済み前提。
@@ -66,6 +74,7 @@ final class StorySessionService: ObservableObject {
         streamingResponse = ""
         streamingSpeakerName = nil
         streamingStatusText = "準備中"
+        latestSafetyConcern = nil
         lastVisibleText = ""
         let generationID = UUID()
         activeGenerationID = generationID
@@ -96,6 +105,93 @@ final class StorySessionService: ObservableObject {
         }
     }
 
+    /// 「このまま続ける」を選んだ時の短い了承を、会話本文へ 1 回だけ追加する。
+    /// 休憩の判断や再提案はここでは行わず、ViewModel のアプリ側ポリシーに任せる。
+    func addRestAcknowledgement(
+        characterID: UUID,
+        characterName: String,
+        session: StorySession
+    ) async {
+        var next = session
+        next.messages.append(
+            StoryMessage(
+                author: .cast(characterId: characterID, displayName: characterName),
+                text: "了解。続けよう。"
+            )
+        )
+        try? await sessionRepo.saveSession(next)
+        savedTurnRevision += 1
+    }
+
+    /// DEBUG用。会話を変更せず、相談サポートUIだけを表示する。
+    func showDebugSafetyConcern() {
+        latestSafetyConcern = SafetyConcern.debugSample
+        NSLog("[SafetyConcern] debug card published")
+    }
+
+    /// 利用者がサポートカードを閉じた時だけ、現在のUI表示を消す。
+    func dismissSafetyConcern() {
+        latestSafetyConcern = nil
+    }
+
+    /// アプリから明示的に依頼された時だけ、休憩提案の本文を 1 回生成する。
+    /// 通常の物語ターンからこのメソッドを呼ばないことで、自主提案を防ぐ。
+    func generateRestSuggestion(
+        character: CharacterProfile?,
+        world: StoryWorld,
+        scene: StoryScene,
+        generationModel: StoryGenerationModel
+    ) async -> String? {
+        let name = character.map { $0.displayName.isEmpty ? $0.name : $0.displayName } ?? "相手"
+        let speakingStyle = character?.speakingStyle ?? "自然で落ち着いた口調"
+        let personality = character?.personality ?? "穏やか"
+        let systemPrompt = """
+        あなたはアプリが休憩提案を表示するときの、キャラクターらしい一文だけを作る補助役です。
+        この呼び出しはアプリ側が連続利用60分を検知した時だけ行われます。休憩を提案するかどうかを自分で判断してはいけません。
+        出力は短い日本語の1文だけ。罪悪感、依存、催促、強制、睡眠・終了の指示、「必ず戻ってきて」「待っている」などの表現は禁止です。
+        強制終了や利用制限を示さず、ユーザーが自由に選べる穏やかな提案にしてください。
+        """
+        let userPrompt = """
+        キャラクター名: \(name)
+        性格: \(personality)
+        口調: \(speakingStyle)
+        現在の物語: \(world.title)
+        シーンの空気: \(scene.mood)
+
+        上の設定に合わせて、目や体を少し休める提案を1文だけ書いてください。
+        """
+
+        let raw: String?
+        switch generationModel {
+        case .b31:
+            raw = try? await StoryGemma31BAPIService.shared.generate(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                temperature: 0.7,
+                maxOutputTokens: 96
+            )
+        case .e4b:
+            let manager = LocalAssistantModelManager.shared
+            let selectedModelURL = generationModel.installedModelURL ?? manager.installedModelURL
+            guard manager.runtimeAvailability == .executable, selectedModelURL != nil else { return nil }
+            raw = await LocalAssistantRuntimeBridge.shared.generateReply(
+                prompt: userPrompt,
+                contextPrompt: nil,
+                coachMode: .studio,
+                reasoningMode: .persona,
+                researchMode: .off,
+                childAge: 12,
+                pageInfo: nil,
+                safetySnapshot: nil,
+                advancedSettings: voiceOptimizedAdvancedSettings(),
+                overrideSystemPrompt: systemPrompt,
+                overrideModelURL: selectedModelURL,
+                onUpdate: nil
+            )
+        }
+        return normalizeRestSuggestion(raw)
+    }
+
     func cancel() {
         generationTask?.cancel()
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
@@ -117,6 +213,16 @@ final class StorySessionService: ObservableObject {
     ) async {
         var session = session
         var scene = scene
+
+        // 初回ターンでも、現在シーンを構造化状態としてAIへ渡せるようにする。
+        if session.storyState == nil {
+            session.storyState = StoryState(
+                location: scene.location,
+                timeOfDay: scene.timeOfDay,
+                mood: scene.mood,
+                activeGoals: scene.sceneGoal.isEmpty ? [] : [scene.sceneGoal]
+            )
+        }
 
         // user メッセージ append + 空 narration ストリーム先を確保
         streamingStatusText = "会話を保存中"
@@ -153,6 +259,19 @@ final class StorySessionService: ObservableObject {
         }()
 
         // 3) 入力 safety
+        // 相談分類は入力/出力を変更しない。本文生成と並行するUI用の情報だけを作る。
+        let safetyConcern = await safetyPipeline.classifyConcern(userText)
+        // 生成完了を待たず、分類できた時点でUIへ通知する。
+        // モデルが遅い／利用できない場合でも相談先を表示できるようにする。
+        if let safetyConcern {
+            self.latestSafetyConcern = safetyConcern
+            NSLog(
+                "[SafetyConcern] detected category=%@ level=%@ confidence=%.2f",
+                safetyConcern.category.rawValue,
+                safetyConcern.level.rawValue,
+                safetyConcern.confidence
+            )
+        }
         let inSafety = await safetyPipeline.evaluateInput(userText, character: representativeCharacter)
         if inSafety.action == .block {
             let polite = inSafety.rewrittenText ?? "(ナレーション) その話題はここではそっと脇に置いて、別の場面に進もう。"
@@ -170,22 +289,61 @@ final class StorySessionService: ObservableObject {
         }
         let effectiveUserText = inSafety.rewrittenText ?? userText
 
-        // 4) シーンに居るキャラを 270M (Mock) で選定。最大 3 名。
+        // 4) シーンに居るキャラを 270M (Mock) で選定。
         streamingStatusText = "場面のキャラを選定中"
+        // 単体物語は毎ターン「ユーザー + 主役NPC1人」。群像劇だけ最大3人を許可する。
+        let activeCharacterLimit = world.isSoloStory
+            ? StoryConstants.soloActiveCharacters
+            : StoryConstants.maxActiveCharacters
+        // ユーザー操作キャラはシーン選定からも外す。表示用のcastには残すが、
+        // AIが返すべき候補として選ばれると「主人公:」の代弁につながる。
+        let userCharacterID = userControlledCharacterID(
+            world: world,
+            cast: cast,
+            characterIndex: charIndex
+        )
+        let selectableCast: [CastMember] = {
+            let aiCast = cast.filter { $0.characterId != userCharacterID }
+            guard world.isSoloStory else { return aiCast }
+
+            // 単体物語では入力に反応して脇役へ切り替えず、主役NPCだけを使う。
+            if let mainID = world.mainCharacterId,
+               let main = aiCast.first(where: { $0.characterId == mainID }) {
+                return [main]
+            }
+            // 古いデータに mainCharacterId がない場合も、重要度トップ1人へ収束させる。
+            return Array(aiCast.sorted { $0.importance > $1.importance }.prefix(StoryConstants.soloActiveCharacters))
+        }()
         let selectedIDs = await sceneSelector.select(
             userInput: effectiveUserText,
             currentScene: scene,
-            cast: cast,
+            cast: selectableCast,
             characterIndex: charIndex,
-            maxActive: StoryConstants.maxActiveCharacters
+            maxActive: activeCharacterLimit
         )
-        scene.activeCharacterIds = Array(selectedIDs.prefix(StoryConstants.maxActiveCharacters))
+        scene.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
         try? await sceneRepo.saveScene(scene)
 
         let activeCast = cast.filter { scene.activeCharacterIds.contains($0.characterId) }
         let inactiveCast = cast.filter { !scene.activeCharacterIds.contains($0.characterId) }
 
-        // 5) メモリー候補 + 選別。active を優先しつつ、世界全体の関係継続に必要な inactive の高重要度メモリーも少し入れる。
+        // ユーザー操作キャラはシーンには表示するが、AIの発話候補からは外す。
+        // これをしないと、モデルが「主人公:」としてユーザーの台詞を勝手に書く。
+        let userCharacterName: String? = {
+            guard let id = userCharacterID, let profile = charIndex[id] else { return nil }
+            return profile.displayName.isEmpty ? profile.name : profile.displayName
+        }()
+        let activeAICast = activeCast.filter { $0.characterId != userCharacterID }
+        let inactiveAICast = inactiveCast.filter { $0.characterId != userCharacterID }
+        // シーン選定がユーザーだけを返した場合でも、世界にいるNPCを1人だけ候補にする。
+        let aiCastForTurn: [CastMember] = {
+            if !activeAICast.isEmpty { return activeAICast }
+            return Array(selectableCast
+                .sorted { $0.importance > $1.importance }
+                .prefix(activeCharacterLimit))
+        }()
+
+        // 5) 全体メモリー候補 + 選別。active を優先しつつ、世界全体の関係継続に必要な inactive の高重要度メモリーも少し入れる。
         streamingStatusText = "記憶を読み込み中"
         var candidates: [CharacterMemory] = []
         for member in activeCast {
@@ -207,23 +365,74 @@ final class StorySessionService: ObservableObject {
             try? await memoryRepo.markUsed(ids: selectedMemories.map(\.id))
         }
 
-        // 6) StoryPromptBuilder
+        // 5-b) 物語内メモリーは、このStoryWorldの履歴だけから選ぶ。
+        let storyMemoryCandidates = (try? await storyMemoryRepo.fetchMemories(storyWorldId: world.id)) ?? []
+        let selectedStoryMemories = selectStoryMemories(
+            query: effectiveUserText,
+            candidates: storyMemoryCandidates,
+            topK: 12
+        )
+        if !selectedStoryMemories.isEmpty {
+            try? await storyMemoryRepo.markUsed(ids: selectedStoryMemories.map(\.id))
+        }
+
+        // 6) Lorebook: キーワード一致した設定だけを選択する。
+        streamingStatusText = "Lorebookを選択中"
+        var lorebookEntries = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
+        // 既存のCharacterLorebookも移行期間は同じ選択器に流し込む。
+        for member in cast {
+            guard let legacy = try? await characterRepo.fetchLorebook(characterId: member.characterId),
+                  !legacy.isEmpty else { continue }
+            let keywords = (legacy.importantPeople + legacy.importantPlaces + legacy.importantEvents)
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let content = [
+                legacy.worldSetting,
+                legacy.importantPeople.isEmpty ? "" : "重要人物: " + legacy.importantPeople.joined(separator: " / "),
+                legacy.importantPlaces.isEmpty ? "" : "重要な場所: " + legacy.importantPlaces.joined(separator: " / "),
+                legacy.importantEvents.isEmpty ? "" : "重要な出来事: " + legacy.importantEvents.joined(separator: " / "),
+                legacy.worldRules.isEmpty ? "" : "世界のルール: " + legacy.worldRules.joined(separator: " / "),
+                legacy.forbiddenBreaks.isEmpty ? "" : "壊してはいけない設定: " + legacy.forbiddenBreaks.joined(separator: " / ")
+            ].filter { !$0.isEmpty }.joined(separator: "\n")
+            if !content.isEmpty {
+                lorebookEntries.append(
+                    StoryLorebookEntry(
+                        storyWorldId: world.id,
+                        characterId: member.characterId,
+                        title: "キャラクター設定",
+                        keywords: keywords,
+                        content: content,
+                        priority: 40
+                    )
+                )
+            }
+        }
+        let selectedLorebookEntries = promptBuilder.selectLorebookEntries(
+            from: lorebookEntries,
+            scene: scene,
+            userInput: effectiveUserText
+        )
+
+        // 7) StoryPromptBuilder
         streamingStatusText = "物語コンテキストを構築中"
         let prompt = promptBuilder.build(
             world: world,
             scene: scene,
-            activeCast: activeCast,
-            inactiveCast: inactiveCast,
+            activeCast: aiCastForTurn,
+            inactiveCast: inactiveAICast,
             characterIndex: charIndex,
             selectedMemories: selectedMemories,
             session: session,
             recentMessages: Array(storyContentMessages(from: session.messages).suffix(48)),
             userInput: effectiveUserText,
             generationModel: generationModel,
-            safetyDecision: inSafety
+            safetyDecision: inSafety,
+            storyState: session.storyState,
+            selectedLorebookEntries: selectedLorebookEntries,
+            selectedStoryMemories: selectedStoryMemories,
+            userCharacterName: userCharacterName
         )
 
-        // 7) Story model 生成。31B を明示選択した時だけ Gemma4 API を使う。
+        // 8) Story model 生成。31B を明示選択した時だけ Gemma4 API を使う。
         streamingStatusText = generationModel == .b31 ? "Gemma4 31Bで発話生成中" : "ローカルモデルで発話生成中"
         var reply: String?
         var isRuntimeNotice = false
@@ -291,7 +500,7 @@ final class StorySessionService: ObservableObject {
             }
         }
 
-        // 8) 出力 safety
+        // 9) 出力 safety
         streamingStatusText = "発話を整形中"
         var rawFinal = (reply?.isEmpty == false ? reply! : streamingResponse)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -304,6 +513,7 @@ final class StorySessionService: ObservableObject {
             try? await sessionRepo.saveSession(session)
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
+                self.latestSafetyConcern = safetyConcern
                 self.streamingResponse = rawFinal
                 self.streamingSpeakerName = "システム"
                 self.streamingStatusText = ""
@@ -323,11 +533,17 @@ final class StorySessionService: ObservableObject {
             break
         }
         rawFinal = ensureStoryNarration(in: rawFinal, scene: scene)
-        rawFinal = stabilizeStoryTurn(rawFinal, activeCast: activeCast, characterIndex: charIndex, scene: scene)
+        rawFinal = stabilizeStoryTurn(rawFinal, activeCast: aiCastForTurn, characterIndex: charIndex, scene: scene)
 
-        // 9) 「名前: 本文」行ごとに StoryMessage 化
+        // 10) 「名前: 本文」行ごとに StoryMessage 化
         streamingStatusText = "発話を保存中"
-        let newMessages = parseSpeakerLines(rawFinal, cast: cast, characterIndex: charIndex)
+        let newMessages = parseSpeakerLines(
+            rawFinal,
+            cast: aiCastForTurn,
+            characterIndex: charIndex,
+            forbiddenCharacterID: userCharacterID,
+            forbiddenCharacterName: userCharacterName
+        )
         for m in newMessages {
             session.messages.append(m)
         }
@@ -335,7 +551,7 @@ final class StorySessionService: ObservableObject {
         session.lastUsedBackendName = usedBackendName
         try? await sessionRepo.saveSession(session)
 
-        // 10) Scene summary 更新 (270M)
+        // 11) Scene summary 更新 (270M)
         streamingStatusText = "場面要約を更新中"
         let newSummary = await summarizer.updateSummary(
             currentSummary: scene.summary,
@@ -346,6 +562,7 @@ final class StorySessionService: ObservableObject {
             scene.summary = newSummary
             try? await sceneRepo.saveScene(scene)
         }
+        // 12) 進行JSON + StoryState差分をAIから取得
         streamingStatusText = "物語進行を更新中"
         let progressUpdate = await generateProgressUpdate(
             world: world,
@@ -372,10 +589,14 @@ final class StorySessionService: ObservableObject {
             progressUpdate.unresolvedHooks,
             fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
         )
+        if let statePatch = progressUpdate.storyState {
+            session.storyState = statePatch.applying(to: session.storyState ?? StoryState(), characterIndex: charIndex)
+        }
         try? await sessionRepo.saveSession(session)
 
         await MainActor.run {
             guard self.activeGenerationID == generationID else { return }
+            self.latestSafetyConcern = safetyConcern
             self.streamingResponse = rawFinal
             self.streamingSpeakerName = newMessages.last?.speakerDisplayName
             self.streamingStatusText = ""
@@ -384,8 +605,11 @@ final class StorySessionService: ObservableObject {
             self.activeGenerationID = nil
         }
 
-        // 11) メモリー抽出 (active キャラ全員に対して同じ抽出を流し込む — 共有体験のため)
-        let userVisibleAssistant = newMessages.map(\.text).joined(separator: "\n")
+        // 13) メモリー抽出。ユーザー事実は全体、出来事は物語内へ保存する。
+        let userVisibleAssistant = newMessages.map { (message: StoryMessage) in
+            message.text
+        }.joined(separator: "\n")
+        var extractedStoryMemoryTexts = Set<String>()
         for member in activeCast {
             guard let profile = charIndex[member.characterId] else { continue }
             let mems = await memorySummarizer.extract(
@@ -393,8 +617,84 @@ final class StorySessionService: ObservableObject {
                 assistantText: userVisibleAssistant,
                 character: profile
             )
-            for m in mems { try? await memoryRepo.saveMemory(m) }
+            for memory in mems {
+                if isGlobalMemoryCategory(memory.category) {
+                    // ユーザーのプロフィール・好みは、別の物語でも使える全体メモリー。
+                    try? await memoryRepo.saveMemory(memory)
+                }
+                if !isGlobalMemoryCategory(memory.category) {
+                    let storyMemory = StoryMemory(
+                        storyWorldId: world.id,
+                        characterId: memory.characterId,
+                        text: memory.text,
+                        category: memory.category,
+                        importance: memory.importance,
+                        source: memory.source
+                    )
+                    try? await storyMemoryRepo.saveMemory(storyMemory)
+                    extractedStoryMemoryTexts.insert(memory.text)
+                }
+            }
         }
+
+        // 進行JSONの「今回の変化」も、次回以降に使える物語内の思い出にする。
+        let progressText = progressUpdate.lastTurnProgress ?? ""
+        if let progress = progressText
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            .nonEmpty,
+           extractedStoryMemoryTexts.insert(progress).inserted {
+            try? await storyMemoryRepo.saveMemory(
+                StoryMemory(
+                    storyWorldId: world.id,
+                    text: progress,
+                    category: .event,
+                    importance: 0.6,
+                    source: .summary
+                )
+            )
+        }
+    }
+
+    // 全体へ持ち越してよい情報だけを明示する。
+    private func isGlobalMemoryCategory(_ category: MemoryCategory) -> Bool {
+        switch category {
+        case .userFact, .preference, .safety:
+            return true
+        case .relationship, .event, .world, .summary, .other:
+            return false
+        }
+    }
+
+    // StoryMemoryは軽量なキーワード重なり + 重要度 + 新しさで選ぶ。
+    private func selectStoryMemories(
+        query: String,
+        candidates: [StoryMemory],
+        topK: Int
+    ) -> [StoryMemory] {
+        let queryTokens = storyMemoryTokens(query)
+        return candidates
+            .map { memory -> (StoryMemory, Double) in
+                let memoryTokens = storyMemoryTokens(memory.text)
+                let overlap = queryTokens.intersection(memoryTokens).count
+                let age = Date().timeIntervalSince(memory.lastUsedAt ?? memory.createdAt)
+                let freshness = age < 60 * 60 * 24 * 7 ? 0.1 : 0.0
+                return (memory, memory.importance * 0.5 + Double(overlap) * 0.4 + freshness)
+            }
+            .sorted { $0.1 > $1.1 }
+            .prefix(max(0, topK))
+            .map(\.0)
+    }
+
+    private func storyMemoryTokens(_ text: String) -> Set<String> {
+        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        var tokens = Set(words)
+        // 日本語は空白で区切られないため、2文字の重なりも関連度に使う。
+        let characters = Array(text.lowercased())
+        guard characters.count > 1 else { return tokens }
+        for index in 0..<(characters.count - 1) {
+            tokens.insert(String(characters[index...(index + 1)]))
+        }
+        return tokens
     }
 
     private func storyContentMessages(from messages: [StoryMessage]) -> [StoryMessage] {
@@ -494,14 +794,22 @@ final class StorySessionService: ObservableObject {
     private func parseSpeakerLines(
         _ text: String,
         cast: [CastMember],
-        characterIndex: [UUID: CharacterProfile]
+        characterIndex: [UUID: CharacterProfile],
+        forbiddenCharacterID: UUID? = nil,
+        forbiddenCharacterName: String? = nil
     ) -> [StoryMessage] {
         let castNames: [(UUID, String)] = cast.compactMap { member in
+            guard member.characterId != forbiddenCharacterID else { return nil }
             if let p = characterIndex[member.characterId] {
                 return (member.characterId, p.displayName.isEmpty ? p.name : p.displayName)
             }
             return nil
         }
+        let forbiddenNames = Set(
+            [forbiddenCharacterName]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
         let lines = text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
         var out: [StoryMessage] = []
         for line in lines where !line.isEmpty {
@@ -512,6 +820,14 @@ final class StorySessionService: ObservableObject {
                     out.append(StoryMessage(author: .narrator, text: body))
                 }
                 continue
+            }
+            // ユーザー操作キャラの発話は表示しない。AIが代弁した場合も、
+            // そのままナレーションへ落とすとユーザーの台詞として見えてしまうため破棄する。
+            if let delimiter = line.firstIndex(where: { $0 == ":" || $0 == "：" }) {
+                let possibleSpeaker = String(line[..<delimiter]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if forbiddenNames.contains(possibleSpeaker) {
+                    continue
+                }
             }
             // 「名前: 本文」 — active キャラの名前と前方一致を確認
             var matched: (UUID, String, String)? = nil
@@ -651,7 +967,58 @@ final class StorySessionService: ObservableObject {
         if let end = lastEnd { out = String(out[end...]) }
         // 余分な空行を圧縮
         while out.contains("\n\n") { out = out.replacingOccurrences(of: "\n\n", with: "\n") }
-        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return removeStoryMetaLeakage(from: out).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // モデルが本文の後ろに混ぜる「User is...」「the prompt says...」等の
+    // 内部自己解説を、UIへ渡す前に落とす。通常の英語台詞を一律削除しない。
+    private func removeStoryMetaLeakage(from text: String) -> String {
+        let markers = [
+            "Wait, User", "User is", "I shouldn't", "I should not",
+            "the prompt says", "Usually, I", "as the NPC", "active characters center",
+            "assistant should", "system prompt", "内部", "思考過程", "自己解説"
+        ]
+        let cleanedLines = text.components(separatedBy: .newlines).compactMap { rawLine -> String? in
+            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { return nil }
+            let lower = line.localizedLowercase
+            guard let marker = markers.first(where: { lower.contains($0.localizedLowercase) }) else {
+                return line
+            }
+
+            // 「台詞」(Wait, User...) の形なら、台詞だけを残す。
+            if let parenthesis = line.firstIndex(where: { $0 == "(" || $0 == "（" }) {
+                line = String(line[..<parenthesis]).trimmingCharacters(in: .whitespacesAndNewlines)
+                return line.isEmpty ? nil : line
+            }
+            // 行全体がメタ文なら表示しない。
+            _ = marker
+            return nil
+        }
+        return cleanedLines.joined(separator: "\n")
+    }
+
+    /// 休憩アラートへ渡す本文を短く整形し、依存・強制につながる出力を捨てる。
+    private func normalizeRestSuggestion(_ text: String?) -> String? {
+        guard var value = text?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        if let firstLine = value.components(separatedBy: .newlines).first?.nonEmpty {
+            value = firstLine
+        }
+        for prefix in ["休憩提案:", "休憩の提案:", "ナレーション:", "提案:"] {
+            if value.hasPrefix(prefix) {
+                value = String(value.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"『』「」*"))
+        let forbiddenPhrases = [
+            "必ず戻って", "戻ってきて", "待ってる", "待っています", "寂しい",
+            "終わらせ", "終了して", "やめてはいけない", "離れないで"
+        ]
+        guard !forbiddenPhrases.contains(where: { value.contains($0) }) else { return nil }
+        guard !value.isEmpty else { return nil }
+        return String(value.prefix(120))
     }
 
     private func sanitizedFinalText(_ text: String) -> String {
@@ -772,6 +1139,43 @@ final class StorySessionService: ObservableObject {
         return nil
     }
 
+    // CharacterProfile は既存データ互換のため専用フラグを持たない。
+    // 「自分自身 / 本人」または主人公表記を優先してユーザー操作キャラを推定する。
+    private func userControlledCharacterID(
+        world: StoryWorld,
+        cast: [CastMember],
+        characterIndex: [UUID: CharacterProfile]
+    ) -> UUID? {
+        func isUserProfile(_ profile: CharacterProfile, castMember: CastMember?) -> Bool {
+            let values = [
+                profile.displayName,
+                profile.name,
+                profile.relationshipToUser,
+                castMember?.relationshipToUser ?? ""
+            ]
+            .joined(separator: " ")
+            .localizedLowercase
+            return values.contains("自分自身")
+                || values.contains("本人")
+                || values.contains("ユーザー")
+                || values.contains("user")
+                || values.contains("主人公")
+                || values.contains("protagonist")
+        }
+
+        if let mainID = world.mainCharacterId,
+           let profile = characterIndex[mainID],
+           let member = cast.first(where: { $0.characterId == mainID }),
+           isUserProfile(profile, castMember: member) {
+            return mainID
+        }
+
+        return cast.first { member in
+            guard let profile = characterIndex[member.characterId] else { return false }
+            return isUserProfile(profile, castMember: member)
+        }?.characterId
+    }
+
     private func defaultCastMembers(for world: StoryWorld, scene: StoryScene) -> [CastMember] {
         let activeIDs = Set(scene.activeCharacterIds.isEmpty ? Array(world.characterIds.prefix(StoryConstants.maxActiveCharacters)) : scene.activeCharacterIds)
         return world.characterIds.enumerated().map { index, characterID in
@@ -801,7 +1205,8 @@ final class StorySessionService: ObservableObject {
             currentObjective: session.currentObjective.nonEmpty ?? scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty,
             lastTurnProgress: synthesizeTurnProgress(from: assistantMessages),
             lastSceneSummary: fallbackSceneSummary.nonEmpty ?? session.lastSceneSummary.nonEmpty,
-            unresolvedHooks: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
+            unresolvedHooks: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks),
+            storyState: nil
         )
 
         let systemPrompt = """
@@ -813,6 +1218,10 @@ final class StorySessionService: ObservableObject {
         lastTurnProgress は今回のターンで物語上なにが変わったか。
         lastSceneSummary は再開時に役立つ短い要約。
         unresolvedHooks は未回収の気になる要素を最大4件。
+        storyState は今回変化した状態だけを入れる。変化がない項目は null にする。
+        characterUpdates は会話に登場したキャラだけ。characterName は画面上の名前を使う。
+        inventoryChanges は add / update / remove のいずれかを使う。
+        storyState の current state を勝手に初期化せず、本文から確実に変化したものだけ更新する。
         """
         let userPrompt = """
         世界: \(world.title)
@@ -830,6 +1239,14 @@ final class StorySessionService: ObservableObject {
         lastSceneSummary: \(session.lastSceneSummary ?? "")
         unresolvedHooks: \((session.unresolvedHooks ?? []).joined(separator: " / "))
 
+        現在のStoryState:
+        場所: \(session.storyState?.location ?? "")
+        時間: \(session.storyState?.timeOfDay ?? "")
+        ムード: \(session.storyState?.mood ?? "")
+        天候: \(session.storyState?.weather ?? "")
+        関係段階: \(session.storyState?.relationshipStage ?? "")
+        所持品: \((session.storyState?.inventory ?? []).map { $0.name }.joined(separator: " / "))
+
         今回のユーザー発言:
         \(userText)
 
@@ -837,7 +1254,7 @@ final class StorySessionService: ObservableObject {
         \(assistantMessages.map { messageLine($0) }.joined(separator: "\n"))
 
         JSON形式:
-        {"progressLabel":"第1章 ...","currentObjective":"...","lastTurnProgress":"...","lastSceneSummary":"...","unresolvedHooks":["..."]}
+        {"progressLabel":"第1章 ...","currentObjective":"...","lastTurnProgress":"...","lastSceneSummary":"...","unresolvedHooks":["..."],"storyState":{"location":"...","timeOfDay":"...","mood":"...","weather":"...","relationshipStage":"...","characterUpdates":[{"characterName":"...","mood":"...","goal":"...","relationship":"...","innerThought":"..."}],"inventoryChanges":[{"action":"add","name":"...","detail":"...","owner":"..."}],"activeGoals":["..."]}}
         """
 
         let raw: String?
@@ -878,7 +1295,8 @@ final class StorySessionService: ObservableObject {
             currentObjective: parsed.currentObjective.nonEmpty ?? fallback.currentObjective,
             lastTurnProgress: parsed.lastTurnProgress.nonEmpty ?? fallback.lastTurnProgress,
             lastSceneSummary: parsed.lastSceneSummary.nonEmpty ?? fallback.lastSceneSummary,
-            unresolvedHooks: normalizedHooks(parsed.unresolvedHooks, fallback: fallback.unresolvedHooks ?? [])
+            unresolvedHooks: normalizedHooks(parsed.unresolvedHooks, fallback: fallback.unresolvedHooks ?? []),
+            storyState: parsed.storyState ?? fallback.storyState
         )
     }
 
