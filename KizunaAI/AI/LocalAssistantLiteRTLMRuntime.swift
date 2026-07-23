@@ -29,6 +29,31 @@ struct LocalAssistantLiteRTLMRequest {
     let topP: Float
     let topK: Int
     let seed: UInt32
+    // 起動確認ではGPU初期化を避け、CPUで本体を読めるかだけを検査する。
+    let preferGPU: Bool
+
+    // preferGPUを含めた明示的な初期化子。Swiftの合成memberwise initに依存しない。
+    init(
+        prompt: String,
+        systemPrompt: String?,
+        modelPath: String,
+        maxTokens: Int,
+        temperature: Float,
+        topP: Float,
+        topK: Int,
+        seed: UInt32,
+        preferGPU: Bool = true
+    ) {
+        self.prompt = prompt
+        self.systemPrompt = systemPrompt
+        self.modelPath = modelPath
+        self.maxTokens = maxTokens
+        self.temperature = temperature
+        self.topP = topP
+        self.topK = topK
+        self.seed = seed
+        self.preferGPU = preferGPU
+    }
 }
 
 private final class LiteRTLMResultBox: @unchecked Sendable {
@@ -190,7 +215,8 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                 temperature: 0,
                 topP: 0.9,
                 topK: 20,
-                seed: 7
+                seed: 7,
+                preferGPU: false
             )
         )
     }
@@ -327,44 +353,32 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             let cpuThreadCount = min(max(ProcessInfo.processInfo.activeProcessorCount / 2, 2), 4)
             var lastError: Error?
 
-            do {
-                let text = try await self.generateText(
-                    sizedRequest,
-                    backend: .gpu,
-                    maxNumTokens: maxNumTokens,
-                    cachePath: cacheURL.path
-                )
-                let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                return VIUKEmbeddedRuntimeResult(
-                    success: !cleaned.isEmpty,
-                    text: cleaned.isEmpty ? nil : cleaned,
-                    errorMessage: cleaned.isEmpty ? "LiteRT-LM runtime の応答が空でした。" : nil
-                )
-            } catch {
-                lastError = error
-            }
-
-            do {
-                let text = try await self.generateText(
-                    sizedRequest,
-                    backend: .cpu(threadCount: cpuThreadCount),
-                    maxNumTokens: maxNumTokens,
-                    cachePath: cacheURL.path
-                )
-                let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                return VIUKEmbeddedRuntimeResult(
-                    success: !cleaned.isEmpty,
-                    text: cleaned.isEmpty ? nil : cleaned,
-                    errorMessage: cleaned.isEmpty ? "LiteRT-LM runtime の応答が空でした。" : nil
-                )
-            } catch {
-                lastError = error
+            let backends: [Backend] = request.preferGPU
+                ? [.gpu, .cpu(threadCount: cpuThreadCount)]
+                : [.cpu(threadCount: cpuThreadCount)]
+            for backend in backends {
+                do {
+                    let text = try await self.generateText(
+                        sizedRequest,
+                        backend: backend,
+                        maxNumTokens: maxNumTokens,
+                        cachePath: cacheURL.path
+                    )
+                    let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return VIUKEmbeddedRuntimeResult(
+                        success: !cleaned.isEmpty,
+                        text: cleaned.isEmpty ? nil : cleaned,
+                        errorMessage: cleaned.isEmpty ? "LiteRT-LM runtime の応答が空でした。" : nil
+                    )
+                } catch {
+                    lastError = error
+                }
             }
 
             return VIUKEmbeddedRuntimeResult(
                 success: false,
                 text: nil,
-                errorMessage: "LiteRT-LM runtime error: \(lastError?.localizedDescription ?? "unknown error")。GPU から CPU へ切り替えても初期化できませんでした。"
+                errorMessage: "LiteRT-LM runtime error: \(lastError?.localizedDescription ?? "unknown error")。モデルの読み込みを完了できませんでした。"
             )
         }
     }
@@ -482,20 +496,21 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         return response.toString
     }
 
-	    nonisolated private func runtimeSizedRequest(_ request: LocalAssistantLiteRTLMRequest) -> LocalAssistantLiteRTLMRequest {
-	        LocalAssistantLiteRTLMRequest(
-	            prompt: clipped(request.prompt, maxCharacters: 6_000),
-	            systemPrompt: request.systemPrompt.map { clipped($0, maxCharacters: 2_000) },
-	            modelPath: request.modelPath,
-	            maxTokens: min(request.maxTokens, 512),
-	            temperature: request.temperature,
+    nonisolated private func runtimeSizedRequest(_ request: LocalAssistantLiteRTLMRequest) -> LocalAssistantLiteRTLMRequest {
+        LocalAssistantLiteRTLMRequest(
+            prompt: clipped(request.prompt, maxCharacters: 6_000),
+            systemPrompt: request.systemPrompt.map { clipped($0, maxCharacters: 2_000) },
+            modelPath: request.modelPath,
+            maxTokens: min(request.maxTokens, 512),
+            temperature: request.temperature,
             topP: request.topP,
             topK: request.topK,
-            seed: request.seed
+            seed: request.seed,
+            preferGPU: request.preferGPU
         )
     }
 
-	    nonisolated private func clipped(_ value: String, maxCharacters: Int) -> String {
+    nonisolated private func clipped(_ value: String, maxCharacters: Int) -> String {
         guard value.count > maxCharacters else { return value }
         let suffix = value.suffix(maxCharacters)
         return """

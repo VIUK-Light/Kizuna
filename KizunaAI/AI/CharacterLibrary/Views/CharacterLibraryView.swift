@@ -432,9 +432,11 @@ struct CharacterLibraryView: View {
                     .clipShape(Circle())
             )
         }
-        if let key = c.imageKey, !key.isEmpty {
+        if let key = c.imageKey,
+           !key.isEmpty,
+           let image = characterLibraryPlatformImage(named: key) {
             return AnyView(
-                Image(key)
+                Image(characterLibraryPlatformImage: image)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size, height: size)
@@ -442,7 +444,6 @@ struct CharacterLibraryView: View {
             )
         }
         let name = c.displayName.isEmpty ? c.name : c.displayName
-        let initial = name.first.map(String.init) ?? "?"
         var sum = 0
         for s in name.unicodeScalars { sum &+= Int(s.value) }
         let hue = Double(sum % 360) / 360.0
@@ -459,8 +460,8 @@ struct CharacterLibraryView: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                Text(initial)
-                    .font(.system(size: size * 0.45, weight: .bold))
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.42, weight: .semibold))
                     .foregroundStyle(.white)
             }
             .frame(width: size, height: size)
@@ -472,6 +473,17 @@ struct CharacterLibraryView: View {
         return NSImage(data: data)
         #elseif canImport(UIKit)
         return UIImage(data: data)
+        #else
+        return nil
+        #endif
+    }
+
+    // 未登録の画像名をSwiftUIへ渡さず、既存のイニシャル表示へフォールバックする。
+    private func characterLibraryPlatformImage(named name: String) -> CharacterLibraryPlatformImage? {
+        #if canImport(AppKit)
+        return NSImage(named: name)
+        #elseif canImport(UIKit)
+        return UIImage(named: name)
         #else
         return nil
         #endif

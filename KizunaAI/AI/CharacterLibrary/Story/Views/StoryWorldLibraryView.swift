@@ -278,8 +278,10 @@ struct StoryWorldLibraryView: View {
                 .resizable()
                 .scaledToFill()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let key = character?.imageKey, !key.isEmpty {
-            Image(key)
+        } else if let key = character?.imageKey,
+                  !key.isEmpty,
+                  let image = storyLibraryPlatformImage(named: key) {
+            Image(storyLibraryPlatformImage: image)
                 .resizable()
                 .scaledToFill()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -302,6 +304,17 @@ struct StoryWorldLibraryView: View {
         return NSImage(data: data)
         #elseif canImport(UIKit)
         return UIImage(data: data)
+        #else
+        return nil
+        #endif
+    }
+
+    // 未登録の画像名をSwiftUIへ渡さず、ログを発生させない。
+    private func storyLibraryPlatformImage(named name: String) -> StoryLibraryPlatformImage? {
+        #if canImport(AppKit)
+        return NSImage(named: name)
+        #elseif canImport(UIKit)
+        return UIImage(named: name)
         #else
         return nil
         #endif

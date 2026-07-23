@@ -39,6 +39,10 @@ struct StoryWorldCreateView: View {
     @StateObject private var vm: StoryWorldCreateViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var newTag = ""
+    // Lorebook入力は物語作成画面に集約し、独立キャラ管理を増やさない。
+    @State private var newLorebookTitle = ""
+    @State private var newLorebookKeywords = ""
+    @State private var newLorebookContent = ""
     @State private var showCharacterPicker = false
     @State private var showCharacterCreator = false
     @FocusState private var generationBriefFocused: Bool
@@ -69,6 +73,7 @@ struct StoryWorldCreateView: View {
                     settingSection
                     openingSceneSection
                     castSection
+                    lorebookSection
                     relationshipSection
                     tagsSection
                     if let err = vm.saveError {
@@ -389,11 +394,96 @@ struct StoryWorldCreateView: View {
                     }.labelsHidden().pickerStyle(.menu)
                 }
 
+                HStack(alignment: .top) {
+                    Text("物語形式").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: { vm.draft.resolvedCastMode },
+                            set: { vm.draft.castMode = $0 }
+                        )
+                    ) {
+                        ForEach(StoryCastMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(vm.draft.resolvedCastMode.detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 HStack {
                     Text("公開状態").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Picker("", selection: $vm.draft.visibility) {
                         ForEach(CharacterVisibility.allCases) { v in Label(v.displayName, systemImage: v.iconName).tag(v) }
                     }.labelsHidden().pickerStyle(.menu)
+                }
+            }
+        }
+    }
+
+    // MARK: - Lorebook
+
+    /// キーワードが出た時だけAIへ渡す設定カード。
+    private var lorebookSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionTitle("Lorebook / キーワード設定")
+            card {
+                Text("世界観・場所・秘密などを登録すると、関連する会話の時だけAIへ渡します。")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                TextField("タイトル（例: 夜の図書館のルール）", text: $newLorebookTitle)
+                    .textFieldStyle(.roundedBorder)
+                TextField("キーワード（例: 図書館、禁書、夜）", text: $newLorebookKeywords)
+                    .textFieldStyle(.roundedBorder)
+                TextEditor(text: $newLorebookContent)
+                    .frame(minHeight: 74)
+                    .padding(6)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12)))
+                HStack {
+                    Spacer()
+                    Button {
+                        vm.addLorebookEntry(
+                            title: newLorebookTitle,
+                            keywordsText: newLorebookKeywords,
+                            content: newLorebookContent
+                        )
+                        newLorebookTitle = ""
+                        newLorebookKeywords = ""
+                        newLorebookContent = ""
+                    } label: {
+                        Label("設定を追加", systemImage: "plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(newLorebookTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || newLorebookContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                ForEach(vm.lorebookDrafts) { entry in
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entry.title).font(.system(size: 12, weight: .bold))
+                            Text(entry.keywords.joined(separator: " / "))
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Text(entry.content)
+                                .font(.system(size: 11))
+                                .lineLimit(3)
+                        }
+                        Spacer(minLength: 0)
+                        Button {
+                            vm.removeLorebookEntry(id: entry.id)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(9)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.035)))
                 }
             }
         }
@@ -630,20 +720,21 @@ struct StoryWorldCreateView: View {
                 .scaledToFill()
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        } else if let key = profile.imageKey, !key.isEmpty {
-            Image(key)
+        } else if let key = profile.imageKey,
+                  !key.isEmpty,
+                  let image = storyPlatformImage(named: key) {
+            Image(storyPlatformImage: image)
                 .resizable()
                 .scaledToFill()
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         } else {
-            let name = profile.displayName.isEmpty ? profile.name : profile.displayName
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.accentColor.opacity(0.16))
                 .frame(width: size, height: size)
                 .overlay {
-                    Text(String(name.prefix(1)).isEmpty ? "?" : String(name.prefix(1)))
-                        .font(.system(size: max(11, size * 0.36), weight: .bold))
+                    Image(systemName: "person.fill")
+                        .font(.system(size: max(16, size * 0.36), weight: .semibold))
                         .foregroundStyle(Color.accentColor)
                 }
         }
@@ -654,6 +745,17 @@ struct StoryWorldCreateView: View {
         return NSImage(data: data)
         #elseif canImport(UIKit)
         return UIImage(data: data)
+        #else
+        return nil
+        #endif
+    }
+
+    // 未登録の画像名をSwiftUIへ渡さず、イニシャルのフォールバックを使う。
+    private func storyPlatformImage(named name: String) -> StoryPlatformImage? {
+        #if canImport(AppKit)
+        return NSImage(named: name)
+        #elseif canImport(UIKit)
+        return UIImage(named: name)
         #else
         return nil
         #endif

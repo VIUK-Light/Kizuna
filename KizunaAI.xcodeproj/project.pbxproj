@@ -10,9 +10,11 @@
 		06D0D93E289A58585617D2D9 /* SceneProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CEC45D9187A7AD9E3CF9DE4 /* SceneProtocols.swift */; };
 		0AFD028991A3FFCC665B3769 /* SafetyPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE6E2DA7A0E7BF418B6A3C7 /* SafetyPipeline.swift */; };
 		1646F9BF705069B3CABED43D /* KizunaSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */; };
+		1646F9BF705069B3CABED44 /* KizunaLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2337228D2EF9CFE2E9A788EA /* KizunaLanguage.swift */; };
 		1E1CC650E2302CB00D1DF1B2 /* ReportCharacterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA3C02F943DFC138887DC5B /* ReportCharacterView.swift */; };
 		1E8D68F6FCAF235F2B84FE19 /* MemoryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = E675C1D433A2840AB2461CFD /* MemoryRepository.swift */; };
 		1F0627CABF8181F36724081E /* Apache-2.0.txt in Resources */ = {isa = PBXBuildFile; fileRef = C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */; };
+		2E7A1F4C8E8F4E0BAE8A1D9C /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 2E7A1F4C8E8F4E0BAE8A1D9B /* Localizable.xcstrings */; };
 		2B2592AAD858D3D96862FAF3 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26955C791E26219A2224961B /* AppBrand.swift */; };
 		2BEDC445F7013C3F2361CD4D /* AIExecutionModes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */; };
 		36622231CDB22D277C6DF874 /* MockMemoryAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A976D1A75B17989A4E31F /* MockMemoryAdapters.swift */; };
@@ -101,10 +103,12 @@
 		1FB7C20DBE13F7AA0FD7580B /* CharacterLibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLibraryViewModel.swift; sourceTree = "<group>"; };
 		208B4E1949CC5B273BB335A7 /* CharacterMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterMemory.swift; sourceTree = "<group>"; };
 		2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaSettingsView.swift; sourceTree = "<group>"; };
+		2337228D2EF9CFE2E9A788EA /* KizunaLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaLanguage.swift; sourceTree = "<group>"; };
 		24DDE9C0180DDB8FD296DC8F /* PersonaSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaSettings.swift; sourceTree = "<group>"; };
 		26955C791E26219A2224961B /* AppBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBrand.swift; sourceTree = "<group>"; };
 		287757A56CBE15F666DC908D /* CharacterLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLibraryView.swift; sourceTree = "<group>"; };
 		2A196A347E7975CA1A50C5D8 /* AIToolCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIToolCatalog.swift; sourceTree = "<group>"; };
+		2E7A1F4C8E8F4E0BAE8A1D9B /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		303798654908AC5FC3B19558 /* LocalAssistantEmbeddedRuntime.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LocalAssistantEmbeddedRuntime.h; sourceTree = "<group>"; };
 		374F9636C3B27129BBD78882 /* CharacterReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterReport.swift; sourceTree = "<group>"; };
 		3802A51489C449BBE1A57390 /* LocalAssistantLiteRTLMRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantLiteRTLMRuntime.swift; sourceTree = "<group>"; };
@@ -258,6 +262,7 @@
 				4A29C9D8E926D83E24A952F4 /* AppTheme.swift */,
 				785139BD8175262981B598A1 /* KizunaAIApp.swift */,
 				5DDF61BECBE7F41CD4EAD9BA /* KizunaDataMigration.swift */,
+				2337228D2EF9CFE2E9A788EA /* KizunaLanguage.swift */,
 				2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */,
 				C611D89D7CAC7F09D41C0D9A /* KizunaUICompatibility.swift */,
 			);
@@ -318,6 +323,7 @@
 			isa = PBXGroup;
 			children = (
 				7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */,
+				2E7A1F4C8E8F4E0BAE8A1D9B /* Localizable.xcstrings */,
 				87FA8C1E60CADDD358A86BE8 /* Info.plist */,
 				1630E4D8FBC935FD5C542996 /* AI */,
 				4A59A16DAD041145F9F40D88 /* App */,
@@ -522,11 +528,12 @@
 				};
 			};
 			buildConfigurationList = 1BA2B5827AB536892D35D5F5 /* Build configuration list for PBXProject "KizunaAI" */;
-			developmentRegion = en;
+			developmentRegion = ja;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				Base,
 				en,
+				ja,
 			);
 			mainGroup = E936FEF38B4615B8183F68F7;
 			minimizedProjectReferenceProxies = 1;
@@ -549,6 +556,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1F0627CABF8181F36724081E /* Apache-2.0.txt in Resources */,
+				2E7A1F4C8E8F4E0BAE8A1D9C /* Localizable.xcstrings in Resources */,
 				8FDCB3669503DEDD95786DA0 /* Assets.xcassets in Resources */,
 				41E3307E2DD22AF0123D2469 /* LiteRT-LM-COPYRIGHT.txt in Resources */,
 				FF358BF04BF87756CE4B881F /* SeedStoryPacks.json in Resources */,
@@ -612,6 +620,7 @@
 				B86BE41B9AAC76DFB1A04B37 /* CharacterTemplateSeed.swift in Sources */,
 				B29F5AD5678DACCCEDD9CB4B /* KeychainHelper.swift in Sources */,
 				CD7F4B290DCF9E71F3BDDDA0 /* KizunaAIApp.swift in Sources */,
+				1646F9BF705069B3CABED44 /* KizunaLanguage.swift in Sources */,
 				B0BDEAE6C995D61479C4A064 /* KizunaDataMigration.swift in Sources */,
 				84E2BB3BA295D977ABF0DCF3 /* KizunaRuntimeCompatibility.swift in Sources */,
 				1646F9BF705069B3CABED43D /* KizunaSettingsView.swift in Sources */,

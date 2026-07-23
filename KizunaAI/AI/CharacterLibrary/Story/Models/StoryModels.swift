@@ -6,9 +6,9 @@
 - 主な型:
     StoryWorld, CastMember, CastRole, IntroductionTiming,
     CharacterRelationship, RelationshipType, StoryScene,
-    StorySession, StoryMessage, StoryMessageAuthor.
+    StorySession, StoryMessage, StoryMessageAuthor, StoryState, StoryLorebookEntry, StoryMemory.
 - 編集ポイント: 物語進行に関する状態 (active 制限、シーン遷移、関係性 enum 拡張)。
-- 制約: activeCharacterIds は 1 シーンあたり最大 3 名に制限する (UI/Service 側で enforced)。
+- 制約: 群像劇の activeCharacterIds は最大 3 名、単体物語は主役1名に制限する (UI/Service 側で enforced)。
 */
 
 import Foundation
@@ -126,6 +126,8 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
     var characterIds: [UUID]
     /// メインキャラ (主人公的・カバー画像扱い)。
     var mainCharacterId: UUID?
+    /// 物語の基本形式。nil は旧データ互換のため単体物語として扱う。
+    var castMode: StoryCastMode?
     /// 標準搭載データ。ユーザーが削除・編集できない。
     var isSystemProtected: Bool?
     var safetyRules: [String]
@@ -147,6 +149,7 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
         mood: String = "",
         characterIds: [UUID] = [],
         mainCharacterId: UUID? = nil,
+        castMode: StoryCastMode? = nil,
         isSystemProtected: Bool? = false,
         safetyRules: [String] = [],
         visibility: CharacterVisibility = .private,
@@ -166,11 +169,42 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
         self.mood = mood
         self.characterIds = characterIds
         self.mainCharacterId = mainCharacterId
+        self.castMode = castMode
         self.isSystemProtected = isSystemProtected
         self.safetyRules = safetyRules
         self.visibility = visibility
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    /// Zeta型の「ユーザー + 主役1人」を既定にする。
+    var resolvedCastMode: StoryCastMode {
+        castMode ?? .solo
+    }
+
+    var isSoloStory: Bool {
+        resolvedCastMode == .solo
+    }
+}
+
+enum StoryCastMode: String, Codable, CaseIterable, Identifiable, Hashable {
+    case solo
+    case ensemble
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .solo: return "単体物語"
+        case .ensemble: return "群像劇"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .solo: return "ユーザーと主役NPC1人を中心に進める"
+        case .ensemble: return "複数のキャラクターが場面に参加する"
+        }
     }
 }
 
@@ -373,10 +407,272 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
     }
 }
 
+// MARK: - StoryState (AIが更新する構造化コンテキスト)
+
+/// 会話本文とは別に保持する、現在の物語状態。
+/// UIのInfo Box、次回プロンプト、将来のクラウド同期で同じ値を使う。
+struct StoryState: Codable, Equatable, Hashable {
+    var location: String
+    var timeOfDay: String
+    var mood: String
+    var weather: String
+    var relationshipStage: String
+    var characterStates: [StoryCharacterState]
+    var inventory: [StoryInventoryItem]
+    var activeGoals: [String]
+    var updatedAt: Date
+
+    init(
+        location: String = "",
+        timeOfDay: String = "",
+        mood: String = "",
+        weather: String = "",
+        relationshipStage: String = "",
+        characterStates: [StoryCharacterState] = [],
+        inventory: [StoryInventoryItem] = [],
+        activeGoals: [String] = [],
+        updatedAt: Date = Date()
+    ) {
+        self.location = location
+        self.timeOfDay = timeOfDay
+        self.mood = mood
+        self.weather = weather
+        self.relationshipStage = relationshipStage
+        self.characterStates = characterStates
+        self.inventory = inventory
+        self.activeGoals = activeGoals
+        self.updatedAt = updatedAt
+    }
+}
+
+/// シーンに登場しているキャラクターの可変状態。
+struct StoryCharacterState: Codable, Equatable, Hashable, Identifiable {
+    var id: UUID
+    var characterId: UUID?
+    var characterName: String
+    var mood: String
+    var goal: String
+    var relationship: String
+    var innerThought: String
+
+    init(
+        id: UUID = UUID(),
+        characterId: UUID? = nil,
+        characterName: String,
+        mood: String = "",
+        goal: String = "",
+        relationship: String = "",
+        innerThought: String = ""
+    ) {
+        self.id = id
+        self.characterId = characterId
+        self.characterName = characterName
+        self.mood = mood
+        self.goal = goal
+        self.relationship = relationship
+        self.innerThought = innerThought
+    }
+}
+
+/// 物語中の所持品・重要オブジェクト。
+struct StoryInventoryItem: Codable, Equatable, Hashable, Identifiable {
+    var id: UUID
+    var name: String
+    var detail: String
+    var owner: String
+
+    init(id: UUID = UUID(), name: String, detail: String = "", owner: String = "") {
+        self.id = id
+        self.name = name
+        self.detail = detail
+        self.owner = owner
+    }
+}
+
+// MARK: - StoryStatePatch (AIレスポンス専用の差分)
+
+/// AIには全文状態ではなく、今回変化したフィールドだけをJSONで返させる。
+struct StoryStatePatch: Codable, Equatable, Hashable {
+    var location: String?
+    var timeOfDay: String?
+    var mood: String?
+    var weather: String?
+    var relationshipStage: String?
+    var characterUpdates: [StoryCharacterStatePatch]?
+    var inventoryChanges: [StoryInventoryChange]?
+    var activeGoals: [String]?
+
+    /// 既存値を保ちつつ、空文字の更新は無視する。
+    func applying(to state: StoryState, characterIndex: [UUID: CharacterProfile]) -> StoryState {
+        var next = state
+        if let location, !location.isEmpty { next.location = location }
+        if let timeOfDay, !timeOfDay.isEmpty { next.timeOfDay = timeOfDay }
+        if let mood, !mood.isEmpty { next.mood = mood }
+        if let weather, !weather.isEmpty { next.weather = weather }
+        if let relationshipStage, !relationshipStage.isEmpty { next.relationshipStage = relationshipStage }
+        if let activeGoals { next.activeGoals = Array(activeGoals.filter { !$0.isEmpty }.prefix(6)) }
+
+        // キャラクター名で返った更新を、現在のキャストのUUIDへ結びつける。
+        for update in characterUpdates ?? [] {
+            let normalizedName = update.characterName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedName.isEmpty else { continue }
+            let matchedID = characterIndex.first { _, profile in
+                let displayName = profile.displayName.isEmpty ? profile.name : profile.displayName
+                return displayName == normalizedName || profile.name == normalizedName
+            }?.key
+            let index = next.characterStates.firstIndex { current in
+                // matchedID がない場合に nil == nil で別キャラへ誤適用しない。
+                if let matchedID { return current.characterId == matchedID }
+                return current.characterName == normalizedName
+            }
+            if let index {
+                // 今回JSONに含まれなかった項目は、前回値をそのまま保持する。
+                var value = next.characterStates[index]
+                value.characterId = matchedID ?? value.characterId
+                value.characterName = normalizedName
+                value.mood = update.mood ?? value.mood
+                value.goal = update.goal ?? value.goal
+                value.relationship = update.relationship ?? value.relationship
+                value.innerThought = update.innerThought ?? value.innerThought
+                next.characterStates[index] = value
+            } else {
+                next.characterStates.append(
+                    StoryCharacterState(
+                        characterId: matchedID,
+                        characterName: normalizedName,
+                        mood: update.mood ?? "",
+                        goal: update.goal ?? "",
+                        relationship: update.relationship ?? "",
+                        innerThought: update.innerThought ?? ""
+                    )
+                )
+            }
+        }
+
+        // 所持品は add/update/remove を小さな差分として適用する。
+        for change in inventoryChanges ?? [] {
+            let name = change.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            if change.action == .remove {
+                next.inventory.removeAll { $0.name == name }
+            } else {
+                let value = StoryInventoryItem(name: name, detail: change.detail ?? "", owner: change.owner ?? "")
+                if let index = next.inventory.firstIndex(where: { $0.name == name }) {
+                    next.inventory[index] = value
+                } else {
+                    next.inventory.append(value)
+                }
+            }
+        }
+        next.updatedAt = Date()
+        return next
+    }
+}
+
+struct StoryCharacterStatePatch: Codable, Equatable, Hashable {
+    var characterName: String
+    var mood: String?
+    var goal: String?
+    var relationship: String?
+    var innerThought: String?
+}
+
+enum StoryInventoryChangeAction: String, Codable, Hashable {
+    case add
+    case update
+    case remove
+}
+
+struct StoryInventoryChange: Codable, Equatable, Hashable {
+    var action: StoryInventoryChangeAction
+    var name: String
+    var detail: String?
+    var owner: String?
+}
+
+// MARK: - StoryLorebookEntry (キーワード連動の設定)
+
+/// ZetaのLorebookに相当する、世界・キャスト共通の設定カード。
+/// キーワードが会話やシーンに現れた時だけプロンプトへ投入する。
+struct StoryLorebookEntry: Codable, Identifiable, Equatable, Hashable {
+    var id: UUID
+    var storyWorldId: UUID
+    var characterId: UUID?
+    var title: String
+    var keywords: [String]
+    var content: String
+    var priority: Int
+    var isEnabled: Bool
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        storyWorldId: UUID,
+        characterId: UUID? = nil,
+        title: String,
+        keywords: [String] = [],
+        content: String,
+        priority: Int = 50,
+        isEnabled: Bool = true,
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.storyWorldId = storyWorldId
+        self.characterId = characterId
+        self.title = title
+        self.keywords = keywords
+        self.content = content
+        self.priority = priority
+        self.isEnabled = isEnabled
+        self.updatedAt = updatedAt
+    }
+}
+
+// MARK: - StoryMemory (この物語だけの思い出)
+
+/// 全体メモリー(CharacterMemory)とは分離して、StoryWorld内の出来事だけを保持する。
+/// 別の物語へ持ち越さないため、storyWorldIdを必須にする。
+struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
+    var id: UUID
+    var storyWorldId: UUID
+    var characterId: UUID?
+    var text: String
+    var category: MemoryCategory
+    var importance: Double
+    var source: MemorySource
+    var createdAt: Date
+    var lastUsedAt: Date?
+
+    init(
+        id: UUID = UUID(),
+        storyWorldId: UUID,
+        characterId: UUID? = nil,
+        text: String,
+        category: MemoryCategory = .event,
+        importance: Double = 0.5,
+        source: MemorySource = .system,
+        createdAt: Date = Date(),
+        lastUsedAt: Date? = nil
+    ) {
+        self.id = id
+        self.storyWorldId = storyWorldId
+        self.characterId = characterId
+        self.text = text
+        self.category = category
+        self.importance = min(max(importance, 0.0), 1.0)
+        self.source = source
+        self.createdAt = createdAt
+        self.lastUsedAt = lastUsedAt
+    }
+}
+
 enum StoryConstants {
     /// 1 シーンで同時に登場できるキャラの上限。プロンプト肥大化と
     /// レイテンシ悪化を防ぐためにハードキャップする。
     static let maxActiveCharacters: Int = 3
+
+    /// 単体物語ではAI発話候補を1人に固定する。
+    static let soloActiveCharacters: Int = 1
 }
 
 // MARK: - StorySession (会話セッション本体)
@@ -421,6 +717,8 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
     var lastTurnProgress: String?
     var lastSceneSummary: String?
     var unresolvedHooks: [String]?
+    /// 本文とは独立して保存する、AI更新可能な現在状態。
+    var storyState: StoryState?
     /// 直近ターンでユーザーが選んだモデル名。実行結果の透明性表示に使う。
     var lastSelectedModelName: String?
     /// 直近ターンで実際に使ったバックエンド、または未起動/失敗理由の短い状態。
@@ -439,6 +737,7 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         lastTurnProgress: String? = nil,
         lastSceneSummary: String? = nil,
         unresolvedHooks: [String]? = nil,
+        storyState: StoryState? = nil,
         lastSelectedModelName: String? = nil,
         lastUsedBackendName: String? = nil,
         createdAt: Date = Date(),
@@ -454,6 +753,7 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         self.lastTurnProgress = lastTurnProgress
         self.lastSceneSummary = lastSceneSummary
         self.unresolvedHooks = unresolvedHooks
+        self.storyState = storyState
         self.lastSelectedModelName = lastSelectedModelName
         self.lastUsedBackendName = lastUsedBackendName
         self.createdAt = createdAt

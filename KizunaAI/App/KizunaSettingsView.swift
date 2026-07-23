@@ -11,6 +11,8 @@ struct KizunaSettingsView: View {
     @State private var selectedStandardModelURL = LocalAssistantModelProfile.defaultDownloadURL
     @State private var saveMessage: String?
     @State private var showDeleteAlert = false
+    @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
+    @AppStorage("kizuna.debug.restSuggestion.enabled") private var debugRestSuggestionEnabled = false
 
     private var canDownload: Bool {
         modelSourceSelection == .standard
@@ -20,6 +22,17 @@ struct KizunaSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("表示言語") {
+                    Picker("言語", selection: $languageRawValue) {
+                        ForEach(KizunaLanguage.allCases) { language in
+                            Text(language.displayName).tag(language.rawValue)
+                        }
+                    }
+                    Text("Kizuna内の表示だけが切り替わります。端末全体の言語は変更しません。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("NAGI（Gemma4 31B API）") {
                     SecureField("Google AI APIキー", text: $nagiAPIKey)
                         .textContentType(.password)
@@ -65,6 +78,15 @@ struct KizunaSettingsView: View {
                         Text("アプリに設定された標準リンクからダウンロードします。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        // 認証が必要な標準モデルだけ、トークン入力を表示する。
+                        if selectedStandardModelRequiresToken {
+                            SecureField("Hugging Faceアクセストークン（必要な場合）", text: $modelAccessToken)
+                                .textContentType(.password)
+                            Text("Gemma 3n E2BはHugging Faceで利用許諾を確認したアクセストークンが必要です。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
                         TextField("Hugging FaceのファイルURL", text: $modelSourceURL)
                             .textContentType(.URL)
@@ -113,7 +135,10 @@ struct KizunaSettingsView: View {
                         }
 
                         Button("起動確認") {
-                            saveSecretsAndModelSource()
+                            // 起動確認は「現在保存されているモデル」を検査するだけ。
+                            // ここでフォームのURLを保存すると、URL差し替え扱いになり、
+                            // 途中状態や既存モデルを消してしまうことがある。
+                            modelManager.updateAccessToken(modelAccessToken)
                             modelManager.recheckRuntimeAvailability()
                         }
                         .disabled(modelManager.installedModelURL == nil || modelManager.isDownloading)
@@ -124,6 +149,29 @@ struct KizunaSettingsView: View {
                             showDeleteAlert = true
                         }
                     }
+                    }
+
+                Section("デバッグ") {
+                    Toggle(
+                        "デバッグオプションを有効化",
+                        isOn: $debugRestSuggestionEnabled
+                    )
+                    Button("休憩提案を30秒後に表示") {
+                        KizunaDebugOptions.requestRestSuggestionUI()
+                        dismiss()
+                    }
+                    .disabled(!debugRestSuggestionEnabled)
+                    Text("押すと設定を閉じ、最初のストーリーを開いて30秒後に画面内カードを表示します。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("危険相談サポートを30秒後に表示") {
+                        KizunaDebugOptions.requestSafetyConcernUI()
+                        dismiss()
+                    }
+                    .disabled(!debugRestSuggestionEnabled)
+                    Text("押すと設定を閉じ、最初のストーリーを開いて30秒後に相談サポートカードを表示します。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("データ保存先") {
@@ -192,6 +240,10 @@ struct KizunaSettingsView: View {
 
     private var standardModelOptions: [LocalAssistantModelProfile.DownloadOption] {
         LocalAssistantModelProfile.standardDownloadOptions
+    }
+
+    private var selectedStandardModelRequiresToken: Bool {
+        selectedStandardModelURL.contains("google/gemma-3n")
     }
 }
 

@@ -37,6 +37,24 @@ protocol StorySessionRepository: AnyObject {
     func deleteSession(id: UUID) async throws
 }
 
+// MARK: - Lorebook repository
+
+/// Lorebookを別テーブルとして扱うことで、将来CloudKit/Supabaseへ差し替えやすくする。
+protocol StoryLorebookRepository: AnyObject {
+    func fetchEntries(storyWorldId: UUID) async throws -> [StoryLorebookEntry]
+    func saveEntry(_ entry: StoryLorebookEntry) async throws
+    func deleteEntry(id: UUID) async throws
+}
+
+/// 物語内メモリー。全体のCharacterMemoryとは保存先・取得条件を分ける。
+protocol StoryMemoryRepository: AnyObject {
+    func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory]
+    func saveMemory(_ memory: StoryMemory) async throws
+    func deleteMemory(id: UUID) async throws
+    func deleteAllMemories(storyWorldId: UUID) async throws
+    func markUsed(ids: [UUID]) async throws
+}
+
 // MARK: - Local JSON impls
 
 final class LocalJSONStoryWorldRepository: StoryWorldRepository {
@@ -114,5 +132,96 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
     }
     func deleteSession(id: UUID) async throws {
         try await store.delete(matching: { $0.id == id })
+    }
+}
+
+// MARK: - Local Lorebook implementation
+
+/// 現在はローカルJSON。Repository境界はクラウド同期実装と共通にする。
+final class LocalJSONStoryLorebookRepository: StoryLorebookRepository {
+    private let store = LocalJSONStore<StoryLorebookEntry>(fileName: "story_lorebook.json")
+
+    func fetchEntries(storyWorldId: UUID) async throws -> [StoryLorebookEntry] {
+        try await store.load()
+            .filter { $0.storyWorldId == storyWorldId && $0.isEnabled }
+            .sorted { $0.priority > $1.priority }
+    }
+
+    func saveEntry(_ entry: StoryLorebookEntry) async throws {
+        var value = entry
+        value.updatedAt = Date()
+        try await store.appendOrReplace(value, idEquals: { $0.id == $1.id })
+    }
+
+    func deleteEntry(id: UUID) async throws {
+        try await store.delete(matching: { $0.id == id })
+    }
+}
+
+// MARK: - Local Story Memory implementation
+
+/// 現在はローカルJSON。将来クラウド同期へ差し替えてもService側の呼び出しは変えない。
+final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
+    private let store = LocalJSONStore<StoryMemory>(fileName: "story_memories.json")
+    private let perWorldLimit = 120
+
+    func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] {
+        try await store.load()
+            .filter { $0.storyWorldId == storyWorldId }
+            .sorted { lhs, rhs in
+                if lhs.importance != rhs.importance { return lhs.importance > rhs.importance }
+                return (lhs.lastUsedAt ?? lhs.createdAt) > (rhs.lastUsedAt ?? rhs.createdAt)
+            }
+    }
+
+    func saveMemory(_ memory: StoryMemory) async throws {
+        var all = (try? await store.load()) ?? []
+        let normalized = normalize(memory.text)
+        if let index = all.firstIndex(where: {
+            $0.storyWorldId == memory.storyWorldId && normalize($0.text) == normalized
+        }) {
+            var existing = all[index]
+            existing.importance = max(existing.importance, memory.importance)
+            existing.lastUsedAt = Date()
+            all[index] = existing
+        } else {
+            all.append(memory)
+        }
+
+        // 物語ごとの上限を設け、古く重要度の低いものから自然に整理する。
+        let grouped = Dictionary(grouping: all, by: { $0.storyWorldId })
+        let kept = grouped.values.flatMap { values in
+            values.sorted {
+                if $0.importance != $1.importance { return $0.importance > $1.importance }
+                return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
+            }.prefix(perWorldLimit)
+        }
+        try await store.save(Array(kept))
+    }
+
+    func deleteMemory(id: UUID) async throws {
+        try await store.delete(matching: { $0.id == id })
+    }
+
+    func deleteAllMemories(storyWorldId: UUID) async throws {
+        try await store.delete(matching: { $0.storyWorldId == storyWorldId })
+    }
+
+    func markUsed(ids: [UUID]) async throws {
+        guard !ids.isEmpty else { return }
+        var all = (try? await store.load()) ?? []
+        let now = Date()
+        for index in all.indices where ids.contains(all[index].id) {
+            all[index].lastUsedAt = now
+        }
+        try await store.save(all)
+    }
+
+    private func normalize(_ text: String) -> String {
+        text.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }

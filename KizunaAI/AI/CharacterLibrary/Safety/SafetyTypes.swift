@@ -1,8 +1,8 @@
 /*
 仕様:
-- 役割: 安全性パイプラインで使う基本型一式 (Rating/Visibility/Action/Severity/Domain/Rule/Decision)。
+- 役割: 安全性パイプラインで使う基本型一式 (Rating/Visibility/Action/Severity/Domain/Rule/Decision/Concern)。
 - 主な型: SafetyRating, CharacterVisibility, SafetyAction, SafetySeverity, SafetyDomain,
-         SafetyRule, SafetyDecision。
+         SafetyRule, SafetyDecision, SafetyConcern。
 - 編集ポイント: 安全カテゴリーや判定結果の構造を変える時。
 */
 
@@ -143,4 +143,122 @@ struct SafetyDecision: Equatable, Hashable {
     }
 
     static let allow = SafetyDecision()
+}
+
+// MARK: - 相談サポート分類
+
+/// 危険な相談を「会話を止める理由」ではなく、UIサポートを出す分類として扱う。
+enum SafetyConcernCategory: String, CaseIterable, Hashable {
+    case emotionalDistress
+    case selfHarm
+    case violenceOrAbuse
+    case medicalUrgency
+    case generalSafety
+
+    var displayName: String {
+        switch self {
+        case .emotionalDistress: return "こころの悩み"
+        case .selfHarm: return "自分を傷つける悩み"
+        case .violenceOrAbuse: return "暴力・被害の悩み"
+        case .medicalUrgency: return "体調・医療の緊急性"
+        case .generalSafety: return "安全に関する悩み"
+        }
+    }
+}
+
+enum SafetyConcernLevel: String, CaseIterable, Hashable {
+    case supportive
+    case elevated
+    case urgent
+
+    var displayName: String {
+        switch self {
+        case .supportive: return "相談をおすすめ"
+        case .elevated: return "早めの相談をおすすめ"
+        case .urgent: return "今すぐ安全を優先"
+        }
+    }
+}
+
+/// UIから開ける相談先。地域・言語ごとの一覧へ差し替えられる構造にする。
+struct SafetySupportResource: Identifiable, Equatable, Hashable {
+    let id: String
+    let title: String
+    let detail: String
+    let actionTitle: String?
+    let urlString: String?
+
+    init(title: String, detail: String, actionTitle: String? = nil, urlString: String? = nil) {
+        self.id = title
+        self.title = title
+        self.detail = detail
+        self.actionTitle = actionTitle
+        self.urlString = urlString
+    }
+}
+
+/// 分類機が返す相談サポート情報。会話の本文を置き換えたり、送信を止めたりしない。
+struct SafetyConcern: Identifiable, Equatable, Hashable {
+    let id: UUID
+    let category: SafetyConcernCategory
+    let level: SafetyConcernLevel
+    let confidence: Double
+    let title: String
+    let message: String
+    let resources: [SafetySupportResource]
+
+    init(
+        id: UUID = UUID(),
+        category: SafetyConcernCategory,
+        level: SafetyConcernLevel,
+        confidence: Double,
+        title: String = "悩みがありますか？",
+        message: String,
+        resources: [SafetySupportResource]
+    ) {
+        self.id = id
+        self.category = category
+        self.level = level
+        self.confidence = confidence
+        self.title = title
+        self.message = message
+        self.resources = resources
+    }
+
+    /// DEBUGビルドで相談サポートUIを確認するためのサンプル。
+    static let debugSample = SafetyConcern(
+        category: .emotionalDistress,
+        level: .elevated,
+        confidence: 1.0,
+        message: "ひとりで抱え込まず、話せる人や専門の相談先につながることも選べます。",
+        resources: SafetyConcern.defaultResources
+    )
+
+    /// 日本語UIの初期相談先。将来は地域・言語設定から差し替える。
+    static let defaultResources: [SafetySupportResource] = [
+        SafetySupportResource(
+            title: "こころの健康相談統一ダイヤル",
+            detail: "0570-064-556。地域の公的なこころの相談窓口につながります。受付時間は地域により異なります。",
+            actionTitle: "電話する",
+            urlString: "tel://0570064556"
+        ),
+        SafetySupportResource(
+            title: "よりそいホットライン",
+            detail: "0120-279-338。話を聴いてほしい時の相談先です。",
+            actionTitle: "電話する",
+            urlString: "tel://0120279338"
+        ),
+        SafetySupportResource(
+            title: "緊急時（日本）",
+            detail: "今すぐ危険がある場合は、110（警察）または119（救急）を利用してください。",
+            actionTitle: nil,
+            urlString: nil
+        ),
+        SafetySupportResource(
+            title: "まもろうよ こころ",
+            detail: "電話・SNS・チャットなど、地域や状況に合う相談先を探せます。",
+            actionTitle: "相談先を見る",
+            urlString: "https://www.mhlw.go.jp/mamorouyokokoro/"
+        )
+    ]
 }

@@ -721,12 +721,10 @@ private struct PersonaAvatarView: View {
                             endRadius: size
                         )
                     )
-                avatarMotif(style)
-                    .padding(size * 0.19)
-                style.cornerGlyph
-                    .font(.system(size: size * 0.22, weight: .heavy))
-                    .foregroundStyle(.white.opacity(0.78))
-                    .offset(x: size * 0.25, y: -size * 0.25)
+                // 画像未登録時はイニシャルや文字ではなく、人型アイコンを表示する。
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.46, weight: .semibold))
+                    .foregroundStyle(.white)
             }
             Circle()
                 .strokeBorder(.white.opacity(0.58), lineWidth: max(1, size * 0.052))
@@ -744,57 +742,12 @@ private struct PersonaAvatarView: View {
         .accessibilityLabel(profile.name)
     }
 
-    @ViewBuilder
-    private func avatarMotif(_ style: PersonaAvatarStyle) -> some View {
-        switch style.motif {
-        case .moon:
-            Image(systemName: "moon.stars.fill")
-                .font(.system(size: size * 0.46, weight: .semibold))
-                .foregroundStyle(.white)
-        case .sun:
-            Image(systemName: "sun.max.fill")
-                .font(.system(size: size * 0.48, weight: .semibold))
-                .foregroundStyle(.white)
-        case .ribbon:
-            Image(systemName: "heart.fill")
-                .font(.system(size: size * 0.44, weight: .semibold))
-                .foregroundStyle(.white)
-        case .wave:
-            Image(systemName: "waveform.path.ecg")
-                .font(.system(size: size * 0.42, weight: .heavy))
-                .foregroundStyle(.white)
-        case .leaf:
-            Image(systemName: "leaf.fill")
-                .font(.system(size: size * 0.46, weight: .semibold))
-                .foregroundStyle(.white)
-        case .book:
-            Image(systemName: "book.closed.fill")
-                .font(.system(size: size * 0.43, weight: .semibold))
-                .foregroundStyle(.white)
-        case .spark:
-            Image(systemName: "sparkles")
-                .font(.system(size: size * 0.46, weight: .heavy))
-                .foregroundStyle(.white)
-        }
-    }
 }
 
 private struct PersonaAvatarStyle {
-    enum Motif {
-        case moon
-        case sun
-        case ribbon
-        case wave
-        case leaf
-        case book
-        case spark
-    }
-
     let primary: Color
     let highlight: Color
     let shadow: Color
-    let motif: Motif
-    let cornerGlyph: Text
     let assetName: String?
 
     init(profile: PersonaProfile) {
@@ -804,58 +757,42 @@ private struct PersonaAvatarStyle {
             primary = Color(red: 0.32, green: 0.50, blue: 0.86)
             highlight = Color(red: 0.70, green: 0.90, blue: 1.00)
             shadow = Color(red: 0.09, green: 0.16, blue: 0.34)
-            motif = .moon
-            cornerGlyph = Text("A")
             assetName = "PersonaAoiAvatar"
         case "ハル":
             primary = Color(red: 1.00, green: 0.58, blue: 0.20)
             highlight = Color(red: 1.00, green: 0.91, blue: 0.38)
             shadow = Color(red: 0.57, green: 0.19, blue: 0.05)
-            motif = .sun
-            cornerGlyph = Text("H")
             assetName = "PersonaHaruAvatar"
         case "ユイ":
             primary = Color(red: 0.95, green: 0.42, blue: 0.68)
             highlight = Color(red: 1.00, green: 0.78, blue: 0.88)
             shadow = Color(red: 0.46, green: 0.09, blue: 0.26)
-            motif = .ribbon
-            cornerGlyph = Text("Y")
             assetName = "PersonaYuiAvatar"
         case "カイ":
             primary = Color(red: 0.19, green: 0.25, blue: 0.35)
             highlight = Color(red: 0.53, green: 0.66, blue: 0.82)
             shadow = Color(red: 0.03, green: 0.05, blue: 0.09)
-            motif = .wave
-            cornerGlyph = Text("K")
             assetName = "PersonaKaiAvatar"
         case "レン":
             primary = Color(red: 0.32, green: 0.58, blue: 0.47)
             highlight = Color(red: 0.74, green: 0.89, blue: 0.66)
             shadow = Color(red: 0.08, green: 0.25, blue: 0.19)
-            motif = .leaf
-            cornerGlyph = Text("R")
             assetName = "PersonaRenAvatar"
         case "ナカムラ先生":
             primary = Color(red: 0.45, green: 0.39, blue: 0.72)
             highlight = Color(red: 0.88, green: 0.79, blue: 1.00)
             shadow = Color(red: 0.17, green: 0.12, blue: 0.33)
-            motif = .book
-            cornerGlyph = Text("N")
             assetName = "PersonaNakamuraAvatar"
         case "ツバサ":
             primary = Color(red: 0.16, green: 0.68, blue: 0.76)
             highlight = Color(red: 0.75, green: 1.00, blue: 0.96)
             shadow = Color(red: 0.02, green: 0.28, blue: 0.35)
-            motif = .spark
-            cornerGlyph = Text("T")
             assetName = "PersonaTsubasaAvatar"
         default:
             let hue = PersonaAvatarStyle.nameHue(name)
             primary = Color(hue: hue, saturation: 0.58, brightness: 0.92)
             highlight = Color(hue: hue, saturation: 0.30, brightness: 1.00)
             shadow = Color(hue: hue, saturation: 0.70, brightness: 0.38)
-            motif = PersonaAvatarStyle.motif(for: profile)
-            cornerGlyph = Text(name.first.map(String.init) ?? "?")
             assetName = nil
         }
     }
@@ -866,16 +803,6 @@ private struct PersonaAvatarStyle {
         return Double(sum % 360) / 360.0
     }
 
-    private static func motif(for profile: PersonaProfile) -> Motif {
-        switch profile.tone {
-        case .calm: return .moon
-        case .cheerful: return .sun
-        case .sweet: return .ribbon
-        case .cool: return .wave
-        case .polite: return profile.relation == .mentor ? .book : .leaf
-        case .casual: return .spark
-        }
-    }
 }
 
 // MARK: - Message bubble
@@ -896,9 +823,18 @@ struct PersonaMessageBubble: View {
         } else {
             HStack(alignment: .bottom, spacing: 8) {
                 if message.role == .assistant {
-                    avatar
-                    bubble(alignment: .leading)
-                    Spacer(minLength: 40)
+                    VStack(alignment: .leading, spacing: 4) {
+                        // アイコンの横にキャラクター名を置く。
+                        HStack(spacing: 6) {
+                            avatar
+                            Text(personaProfile.name)
+                                .font(.system(size: 11.5, weight: .bold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        bubble(alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     Spacer(minLength: 40)
                     bubble(alignment: .trailing)
@@ -931,8 +867,9 @@ struct PersonaMessageBubble: View {
                     .background(bubbleBackground)
             } else {
                 Text(message.text)
-                    .font(.system(size: 14))
+                    .font(.system(size: 16, weight: .regular))
                     .foregroundStyle(message.role == .user ? .white : .primary)
+                    .frame(maxWidth: message.role == .assistant ? .infinity : nil, alignment: .leading)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
                     .background(bubbleBackground)
