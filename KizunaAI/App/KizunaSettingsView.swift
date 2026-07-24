@@ -116,21 +116,26 @@ struct KizunaSettingsView: View {
                             .foregroundStyle(.red)
                     }
 
-                    HStack {
+                    // Form内で隣接ボタンを同じ行に置くと、iOSでタップ領域が広がり
+                    // 起動確認がダウンロード操作として扱われることがあるため、別行にする。
+                    VStack(alignment: .leading, spacing: 8) {
                         if modelManager.isDownloading {
                             Button("一時停止") {
                                 modelManager.cancelDownload()
                             }
+                            .buttonStyle(.bordered)
                         } else if modelManager.canResumeDownload {
                             Button("ダウンロードを再開") {
                                 saveSecretsAndModelSource()
                                 modelManager.resumeDownloadIfPossible()
                             }
+                            .buttonStyle(.bordered)
                         } else {
                             Button(modelManager.installedModelURL == nil ? "モデルをダウンロード" : "再ダウンロード") {
                                 saveSecretsAndModelSource()
                                 modelManager.startDownload()
                             }
+                            .buttonStyle(.bordered)
                             .disabled(!canDownload)
                         }
 
@@ -141,6 +146,7 @@ struct KizunaSettingsView: View {
                             modelManager.updateAccessToken(modelAccessToken)
                             modelManager.recheckRuntimeAvailability()
                         }
+                        .buttonStyle(.borderedProminent)
                         .disabled(modelManager.installedModelURL == nil || modelManager.isDownloading)
                     }
 

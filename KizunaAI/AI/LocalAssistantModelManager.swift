@@ -475,10 +475,33 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     func recheckRuntimeAvailability() {
         LocalAssistantRuntimeBridge.shared.clearRuntimeError()
 
+        // 起動確認は保存済みファイルの検査だけ。ダウンロード開始経路には入らない。
+        NSLog(
+            "[ModelManager] self-check requested installed=%@ downloading=%@ status=%@",
+            installedModelURL?.path ?? "nil",
+            isDownloading ? "true" : "false",
+            downloadStatus.rawValue
+        )
+
         // 環境更新を非同期に待つ前にURLを確定する。
         // 旧実装は更新前のnilを拾い、保存済みモデルを未導入扱いにすることがあった。
         restorePersistedDownloadState()
         refreshInstalledState()
+
+        // 実ファイルが見つかったのに、古い状態JSONだけが downloading のまま残る
+        // ケースを修復する。実ダウンロード中なら状態を変更しない。
+        if !isDownloading,
+           resolvedInstalledModelURL != nil,
+           [.preflighting, .downloading].contains(downloadStatus) {
+            downloadStatus = .completed
+            updateDownloadState(
+                status: .completed,
+                expectedBytes: installedFileSize > 0 ? max(expectedBytes, installedFileSize) : nil,
+                lastError: nil,
+                resumeDataPath: nil
+            )
+            applyStatusPresentation()
+        }
 
         guard let currentModelURL = installedModelURL else {
             scheduleStatusPresentationRefresh()
@@ -545,11 +568,22 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     func startDownload() {
         guard !isDownloading else { return }
+        NSLog(
+            "[ModelManager] DOWNLOAD START requested status=%@ installed=%@ callstack=%@",
+            downloadStatus.rawValue,
+            installedModelURL?.path ?? "nil",
+            Thread.callStackSymbols.prefix(8).joined(separator: " <- ")
+        )
         beginDownload(resuming: false)
     }
 
     func resumeDownloadIfPossible() {
         guard !isDownloading, canResumeDownload else { return }
+        NSLog(
+            "[ModelManager] DOWNLOAD RESUME requested status=%@ installed=%@",
+            downloadStatus.rawValue,
+            installedModelURL?.path ?? "nil"
+        )
         beginDownload(resuming: true)
     }
 
@@ -664,7 +698,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private var displayState: LocalAssistantDisplayState {
-        if isDownloading || downloadStatus == .preflighting || downloadStatus == .downloading {
+        // 保存済みモデルがある場合、停止済みの古い状態JSONだけで
+        // 「ダウンロード中」に戻さない。実ダウンロード中は isDownloading が真。
+        if isDownloading || (resolvedInstalledModelURL == nil && [.preflighting, .downloading].contains(downloadStatus)) {
             return .downloading
         }
         if canResumeDownload {
@@ -1039,10 +1075,29 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         guard let stateFileName = stateReferencedFileName(for: state) else { return false }
         guard stateFileName == url.lastPathComponent else { return false }
 
-        // 中断状態のファイルは、保存予定サイズに届いた時だけ完成品として扱う。
-        // expectedBytes がない途中ファイルを「50MB以上あるから完成」と誤認しない。
-        guard state.expectedBytes > 1 else { return true }
+        // 旧バージョンではRange確認の Content-Length: 1 が状態JSONに保存されていた。
+        // ただし、単に50MB以上あるだけでは中断ファイルも完成扱いになる。
+        // 標準Gemmaの既知サイズに近く、再開データもない場合だけ移行扱いにする。
+        guard state.expectedBytes > 1 else {
+            return !isLikelyCompletedModelWithUnknownSize(at: url, state: state)
+        }
         return !isValidModelFile(at: url, expectedBytes: state.expectedBytes)
+    }
+
+    private func isLikelyCompletedModelWithUnknownSize(
+        at url: URL,
+        state: LocalAssistantDownloadState
+    ) -> Bool {
+        guard Self.isEffectivelyDefaultSource(state.sourceURL),
+              currentResumeDataURL(from: state) == nil,
+              isValidModelFile(at: url) else {
+            return false
+        }
+
+        let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        let expectedSize = LocalAssistantModelProfile.expectedModelSizeBytes
+        let tolerance = max(Int64(128 * 1024 * 1024), expectedSize / 20)
+        return abs(fileSize - expectedSize) <= tolerance
     }
 
     private func adoptExistingModelIfNeeded(at modelURL: URL) {
