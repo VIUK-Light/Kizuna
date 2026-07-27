@@ -236,7 +236,9 @@ struct StoryPromptBuilder {
                 sections.append("## これまでの流れの目印\n" + olderAnchor)
             }
 
-            let convo = storyRecentMessages.suffix(24).compactMap { msg -> String? in
+            // 直近48メッセージをそのまま渡す。24件で切ると、ローカルモデルでも
+            // 会話の連続性を早く失ってしまう。
+            let convo = storyRecentMessages.suffix(48).compactMap { msg -> String? in
                 switch msg.author {
                 case .user: return "ユーザー: " + msg.text
                 case .system: return nil
@@ -363,7 +365,7 @@ struct StoryPromptBuilder {
     }
 
     private func conversationAnchors(from messages: [StoryMessage]) -> String {
-        let older = Array(messages.dropLast(24))
+        let older = Array(messages.dropLast(48))
         guard !older.isEmpty else { return "" }
         let anchors = older.enumerated().compactMap { index, message -> String? in
             guard index % 6 == 0 || index == older.count - 1 else { return nil }
@@ -378,6 +380,6 @@ struct StoryPromptBuilder {
             guard !text.isEmpty else { return nil }
             return "- \(speaker): \(text.prefix(90))"
         }
-        return anchors.prefix(8).joined(separator: "\n")
+        return anchors.prefix(12).joined(separator: "\n")
     }
 }
