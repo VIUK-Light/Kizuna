@@ -225,9 +225,10 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
     modelParams.use_mmap = true;
     modelParams.use_mlock = false;
     modelParams.check_tensors = false;
-    // Prefer the conservative CPU path first. The previous GPU/Metal-first
+    // Keep macOS on the conservative CPU path. The previous GPU/Metal-first
     // configuration could survive model load and then abort inside
-    // llama_decode() on some Macs.
+    // llama_decode() on some Macs. iOS currently links the CPU-only llama.cpp
+    // artifacts, so the device path must stay CPU as well.
     modelParams.n_gpu_layers = 0;
 
     struct llama_model *model = llama_model_load_from_file(modelPath.fileSystemRepresentation, modelParams);
@@ -268,6 +269,11 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
     const int32_t reservedOutputTokens = std::max<int32_t>(static_cast<int32_t>(maxTokens) + 16, 160);
     const int32_t maxPromptTokens = std::max<int32_t>(128, modelCtx - reservedOutputTokens);
     if (static_cast<int32_t>(promptTokens.size()) > maxPromptTokens) {
+        NSLog(@"[KizunaContext] prompt truncated: tokens=%d maxPrompt=%d modelCtx=%d maxTokens=%ld",
+              static_cast<int32_t>(promptTokens.size()),
+              maxPromptTokens,
+              modelCtx,
+              static_cast<long>(maxTokens));
         promptTokens.erase(
             promptTokens.begin(),
             promptTokens.end() - maxPromptTokens
@@ -276,7 +282,14 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
 
     const int32_t promptCount = static_cast<int32_t>(promptTokens.size());
     const int32_t desiredCtx = std::min<int32_t>(modelCtx, std::max<int32_t>(1024, promptCount + static_cast<int32_t>(maxTokens) + 64));
-#if TARGET_OS_IOS
+#if TARGET_OS_IOS && !TARGET_OS_SIMULATOR
+    // Two threads made prompt prefill and short story turns unnecessarily slow
+    // on real iPhones. Cap below the full core count to avoid saturating the UI.
+    const int32_t threadCount = std::max<int32_t>(2, std::min<int32_t>(
+        static_cast<int32_t>(NSProcessInfo.processInfo.activeProcessorCount) - 1,
+        4
+    ));
+#elif TARGET_OS_IOS
     const int32_t threadCount = 2;
 #else
     const int32_t threadCount = std::max<int32_t>(2, static_cast<int32_t>(NSProcessInfo.processInfo.activeProcessorCount) - 1);
@@ -289,7 +302,7 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
     contextParams.n_ubatch = static_cast<uint32_t>(std::min<int32_t>(safeBatchSize, 32));
     contextParams.n_seq_max = 1;
     contextParams.n_threads = std::max<int32_t>(1, std::min<int32_t>(threadCount, 6));
-    contextParams.n_threads_batch = 1;
+    contextParams.n_threads_batch = TARGET_OS_IOS && !TARGET_OS_SIMULATOR ? 2 : 1;
     // Prefer the more conservative CPU path first. The previous configuration
     // could abort inside llama_decode on some Macs before we could recover.
     contextParams.offload_kqv = false;

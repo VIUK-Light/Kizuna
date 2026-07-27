@@ -422,7 +422,7 @@ final class StorySessionService: ObservableObject {
             characterIndex: charIndex,
             selectedMemories: selectedMemories,
             session: session,
-            recentMessages: Array(storyContentMessages(from: session.messages).suffix(48)),
+            recentMessages: Array(storyContentMessages(from: session.messages).suffix(96)),
             userInput: effectiveUserText,
             generationModel: generationModel,
             safetyDecision: inSafety,
@@ -562,16 +562,19 @@ final class StorySessionService: ObservableObject {
             scene.summary = newSummary
             try? await sceneRepo.saveScene(scene)
         }
-        // 12) 進行JSON + StoryState差分をAIから取得
-        streamingStatusText = "物語進行を更新中"
-        let progressUpdate = await generateProgressUpdate(
-            world: world,
-            scene: scene,
-            session: session,
-            userText: userText,
-            assistantMessages: newMessages,
-            fallbackSceneSummary: newSummary,
-            generationModel: generationModel
+        // 12) 進行状態は本文の完了を遅らせない。
+        // 以前はここで同じローカルモデルへ進行JSONを追加生成していたため、
+        // 1ターンの待ち時間が実質2回分になっていた。本文を先に返し、
+        // 進行表示に必要な最小状態は決定的に更新する。
+        let progressUpdate = StoryProgressUpdate(
+            progressLabel: session.progressLabel.nonEmpty ?? "第1章 きっかけ",
+            currentObjective: session.currentObjective.nonEmpty
+                ?? scene.sceneGoal.nonEmpty
+                ?? world.storyGoal.nonEmpty,
+            lastTurnProgress: synthesizeTurnProgress(from: newMessages),
+            lastSceneSummary: newSummary.nonEmpty ?? session.lastSceneSummary.nonEmpty,
+            unresolvedHooks: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks),
+            storyState: nil
         )
         session.progressLabel = progressUpdate.progressLabel.nonEmpty
             ?? session.progressLabel.nonEmpty

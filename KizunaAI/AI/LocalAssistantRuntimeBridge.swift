@@ -1778,7 +1778,11 @@ final class BundledServerLogAggregator {
         }
         let fullPrompt = buildRuntimePrompt(
             conversationPrompt: conversationPrompt,
-            systemPrompt: systemPrompt
+            systemPrompt: systemPrompt,
+            appendGemmaThinkingTrigger: shouldAppendInlineGemmaThinkingTrigger(
+                modelPath: installedModelURL.path,
+                reasoningMode: reasoningMode
+            )
         )
         let parameters = generationParameters(
             for: reasoningMode,
@@ -1884,7 +1888,11 @@ final class BundledServerLogAggregator {
         )
         let fullPrompt = buildRuntimePrompt(
             conversationPrompt: userPrompt,
-            systemPrompt: systemPrompt
+            systemPrompt: systemPrompt,
+            appendGemmaThinkingTrigger: shouldAppendInlineGemmaThinkingTrigger(
+                modelPath: installedModelURL.path,
+                reasoningMode: reasoningMode
+            )
         )
         let parameters = generationParameters(
             for: reasoningMode,
@@ -2277,11 +2285,28 @@ final class BundledServerLogAggregator {
     }
 
     private func shouldEnableNativeThinking(forModelPath modelPath: String, reasoningMode: ReasoningMode) -> Bool {
-        // .fast / .persona は native thinking を無効化する。
-        // 特に .persona は絆チャットとして即答感が欲しいので、Gemma 4 の thinking channel が
-        // 漏れて「(案)」「計画:」のような構造化テキストが見えてしまうのを防ぐ。
-        guard reasoningMode != .fast, reasoningMode != .persona else { return false }
+        // fastモードは即答経路のまま維持する。
+        // KizunaのpersonaはGemma 4のテンプレート仕様に合わせてThinkingを有効化する。
+        guard reasoningMode != .fast else { return false }
         return modelPathLooksLikeGemma4(modelPath)
+    }
+
+    /// iOSのGGUF埋め込み経路にはchat-template kwargsがないため、
+    /// Gemma 4のThinking開始タグを生成前に直接渡す。
+    /// server/LiteRT-LM経路はそれぞれのテンプレートに任せる。
+    private func shouldAppendInlineGemmaThinkingTrigger(
+        modelPath: String,
+        reasoningMode: ReasoningMode
+    ) -> Bool {
+#if os(iOS)
+        guard reasoningMode == .persona else { return false }
+        let lowercased = modelPath.lowercased()
+        return modelPathLooksLikeGemma4(modelPath) && lowercased.hasSuffix(".gguf")
+#else
+        _ = modelPath
+        _ = reasoningMode
+        return false
+#endif
     }
 
     private func shouldSkipChatParsing(forModelPath modelPath: String) -> Bool {
@@ -2480,13 +2505,22 @@ final class BundledServerLogAggregator {
         return Date().timeIntervalSince(lastUsedAt) <= bundledServerIdleReuseWindow
     }
 
+    private func runtimePreset(for reasoningMode: ReasoningMode) -> LocalAssistantModelProfile.RuntimePreset {
+        switch reasoningMode {
+        case .persona:
+            return LocalAssistantModelProfile.personaRuntimePreset
+        case .fast:
+            return LocalAssistantModelProfile.fastRuntimePreset
+        case .thinking, .deepThinking:
+            return LocalAssistantModelProfile.runtimePreset
+        }
+    }
+
     private func bundledServerRuntimePreset(
         forModelPath modelPath: String,
         reasoningMode: ReasoningMode = .thinking
     ) -> LocalAssistantModelProfile.RuntimePreset {
-        let base = reasoningMode == .fast
-            ? LocalAssistantModelProfile.fastRuntimePreset
-            : LocalAssistantModelProfile.runtimePreset
+        let base = runtimePreset(for: reasoningMode)
         guard shouldPreferBundledServer(forModelPath: modelPath) else {
             return base
         }
@@ -2495,15 +2529,14 @@ final class BundledServerLogAggregator {
         // bundled server は Apple Silicon 統合メモリを活用するため GPU layers を有効にする。
         // CLI の conservativeCPU 制約とは独立して、base preset の GPU 設定を継承する。
         // prefill 速度を上げるため base preset 相当の batch/ubatch を採用。
-        // ctx-size を 8192 に引き上げ: 途中で切れる問題の根本対策（M2 16GB では KV キャッシュ ~600MB）
-        // fast モードは 4096 のまま KV メモリを節約しつつプリフィル優先
+        // Kizuna personaだけ16kを使い、共有のfast/thinking系は従来値を使う。
         let targetContextSize: Int
         if severeDiskPressure {
             targetContextSize = 2048
-        } else if reasoningMode == .fast {
-            targetContextSize = 4096
+        } else if reasoningMode == .persona {
+            targetContextSize = 16_384
         } else {
-            targetContextSize = 8192
+            targetContextSize = base.contextSize
         }
         return LocalAssistantModelProfile.RuntimePreset(
             contextSize: targetContextSize,
@@ -2685,7 +2718,7 @@ final class BundledServerLogAggregator {
             startedAt: startedAt,
             onUpdate: onUpdate
         )
-        if reasoningMode != .fast, let onUpdate {
+        if shouldEnableNativeThinking(forModelPath: modelPath, reasoningMode: reasoningMode), let onUpdate {
             emitStatus(
                 .thinking,
                 title: "回答方針を整理中",
@@ -2800,7 +2833,7 @@ final class BundledServerLogAggregator {
                     startedAt: startedAt,
                     onUpdate: onUpdate
                 )
-                if reasoningMode != .fast, let onUpdate {
+                if shouldEnableNativeThinking(forModelPath: modelPath, reasoningMode: reasoningMode), let onUpdate {
                     emitStatus(
                         .thinking,
                         title: "回答方針を整理中",
@@ -3257,7 +3290,7 @@ final class BundledServerLogAggregator {
             startedAt: startedAt,
             onUpdate: onUpdate
         )
-        if reasoningMode != .fast, let onUpdate {
+        if shouldEnableNativeThinking(forModelPath: modelPath, reasoningMode: reasoningMode), let onUpdate {
             emitStatus(
                 .thinking,
                 title: "回答方針を整理中",
@@ -3751,7 +3784,7 @@ final class BundledServerLogAggregator {
                     startedAt: startedAt,
                     onUpdate: onUpdate
                 )
-                if reasoningMode != .fast, let onUpdate {
+                if shouldEnableNativeThinking(forModelPath: modelPath, reasoningMode: reasoningMode), let onUpdate {
                     emitStatus(
                         .thinking,
                         title: "回答方針を整理中",
@@ -3970,10 +4003,9 @@ final class BundledServerLogAggregator {
             body["stream_options"] = ["include_usage": true]
         }
 
-        // Fast は低遅延維持のため thinking を無効化する。
-        // Thinking / 高精度では server セッション自体を thinking 有効で起動し、
-        // reasoning_content を SSE で UI に流す。
-        if reasoningMode == .fast || !session.nativeThinkingEnabled {
+        // Kizuna personaでは生成開始前のThinkingを有効にする。
+        // ただし reasoningBudget は小さく固定し、計算資源を制限する。
+        if !session.nativeThinkingEnabled {
             body["reasoning_format"] = "none"
             body["chat_template_kwargs"] = ["enable_thinking": false]
         } else {
@@ -4079,7 +4111,7 @@ final class BundledServerLogAggregator {
             let (normContent, normReasoning) = normalizeGemma4ChannelResponse(
                 content: collector.accContent,
                 reasoningContent: collector.accReasoning,
-                nativeThinkingEnabled: session.nativeThinkingEnabled && reasoningMode != .fast,
+                nativeThinkingEnabled: session.nativeThinkingEnabled,
                 hasToolCalls: !streamedToolCalls.isEmpty,
                 finishReason: collector.finishReason
             )
@@ -4169,7 +4201,7 @@ final class BundledServerLogAggregator {
         let (normContent, normReasoning) = normalizeGemma4ChannelResponse(
             content: content,
             reasoningContent: reasoningContent,
-            nativeThinkingEnabled: session.nativeThinkingEnabled && reasoningMode != .fast,
+            nativeThinkingEnabled: session.nativeThinkingEnabled,
             hasToolCalls: !openAIToolCalls.isEmpty,
             finishReason: finishReason
         )
@@ -4431,9 +4463,7 @@ final class BundledServerLogAggregator {
             return VIUKEmbeddedRuntimeResult(success: false, text: nil, errorMessage: diagnostic.detailedMessage)
         }
 
-        let runtimePreset = reasoningMode == .fast
-            ? LocalAssistantModelProfile.fastRuntimePreset
-            : LocalAssistantModelProfile.runtimePreset
+        let runtimePreset = runtimePreset(for: reasoningMode)
         let forceConservativeCPURuntime = shouldForceConservativeCPURuntime(forModelPath: modelPath)
         let disableNativeThinking = !shouldEnableNativeThinking(forModelPath: modelPath, reasoningMode: reasoningMode)
         let tuning = effectiveCLITuning(
@@ -4470,7 +4500,7 @@ final class BundledServerLogAggregator {
                 "--reasoning", "off",
                 "--chat-template-kwargs", #"{"enable_thinking":false}"#
             ])
-        } else if reasoningMode != .fast {
+        } else {
             // Gemma 4 では `enable_thinking:true` を明示しないと
             // `<|think|>` トリガーがテンプレートに注入されず思考が空になる。
             baseArguments.append(contentsOf: [
@@ -4596,8 +4626,8 @@ final class BundledServerLogAggregator {
                     onUpdate: onUpdate
                 )
                 emitStatus(
-                    (reasoningMode == .fast || disableNativeThinking) ? .generating : .thinking,
-                    title: (reasoningMode == .fast || disableNativeThinking) ? "本文を生成中" : "推論を整理中",
+                    disableNativeThinking ? .generating : .thinking,
+                    title: disableNativeThinking ? "本文を生成中" : "推論を整理中",
                     detail: disableNativeThinking
                         ? "Gemma 4 が回答を生成しています。"
                         : (reasoningMode == .fast
@@ -4804,9 +4834,7 @@ final class BundledServerLogAggregator {
             )
         }
 
-        let runtimePreset = reasoningMode == .fast
-            ? LocalAssistantModelProfile.fastRuntimePreset
-            : LocalAssistantModelProfile.runtimePreset
+        let runtimePreset = runtimePreset(for: reasoningMode)
         let forceConservativeCPURuntime = shouldForceConservativeCPURuntime(forModelPath: modelPath)
         let disableNativeThinking = !shouldEnableNativeThinking(forModelPath: modelPath, reasoningMode: reasoningMode)
         let tuning = effectiveCLITuning(
@@ -4846,7 +4874,7 @@ final class BundledServerLogAggregator {
                 "--reasoning", "off",
                 "--chat-template-kwargs", #"{"enable_thinking":false}"#
             ])
-        } else if reasoningMode != .fast {
+        } else {
             // Gemma 4 では `enable_thinking:true` を明示しないと
             // `<|think|>` トリガーがテンプレートに注入されず思考が空になる。
             baseArguments.append(contentsOf: [
@@ -4974,8 +5002,8 @@ final class BundledServerLogAggregator {
                     onUpdate: onUpdate
                 )
                 emitStatus(
-                    (reasoningMode == .fast || disableNativeThinking) ? .generating : .thinking,
-                    title: (reasoningMode == .fast || disableNativeThinking) ? "本文を生成中" : "推論を整理中",
+                    disableNativeThinking ? .generating : .thinking,
+                    title: disableNativeThinking ? "本文を生成中" : "推論を整理中",
                     detail: disableNativeThinking
                         ? "Gemma 4 が回答を生成しています。"
                         : (reasoningMode == .fast
@@ -5621,15 +5649,19 @@ final class BundledServerLogAggregator {
             ? (contextPrompt ?? prompt)
             : prompt
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > 6400 else { return trimmed }
-        let suffix = trimmed.suffix(6400)
+        guard trimmed.count > 6_400 else { return trimmed }
+        let suffix = trimmed.suffix(6_400)
         return "直近の会話コンテキスト:\n\(suffix)"
     }
 
     private func buildRuntimePrompt(
         conversationPrompt: String,
-        systemPrompt: String
+        systemPrompt: String,
+        appendGemmaThinkingTrigger: Bool = false
     ) -> String {
+        let modelTurn = appendGemmaThinkingTrigger
+            ? "<start_of_turn>model\n<|think|>\n"
+            : "<start_of_turn>model\n"
         return """
         <start_of_turn>system
         \(systemPrompt)
@@ -5637,7 +5669,7 @@ final class BundledServerLogAggregator {
         <start_of_turn>user
         \(conversationPrompt)
         <end_of_turn>
-        <start_of_turn>model
+        \(modelTurn)
         """
     }
 
@@ -6012,8 +6044,12 @@ final class BundledServerLogAggregator {
 
     private func reasoningBudget(for reasoningMode: ReasoningMode) -> Int {
         switch reasoningMode {
-        case .fast, .persona:
+        case .fast:
+            // 即答経路。Thinkingは使わない。
             return 0
+        case .persona:
+            // KizunaはThinkingを有効にするが、1ターンの推論予算は512に制限。
+            return 512
         case .thinking:
             return 1024
         case .deepThinking:
@@ -6057,9 +6093,7 @@ final class BundledServerLogAggregator {
         timeoutSeconds: Int,
         loadingPreview: String?
     ) {
-        let runtimePreset = reasoningMode == .fast
-            ? LocalAssistantModelProfile.fastRuntimePreset
-            : LocalAssistantModelProfile.runtimePreset
+        let runtimePreset = runtimePreset(for: reasoningMode)
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let shortPrompt = trimmedPrompt.count <= 120
         let mediumPrompt = trimmedPrompt.count > 120 && trimmedPrompt.count <= 1600
@@ -6067,9 +6101,10 @@ final class BundledServerLogAggregator {
         let severeDiskPressure = hasSevereDiskPressure(forModelPath: modelPath)
 
         var contextSize: Int
-        // maxTokens を 12k〜16k に増やしたので、入力分を加味して余裕を確保する。
-        // (prompt 500〜1500 + output 上限) が context を超えないように切り上げる。
-        if requestedMaxTokens >= 16_384 {
+        if reasoningMode == .persona {
+            // Storyの履歴を保持するのはKizuna personaだけ。
+            contextSize = 16_384
+        } else if requestedMaxTokens >= 16_384 {
             contextSize = 24_576
         } else if reasoningMode == .deepThinking || requestedMaxTokens >= 12_288 {
             contextSize = 20_480
@@ -6083,7 +6118,7 @@ final class BundledServerLogAggregator {
             contextSize = 4_096
         }
 
-        let isFast = reasoningMode == .fast
+        let isFast = reasoningMode == .fast || reasoningMode == .persona
         var batchSize = isFast ? 24 : 40
         var microBatchSize = isFast ? 12 : 20
         let maxTokens = requestedMaxTokens

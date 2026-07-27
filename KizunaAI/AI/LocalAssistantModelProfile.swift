@@ -103,8 +103,8 @@ enum LocalAssistantModelProfile {
     private static let runtimeGPULayerCount = prefersAggressiveGPUOffload ? 99 : 12
     private static let prewarmGPULayerCount = prefersAggressiveGPUOffload ? 24 : 4
 
-    // 通常実行 preset（thinking / deepThinking モード向け）
-    // M2 16GB など統合メモリ機では 8192 ctx でも KV キャッシュは ~600MB 程度に収まる
+    // 通常実行 preset（thinking / deepThinking モード向け）。
+    // 共有ランタイムの既定値は変更せず、Kizuna専用値は下のpersona presetに分離する。
     static let runtimePreset = RuntimePreset(
         contextSize: 8192,
         batchSize: prefersAggressiveGPUOffload ? 512 : 128,
@@ -116,7 +116,7 @@ enum LocalAssistantModelProfile {
         disableKVOffload: false
     )
 
-    // fast モード専用 preset: ctx を 4096 にして KV キャッシュを抑えつつ、
+    // fast モード専用 preset: ctx を4096にしてKVキャッシュを抑えつつ、
     // batchSize を最大化してプリフィル速度を向上
     static let fastRuntimePreset = RuntimePreset(
         contextSize: 4096,
@@ -124,6 +124,19 @@ enum LocalAssistantModelProfile {
         microBatchSize: prefersAggressiveGPUOffload ? 128 : 64,
         threadCount: min(max(ProcessInfo.processInfo.activeProcessorCount - 1, 4), 8),
         batchThreadCount: prefersAggressiveGPUOffload ? 4 : min(max(ProcessInfo.processInfo.activeProcessorCount / 4, 1), 2),
+        gpuLayers: prefersAggressiveGPUOffload ? 99 : min(runtimeGPULayerCount + 6, 24),
+        flashAttentionEnabled: prefersAggressiveGPUOffload,
+        disableKVOffload: false
+    )
+
+    // Kizunaのpersonaモード専用。共有設定を変更せず、
+    // 会話履歴だけ長く保持しながらスレッド数は端末負荷を抑える。
+    static let personaRuntimePreset = RuntimePreset(
+        contextSize: 16_384,
+        batchSize: prefersAggressiveGPUOffload ? 256 : 128,
+        microBatchSize: prefersAggressiveGPUOffload ? 64 : 32,
+        threadCount: min(max(ProcessInfo.processInfo.activeProcessorCount - 2, 2), 4),
+        batchThreadCount: prefersAggressiveGPUOffload ? 2 : 1,
         gpuLayers: prefersAggressiveGPUOffload ? 99 : min(runtimeGPULayerCount + 6, 24),
         flashAttentionEnabled: prefersAggressiveGPUOffload,
         disableKVOffload: false
@@ -181,8 +194,8 @@ enum LocalAssistantModelProfile {
         case (.deepThinking, _):
             return GenerationPreset(maxTokens: 14_336, temperature: 0.5, topP: 0.9, topK: 48, seed: 23)
         case (.persona, _):
-            // 恋愛モード: 短文・自然な会話。temperature は少し高めにして表現を柔らかく。
-            return GenerationPreset(maxTokens: 256, temperature: 0.55, topP: 0.85, topK: 40, seed: 24)
+            // 絆はThinkingを有効にし、生成全体を768トークン以内に抑える。
+            return GenerationPreset(maxTokens: 768, temperature: 0.65, topP: 0.85, topK: 40, seed: 24)
         }
     }
 
