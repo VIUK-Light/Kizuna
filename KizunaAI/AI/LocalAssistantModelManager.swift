@@ -732,8 +732,11 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         let sourceString = resuming ? (persistedDownloadState?.sourceURL ?? resolvedSourceURLString) : resolvedSourceURLString
         guard let url = URL(string: sourceString),
               let scheme = url.scheme?.lowercased(),
-              ["https", "http"].contains(scheme) else {
-            applyFailure(message: "標準ダウンロードリンクを解決できません。必要なら詳細設定からURLを上書きしてください。")
+              scheme == "https",
+              url.host != nil,
+              url.user == nil,
+              url.password == nil else {
+            applyFailure(message: "モデルの配布元は安全なHTTPS URLで指定してください。")
             return
         }
 
@@ -1255,7 +1258,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return
         }
 
-        let fileName = [
+        let requestedFileName = [
             response?.suggestedFilename?.trimmingCharacters(in: .whitespacesAndNewlines),
             persistedDownloadState?.suggestedFilename,
             response?.url?.lastPathComponent
@@ -1263,6 +1266,11 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         .compactMap { $0 }
         .first(where: { !$0.isEmpty && $0 != "/" })
         ?? LocalAssistantModelProfile.defaultFileName
+        guard let fileName = safeModelFileName(requestedFileName) else {
+            try? FileManager.default.removeItem(at: tempURL)
+            applyFailure(message: "配布元が安全でないモデルファイル名を返しました。")
+            return
+        }
 
         let destinationURL = installationDirectoryURL.appendingPathComponent(fileName)
         let expectedBytesForValidation = persistedDownloadState?.expectedBytes ?? expectedBytes
@@ -1394,6 +1402,24 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
         return response.suggestedFilename?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? fallbackURL.lastPathComponent
+    }
+
+    /// HTTPヘッダー由来の名前を保存先の単一ファイル名へ限定する。
+    /// Content-Disposition は配布元が制御できるため、パス要素や制御文字をそのまま
+    /// appendingPathComponent に渡すと保存先外への書き込みにつながる。
+    private func safeModelFileName(_ candidate: String) -> String? {
+        let decoded = candidate.removingPercentEncoding ?? candidate
+        let basename = URL(fileURLWithPath: decoded).lastPathComponent
+            .replacingOccurrences(of: "\\", with: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !basename.isEmpty, basename != ".", basename != ".." else { return nil }
+        let filtered = basename.unicodeScalars.filter { scalar in
+            scalar.value >= 0x20 && scalar.value != 0x7F && scalar != "/" && scalar != "\\"
+        }
+        let name = String(String.UnicodeScalarView(filtered))
+        let ext = URL(fileURLWithPath: name).pathExtension.lowercased()
+        guard ["gguf", "bin", "litertlm"].contains(ext) else { return nil }
+        return name
     }
 
     private func parseFileName(fromContentDisposition disposition: String) -> String? {
