@@ -1869,6 +1869,14 @@ final class BundledServerLogAggregator {
         toolResults: [LocalAssistantToolResult] = [],
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> LocalAssistantStructuredTurn? {
+        guard let installedModelURL = LocalAssistantModelManager.shared.installedModelURL else {
+            return nil
+        }
+
+        guard availability(installedModelURL: installedModelURL) == .executable else {
+            return nil
+        }
+
         let conversationPrompt = runtimeConversationPrompt(for: prompt, contextPrompt: contextPrompt)
         let systemPrompt = structuredTurnSystemPrompt(
             coachMode: coachMode,
@@ -1900,14 +1908,6 @@ final class BundledServerLogAggregator {
             advancedSettings: advancedSettings
         )
         let startedAt = Date()
-
-        guard let installedModelURL = LocalAssistantModelManager.shared.installedModelURL else {
-            return nil
-        }
-
-        guard availability(installedModelURL: installedModelURL) == .executable else {
-            return nil
-        }
 
         let preferredEngine = preferredRuntimeEngine(forModelPath: installedModelURL.path)
         guard hasAvailableRuntimeEngine(preferredEngine) else {
