@@ -736,7 +736,8 @@ final class StorySessionService: ObservableObject {
             }
             return text
         } catch {
-            let message = "ナレーション: Gemma4 31B API の応答に失敗しました。\(error.localizedDescription)"
+            // API応答本文やURLなどの診断情報を会話履歴へ保存しない。
+            let message = "ナレーション: 通信が途切れ、場面がいったん静かになった。もう一度話しかけてください。"
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = message
@@ -915,10 +916,7 @@ final class StorySessionService: ObservableObject {
         case .savedOnly:
             return "iori のモデルファイルは保存済みですが、端末内で起動できる確認がまだ終わっていません。モデル詳細から実行確認をしてください。"
         case .recentFailure:
-            let detail = LocalAssistantModelManager.shared.runtimeDiagnosticSummary
-                ?? LocalAssistantRuntimeBridge.shared.lastRuntimeError
-                ?? "ローカルモデルの起動確認に失敗しました。"
-            return "iori のローカル起動に失敗しました。\(detail)"
+            return "iori のローカル起動に失敗しました。モデル詳細から起動確認をやり直してください。"
         case .modelMissing:
             return "iori のローカルモデルが未導入です。モデルを保存し、self-check が成功してからこの場面を続けられます。"
         }
@@ -948,10 +946,7 @@ final class StorySessionService: ObservableObject {
     }
 
     private func localStoryGenerationFailureMessage() -> String {
-        let detail = LocalAssistantModelManager.shared.runtimeDiagnosticSummary
-            ?? LocalAssistantRuntimeBridge.shared.lastRuntimeError
-            ?? "ローカル生成が完了しませんでした。"
-        return "iori のローカル生成に失敗しました。\(detail)"
+        return "ローカル生成が止まりました。もう一度試すか、NAGIで続けられます。"
     }
 
     private func sanitize(_ text: String) -> String {
@@ -1077,6 +1072,7 @@ final class StorySessionService: ObservableObject {
 
         var firstNarration: String?
         var speeches: [String] = []
+        var seenSpeechKeys = Set<String>()
 
         for line in lines {
             if line.hasPrefix("ナレーション:") || line.hasPrefix("ナレーション：") || line.hasPrefix("ナレーター:") || line.hasPrefix("ナレーター：") {
@@ -1089,7 +1085,8 @@ final class StorySessionService: ObservableObject {
             for (_, name) in activeNames {
                 if line.hasPrefix(name + ":") || line.hasPrefix(name + "：") {
                     let body = textAfterSpeakerDelimiter(line)
-                    if !body.isEmpty, speeches.count < 3 {
+                    let key = "\(name)\u{1F}\(normalizedSpeechKey(body))"
+                    if !body.isEmpty, speeches.count < 3, seenSpeechKeys.insert(key).inserted {
                         speeches.append("\(name): \(body)")
                     }
                     break
@@ -1110,6 +1107,14 @@ final class StorySessionService: ObservableObject {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
+    }
+
+    private func normalizedSpeechKey(_ text: String) -> String {
+        text
+            .lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func normalizeNarrationLine(_ line: String) -> String {
