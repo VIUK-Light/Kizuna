@@ -835,6 +835,7 @@ final class StorySessionViewModel: ObservableObject {
     private var debugSafetyConcernTask: Task<Void, Never>?
     private var debugSafetyConcernObserver: NSObjectProtocol?
     private var debugRequestPollingTask: Task<Void, Never>?
+    private var lastSubmittedText: String?
 
     init(world: StoryWorld, session: StorySession, scene: StoryScene) {
         self.world = world
@@ -968,6 +969,7 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     func send(_ userText: String) {
+        lastSubmittedText = userText
         service.send(userText, session: session, world: world, scene: scene, generationModel: generationModel)
         // Service 内で session/scene が永続化されるので、こちらは UI 更新のため
         // 軽くポーリングで再取得する (将来 Combine pipeline 化)。
@@ -983,6 +985,11 @@ final class StorySessionViewModel: ObservableObject {
             }
             await self?.refreshAfterTurn()
         }
+    }
+
+    func retryLastMessage() {
+        guard let lastSubmittedText, service.phase != .thinking else { return }
+        send(lastSubmittedText)
     }
 
     func addNarration(_ text: String) {

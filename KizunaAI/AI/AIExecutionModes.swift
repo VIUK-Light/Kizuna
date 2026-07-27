@@ -11,17 +11,17 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
     case thinking
     case deepThinking
     /// 絆会話モード。設定したキャラ (名前・性格・口調) と自由に会話する。
-    /// 内部的には fast 相当 (thinking なし・短文) で動き、専用 system prompt に切り替わる。
+    /// Gemma 4 の Thinking を内部で有効にしつつ、短い会話本文だけを表示する。
     case persona
 
     var id: String { rawValue }
 
     /// thinking や検索向けの「推論モード」として一般化できるか。
-    /// persona はキャラ会話なので thinking と同じ扱いはしない (fast 相当)。
+    /// persona はキャラ会話だが、コンテキスト維持のため内部Thinkingを使う。
     var isFastLike: Bool {
         switch self {
-        case .fast, .persona: return true
-        case .thinking, .deepThinking: return false
+        case .fast: return true
+        case .thinking, .deepThinking, .persona: return false
         }
     }
 

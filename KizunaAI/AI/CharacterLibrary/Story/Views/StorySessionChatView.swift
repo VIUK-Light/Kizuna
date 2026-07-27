@@ -115,11 +115,22 @@ struct StorySessionChatView: View {
             .layoutPriority(1)
             Spacer(minLength: 4)
 
-            if let sessionVM {
-                StoryGenerationModelPill(vm: sessionVM)
-            }
-
             Menu {
+                if let sessionVM {
+                    Section("モデル") {
+                        ForEach(StoryGenerationModel.allCases) { model in
+                            Button {
+                                sessionVM.generationModel = model
+                            } label: {
+                                Label(
+                                    model.displayName,
+                                    systemImage: sessionVM.generationModel == model ? "checkmark" : "cpu"
+                                )
+                            }
+                        }
+                    }
+                    Divider()
+                }
                 Button("セッションを閉じる") { dismiss() }
             } label: {
                 Image(systemName: "line.3.horizontal")
@@ -517,12 +528,9 @@ private struct StorySessionChatBody: View {
     }
 
     private var visibleMessages: [StoryMessage] {
-        var castTurns = Set<String>()
-        return vm.session.messages.filter { message in
-            guard case let .cast(characterID, _) = message.author else { return true }
-            let second = Int(message.createdAt.timeIntervalSince1970)
-            return castTurns.insert("\(characterID.uuidString)-\(second)").inserted
-        }
+        // StoryMessage.id は発話単位の永続ID。同一秒に同じキャラが2回話す正当なターンを
+        // timestampで間引くと本文を失うため、保存済みメッセージはそのまま描画する。
+        vm.session.messages
     }
 
     private var sceneStrip: some View {
@@ -540,25 +548,10 @@ private struct StorySessionChatBody: View {
 
     private var regularSceneStrip: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(vm.scene.title.isEmpty ? "現在のシーン" : vm.scene.title)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(storyText)
-                HStack(spacing: 8) {
-                    if !vm.scene.location.isEmpty {
-                        Label(vm.scene.location, systemImage: "mappin.and.ellipse")
-                    }
-                    if !vm.scene.timeOfDay.isEmpty {
-                        Label(vm.scene.timeOfDay, systemImage: "clock")
-                    }
-                    if !vm.scene.mood.isEmpty {
-                        Label(vm.scene.mood, systemImage: "theatermasks")
-                    }
-                }
-                .font(.system(size: 10.5))
-                .foregroundStyle(storyMuted)
+            Text(vm.scene.title.isEmpty ? "現在のシーン" : vm.scene.title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(storyText)
                 .lineLimit(1)
-            }
             Spacer()
             activeCharacterChips
         }
@@ -576,18 +569,6 @@ private struct StorySessionChatBody: View {
                 Spacer(minLength: 4)
                 activeCharacterChips
                     .frame(maxWidth: 210, alignment: .trailing)
-            }
-            HStack(spacing: 10) {
-                if !vm.scene.location.isEmpty {
-                    compactSceneMeta(icon: "mappin.and.ellipse", text: vm.scene.location)
-                }
-                if !vm.scene.timeOfDay.isEmpty {
-                    compactSceneMeta(icon: "clock", text: vm.scene.timeOfDay)
-                }
-                if !vm.scene.mood.isEmpty {
-                    compactSceneMeta(icon: "theatermasks", text: vm.scene.mood)
-                }
-                Spacer(minLength: 0)
             }
         }
     }
@@ -801,6 +782,12 @@ private struct StorySessionChatBody: View {
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(storyText.opacity(0.78))
                             .fixedSize(horizontal: false, vertical: true)
+                        Button("もう一度試す") {
+                            vm.retryLastMessage()
+                        }
+                        .font(.system(size: 11.5, weight: .bold))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                         if shouldOfferNAGISwitch(for: message) {
                             Button {
                                 vm.generationModel = .b31
