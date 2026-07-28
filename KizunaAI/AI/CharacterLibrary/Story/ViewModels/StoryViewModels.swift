@@ -1099,11 +1099,6 @@ final class StorySessionViewModel: ObservableObject {
         service.cancel()
     }
 
-    func retryLastMessage() {
-        guard let lastSubmittedText, service.phase != .thinking else { return }
-        send(lastSubmittedText)
-    }
-
     func addNarration(_ text: String) {
         service.addNarration(text, session: session)
         Task { [weak self] in
