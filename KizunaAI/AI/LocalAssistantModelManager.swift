@@ -51,6 +51,62 @@ private struct LocalAssistantDownloadPreflight {
     let acceptsResume: Bool
 }
 
+/// Rangeを無視する配布元でも、モデル本体をDataへ全量バッファしないためのpreflight delegate。
+/// ヘッダーだけ受け取って意図的にキャンセルし、本ダウンロードは別のdownload taskで行う。
+private final class LocalAssistantPreflightDelegate: NSObject, URLSessionDataDelegate {
+    private let responseHandler: (HTTPURLResponse) -> Void
+    private let failureHandler: (Error?) -> Void
+    private var didDeliverResponse = false
+
+    init(
+        responseHandler: @escaping (HTTPURLResponse) -> Void,
+        failureHandler: @escaping (Error?) -> Void
+    ) {
+        self.responseHandler = responseHandler
+        self.failureHandler = failureHandler
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            didDeliverResponse = true
+            completionHandler(.cancel)
+            failureHandler(nil)
+            return
+        }
+
+        // リダイレクトは最終URLのヘッダーを検査するまで追従する。
+        if (300...399).contains(httpResponse.statusCode) {
+            completionHandler(.allow)
+            return
+        }
+
+        didDeliverResponse = true
+        responseHandler(httpResponse)
+        // ここで本文を受け取らずに終了するため、巨大なGGUFをメモリへ載せない。
+        completionHandler(.cancel)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(request)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard !didDeliverResponse else { return }
+        failureHandler(error)
+    }
+}
+
 private enum LocalAssistantDisplayState {
     case downloading
     case resumable
@@ -112,6 +168,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private var urlSession: URLSession?
     private var downloadTask: URLSessionDownloadTask?
     private var preflightTask: URLSessionDataTask?
+    private var preflightSession: URLSession?
+    private var preflightDelegate: LocalAssistantPreflightDelegate?
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var isCancellingForResume = false
     private var progressSamples: [(time: TimeInterval, bytes: Int64)] = []
@@ -613,8 +671,14 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         if let preflightTask {
             preflightTask.cancel()
             self.preflightTask = nil
+            preflightSession?.invalidateAndCancel()
+            preflightSession = nil
+            preflightDelegate = nil
             isDownloading = false
             downloadStatus = .idle
+            clearPersistedDownloadState(removeResumeData: true)
+            downloadedBytes = 0
+            expectedBytes = 0
             statusMessage = "ダウンロード準備を停止しました"
             return
         }
@@ -769,7 +833,33 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 45
         configuration.timeoutIntervalForResource = 60
-        let session = URLSession(configuration: configuration)
+        let delegate = LocalAssistantPreflightDelegate { [weak self] response in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard self.isDownloading, self.downloadStatus == .preflighting else { return }
+                self.preflightTask = nil
+                self.preflightSession?.invalidateAndCancel()
+                self.preflightSession = nil
+                self.preflightDelegate = nil
+                self.handlePreflightResponse(response, sourceURL: url, resuming: resuming)
+            }
+        } failureHandler: { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard self.isDownloading, self.downloadStatus == .preflighting else { return }
+                self.preflightTask = nil
+                self.preflightSession?.invalidateAndCancel()
+                self.preflightSession = nil
+                self.preflightDelegate = nil
+                if let error = error as NSError?, error.code == NSURLErrorCancelled {
+                    return
+                }
+                self.applyFailure(message: "配布元の確認に失敗しました。ネットワーク接続を確認して再試行してください。")
+            }
+        }
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        preflightSession = session
+        preflightDelegate = delegate
 
         var request = URLRequest(url: url)
         // Hugging Face/XetはHEADで配布サイズを返さないことがあるため、1バイトだけGETして確認する。
@@ -780,76 +870,65 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         }
 
-        preflightTask = session.dataTask(with: request) { [weak self] _, response, error in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.preflightTask = nil
-                if let error = error as NSError? {
-                    if error.code == NSURLErrorCancelled {
-                        return
-                    }
-                    self.applyFailure(message: "配布元の確認に失敗しました。ネットワーク接続を確認して再試行してください。")
-                    return
-                }
-
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    self.applyFailure(message: "配布元の応答を確認できませんでした。")
-                    return
-                }
-
-                let statusCode = httpResponse.statusCode
-                if statusCode == 401 || statusCode == 403 {
-                    self.applyFailure(message: "配布元が認証を要求しました。Bearer トークンを確認してください。")
-                    return
-                }
-
-                guard (200...299).contains(statusCode) else {
-                    self.applyFailure(message: "配布元が HTTP \(statusCode) を返しました。しばらく待って再試行してください。")
-                    return
-                }
-
-                let contentType = (httpResponse.value(forHTTPHeaderField: "Content-Type") ?? response?.mimeType ?? "").lowercased()
-                if contentType.contains("html") {
-                    self.applyFailure(message: "モデル本体ではなくHTMLが返されました。配布元か認証設定を確認してください。")
-                    return
-                }
-
-                let expectedBytes = self.expectedBytesFromResponse(httpResponse, fallbackURL: url)
-                do {
-                    try FileManager.default.createDirectory(at: self.installationDirectoryURL, withIntermediateDirectories: true)
-                } catch {
-                    self.applyFailure(message: "保存先フォルダを作成できません。")
-                    return
-                }
-
-                let requiredBytes = self.requiredBytesForPreflight(expectedBytes: expectedBytes)
-                if let freeBytes = self.availableDiskSpaceBytes(),
-                   freeBytes > 0,
-                   freeBytes < requiredBytes {
-                    self.applyFailure(message: "空き容量が不足しています。モデル保存には追加の空きが必要です。")
-                    return
-                }
-
-                let acceptsResume = (httpResponse.value(forHTTPHeaderField: "Accept-Ranges") ?? "")
-                    .lowercased()
-                    .contains("bytes")
-                if resuming && !acceptsResume {
-                    self.applyFailure(message: "配布元が続きからの再開に対応していません。最初からやり直してください。")
-                    return
-                }
-
-                let preflight = LocalAssistantDownloadPreflight(
-                    sourceURL: url,
-                    resolvedURL: httpResponse.url ?? url,
-                    expectedBytes: expectedBytes,
-                    eTag: httpResponse.value(forHTTPHeaderField: "ETag"),
-                    suggestedFilename: self.suggestedFileName(from: httpResponse, fallbackURL: httpResponse.url ?? url),
-                    acceptsResume: acceptsResume
-                )
-                self.startDownloadTask(with: preflight, resuming: resuming)
-            }
-        }
+        preflightTask = session.dataTask(with: request)
         preflightTask?.resume()
+    }
+
+    private func handlePreflightResponse(
+        _ response: HTTPURLResponse,
+        sourceURL: URL,
+        resuming: Bool
+    ) {
+        let statusCode = response.statusCode
+        if statusCode == 401 || statusCode == 403 {
+            applyFailure(message: "配布元が認証を要求しました。Bearer トークンを確認してください。")
+            return
+        }
+
+        guard (200...299).contains(statusCode) else {
+            applyFailure(message: "配布元が HTTP \(statusCode) を返しました。しばらく待って再試行してください。")
+            return
+        }
+
+        let contentType = (response.value(forHTTPHeaderField: "Content-Type") ?? response.mimeType ?? "").lowercased()
+        if contentType.contains("html") {
+            applyFailure(message: "モデル本体ではなくHTMLが返されました。配布元か認証設定を確認してください。")
+            return
+        }
+
+        let expectedBytes = expectedBytesFromResponse(response, fallbackURL: sourceURL)
+        do {
+            try FileManager.default.createDirectory(at: installationDirectoryURL, withIntermediateDirectories: true)
+        } catch {
+            applyFailure(message: "保存先フォルダを作成できません。")
+            return
+        }
+
+        let requiredBytes = requiredBytesForPreflight(expectedBytes: expectedBytes)
+        if let freeBytes = availableDiskSpaceBytes(),
+           freeBytes > 0,
+           freeBytes < requiredBytes {
+            applyFailure(message: "空き容量が不足しています。モデル保存には追加の空きが必要です。")
+            return
+        }
+
+        let acceptsResume = (response.value(forHTTPHeaderField: "Accept-Ranges") ?? "")
+            .lowercased()
+            .contains("bytes")
+        if resuming && !acceptsResume {
+            applyFailure(message: "配布元が続きからの再開に対応していません。最初からやり直してください。")
+            return
+        }
+
+        let preflight = LocalAssistantDownloadPreflight(
+            sourceURL: sourceURL,
+            resolvedURL: response.url ?? sourceURL,
+            expectedBytes: expectedBytes,
+            eTag: response.value(forHTTPHeaderField: "ETag"),
+            suggestedFilename: suggestedFileName(from: response, fallbackURL: response.url ?? sourceURL),
+            acceptsResume: acceptsResume
+        )
+        startDownloadTask(with: preflight, resuming: resuming)
     }
 
     private func startDownloadTask(with preflight: LocalAssistantDownloadPreflight, resuming: Bool) {
@@ -1792,6 +1871,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private func cancelActiveTasksWithoutResume() {
         preflightTask?.cancel()
         preflightTask = nil
+        preflightSession?.invalidateAndCancel()
+        preflightSession = nil
+        preflightDelegate = nil
         downloadTask?.cancel()
         resetActiveSession()
         isDownloading = false

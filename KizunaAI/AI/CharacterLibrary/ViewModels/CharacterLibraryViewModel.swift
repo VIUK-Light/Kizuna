@@ -21,13 +21,16 @@ final class CharacterLibraryViewModel: ObservableObject {
 
     private let characterRepo: CharacterRepository
     private let templateRepo: TemplateRepository
+    private let memoryRepo: MemoryRepository
 
     init(
         characterRepo: CharacterRepository? = nil,
-        templateRepo: TemplateRepository? = nil
+        templateRepo: TemplateRepository? = nil,
+        memoryRepo: MemoryRepository? = nil
     ) {
         self.characterRepo = characterRepo ?? LocalJSONCharacterRepository()
         self.templateRepo = templateRepo ?? LocalJSONTemplateRepository()
+        self.memoryRepo = memoryRepo ?? LocalJSONMemoryRepository()
     }
 
     func bootstrap() async {
@@ -49,6 +52,16 @@ final class CharacterLibraryViewModel: ObservableObject {
 
     func delete(id: UUID) async {
         do {
+            // 一覧のスナップショットではなく最新保存値で保護状態を確認する。
+            // 標準化処理と削除タップが競合しても、メモリーだけを消さない。
+            let latest = try await characterRepo.fetchCharacters().first(where: { $0.id == id })
+            guard latest?.isSystemProtected != true else { return }
+            // 物語本文は残すが、今後のシーン/キャストで削除済みIDを使わない。
+            try await StoryCharacterReferenceCleaner.remove(characterID: id)
+            // 一覧のコンテキストメニューから削除した場合も、詳細画面と同じく
+            // キャラに紐づく全体メモリーを孤児化させない。
+            try await memoryRepo.deleteAllMemories(characterId: id)
+            // 関連データの掃除に成功してから本体を削除する。
             try await characterRepo.deleteCharacter(id: id)
             await reload()
         } catch {

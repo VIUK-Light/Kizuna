@@ -114,6 +114,7 @@ final class PersonaChatService: ObservableObject {
     private func runCharacterPipeline(threadID: UUID, characterID: UUID, userText: String, generationID: UUID) async {
         // ── 1) CharacterProfile / Lorebook 取得 ──
         let allCharacters = (try? await characterRepo.fetchCharacters()) ?? []
+        guard isGenerationActive(generationID) else { return }
         guard let character = allCharacters.first(where: { $0.id == characterID }) else {
             // キャラが消えていた → 旧パスにフォールバック
             await MainActor.run {
@@ -123,9 +124,11 @@ final class PersonaChatService: ObservableObject {
             return
         }
         let lorebook = try? await characterRepo.fetchLorebook(characterId: characterID)
+        guard isGenerationActive(generationID) else { return }
 
         // ── 2) 入力 safety ──
         let inSafety = await safetyPipeline.evaluateInput(userText, character: character)
+        guard isGenerationActive(generationID) else { return }
         if inSafety.action == .block {
             // ブロックされたらキャラから穏当な拒否メッセージを返して終了
             let polite = inSafety.rewrittenText ?? "ごめん、その話題には乗れないな。別の話、しよ?"
@@ -143,6 +146,7 @@ final class PersonaChatService: ObservableObject {
 
         // ── 3) メモリー候補と選別 ──
         let candidates = (try? await memoryRepo.fetchMemories(characterId: characterID)) ?? []
+        guard isGenerationActive(generationID) else { return }
         let needsRecall: Bool
         if candidates.isEmpty {
             needsRecall = false
@@ -151,6 +155,7 @@ final class PersonaChatService: ObservableObject {
                 text: effectiveUserText,
                 labels: ["recall_needed", "casual_chat"]
             )
+            guard isGenerationActive(generationID) else { return }
             needsRecall = (c.label == "recall_needed" && c.confidence > 0.35) || candidates.count <= 3
         }
         let selected: [CharacterMemory]
@@ -163,11 +168,13 @@ final class PersonaChatService: ObservableObject {
         } else {
             selected = []
         }
+        guard isGenerationActive(generationID) else { return }
 
         // 想起したメモリーは lastUsedAt 更新
         if !selected.isEmpty {
             try? await memoryRepo.markUsed(ids: selected.map(\.id))
         }
+        guard isGenerationActive(generationID) else { return }
         // ── 4) PromptBuilder ──
         let recent = await MainActor.run { () -> [PersonaMessage] in
             (PersonaChatStore.shared.threads.first(where: { $0.id == threadID })?.messages ?? [])
@@ -175,6 +182,7 @@ final class PersonaChatService: ObservableObject {
                 .suffix(6)
                 .map { $0 }
         }
+        guard isGenerationActive(generationID) else { return }
         let systemPrompt = promptBuilder.build(
             character: character,
             lorebook: lorebook,
@@ -202,12 +210,14 @@ final class PersonaChatService: ObservableObject {
                 self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
             }
         )
+        guard isGenerationActive(generationID) else { return }
 
         // ── 6) 出力 safety ──
         var finalText = (reply?.isEmpty == false ? reply! : streamingResponse)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         finalText = sanitizedFinalText(finalText)
         let outSafety = await safetyPipeline.evaluateOutput(finalText, character: character)
+        guard isGenerationActive(generationID) else { return }
         switch outSafety.action {
         case .block:
             finalText = outSafety.rewrittenText ?? "うまく言えないけど、それは話したくないな。別の話にしよう?"
@@ -241,6 +251,7 @@ final class PersonaChatService: ObservableObject {
 
     func cancel() {
         generationTask?.cancel()
+        generationTask = nil
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
         activeGenerationID = nil
         phase = .idle
@@ -281,6 +292,8 @@ final class PersonaChatService: ObservableObject {
                 guard let self,
                       self.activeGenerationID == generationID,
                       self.phase == .thinking else { return }
+                self.generationTask?.cancel()
+                self.generationTask = nil
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
                 let fallback = self.streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? "（応答が止まったため中断しました。もう一度送ってください）"
@@ -292,6 +305,10 @@ final class PersonaChatService: ObservableObject {
                 self.activeGenerationID = nil
             }
         }
+    }
+
+    private func isGenerationActive(_ generationID: UUID) -> Bool {
+        !Task.isCancelled && activeGenerationID == generationID
     }
 
     // MARK: - Prompt assembly

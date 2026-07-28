@@ -4565,11 +4565,19 @@ final class BundledServerLogAggregator {
                 // ネイティブ Thinking が無効なら常に空文字列を使い、<Thinking> ブロックを表示しない。
                 let thinkingPreview = disableNativeThinking ? "" : self.partialThinkingPreview(from: rawText)
                 let visiblePreview = self.partialVisiblePreview(from: rawText)
+                let shouldPublishThinking = !thinkingPreview.isEmpty && thinkingPreview != latestThinkingPreview
+                let shouldPublishVisible = !visiblePreview.isEmpty && visiblePreview != latestVisiblePreview
+                if shouldPublishThinking {
+                    latestThinkingPreview = thinkingPreview
+                }
+                if shouldPublishVisible {
+                    latestVisiblePreview = visiblePreview
+                    lastVisibleOutputActivityAt = Date()
+                }
                 lock.unlock()
 
                 if let onUpdate {
-                    if !thinkingPreview.isEmpty, thinkingPreview != latestThinkingPreview {
-                        latestThinkingPreview = thinkingPreview
+                    if shouldPublishThinking {
                         self.emitStatus(
                             .thinking,
                             title: "推論方針を整理中",
@@ -4582,9 +4590,7 @@ final class BundledServerLogAggregator {
                         )
                         Task { @MainActor in onUpdate(.thinkingPreview(thinkingPreview)) }
                     }
-                    if !visiblePreview.isEmpty, visiblePreview != latestVisiblePreview {
-                        latestVisiblePreview = visiblePreview
-                        lastVisibleOutputActivityAt = Date()
+                    if shouldPublishVisible {
                         self.emitStatus(
                             .streaming,
                             title: "本文を書き出し中",
@@ -4941,11 +4947,19 @@ final class BundledServerLogAggregator {
                 // ネイティブ Thinking が無効なら常に空文字列を使い、<Thinking> ブロックを表示しない。
                 let thinkingPreview = disableNativeThinking ? "" : self.partialThinkingPreview(from: rawText)
                 let visiblePreview = self.partialVisiblePreview(from: rawText)
+                let shouldPublishThinking = !thinkingPreview.isEmpty && thinkingPreview != latestThinkingPreview
+                let shouldPublishVisible = !visiblePreview.isEmpty && visiblePreview != latestVisiblePreview
+                if shouldPublishThinking {
+                    latestThinkingPreview = thinkingPreview
+                }
+                if shouldPublishVisible {
+                    latestVisiblePreview = visiblePreview
+                    lastVisibleOutputActivityAt = Date()
+                }
                 lock.unlock()
 
                 if let onUpdate {
-                    if !thinkingPreview.isEmpty, thinkingPreview != latestThinkingPreview {
-                        latestThinkingPreview = thinkingPreview
+                    if shouldPublishThinking {
                         self.emitStatus(
                             .thinking,
                             title: "推論方針を整理中",
@@ -4958,9 +4972,7 @@ final class BundledServerLogAggregator {
                         )
                         Task { @MainActor in onUpdate(.thinkingPreview(thinkingPreview)) }
                     }
-                    if !visiblePreview.isEmpty, visiblePreview != latestVisiblePreview {
-                        latestVisiblePreview = visiblePreview
-                        lastVisibleOutputActivityAt = Date()
+                    if shouldPublishVisible {
                         self.emitStatus(
                             .streaming,
                             title: "本文を書き出し中",

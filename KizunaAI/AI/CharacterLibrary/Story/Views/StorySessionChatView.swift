@@ -981,7 +981,7 @@ private struct StorySessionChatBody: View {
                 .onSubmit(submit)
             Button {
                 if service.phase == .thinking {
-                    service.cancel()
+                    vm.cancelGeneration()
                 } else {
                     submit()
                 }
@@ -1010,9 +1010,10 @@ private struct StorySessionChatBody: View {
     private func submit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, service.phase != .thinking else { return }
+        // 送信準備中の二重タップでは受付されないため、受理された時だけ入力を消す。
+        guard vm.send(text) else { return }
         draft = ""
         composerFocused = false
-        vm.send(text)
     }
 }
 

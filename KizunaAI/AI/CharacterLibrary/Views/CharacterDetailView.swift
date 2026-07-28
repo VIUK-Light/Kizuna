@@ -269,10 +269,16 @@ struct CharacterDetailView: View {
             } label: { Label("編集", systemImage: "pencil") }
                 .buttonStyle(.bordered)
 
-            Button(role: .destructive) {
-                showDeleteConfirm = true
-            } label: { Label("削除", systemImage: "trash") }
-                .buttonStyle(.bordered)
+            if character.isSystemProtected != true {
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: { Label("削除", systemImage: "trash") }
+                    .buttonStyle(.bordered)
+            } else {
+                Label("標準", systemImage: "lock.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
 
             Button {
                 showReport = true
