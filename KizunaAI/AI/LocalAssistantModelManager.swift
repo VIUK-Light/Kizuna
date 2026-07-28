@@ -175,6 +175,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private var progressSamples: [(time: TimeInterval, bytes: Int64)] = []
     private var activeDownloadBaseBytes: Int64 = 0
     private var isEnvironmentRefreshScheduled = false
+    // 端末内 runtime の確認は UI ボタンではなく、モデル検出後に一度だけ自動実行する。
+    // 同じモデルで refreshEnvironment() が連続しても、重いモデル初期化を重ねない。
+    private var automaticRuntimeCheckTask: Task<Void, Never>?
+    private var automaticRuntimeCheckModelKey: String?
 
     private override init() {
         self.sourceURLString = Self.normalizedSourceURL(
@@ -197,6 +201,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     deinit {
+        automaticRuntimeCheckTask?.cancel()
         lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
@@ -432,9 +437,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         case .executable:
             return "\(LocalAssistantModelProfile.modelName) をこの端末で実行できます。"
         case .recentFailure:
-            return runtimeDiagnosticSummary ?? "ローカル実行の起動確認に失敗しました。APIへ自動で切り替えず、原因を確認してください。"
+            return runtimeDiagnosticSummary ?? "ローカル実行の自動確認に失敗しました。モデル形式と端末の空き容量を確認してください。"
         case .savedOnly:
-            return "モデルファイルは保存済みです。まだ端末内で起動確認は完了していません。"
+            return "モデルファイルは保存済みです。端末内の実行確認を自動で開始します。"
         case .modelMissing:
             if hasLegacyInstalledModel {
                 return "旧ローカルモデルは残っていますが、既定の \(LocalAssistantModelProfile.internalModelName) は未導入です。"
@@ -461,9 +466,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         case .checking:
             return "ローカルモデルを端末内で起動確認中です。完了するまで実行可能とは表示しません。"
         case .recentFailure:
-            return runtimeDiagnosticSummary ?? "ローカル実行に失敗しました。NAGI/APIへは自動で切り替えません。"
+            return runtimeDiagnosticSummary ?? "ローカル実行の自動確認に失敗しました。"
         case .savedOnly:
-            return "モデルは保存済みですが、まだ端末内で使えるとは確認できていません。"
+            return "モデルは保存済みです。端末内の実行確認を自動で開始します。"
         case .executable, .modelMissing:
             return nil
         }
@@ -533,7 +538,11 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     func recheckRuntimeAvailability() {
         LocalAssistantRuntimeBridge.shared.clearRuntimeError()
 
-        // 起動確認は保存済みファイルの検査だけ。ダウンロード開始経路には入らない。
+        automaticRuntimeCheckTask?.cancel()
+        automaticRuntimeCheckTask = nil
+        automaticRuntimeCheckModelKey = nil
+
+        // 手動再確認を残す呼び出し元向けの互換入口。通常はモデル検出後に自動実行する。
         NSLog(
             "[ModelManager] self-check requested installed=%@ downloading=%@ status=%@",
             installedModelURL?.path ?? "nil",
@@ -566,19 +575,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return
         }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.runtimeAvailabilitySnapshot = .checking
-            self.statusMessage = "Gemma の実行を確認しています"
-        }
-
-        Task { [weak self] in
-            guard let self else { return }
-            _ = await LocalAssistantRuntimeBridge.shared.performSelfCheck(installedModelURL: currentModelURL)
-            await MainActor.run {
-                self.refreshEnvironment()
-            }
-        }
+        startRuntimeAvailabilityCheck(for: currentModelURL)
     }
 
     private func scheduleEnvironmentRefresh() {
@@ -619,9 +616,51 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func refreshRuntimeAvailabilitySnapshot() {
         let nextAvailability = LocalAssistantRuntimeBridge.shared.availability(installedModelURL: installedModelURL)
-        DispatchQueue.main.async { [weak self] in
-            self?.runtimeAvailabilitySnapshot = nextAvailability
+        runtimeAvailabilitySnapshot = nextAvailability
+        scheduleAutomaticRuntimeCheckIfNeeded()
+    }
+
+    private func scheduleAutomaticRuntimeCheckIfNeeded() {
+        guard !isDownloading,
+              runtimeAvailability == .savedOnly,
+              let modelURL = installedModelURL else {
+            return
         }
+        startRuntimeAvailabilityCheck(for: modelURL)
+    }
+
+    private func startRuntimeAvailabilityCheck(for modelURL: URL) {
+        let modelKey = automaticRuntimeCheckKey(for: modelURL)
+        guard automaticRuntimeCheckTask == nil,
+              automaticRuntimeCheckModelKey != modelKey else {
+            return
+        }
+
+        automaticRuntimeCheckModelKey = modelKey
+        runtimeAvailabilitySnapshot = .checking
+        statusMessage = "ローカルモデルを端末内で確認しています"
+
+        automaticRuntimeCheckTask = Task { [weak self] in
+            guard let self else { return }
+            let result = await LocalAssistantRuntimeBridge.shared.performSelfCheck(installedModelURL: modelURL)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self.automaticRuntimeCheckTask = nil
+                guard self.installedModelURL?.standardizedFileURL == modelURL.standardizedFileURL else {
+                    self.automaticRuntimeCheckModelKey = nil
+                    return
+                }
+                self.runtimeAvailabilitySnapshot = result
+                self.applyStatusPresentation()
+            }
+        }
+    }
+
+    private func automaticRuntimeCheckKey(for modelURL: URL) -> String {
+        let values = try? modelURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let size = values?.fileSize ?? 0
+        let modified = values?.contentModificationDate?.timeIntervalSinceReferenceDate ?? 0
+        return "\(modelURL.standardizedFileURL.path)|\(size)|\(modified)"
     }
 
     func startDownload() {

@@ -734,10 +734,25 @@ final class StorySessionService: ObservableObject {
     }
 
     private func storyContentMessages(from messages: [StoryMessage]) -> [StoryMessage] {
-        messages.filter { message in
-            if case .system = message.author { return false }
-            return true
+        var result: [StoryMessage] = []
+        for message in messages {
+            if case .system = message.author { continue }
+            if let previous = result.last, isSameSpeakerBurst(previous, message) {
+                continue
+            }
+            result.append(message)
         }
+        return result
+    }
+
+    /// 1回の生成で同じキャラの候補が複数保存された場合、後続プロンプトへ重複を持ち込まない。
+    private func isSameSpeakerBurst(_ lhs: StoryMessage, _ rhs: StoryMessage) -> Bool {
+        guard case let .cast(lhsID, _) = lhs.author,
+              case let .cast(rhsID, _) = rhs.author,
+              lhsID == rhsID else { return false }
+        // 1ターンの出力はユーザー発言やナレーションで区切られるため、
+        // 同じキャラが連続していれば候補の重複として扱う。
+        return true
     }
 
     // MARK: - Stream handling
@@ -759,7 +774,8 @@ final class StorySessionService: ObservableObject {
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 temperature: 0.72,
-                maxOutputTokens: 4096
+                // 物語本文は2〜7行で十分。過剰な上限は待ち時間と候補の連続出力を増やす。
+                maxOutputTokens: 1024
             )
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
@@ -768,9 +784,21 @@ final class StorySessionService: ObservableObject {
                 self.streamingSpeakerName = self.detectCurrentSpeakerName(in: text)
             }
             return text
+        } catch let error as StoryGemma31BAPIError {
+            // APIエラーをNPC本文として整形すると、空レスポンス時に
+            // 同じキャラのフォールバック発話が追加されるためsystem通知にする。
+            let message = gemmaRuntimeNotice(for: error)
+            NSLog("[StoryGemma31B] generation failed: %@", error.localizedDescription)
+            await MainActor.run {
+                guard self.activeGenerationID == generationID else { return }
+                self.streamingResponse = message
+                self.streamingStatusText = ""
+                self.streamingSpeakerName = nil
+            }
+            return message
         } catch {
-            // API応答本文やURLなどの診断情報を会話履歴へ保存しない。
-            let message = "ナレーション: 通信が途切れ、場面がいったん静かになった。もう一度話しかけてください。"
+            let message = "Gemma4 31B API の応答に失敗しました。もう一度試してください。"
+            NSLog("[StoryGemma31B] generation failed: %@", error.localizedDescription)
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = message
@@ -855,6 +883,7 @@ final class StorySessionService: ObservableObject {
         )
         let lines = text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
         var out: [StoryMessage] = []
+        var emittedCastIDs = Set<UUID>()
         for line in lines where !line.isEmpty {
             // 「ナレーション:」
             if line.hasPrefix("ナレーション:") || line.hasPrefix("ナレーション：") || line.hasPrefix("ナレーター:") || line.hasPrefix("ナレーター：") {
@@ -881,7 +910,9 @@ final class StorySessionService: ObservableObject {
                     break
                 }
             }
-            if let (id, name, body) = matched, !body.isEmpty {
+            if let (id, name, body) = matched,
+               !body.isEmpty,
+               emittedCastIDs.insert(id).inserted {
                 out.append(StoryMessage(author: .cast(characterId: id, displayName: name), text: body))
                 continue
             }
@@ -941,6 +972,19 @@ final class StorySessionService: ObservableObject {
             || text.contains("Gemma4 31B API の出力本文が空")
     }
 
+    private func gemmaRuntimeNotice(for error: StoryGemma31BAPIError) -> String {
+        switch error {
+        case .missingAPIKey:
+            return "Gemma4 APIキーが未設定です。NAGIのモデル詳細からAPIキーを設定してください。"
+        case .emptyResponse:
+            return "Gemma4 31B API が空レスポンスを返しました。もう一度試してください。"
+        case .emptyText:
+            return "Gemma4 31B API の出力本文が空でした。もう一度試してください。"
+        case .invalidURL, .httpStatus:
+            return "Gemma4 31B API の応答に失敗しました。もう一度試してください。"
+        }
+    }
+
     private func localStoryRuntimeUnavailableMessage(
         availability: LocalAssistantRuntimeAvailability,
         selectedModelURL: URL?
@@ -953,11 +997,11 @@ final class StorySessionService: ObservableObject {
         case .checking:
             return "iori はまだ端末内で起動確認中です。確認が終わるまで、この場面のローカル生成は開始しません。"
         case .savedOnly:
-            return "iori のモデルファイルは保存済みですが、端末内で起動できる確認がまだ終わっていません。モデル詳細から実行確認をしてください。"
+            return "iori のモデルファイルは保存済みです。端末内の実行確認が自動で進行中です。"
         case .recentFailure:
-            return "iori のローカル起動に失敗しました。モデル詳細から起動確認をやり直してください。"
+            return "iori のローカル実行を確認できませんでした。モデルメニューからNAGIへ切り替えられます。"
         case .modelMissing:
-            return "iori のローカルモデルが未導入です。モデルを保存し、self-check が成功してからこの場面を続けられます。"
+            return "iori のローカルモデルが未導入です。モデルを保存すると端末内で自動確認します。"
         }
     }
 
@@ -1112,6 +1156,7 @@ final class StorySessionService: ObservableObject {
         var firstNarration: String?
         var speeches: [String] = []
         var seenSpeechKeys = Set<String>()
+        var seenSpeakers = Set<UUID>()
 
         for line in lines {
             if line.hasPrefix("ナレーション:") || line.hasPrefix("ナレーション：") || line.hasPrefix("ナレーター:") || line.hasPrefix("ナレーター：") {
@@ -1121,12 +1166,16 @@ final class StorySessionService: ObservableObject {
                 continue
             }
 
-            for (_, name) in activeNames {
+            for (id, name) in activeNames {
                 if line.hasPrefix(name + ":") || line.hasPrefix(name + "：") {
                     let body = textAfterSpeakerDelimiter(line)
                     let key = "\(name)\u{1F}\(normalizedSpeechKey(body))"
-                    if !body.isEmpty, speeches.count < 3, seenSpeechKeys.insert(key).inserted {
+                    if !body.isEmpty,
+                       speeches.count < 2,
+                       !seenSpeakers.contains(id),
+                       seenSpeechKeys.insert(key).inserted {
                         speeches.append("\(name): \(body)")
+                        seenSpeakers.insert(id)
                     }
                     break
                 }

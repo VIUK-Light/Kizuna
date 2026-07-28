@@ -10,7 +10,11 @@ import Foundation
 import AppKit
 #endif
 
+#if os(macOS) || os(iOS)
+// Objective-C runtimeの結果型をSwift Concurrency境界へ渡すために必要。
+// iOSでも埋め込み llama.cpp runtime を使用する。
 extension VIUKEmbeddedRuntimeResult: @unchecked Sendable {}
+#endif
 
 nonisolated private func makeRuntimeDefaultGemmaAdvancedSettings() -> GemmaAdvancedSettings {
     GemmaAdvancedSettings(
@@ -722,10 +726,9 @@ final class LocalAssistantRuntimeBridge {
     }
 
     func prewarmIfPossible() {
-        #if !os(macOS)
-        // iOS local execution must be opt-in through an explicit self-check.
-        // Background prewarm can touch native model/runtime initialization before the UI can
-        // show a clear failure reason, which was the source of phone-side AI crashes.
+#if !os(macOS)
+        // iOSはアプリ起動時にnative Engineを先回りで初期化しない。
+        // ModelManagerがモデル検出後に一度だけ、UIへ状態を出しながら自動self-checkする。
         return
         #else
         guard let installedModelURL = LocalAssistantModelManager.shared.installedModelURL else {
@@ -1336,7 +1339,7 @@ final class BundledServerLogAggregator {
                 cachedAvailability = cachedModelPath == nil ? .modelMissing : .savedOnly
             }
         }
-#if os(macOS)
+#if os(macOS) || os(iOS)
         VIUKEmbeddedRuntime.shared().clearCachedModel()
 #endif
         terminateBundledServer()
@@ -1393,7 +1396,7 @@ final class BundledServerLogAggregator {
                     stage: .selfCheck,
                     modelPath: installedModelURL.path,
                     summary: "このiOSビルドでは現在のモデル形式を実行できません。",
-                    detail: "iOS実機のローカル実行は .litertlm モデルのみ対象です。保存済みファイルを実行可能とは表示しません。"
+                    detail: "iOS実機では .gguf/.bin は埋め込みruntime、.litertlm はLiteRT-LM native runtimeで実行します。現在のファイル形式には対応する経路がありません。"
                 )
 #else
                 return .savedOnly
@@ -1433,7 +1436,7 @@ final class BundledServerLogAggregator {
                     stage: .selfCheck,
                     modelPath: installedModelURL.path,
                     summary: "このiOSビルドでは現在のモデル形式を実行できません。",
-                    detail: "iOS実機のローカル実行は .litertlm モデルのみ対象です。保存済みファイルを実行可能とは表示しません。"
+                    detail: "iOS実機では .gguf/.bin は埋め込みruntime、.litertlm はLiteRT-LM native runtimeで実行します。現在のファイル形式には対応する経路がありません。"
                 )
 #else
                 cachedAvailability = .savedOnly
@@ -1588,7 +1591,7 @@ final class BundledServerLogAggregator {
             stage: stage,
             kind: .runnerUnavailable,
             summary: LocalAssistantLiteRTLMRuntime.shared.unavailableReason,
-            detail: "Gemma4 31B API へ自動で逃がさず、ローカル実行は停止します。LiteRT-LM native runtime を再開する場合は、実機で Engine 初期化が安定したことを確認してから VIUK_ENABLE_LITERTLM_NATIVE を有効にしてください。",
+            detail: "LiteRT-LM native runtime を読み込めません。LiteRT-LM パッケージの解決状態と、端末上の .litertlm モデルを確認してください。",
             terminationStatus: nil,
             runnerPath: "LiteRTLM.Engine",
             modelPath: modelPath
@@ -2607,7 +2610,7 @@ final class BundledServerLogAggregator {
             let result: VIUKEmbeddedRuntimeResult
             switch engine {
             case .embedded:
-#if os(macOS)
+#if os(macOS) || os(iOS)
                 result = VIUKEmbeddedRuntime.shared().performSelfCheck(withModelPath: modelPath, maxTokens: 24)
 #else
                 result = VIUKEmbeddedRuntimeResult(success: false, text: nil, errorMessage: "このプラットフォームでは埋め込み runtime を使えません。")
@@ -2786,7 +2789,7 @@ final class BundledServerLogAggregator {
                     startedAt: startedAt,
                     onUpdate: onUpdate
                 )
-#if os(macOS)
+#if os(macOS) || os(iOS)
                 let result = VIUKEmbeddedRuntime.shared().generate(
                     withPrompt: prompt,
                     modelPath: modelPath,
@@ -3416,7 +3419,7 @@ final class BundledServerLogAggregator {
                     startedAt: startedAt,
                     onUpdate: onUpdate
                 )
-#if os(macOS)
+#if os(macOS) || os(iOS)
                 let result = VIUKEmbeddedRuntime.shared().generate(
                     withPrompt: prompt,
                     modelPath: modelPath,

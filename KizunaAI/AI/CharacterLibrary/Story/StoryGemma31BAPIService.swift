@@ -66,6 +66,7 @@ final class StoryGemma31BAPIService {
             throw StoryGemma31BAPIError.missingAPIKey
         }
         let prompt = """
+        <Thinking>
         \(systemPrompt)
 
         ---
@@ -80,7 +81,9 @@ final class StoryGemma31BAPIService {
             generationConfig: GenerationConfig(
                 temperature: temperature,
                 topP: 0.92,
-                maxOutputTokens: maxOutputTokens
+                maxOutputTokens: maxOutputTokens,
+                // Gemma 4 APIではThinkingをgenerationConfigで明示的に有効化する。
+                thinkingConfig: ThinkingConfig(thinkingLevel: "high")
             )
         ))
 
@@ -93,6 +96,8 @@ final class StoryGemma31BAPIService {
         let decoded = try decoder.decode(GenerateContentResponse.self, from: data)
         let text = decoded.candidates?
             .flatMap { $0.content?.parts ?? [] }
+            // 思考過程は会話本文・次ターンの履歴へ保存しない。
+            .filter { $0.thought != true }
             .compactMap(\.text)
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -170,12 +175,23 @@ final class StoryGemma31BAPIService {
 
     private struct Part: Codable {
         let text: String?
+        let thought: Bool?
+
+        init(text: String?, thought: Bool? = nil) {
+            self.text = text
+            self.thought = thought
+        }
     }
 
     private struct GenerationConfig: Encodable {
         let temperature: Double
         let topP: Double
         let maxOutputTokens: Int
+        let thinkingConfig: ThinkingConfig
+    }
+
+    private struct ThinkingConfig: Encodable {
+        let thinkingLevel: String
     }
 
     private struct GenerateContentResponse: Decodable {

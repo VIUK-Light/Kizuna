@@ -115,22 +115,14 @@ struct StorySessionChatView: View {
             .layoutPriority(1)
             Spacer(minLength: 4)
 
+            // モデル選択をハンバーガーメニューの中に隠さない。
+            // 以前は StoryGenerationModelPill が定義されているだけで画面に挿入されておらず、
+            // NAGIを選ぶ導線が見えない状態になっていた。
+            if let sessionVM {
+                StoryGenerationModelPill(vm: sessionVM)
+            }
+
             Menu {
-                if let sessionVM {
-                    Section("モデル") {
-                        ForEach(StoryGenerationModel.allCases) { model in
-                            Button {
-                                sessionVM.generationModel = model
-                            } label: {
-                                Label(
-                                    model.displayName,
-                                    systemImage: sessionVM.generationModel == model ? "checkmark" : "cpu"
-                                )
-                            }
-                        }
-                    }
-                    Divider()
-                }
                 Button("セッションを閉じる") { dismiss() }
             } label: {
                 Image(systemName: "line.3.horizontal")
@@ -223,18 +215,12 @@ private struct StoryGenerationModelPill: View {
             }
             if vm.generationModel == .e4b {
                 Divider().opacity(0.35)
-                Button {
-                    localModelManager.recheckRuntimeAvailability()
-                } label: {
-                    Label(
-                        localModelManager.runtimeAvailability == .checking ? "確認中..." : "ioriを起動確認",
-                        systemImage: "checkmark.seal"
-                    )
-                    .font(.system(size: 11.5, weight: .bold))
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(localModelManager.runtimeAvailability == .checking)
+                Label(
+                    ioriRuntimeStatusLabel,
+                    systemImage: ioriRuntimeStatusIcon
+                )
+                .font(.system(size: 11.5, weight: .bold))
+                .foregroundStyle(modelAvailabilityColor(.e4b))
                 Text(ioriRuntimeActionHint)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -263,15 +249,35 @@ private struct StoryGenerationModelPill: View {
     private var ioriRuntimeActionHint: String {
         switch localModelManager.runtimeAvailability {
         case .checking:
-            return "端末内で短い生成を走らせ、本当に実行できるか確認しています。"
+            return "モデル保存後に端末内で自動確認しています。完了まで生成は開始しません。"
         case .executable:
-            return "self-check 済みです。選択中は iori が端末内で実行されます。"
+            return "端末内で実行できます。選択中は iori がローカルで応答します。"
         case .savedOnly:
-            return "ファイル保存済みですが、まだ実行可能とは扱いません。起動確認を実行してください。"
+            return "モデルは保存済みです。端末内の実行確認を自動で開始します。"
         case .recentFailure:
-            return "失敗理由を確認し、修正後に再度起動確認してください。NAGIへは自動切替しません。"
+            return "端末内実行を確認できませんでした。NAGIへ切り替える場合はモデルメニューから選択してください。"
         case .modelMissing:
-            return "ローカルモデルが未導入です。モデルを保存してから起動確認できます。"
+            return "ローカルモデルが未導入です。モデルを保存すると端末内で自動確認します。"
+        }
+    }
+
+    private var ioriRuntimeStatusLabel: String {
+        switch localModelManager.runtimeAvailability {
+        case .checking: return "端末内で自動確認中"
+        case .executable: return "端末内で実行可能"
+        case .savedOnly: return "保存済み・自動確認待ち"
+        case .recentFailure: return "端末内実行を確認できません"
+        case .modelMissing: return "ローカルモデル未導入"
+        }
+    }
+
+    private var ioriRuntimeStatusIcon: String {
+        switch localModelManager.runtimeAvailability {
+        case .checking: return "arrow.triangle.2.circlepath"
+        case .executable: return "checkmark.seal.fill"
+        case .savedOnly: return "clock"
+        case .recentFailure: return "exclamationmark.triangle"
+        case .modelMissing: return "arrow.down.circle"
         }
     }
 
@@ -282,7 +288,7 @@ private struct StoryGenerationModelPill: View {
     private func modelShortDescription(_ model: StoryGenerationModel) -> String {
         switch model {
         case .e4b:
-            return "ローカル iori。self-check 成功済みの時だけ端末内で実行します。"
+            return "ローカル iori。モデル保存後に端末内の実行可否を自動確認します。"
         case .b31:
             return "Gemma4 31B API。描写、関係性の機微、場面の空気をより丁寧に出します。"
         }
@@ -293,13 +299,13 @@ private struct StoryGenerationModelPill: View {
         case .e4b:
             switch localModelManager.runtimeAvailability {
             case .checking:
-                return "起動確認中"
+                return "自動確認中"
             case .executable:
                 return "端末内で実行中"
             case .savedOnly:
-                return "モデル保存済み・起動未確認"
+                return "モデル保存済み・自動確認待ち"
             case .recentFailure:
-                return localModelManager.runtimeDiagnosticSummary ?? "ローカル起動失敗"
+                return localModelManager.runtimeDiagnosticSummary ?? "ローカル自動確認失敗"
             case .modelMissing:
                 return "ローカル未導入"
             }
@@ -528,9 +534,19 @@ private struct StorySessionChatBody: View {
     }
 
     private var visibleMessages: [StoryMessage] {
-        // StoryMessage.id は発話単位の永続ID。同一秒に同じキャラが2回話す正当なターンを
-        // timestampで間引くと本文を失うため、保存済みメッセージはそのまま描画する。
-        vm.session.messages
+        // 旧バージョンで1ターンに同じキャラの候補が複数保存された履歴も、
+        // 画面では同じ発話として畳む。ユーザー発言やナレーションで区切られた発話は残す。
+        var result: [StoryMessage] = []
+        for message in vm.session.messages {
+            if let previous = result.last,
+               case let .cast(previousID, _) = previous.author,
+               case let .cast(currentID, _) = message.author,
+               previousID == currentID {
+                continue
+            }
+            result.append(message)
+        }
+        return result
     }
 
     private var sceneStrip: some View {
@@ -791,9 +807,10 @@ private struct StorySessionChatBody: View {
                         if shouldOfferNAGISwitch(for: message) {
                             Button {
                                 vm.generationModel = .b31
+                                vm.retryLastMessage()
                             } label: {
                                 Label(
-                                    StoryGemma31BAPIService.shared.hasAPIKey ? "NAGIで続ける" : "NAGI APIキー未設定",
+                                    StoryGemma31BAPIService.shared.hasAPIKey ? "NAGIで再試行" : "NAGI APIキー未設定",
                                     systemImage: "arrow.triangle.2.circlepath"
                                 )
                                 .font(.system(size: 11.5, weight: .bold))
