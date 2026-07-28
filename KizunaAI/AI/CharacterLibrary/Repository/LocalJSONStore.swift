@@ -14,7 +14,21 @@ enum LocalJSONStoreError: Error {
     case decode(underlying: Error)
 }
 
+private final class LocalJSONStoreFileLock: @unchecked Sendable {
+    nonisolated static let shared = LocalJSONStoreFileLock()
+    private let lock = NSLock()
+
+    nonisolated func withLock<R>(_ body: () throws -> R) rethrows -> R {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
+}
+
 actor LocalJSONStore<T: Codable> {
+    // Repositoryは画面ごとに別インスタンスでも同じファイルを指すため、
+    // actor単位だけでは read-modify-write の競合を防げない。
+    // 共有ロックで、同じJSONファイル群の更新を直列化する。
     private let fileName: String
     private let fileURL: URL
     private let encoder: JSONEncoder
@@ -41,6 +55,28 @@ actor LocalJSONStore<T: Codable> {
     }
 
     func load() async throws -> [T] {
+        try LocalJSONStoreFileLock.shared.withLock {
+            try loadUnlocked()
+        }
+    }
+
+    func save(_ items: [T]) async throws {
+        try LocalJSONStoreFileLock.shared.withLock {
+            try saveUnlocked(items)
+        }
+    }
+
+    /// read-modify-writeを1回のロック内で完了させる。
+    /// メモリーの重複排除・上限整理など、複数repositoryから同時に呼ばれる処理に使う。
+    func mutate(_ mutation: (inout [T]) throws -> Void) async throws {
+        try LocalJSONStoreFileLock.shared.withLock {
+            var items = try loadUnlocked()
+            try mutation(&items)
+            try saveUnlocked(items)
+        }
+    }
+
+    private func loadUnlocked() throws -> [T] {
         guard fm.fileExists(atPath: fileURL.path) else { return [] }
         do {
             let data = try Data(contentsOf: fileURL)
@@ -52,7 +88,7 @@ actor LocalJSONStore<T: Codable> {
         }
     }
 
-    func save(_ items: [T]) async throws {
+    private func saveUnlocked(_ items: [T]) throws {
         do {
             let data = try encoder.encode(items)
             try data.write(to: fileURL, options: [.atomic])
@@ -65,18 +101,18 @@ actor LocalJSONStore<T: Codable> {
 
     /// id が一致する既存要素を置き換え、なければ末尾に追加する。
     func appendOrReplace(_ item: T, idEquals: (T, T) -> Bool) async throws {
-        var items = (try? await load()) ?? []
-        if let idx = items.firstIndex(where: { idEquals($0, item) }) {
-            items[idx] = item
-        } else {
-            items.append(item)
+        try await mutate { items in
+            if let idx = items.firstIndex(where: { idEquals($0, item) }) {
+                items[idx] = item
+            } else {
+                items.append(item)
+            }
         }
-        try await save(items)
     }
 
     func delete(matching predicate: (T) -> Bool) async throws {
-        var items = (try? await load()) ?? []
-        items.removeAll(where: predicate)
-        try await save(items)
+        try await mutate { items in
+            items.removeAll(where: predicate)
+        }
     }
 }

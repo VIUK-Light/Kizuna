@@ -194,6 +194,7 @@ final class StorySessionService: ObservableObject {
 
     func cancel() {
         generationTask?.cancel()
+        generationTask = nil
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
         activeGenerationID = nil
         phase = .idle
@@ -211,6 +212,7 @@ final class StorySessionService: ObservableObject {
         generationModel: StoryGenerationModel,
         generationID: UUID
     ) async {
+        guard isGenerationActive(generationID) else { return }
         var session = session
         var scene = scene
 
@@ -229,6 +231,7 @@ final class StorySessionService: ObservableObject {
         let userMsg = StoryMessage(author: .user, text: userText)
         session.messages.append(userMsg)
         try? await sessionRepo.saveSession(session)
+        guard isGenerationActive(generationID) else { return }
 
         // 1) キャラ index / cast 取得
         streamingStatusText = "登場キャラを確認中"
@@ -238,9 +241,13 @@ final class StorySessionService: ObservableObject {
             result[character.id] = character
         }
         var cast = (try? await castRepo.fetchCast(storyWorldId: world.id)) ?? []
-        if cast.isEmpty, !world.characterIds.isEmpty {
-            cast = defaultCastMembers(for: world, scene: scene)
+        let reconciledCast = reconciledCast(cast, for: world, scene: scene)
+        if Set(cast.map(\.characterId)) != Set(reconciledCast.map(\.characterId)) || cast.count != reconciledCast.count {
+            try? await castRepo.deleteAllCast(storyWorldId: world.id)
+            cast = reconciledCast
             for member in cast { try? await castRepo.saveCast(member) }
+        } else {
+            cast = reconciledCast
         }
 
         // 2) Mock 安全用に CharacterProfile を 1 つ採用 (main または最 importance)。
@@ -261,6 +268,7 @@ final class StorySessionService: ObservableObject {
         // 3) 入力 safety
         // 相談分類は入力/出力を変更しない。本文生成と並行するUI用の情報だけを作る。
         let safetyConcern = await safetyPipeline.classifyConcern(userText)
+        guard isGenerationActive(generationID) else { return }
         // 生成完了を待たず、分類できた時点でUIへ通知する。
         // モデルが遅い／利用できない場合でも相談先を表示できるようにする。
         if let safetyConcern {
@@ -273,6 +281,7 @@ final class StorySessionService: ObservableObject {
             )
         }
         let inSafety = await safetyPipeline.evaluateInput(userText, character: representativeCharacter)
+        guard isGenerationActive(generationID) else { return }
         if inSafety.action == .block {
             let polite = inSafety.rewrittenText ?? "(ナレーション) その話題はここではそっと脇に置いて、別の場面に進もう。"
             let narration = StoryMessage(author: .narrator, text: polite)
@@ -323,6 +332,7 @@ final class StorySessionService: ObservableObject {
         )
         scene.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
         try? await sceneRepo.saveScene(scene)
+        guard isGenerationActive(generationID) else { return }
 
         let activeCast = cast.filter { scene.activeCharacterIds.contains($0.characterId) }
         let inactiveCast = cast.filter { !scene.activeCharacterIds.contains($0.characterId) }
@@ -361,12 +371,14 @@ final class StorySessionService: ObservableObject {
         } else {
             selectedMemories = candidates
         }
+        guard isGenerationActive(generationID) else { return }
         if !selectedMemories.isEmpty {
             try? await memoryRepo.markUsed(ids: selectedMemories.map(\.id))
         }
 
         // 5-b) 物語内メモリーは、このStoryWorldの履歴だけから選ぶ。
         let storyMemoryCandidates = (try? await storyMemoryRepo.fetchMemories(storyWorldId: world.id)) ?? []
+        guard isGenerationActive(generationID) else { return }
         let selectedStoryMemories = selectStoryMemories(
             query: effectiveUserText,
             candidates: storyMemoryCandidates,
@@ -379,6 +391,7 @@ final class StorySessionService: ObservableObject {
         // 6) Lorebook: キーワード一致した設定だけを選択する。
         streamingStatusText = "Lorebookを選択中"
         var lorebookEntries = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
+        guard isGenerationActive(generationID) else { return }
         // 既存のCharacterLorebookも移行期間は同じ選択器に流し込む。
         for member in cast {
             guard let legacy = try? await characterRepo.fetchLorebook(characterId: member.characterId),
@@ -431,6 +444,7 @@ final class StorySessionService: ObservableObject {
             selectedStoryMemories: selectedStoryMemories,
             userCharacterName: userCharacterName
         )
+        guard isGenerationActive(generationID) else { return }
 
         // 8) Story model 生成。31B を明示選択した時だけ Gemma4 API を使う。
         streamingStatusText = generationModel == .b31 ? "Gemma4 31Bで発話生成中" : "ローカルモデルで発話生成中"
@@ -500,12 +514,16 @@ final class StorySessionService: ObservableObject {
             }
         }
 
+        // キャンセルやウォッチドッグ後に、古い生成結果を後段へ保存しない。
+        guard isGenerationActive(generationID) else { return }
+
         // 9) 出力 safety
         streamingStatusText = "発話を整形中"
         var rawFinal = (reply?.isEmpty == false ? reply! : streamingResponse)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         rawFinal = sanitizedFinalText(rawFinal)
         if isRuntimeNotice {
+            guard isGenerationActive(generationID) else { return }
             let notice = StoryMessage(author: .system, text: textAfterSpeakerDelimiter(rawFinal))
             session.messages.append(notice)
             session.lastSelectedModelName = generationModel.displayName
@@ -524,6 +542,7 @@ final class StorySessionService: ObservableObject {
             return
         }
         let outSafety = await safetyPipeline.evaluateOutput(rawFinal, character: representativeCharacter)
+        guard isGenerationActive(generationID) else { return }
         switch outSafety.action {
         case .block:
             rawFinal = outSafety.rewrittenText ?? "ナレーション: しばらく沈黙が流れた。別の話題にしよう。"
@@ -550,6 +569,7 @@ final class StorySessionService: ObservableObject {
         session.lastSelectedModelName = generationModel.displayName
         session.lastUsedBackendName = usedBackendName
         try? await sessionRepo.saveSession(session)
+        guard isGenerationActive(generationID) else { return }
 
         // 11) Scene summary 更新 (270M)
         streamingStatusText = "場面要約を更新中"
@@ -558,9 +578,11 @@ final class StorySessionService: ObservableObject {
             recentMessages: Array(storyContentMessages(from: session.messages).suffix(18)),
             characterIndex: charIndex
         )
+        guard isGenerationActive(generationID) else { return }
         if newSummary != scene.summary {
             scene.summary = newSummary
             try? await sceneRepo.saveScene(scene)
+            guard isGenerationActive(generationID) else { return }
         }
         // 12) 進行状態は本文の完了を遅らせない。
         // 以前はここで同じローカルモデルへ進行JSONを追加生成していたため、
@@ -596,24 +618,18 @@ final class StorySessionService: ObservableObject {
             session.storyState = statePatch.applying(to: session.storyState ?? StoryState(), characterIndex: charIndex)
         }
         try? await sessionRepo.saveSession(session)
-
-        await MainActor.run {
-            guard self.activeGenerationID == generationID else { return }
-            self.latestSafetyConcern = safetyConcern
-            self.streamingResponse = rawFinal
-            self.streamingSpeakerName = newMessages.last?.speakerDisplayName
-            self.streamingStatusText = ""
-            self.savedTurnRevision += 1
-            self.phase = .idle
-            self.activeGenerationID = nil
-        }
+        guard isGenerationActive(generationID) else { return }
 
         // 13) メモリー抽出。ユーザー事実は全体、出来事は物語内へ保存する。
+        // ここを phase=.idle / activeGenerationID=nil より後に置くと、下の
+        // isGenerationActive ガードが常に失敗してメモリーが一件も保存されない。
+        // 本文の永続化は済んでいるため、抽出だけを完了させてからUIをidleへ戻す。
         let userVisibleAssistant = newMessages.map { (message: StoryMessage) in
             message.text
         }.joined(separator: "\n")
         var extractedStoryMemoryTexts = Set<String>()
         for member in activeCast {
+            guard isGenerationActive(generationID) else { return }
             guard let profile = charIndex[member.characterId] else { continue }
             let mems = await memorySummarizer.extract(
                 userText: userText,
@@ -621,6 +637,7 @@ final class StorySessionService: ObservableObject {
                 character: profile
             )
             for memory in mems {
+                guard isGenerationActive(generationID) else { return }
                 if isGlobalMemoryCategory(memory.category) {
                     // ユーザーのプロフィール・好みは、別の物語でも使える全体メモリー。
                     try? await memoryRepo.saveMemory(memory)
@@ -646,6 +663,7 @@ final class StorySessionService: ObservableObject {
             .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             .nonEmpty,
            extractedStoryMemoryTexts.insert(progress).inserted {
+            guard isGenerationActive(generationID) else { return }
             try? await storyMemoryRepo.saveMemory(
                 StoryMemory(
                     storyWorldId: world.id,
@@ -656,6 +674,21 @@ final class StorySessionService: ObservableObject {
                 )
             )
         }
+
+        await MainActor.run {
+            guard self.activeGenerationID == generationID else { return }
+            self.latestSafetyConcern = safetyConcern
+            self.streamingResponse = rawFinal
+            self.streamingSpeakerName = newMessages.last?.speakerDisplayName
+            self.streamingStatusText = ""
+            self.savedTurnRevision += 1
+            self.phase = .idle
+            self.activeGenerationID = nil
+        }
+    }
+
+    private func isGenerationActive(_ generationID: UUID) -> Bool {
+        !Task.isCancelled && activeGenerationID == generationID
     }
 
     // 全体へ持ち越してよい情報だけを明示する。
@@ -736,7 +769,8 @@ final class StorySessionService: ObservableObject {
             }
             return text
         } catch {
-            let message = "ナレーション: Gemma4 31B API の応答に失敗しました。\(error.localizedDescription)"
+            // API応答本文やURLなどの診断情報を会話履歴へ保存しない。
+            let message = "ナレーション: 通信が途切れ、場面がいったん静かになった。もう一度話しかけてください。"
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = message
@@ -769,12 +803,18 @@ final class StorySessionService: ObservableObject {
                 guard let self,
                       self.activeGenerationID == generationID,
                       self.phase == .thinking else { return }
+                self.generationTask?.cancel()
+                self.generationTask = nil
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
                 let fallback = self.streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? "ナレーション: 応答が途切れ、場面はいったん止まった。もう一度話しかけてください。"
                     : self.streamingResponse
-                Task {
-                    var next = session
+                Task { [weak self] in
+                    guard let self else { return }
+                    // 生成タスクが停止直前に保存した最新状態を基準にする。
+                    // 初期スナップショットへ戻すと、直前の発言や進行状態を上書きする。
+                    var next = ((try? await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId)) ?? [])
+                        .first(where: { $0.id == session.id }) ?? session
                     next.messages.append(StoryMessage(author: .narrator, text: fallback))
                     try? await self.sessionRepo.saveSession(next)
                     await MainActor.run {
@@ -915,10 +955,7 @@ final class StorySessionService: ObservableObject {
         case .savedOnly:
             return "iori のモデルファイルは保存済みですが、端末内で起動できる確認がまだ終わっていません。モデル詳細から実行確認をしてください。"
         case .recentFailure:
-            let detail = LocalAssistantModelManager.shared.runtimeDiagnosticSummary
-                ?? LocalAssistantRuntimeBridge.shared.lastRuntimeError
-                ?? "ローカルモデルの起動確認に失敗しました。"
-            return "iori のローカル起動に失敗しました。\(detail)"
+            return "iori のローカル起動に失敗しました。モデル詳細から起動確認をやり直してください。"
         case .modelMissing:
             return "iori のローカルモデルが未導入です。モデルを保存し、self-check が成功してからこの場面を続けられます。"
         }
@@ -948,10 +985,7 @@ final class StorySessionService: ObservableObject {
     }
 
     private func localStoryGenerationFailureMessage() -> String {
-        let detail = LocalAssistantModelManager.shared.runtimeDiagnosticSummary
-            ?? LocalAssistantRuntimeBridge.shared.lastRuntimeError
-            ?? "ローカル生成が完了しませんでした。"
-        return "iori のローカル生成に失敗しました。\(detail)"
+        return "ローカル生成が止まりました。もう一度試すか、NAGIで続けられます。"
     }
 
     private func sanitize(_ text: String) -> String {
@@ -1077,6 +1111,7 @@ final class StorySessionService: ObservableObject {
 
         var firstNarration: String?
         var speeches: [String] = []
+        var seenSpeechKeys = Set<String>()
 
         for line in lines {
             if line.hasPrefix("ナレーション:") || line.hasPrefix("ナレーション：") || line.hasPrefix("ナレーター:") || line.hasPrefix("ナレーター：") {
@@ -1089,7 +1124,8 @@ final class StorySessionService: ObservableObject {
             for (_, name) in activeNames {
                 if line.hasPrefix(name + ":") || line.hasPrefix(name + "：") {
                     let body = textAfterSpeakerDelimiter(line)
-                    if !body.isEmpty, speeches.count < 3 {
+                    let key = "\(name)\u{1F}\(normalizedSpeechKey(body))"
+                    if !body.isEmpty, speeches.count < 3, seenSpeechKeys.insert(key).inserted {
                         speeches.append("\(name): \(body)")
                     }
                     break
@@ -1110,6 +1146,14 @@ final class StorySessionService: ObservableObject {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
+    }
+
+    private func normalizedSpeechKey(_ text: String) -> String {
+        text
+            .lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func normalizeNarrationLine(_ line: String) -> String {
@@ -1192,6 +1236,19 @@ final class StorySessionService: ObservableObject {
                 isActiveInCurrentScene: activeIDs.contains(characterID)
             )
         }
+    }
+
+    private func reconciledCast(
+        _ existing: [CastMember],
+        for world: StoryWorld,
+        scene: StoryScene
+    ) -> [CastMember] {
+        guard !world.characterIds.isEmpty else { return [] }
+        let defaults = defaultCastMembers(for: world, scene: scene)
+        let existingByCharacterID = existing.reduce(into: [UUID: CastMember]()) { result, member in
+            if result[member.characterId] == nil { result[member.characterId] = member }
+        }
+        return defaults.map { existingByCharacterID[$0.characterId] ?? $0 }
     }
 
     private func generateProgressUpdate(

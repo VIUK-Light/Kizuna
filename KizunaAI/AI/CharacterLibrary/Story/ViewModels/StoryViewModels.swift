@@ -42,6 +42,11 @@ final class StoryWorldLibraryViewModel: ObservableObject {
 
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
+    private let castRepo: CastRepository = LocalJSONCastRepository()
+    private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
+    private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
+    private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
+    private let storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository()
 
     func bootstrap() async {
         await CharacterLibrarySeed.seedIfNeeded(characterRepo: characterRepo, worldRepo: worldRepo)
@@ -62,7 +67,20 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     }
 
     func delete(id: UUID) async {
+        guard let world = worlds.first(where: { $0.id == id }), world.isSystemProtected != true else { return }
         do {
+            // 一覧画面からの削除も詳細画面と同じく関連データを掃除する。
+            let sessions = try await sessionRepo.fetchSessions(storyWorldId: id)
+            for session in sessions {
+                try await sessionRepo.deleteSession(id: session.id)
+            }
+            let lorebookEntries = try await lorebookRepo.fetchAllEntries(storyWorldId: id)
+            for entry in lorebookEntries {
+                try await lorebookRepo.deleteEntry(id: entry.id)
+            }
+            try await castRepo.deleteAllCast(storyWorldId: id)
+            try await sceneRepo.deleteAllScenes(storyWorldId: id)
+            try await storyMemoryRepo.deleteAllMemories(storyWorldId: id)
             try await worldRepo.deleteWorld(id: id)
             await reload()
         } catch {
@@ -341,7 +359,9 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 try await castRepo.saveCast(m)
             }
             // LorebookもWorld単位で置き換え、削除されたカードを残さない。
-            let existingLorebook = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
+            // 無効化済みエントリも編集保存時に置き換える。enabled のみ取得すると
+            // UIから見えない古いカードが story_lorebook.json に残り続ける。
+            let existingLorebook = (try? await lorebookRepo.fetchAllEntries(storyWorldId: world.id)) ?? []
             for entry in existingLorebook {
                 try? await lorebookRepo.deleteEntry(id: entry.id)
             }
@@ -696,6 +716,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
     private let castRepo: CastRepository = LocalJSONCastRepository()
     private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
     private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
+    private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
     private let storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository()
     private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
 
@@ -710,13 +731,13 @@ final class StoryWorldDetailViewModel: ObservableObject {
         async let memoriesFetch = (try? await storyMemoryRepo.fetchMemories(storyWorldId: world.id)) ?? []
         async let charsFetch = (try? await characterRepo.fetchCharacters()) ?? []
         let (cast, scenes, sessions, memories, chars) = await (castFetch, scenesFetch, sessionsFetch, memoriesFetch, charsFetch)
-        if cast.isEmpty, !world.characterIds.isEmpty {
-            let repaired = defaultCastMembers(for: world, existingScenes: scenes)
-            for member in repaired { try? await castRepo.saveCast(member) }
-            self.cast = repaired
-        } else {
-            self.cast = cast
+        let repairedCast = reconciledCast(cast, for: world, existingScenes: scenes)
+        if Set(cast.map(\.characterId)) != Set(repairedCast.map(\.characterId)) || cast.count != repairedCast.count {
+            // 部分的に欠けたキャストや、削除済みキャラの孤児参照を一度だけ整理する。
+            try? await castRepo.deleteAllCast(storyWorldId: world.id)
+            for member in repairedCast { try? await castRepo.saveCast(member) }
         }
+        self.cast = repairedCast
         self.scenes = scenes
         self.sessions = sessions
         self.storyMemories = memories
@@ -734,13 +755,34 @@ final class StoryWorldDetailViewModel: ObservableObject {
            let scene = scenes.first(where: { $0.id == sceneId }) {
             return (session, scene)
         }
-        if let last = sessions.first,
+        if preferredSessionID == nil,
+           let last = sessions.first,
            let sceneId = last.currentSceneId,
            let scene = scenes.first(where: { $0.id == sceneId }) {
             return (last, scene)
         }
         // 新規セッション + 先頭シーン
         guard let firstScene = scenes.first else { return nil }
+
+        // セッション保存中にシーンが削除・置換されると currentSceneId だけが
+        // 無効になる。ここで既存セッションを先頭シーンへ修復しないと、画面を
+        // 開くたびに同じセッションが新規作成され、会話履歴が分裂する。
+        if let brokenIndex = sessions.firstIndex(where: { session in
+            if let preferredSessionID { return session.id == preferredSessionID }
+            return session.id == sessions.first?.id
+        }) {
+            var repaired = sessions[brokenIndex]
+            repaired.currentSceneId = firstScene.id
+            if repaired.progressLabel?.isEmpty != false { repaired.progressLabel = "第1章 きっかけ" }
+            if repaired.currentObjective?.isEmpty != false { repaired.currentObjective = firstScene.sceneGoal.isEmpty ? world.storyGoal : firstScene.sceneGoal }
+            if repaired.lastSceneSummary?.isEmpty != false {
+                repaired.lastSceneSummary = firstScene.summary.isEmpty ? world.openingScene : firstScene.summary
+            }
+            try? await sessionRepo.saveSession(repaired)
+            await reload()
+            return (repaired, firstScene)
+        }
+
         var session = StorySession(
             storyWorldId: world.id,
             currentSceneId: firstScene.id,
@@ -761,12 +803,23 @@ final class StoryWorldDetailViewModel: ObservableObject {
     }
 
     func delete() async {
+        // 標準ストーリーはUI以外からこのメソッドが呼ばれても削除しない。
+        guard world.isSystemProtected != true else { return }
         do {
-            try await worldRepo.deleteWorld(id: world.id)
+            // セッションとLorebookは別ファイルのため、世界だけ消すと孤児データが残る。
+            let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
+            for session in sessions {
+                try await sessionRepo.deleteSession(id: session.id)
+            }
+            let lorebookEntries = try await lorebookRepo.fetchAllEntries(storyWorldId: world.id)
+            for entry in lorebookEntries {
+                try await lorebookRepo.deleteEntry(id: entry.id)
+            }
             try await castRepo.deleteAllCast(storyWorldId: world.id)
             try await sceneRepo.deleteAllScenes(storyWorldId: world.id)
             // 物語を削除する時は、その世界だけの思い出も一緒に削除する。
             try await storyMemoryRepo.deleteAllMemories(storyWorldId: world.id)
+            try await worldRepo.deleteWorld(id: world.id)
         } catch {
             NSLog("[StoryDetailVM] delete failed: %@", String(describing: error))
         }
@@ -785,6 +838,20 @@ final class StoryWorldDetailViewModel: ObservableObject {
                 isActiveInCurrentScene: activeIDs.contains(characterID)
             )
         }
+    }
+
+    private func reconciledCast(
+        _ existing: [CastMember],
+        for world: StoryWorld,
+        existingScenes: [StoryScene]
+    ) -> [CastMember] {
+        guard !world.characterIds.isEmpty else { return [] }
+        let defaults = defaultCastMembers(for: world, existingScenes: existingScenes)
+        let existingByCharacterID = existing.reduce(into: [UUID: CastMember]()) { result, member in
+            // 重複行がある場合は、最初の1件を正として安定させる。
+            if result[member.characterId] == nil { result[member.characterId] = member }
+        }
+        return defaults.map { existingByCharacterID[$0.characterId] ?? $0 }
     }
 }
 
@@ -835,6 +902,9 @@ final class StorySessionViewModel: ObservableObject {
     private var debugSafetyConcernTask: Task<Void, Never>?
     private var debugSafetyConcernObserver: NSObjectProtocol?
     private var debugRequestPollingTask: Task<Void, Never>?
+    private var lastSubmittedText: String?
+    private var sendPreparationTask: Task<Void, Never>?
+    private var sendPreparationID: UUID?
 
     init(world: StoryWorld, session: StorySession, scene: StoryScene) {
         self.world = world
@@ -853,6 +923,7 @@ final class StorySessionViewModel: ObservableObject {
         debugRestSuggestionTask?.cancel()
         debugSafetyConcernTask?.cancel()
         debugRequestPollingTask?.cancel()
+        sendPreparationTask?.cancel()
         if let debugRestSuggestionObserver {
             NotificationCenter.default.removeObserver(debugRestSuggestionObserver)
         }
@@ -967,22 +1038,65 @@ final class StorySessionViewModel: ObservableObject {
         }
     }
 
-    func send(_ userText: String) {
-        service.send(userText, session: session, world: world, scene: scene, generationModel: generationModel)
-        // Service 内で session/scene が永続化されるので、こちらは UI 更新のため
-        // 軽くポーリングで再取得する (将来 Combine pipeline 化)。
-        Task { [weak self] in
+    @discardableResult
+    func send(_ userText: String) -> Bool {
+        let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              service.phase != .thinking,
+              sendPreparationTask == nil else { return false }
+        lastSubmittedText = userText
+        // 直前ターンの保存完了通知と送信タップが競合すると、古い session スナップショットで
+        // 次のターンを開始して新しい発言を上書きする。送信前に最新状態を一度だけ読み直す。
+        let preparationID = UUID()
+        sendPreparationID = preparationID
+        sendPreparationTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.sendPreparationID == preparationID {
+                    self.sendPreparationTask = nil
+                    self.sendPreparationID = nil
+                }
+            }
+            guard !Task.isCancelled, self.sendPreparationID == preparationID else { return }
+            await self.refreshAfterTurn()
+            // キャンセルと再送が近接すると、古い準備タスクが最新の送信を
+            // 横取りしないよう、IDとTask.isCancelledの両方を確認する。
+            guard !Task.isCancelled,
+                  self.sendPreparationID == preparationID,
+                  self.service.phase != .thinking else { return }
+            self.service.send(trimmed, session: self.session, world: self.world, scene: self.scene, generationModel: self.generationModel)
+
+            // Service 内で session/scene が永続化されるので、こちらは UI 更新のため
+            // 軽くポーリングで再取得する (将来 Combine pipeline 化)。
             for _ in 0..<60 {
                 try? await Task.sleep(nanoseconds: 250_000_000)
-                await self?.refreshAfterTurn()
-                if self?.service.phase == .idle {
+                guard !Task.isCancelled, self.sendPreparationID == preparationID else { return }
+                await self.refreshAfterTurn()
+                if self.service.phase == .idle {
                     try? await Task.sleep(nanoseconds: 150_000_000)
-                    await self?.refreshAfterTurn()
+                    guard !Task.isCancelled, self.sendPreparationID == preparationID else { return }
+                    await self.refreshAfterTurn()
                     break
                 }
             }
-            await self?.refreshAfterTurn()
+            guard !Task.isCancelled, self.sendPreparationID == preparationID else { return }
+            await self.refreshAfterTurn()
         }
+        return true
+    }
+
+    func retryLastMessage() {
+        guard let lastSubmittedText, service.phase != .thinking else { return }
+        send(lastSubmittedText)
+    }
+
+    /// 生成停止時は、サービス本体だけでなく送信前の状態再読込も止める。
+    /// これを残すと停止直後の再送が一時的に弾かれる。
+    func cancelGeneration() {
+        sendPreparationID = nil
+        sendPreparationTask?.cancel()
+        sendPreparationTask = nil
+        service.cancel()
     }
 
     func addNarration(_ text: String) {

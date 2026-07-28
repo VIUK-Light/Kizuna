@@ -50,8 +50,8 @@ struct StoryPromptBuilder {
             sections.append(
                 """
                 ## ユーザー操作キャラ
-                (userCharacterName)
-                このキャラはユーザー本人です。AIは「(userCharacterName):」という発話行を絶対に生成しません。
+                \(userCharacterName)
+                このキャラはユーザー本人です。AIは「\(userCharacterName):」という発話行を絶対に生成しません。
                 ユーザーの返答が必要な場面では、ナレーションで間を残して止めます。
                 """
             )
