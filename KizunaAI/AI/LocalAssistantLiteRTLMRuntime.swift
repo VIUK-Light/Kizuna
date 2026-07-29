@@ -188,14 +188,14 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     static let shared = LocalAssistantLiteRTLMRuntime()
 
     private enum Tuning {
-        // Google公式Gemma 3n E2B LiteRT-LMの通常コンテキスト。
-        nonisolated static let contextTokenLimit = 4_096
-        nonisolated static let runtimeCheckContextTokenLimit = 4_096
+        // Gemma 4 E2B LiteRT-LMの標準エンジン設定。
+        nonisolated static let contextTokenLimit = 2_048
+        nonisolated static let runtimeCheckContextTokenLimit = 2_048
         nonisolated static let maximumOutputTokens = 768
         nonisolated static let minimumOutputTokens = 64
         // 会話テンプレート・roleタグに使われる分を必ず残す。
         nonisolated static let chatTemplateReserveTokens = 128
-        nonisolated static let runtimeCacheVersion = "v0.16.0-gemma3n-4096"
+        nonisolated static let runtimeCacheVersion = "v0.17.0-gemma4-token-budget"
     }
 
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
@@ -265,7 +265,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         guard fileSize >= LocalAssistantModelProfile.minimumAcceptedModelSizeBytes else {
             return "モデルファイルが小さすぎます。ダウンロードが途中で止まっている可能性があります。"
         }
-        guard ProcessInfo.processInfo.physicalMemory >= 8 * 1024 * 1024 * 1024 else {
+        guard ProcessInfo.processInfo.physicalMemory >= 4 * 1024 * 1024 * 1024 else {
             return "この端末のメモリでは LiteRT-LM ローカル実行を開始しません。"
         }
         return nil
