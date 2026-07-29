@@ -111,6 +111,34 @@ private actor LiteRTLMExecutionGate {
     }
 }
 
+/// `Conversation.sendMessage` はネイティブ推論中も戻らないため、SwiftのTask cancel
+/// だけでは停止しない。現在のConversationを保持してSDKのcancelを直接呼ぶ。
+private final class LiteRTLMActiveConversation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var conversation: Conversation?
+
+    func set(_ conversation: Conversation) {
+        lock.lock()
+        self.conversation = conversation
+        lock.unlock()
+    }
+
+    func clear(_ conversation: Conversation) {
+        lock.lock()
+        if self.conversation === conversation {
+            self.conversation = nil
+        }
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        let activeConversation = conversation
+        lock.unlock()
+        try? activeConversation?.cancel()
+    }
+}
+
 private actor LiteRTLMEngineStore {
     private var engine: Engine?
     private var loadedConfiguration: LiteRTLMEngineConfiguration?
@@ -145,6 +173,12 @@ private actor LiteRTLMEngineStore {
         guard loadedConfiguration == configuration else { return }
         engine = nil
         loadedConfiguration = nil
+    }
+
+    func release() {
+        engine = nil
+        loadedConfiguration = nil
+        NSLog("[KizunaLiteRTLM] released CPU engine while app is in background")
     }
 }
 #endif
@@ -184,6 +218,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
 #if canImport(LiteRTLM)
     nonisolated private let executionGate = LiteRTLMExecutionGate()
     nonisolated private let engineStore = LiteRTLMEngineStore()
+    nonisolated private let activeConversation = LiteRTLMActiveConversation()
 #endif
 #endif
 
@@ -320,6 +355,31 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         )
     }
 
+    /// UIの停止・watchdogから呼ぶ。Swift TaskだけでなくネイティブConversationにも
+    /// cancelを届け、次ターンがexecution gateで待ち続けないようにする。
+    nonisolated func cancelActiveGeneration() {
+#if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
+#if canImport(LiteRTLM)
+        activeConversation.cancel()
+#endif
+#endif
+    }
+
+    /// アプリがバックグラウンドへ移った時だけモデルとKVキャッシュを解放する。
+    /// 画面遷移では解放しないため、通常の会話継続の速度は保つ。
+    nonisolated func releaseResourcesForBackground() {
+#if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
+#if canImport(LiteRTLM)
+        activeConversation.cancel()
+        Task(priority: .utility) {
+            await executionGate.acquire()
+            await engineStore.release()
+            await executionGate.release()
+        }
+#endif
+#endif
+    }
+
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
 #if canImport(LiteRTLM)
     nonisolated private func runLiteRTLMAttempt(
@@ -357,6 +417,8 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     maxOutputTokens: sizedRequest.maxTokens
                 )
             )
+            activeConversation.set(conversation)
+            defer { activeConversation.clear(conversation) }
             NSLog("[KizunaLiteRTLM] conversation ready; sending message")
             let response = try await conversation.sendMessage(Message(sizedRequest.prompt))
             let cleaned = response.toString.trimmingCharacters(in: .whitespacesAndNewlines)

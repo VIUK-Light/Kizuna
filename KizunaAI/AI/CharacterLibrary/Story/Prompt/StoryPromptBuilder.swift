@@ -321,6 +321,8 @@ struct StoryPromptBuilder {
         scene: StoryScene,
         activeCast: [CastMember],
         characterIndex: [UUID: CharacterProfile],
+        selectedMemories: [CharacterMemory],
+        selectedStoryMemories: [StoryMemory],
         userCharacterName: String?
     ) -> String {
         let npc = activeCast.compactMap { member -> (String, CharacterProfile)? in
@@ -339,11 +341,25 @@ struct StoryPromptBuilder {
             lines.append("ユーザー操作キャラ: \(utf8Prefix(userCharacterName, byteLimit: 72))。この名前で発話を生成しない。")
         }
 
+        // ローカル実行でも、既に選別済みの記憶を小さな状態カプセルとして渡す。
+        // 再検索や追加の推論はせず、最重要の3件だけに絞ってコンテキストを圧迫しない。
+        let memoryFacts = selectedStoryMemories
+            .sorted { $0.importance > $1.importance }
+            .prefix(2)
+            .map { "物語の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
+            + selectedMemories
+                .sorted { $0.importance > $1.importance }
+                .prefix(1)
+                .map { "共通の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
+        if !memoryFacts.isEmpty {
+            lines.append("重要な過去: \(memoryFacts.joined(separator: " / "))。説明せず自然に整合させる。")
+        }
+
         let sceneDetails = [
-            scene.location.isEmpty ? nil : "場所: \(utf8Prefix(scene.location, byteLimit: 120))",
-            scene.timeOfDay.isEmpty ? nil : "時間: \(utf8Prefix(scene.timeOfDay, byteLimit: 72))",
-            scene.mood.isEmpty ? nil : "空気: \(utf8Prefix(scene.mood, byteLimit: 120))",
-            scene.sceneGoal.isEmpty ? nil : "目的: \(utf8Prefix(scene.sceneGoal, byteLimit: 120))"
+            scene.location.isEmpty ? nil : "場所: \(utf8Prefix(scene.location, byteLimit: 84))",
+            scene.timeOfDay.isEmpty ? nil : "時間: \(utf8Prefix(scene.timeOfDay, byteLimit: 48))",
+            scene.mood.isEmpty ? nil : "空気: \(utf8Prefix(scene.mood, byteLimit: 72))",
+            scene.sceneGoal.isEmpty ? nil : "目的: \(utf8Prefix(scene.sceneGoal, byteLimit: 72))"
         ].compactMap { $0 }
         if !sceneDetails.isEmpty { lines.append("現在の場面: " + sceneDetails.joined(separator: " / ")) }
 
@@ -355,7 +371,7 @@ struct StoryPromptBuilder {
         ]
         .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
-        .map { utf8Prefix($0, byteLimit: 120) }
+        .map { utf8Prefix($0, byteLimit: 72) }
         if !characterDetails.isEmpty {
             lines.append("\(npcName)の設定: " + characterDetails.joined(separator: " / "))
         }

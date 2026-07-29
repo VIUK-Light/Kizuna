@@ -681,6 +681,9 @@ final class LocalAssistantRuntimeBridge {
     }
 
     func cancelActiveGeneration() {
+        // LiteRT-LMはURLSession/bundled serverではないため、SDKのConversationへ
+        // 明示的にcancelを届ける。これをしないとUIだけ停止して推論は続行する。
+        LocalAssistantLiteRTLMRuntime.shared.cancelActiveGeneration()
         activeBundledRequestLock.lock()
         let task = activeBundledRequestTask
         activeBundledRequestTask = nil

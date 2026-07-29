@@ -24,6 +24,7 @@ struct KizunaAIApp: App {
 }
 
 private struct KizunaMigrationGateView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isReady = false
 
     var body: some View {
@@ -60,6 +61,13 @@ private struct KizunaMigrationGateView: View {
             // separate confirmation button.
             LocalAssistantModelManager.shared.refreshEnvironment()
             LocalAssistantRuntimeBridge.shared.prewarmIfPossible()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // iPhoneでアプリを離れたまま1GB級のモデルとKVキャッシュを保持しない。
+            // 次回の端末内生成では必要時に再初期化する。
+            guard phase == .background else { return }
+            LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
+            LocalAssistantLiteRTLMRuntime.shared.releaseResourcesForBackground()
         }
     }
 }
