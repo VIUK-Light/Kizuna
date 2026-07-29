@@ -427,23 +427,56 @@ final class StorySessionService: ObservableObject {
 
         // 7) StoryPromptBuilder
         streamingStatusText = "物語コンテキストを構築中"
-        let prompt = promptBuilder.build(
-            world: world,
-            scene: scene,
-            activeCast: aiCastForTurn,
-            inactiveCast: inactiveAICast,
-            characterIndex: charIndex,
-            selectedMemories: selectedMemories,
-            session: session,
-            recentMessages: Array(storyContentMessages(from: session.messages).suffix(96)),
-            userInput: effectiveUserText,
-            generationModel: generationModel,
-            safetyDecision: inSafety,
-            storyState: session.storyState,
-            selectedLorebookEntries: selectedLorebookEntries,
-            selectedStoryMemories: selectedStoryMemories,
-            userCharacterName: userCharacterName
-        )
+        let contentMessages = Array(storyContentMessages(from: session.messages).suffix(96))
+        // 現在のユーザー発言は別途sendMessageへ渡す。直前3件だけをSDK本来の
+        // user/model roleで初期履歴にし、巨大な文字列テンプレートへ混ぜない。
+        let localConversationHistory: [LocalAssistantLiteRTLMHistoryMessage] = contentMessages
+            .dropLast()
+            .suffix(3)
+            .compactMap { message in
+                let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                switch message.author {
+                case .user:
+                    return LocalAssistantLiteRTLMHistoryMessage(role: .user, text: text)
+                case .narrator:
+                    return LocalAssistantLiteRTLMHistoryMessage(role: .model, text: text)
+                case .cast(_, _):
+                    return LocalAssistantLiteRTLMHistoryMessage(role: .model, text: text)
+                case .system:
+                    return nil
+                }
+            }
+        let prompt: String
+        if generationModel == .b31 {
+            prompt = promptBuilder.build(
+                world: world,
+                scene: scene,
+                activeCast: aiCastForTurn,
+                inactiveCast: inactiveAICast,
+                characterIndex: charIndex,
+                selectedMemories: selectedMemories,
+                session: session,
+                recentMessages: contentMessages,
+                userInput: effectiveUserText,
+                generationModel: generationModel,
+                safetyDecision: inSafety,
+                storyState: session.storyState,
+                selectedLorebookEntries: selectedLorebookEntries,
+                selectedStoryMemories: selectedStoryMemories,
+                userCharacterName: userCharacterName
+            )
+        } else {
+            prompt = promptBuilder.buildLocalRuntimePrompt(
+                world: world,
+                scene: scene,
+                activeCast: aiCastForTurn,
+                characterIndex: charIndex,
+                selectedMemories: selectedMemories,
+                selectedStoryMemories: selectedStoryMemories,
+                userCharacterName: userCharacterName
+            )
+        }
         guard isGenerationActive(generationID) else { return }
 
         // 8) Story model 生成。31B を明示選択した時だけ Gemma4 API を使う。
@@ -500,16 +533,20 @@ final class StorySessionService: ObservableObject {
                     safetySnapshot: nil,
                     advancedSettings: advanced,
                     overrideSystemPrompt: prompt,
+                    initialMessages: localConversationHistory,
                     overrideModelURL: selectedModelURL,
                     onUpdate: { @MainActor [weak self] update in
                         self?.handleStreamUpdate(update, generationID: generationID)
                     }
                 )
                 if reply == nil {
-                    streamingStatusText = "ローカル起動失敗"
+                    let runtimeError = LocalAssistantRuntimeBridge.shared.latestDebugSnapshot().errorMessage
+                    streamingStatusText = runtimeError?.contains("記号だけ") == true
+                        ? "ローカル出力が無効"
+                        : "ローカル起動失敗"
                     isRuntimeNotice = true
                     usedBackendName = "iori ローカル生成失敗"
-                    reply = localStoryGenerationFailureMessage()
+                    reply = localStoryGenerationFailureMessage(runtimeError: runtimeError)
                 }
             }
         }
@@ -522,6 +559,13 @@ final class StorySessionService: ObservableObject {
         var rawFinal = (reply?.isEmpty == false ? reply! : streamingResponse)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         rawFinal = sanitizedFinalText(rawFinal)
+        if !isMeaningfulStoryText(rawFinal) {
+            isRuntimeNotice = true
+            usedBackendName += "・無効出力"
+            rawFinal = generationModel == .b31
+                ? "Gemma4 31B API が有効な本文を返しませんでした。もう一度試してください。"
+                : localStoryGenerationFailureMessage(runtimeError: "記号だけの本文")
+        }
         if isRuntimeNotice {
             guard isGenerationActive(generationID) else { return }
             let notice = StoryMessage(author: .system, text: textAfterSpeakerDelimiter(rawFinal))
@@ -545,14 +589,47 @@ final class StorySessionService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         switch outSafety.action {
         case .block:
-            rawFinal = outSafety.rewrittenText ?? "ナレーション: しばらく沈黙が流れた。別の話題にしよう。"
+            // 安全ブロックを物語内の沈黙や台詞に偽装しない。モデル本文は保存せず、
+            // 明示的なsystem通知として返す。
+            let notice = "安全上の理由でこの応答は保存しませんでした。別の表現で続けてください。"
+            session.messages.append(StoryMessage(author: .system, text: notice))
+            session.lastSelectedModelName = generationModel.displayName
+            session.lastUsedBackendName = usedBackendName + "・安全ブロック"
+            try? await sessionRepo.saveSession(session)
+            await MainActor.run {
+                guard self.activeGenerationID == generationID else { return }
+                self.latestSafetyConcern = safetyConcern
+                self.streamingResponse = notice
+                self.streamingSpeakerName = "システム"
+                self.streamingStatusText = ""
+                self.savedTurnRevision += 1
+                self.phase = .idle
+                self.activeGenerationID = nil
+            }
+            return
         case .soften, .requireEdit:
             if let rewritten = outSafety.rewrittenText, !rewritten.isEmpty { rawFinal = rewritten }
         case .warn, .allow:
             break
         }
-        rawFinal = ensureStoryNarration(in: rawFinal, scene: scene)
-        rawFinal = stabilizeStoryTurn(rawFinal, activeCast: aiCastForTurn, characterIndex: charIndex, scene: scene)
+        rawFinal = sanitize(rawFinal)
+        guard isMeaningfulStoryText(rawFinal) else {
+            let notice = "整形後の本文が空になったため保存していません。もう一度試すか、NAGIで続けられます。"
+            session.messages.append(StoryMessage(author: .system, text: notice))
+            session.lastSelectedModelName = generationModel.displayName
+            session.lastUsedBackendName = usedBackendName + "・無効出力"
+            try? await sessionRepo.saveSession(session)
+            await MainActor.run {
+                guard self.activeGenerationID == generationID else { return }
+                self.streamingResponse = notice
+                self.streamingSpeakerName = "システム"
+                self.streamingStatusText = ""
+                self.savedTurnRevision += 1
+                self.phase = .idle
+                self.activeGenerationID = nil
+            }
+            return
+        }
 
         // 10) 「名前: 本文」行ごとに StoryMessage 化
         streamingStatusText = "発話を保存中"
@@ -734,25 +811,10 @@ final class StorySessionService: ObservableObject {
     }
 
     private func storyContentMessages(from messages: [StoryMessage]) -> [StoryMessage] {
-        var result: [StoryMessage] = []
-        for message in messages {
-            if case .system = message.author { continue }
-            if let previous = result.last, isSameSpeakerBurst(previous, message) {
-                continue
-            }
-            result.append(message)
+        messages.filter { message in
+            if case .system = message.author { return false }
+            return true
         }
-        return result
-    }
-
-    /// 1回の生成で同じキャラの候補が複数保存された場合、後続プロンプトへ重複を持ち込まない。
-    private func isSameSpeakerBurst(_ lhs: StoryMessage, _ rhs: StoryMessage) -> Bool {
-        guard case let .cast(lhsID, _) = lhs.author,
-              case let .cast(rhsID, _) = rhs.author,
-              lhsID == rhsID else { return false }
-        // 1ターンの出力はユーザー発言やナレーションで区切られるため、
-        // 同じキャラが連続していれば候補の重複として扱う。
-        return true
     }
 
     // MARK: - Stream handling
@@ -834,23 +896,20 @@ final class StorySessionService: ObservableObject {
                 self.generationTask?.cancel()
                 self.generationTask = nil
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
-                let fallback = self.streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? "ナレーション: 応答が途切れ、場面はいったん止まった。もう一度話しかけてください。"
-                    : self.streamingResponse
+                let notice = "ローカル生成を75秒で停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。"
                 Task { [weak self] in
                     guard let self else { return }
-                    // 生成タスクが停止直前に保存した最新状態を基準にする。
-                    // 初期スナップショットへ戻すと、直前の発言や進行状態を上書きする。
                     var next = ((try? await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId)) ?? [])
                         .first(where: { $0.id == session.id }) ?? session
-                    next.messages.append(StoryMessage(author: .narrator, text: fallback))
+                    // timeoutは物語上の出来事ではない。UI上のsystem通知としてだけ残す。
+                    next.messages.append(StoryMessage(author: .system, text: notice))
                     try? await self.sessionRepo.saveSession(next)
                     await MainActor.run {
                         self.savedTurnRevision += 1
                     }
                 }
-                self.streamingResponse = fallback
-                self.streamingSpeakerName = self.detectCurrentSpeakerName(in: fallback)
+                self.streamingResponse = notice
+                self.streamingSpeakerName = "システム"
                 self.streamingStatusText = ""
                 self.phase = .idle
                 self.activeGenerationID = nil
@@ -1028,8 +1087,11 @@ final class StorySessionService: ObservableObject {
         }
     }
 
-    private func localStoryGenerationFailureMessage() -> String {
-        return "ローカル生成が止まりました。もう一度試すか、NAGIで続けられます。"
+    private func localStoryGenerationFailureMessage(runtimeError: String? = nil) -> String {
+        if runtimeError?.contains("記号だけ") == true {
+            return "ローカルモデルが「…」のような記号だけを返しました。これは本文ではないため保存していません。もう一度試すか、NAGIで続けられます。"
+        }
+        return "ローカルモデルが本文を生成できませんでした。会話は変更していません。もう一度試すか、NAGIで続けられます。"
     }
 
     private func sanitize(_ text: String) -> String {
@@ -1103,136 +1165,15 @@ final class StorySessionService: ObservableObject {
     }
 
     private func sanitizedFinalText(_ text: String) -> String {
-        let cleaned = sanitize(text).trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleaned.isEmpty {
-            return "ナレーション: 一瞬、場面に沈黙が落ちた。誰かが次の言葉を待っている。"
-        }
-        if cleaned.count <= 1 {
-            return "ナレーション: 返事は短く途切れた。もう少しはっきり言葉にしてほしそうだ。"
-        }
-        return cleaned
+        // 整形は記法の除去だけに留める。空・記号だけの応答を物語本文へ
+        // 差し替えると、障害を隠したまま存在しない会話を保存してしまう。
+        sanitize(text).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func ensureStoryNarration(in text: String, scene: StoryScene) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return trimmed }
-        let lines = trimmed.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let hasNarration = lines.contains { line in
-            line.hasPrefix("ナレーション:") || line.hasPrefix("ナレーション：") || line.hasPrefix("ナレーター:") || line.hasPrefix("ナレーター：")
+    private func isMeaningfulStoryText(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            scalar.properties.isAlphabetic || scalar.properties.numericType != nil
         }
-        if hasNarration { return trimmed }
-
-        let location = scene.location.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mood = scene.mood.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefix: String
-        if !location.isEmpty, !mood.isEmpty {
-            prefix = "ナレーション: \(location)に、\(mood)空気がゆっくり満ちていく。"
-        } else if !location.isEmpty {
-            prefix = "ナレーション: \(location)で、場面が静かに動き出す。"
-        } else if !mood.isEmpty {
-            prefix = "ナレーション: \(mood)空気の中、次の言葉を待つ沈黙が落ちる。"
-        } else {
-            prefix = "ナレーション: 場面が少しだけ動き、誰かの視線が次の言葉を待つ。"
-        }
-        return ([prefix] + lines).joined(separator: "\n")
-    }
-
-    private func stabilizeStoryTurn(
-        _ text: String,
-        activeCast: [CastMember],
-        characterIndex: [UUID: CharacterProfile],
-        scene: StoryScene
-    ) -> String {
-        let activeNames: [(UUID, String)] = activeCast.compactMap { member in
-            guard let profile = characterIndex[member.characterId] else { return nil }
-            return (member.characterId, profile.displayName.isEmpty ? profile.name : profile.displayName)
-        }
-        let lines = text.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        var firstNarration: String?
-        var speeches: [String] = []
-        var seenSpeechKeys = Set<String>()
-        var seenSpeakers = Set<UUID>()
-
-        for line in lines {
-            if line.hasPrefix("ナレーション:") || line.hasPrefix("ナレーション：") || line.hasPrefix("ナレーター:") || line.hasPrefix("ナレーター：") {
-                if firstNarration == nil {
-                    firstNarration = normalizeNarrationLine(line)
-                }
-                continue
-            }
-
-            for (id, name) in activeNames {
-                if line.hasPrefix(name + ":") || line.hasPrefix(name + "：") {
-                    let body = textAfterSpeakerDelimiter(line)
-                    let key = "\(name)\u{1F}\(normalizedSpeechKey(body))"
-                    if !body.isEmpty,
-                       speeches.count < 2,
-                       !seenSpeakers.contains(id),
-                       seenSpeechKeys.insert(key).inserted {
-                        speeches.append("\(name): \(body)")
-                        seenSpeakers.insert(id)
-                    }
-                    break
-                }
-            }
-        }
-
-        if firstNarration == nil {
-            firstNarration = synthesizeNarration(scene: scene)
-        }
-
-        if speeches.isEmpty, let first = activeNames.first {
-            let fallbackBody = firstNonSpeakerBody(from: lines) ?? "……今の、少し気になります。"
-            speeches.append("\(first.1): \(fallbackBody)")
-        }
-
-        return ([firstNarration].compactMap { $0 } + speeches)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-    }
-
-    private func normalizedSpeechKey(_ text: String) -> String {
-        text
-            .lowercased()
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
-
-    private func normalizeNarrationLine(_ line: String) -> String {
-        let body = textAfterSpeakerDelimiter(line)
-        return body.isEmpty ? "ナレーション: 場面に短い沈黙が落ちる。" : "ナレーション: \(body)"
-    }
-
-    private func synthesizeNarration(scene: StoryScene) -> String {
-        let location = scene.location.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mood = scene.mood.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !location.isEmpty, !mood.isEmpty {
-            return "ナレーション: \(location)に、\(mood)空気が静かに残っている。"
-        }
-        if !location.isEmpty {
-            return "ナレーション: \(location)で、相手の反応を待つ間が生まれる。"
-        }
-        return "ナレーション: ふっと空気が変わり、次の言葉を待つ沈黙が落ちる。"
-    }
-
-    private func firstNonSpeakerBody(from lines: [String]) -> String? {
-        for line in lines {
-            if line.hasPrefix("ナレーション:") || line.hasPrefix("ナレーション：") || line.hasPrefix("ナレーター:") || line.hasPrefix("ナレーター：") {
-                continue
-            }
-            let body = textAfterSpeakerDelimiter(line)
-            if !body.isEmpty, body.count <= 80 {
-                return body
-            }
-        }
-        return nil
     }
 
     // CharacterProfile は既存データ互換のため専用フラグを持たない。

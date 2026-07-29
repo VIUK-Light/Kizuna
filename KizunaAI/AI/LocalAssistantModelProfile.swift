@@ -194,8 +194,10 @@ enum LocalAssistantModelProfile {
         case (.deepThinking, _):
             return GenerationPreset(maxTokens: 14_336, temperature: 0.5, topP: 0.9, topK: 48, seed: 23)
         case (.persona, _):
-            // 絆はThinkingを有効にし、生成全体を768トークン以内に抑える。
-            return GenerationPreset(maxTokens: 768, temperature: 0.65, topP: 0.85, topK: 40, seed: 24)
+            // 絆はThinkingを有効にする。LiteRT-LMでは推論と本文が同じ出力予算を
+            // 使うため、512では本文前に止まりやすい。Gemma 4の推奨に近いsamplingで
+            // 物語として自然な揺らぎを確保する。
+            return GenerationPreset(maxTokens: 1_024, temperature: 0.72, topP: 0.95, topK: 40, seed: 24)
         }
     }
 

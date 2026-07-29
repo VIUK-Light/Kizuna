@@ -313,6 +313,76 @@ struct StoryPromptBuilder {
         return sections.joined(separator: "\n\n")
     }
 
+    /// 端末内の小型モデル向けに、本文生成に必要な情報だけへ圧縮したsystem prompt。
+    /// 完全版の世界設定・Lorebook・長い履歴を渡すのは31B API向けであり、2B級の
+    /// ローカルモデルでは指示が埋もれて「…」だけを返す原因になる。
+    func buildLocalRuntimePrompt(
+        world: StoryWorld,
+        scene: StoryScene,
+        activeCast: [CastMember],
+        characterIndex: [UUID: CharacterProfile],
+        selectedMemories: [CharacterMemory],
+        selectedStoryMemories: [StoryMemory],
+        userCharacterName: String?
+    ) -> String {
+        let npc = activeCast.compactMap { member -> (String, CharacterProfile)? in
+            guard let profile = characterIndex[member.characterId] else { return nil }
+            let name = profile.displayName.isEmpty ? profile.name : profile.displayName
+            return (name, profile)
+        }.first
+        let npcName = npc?.0 ?? "相手"
+        let profile = npc?.1
+
+        var lines = [
+            "あなたは絆の物語チャットの相手役です。日本語の本文だけを返す。思考、説明、英語、箇条書き、記号だけの返答は禁止。",
+            "必ず2行で返す: 1行目は「ナレーション: 短い場面描写」、2行目は「\(npcName): 自然な返事」。ユーザーの台詞・行動・感情は代弁しない。"
+        ]
+        if let userCharacterName, !userCharacterName.isEmpty {
+            lines.append("ユーザー操作キャラ: \(utf8Prefix(userCharacterName, byteLimit: 72))。この名前で発話を生成しない。")
+        }
+
+        // ローカル実行でも、既に選別済みの記憶を小さな状態カプセルとして渡す。
+        // 再検索や追加の推論はせず、最重要の3件だけに絞ってコンテキストを圧迫しない。
+        let memoryFacts = selectedStoryMemories
+            .sorted { $0.importance > $1.importance }
+            .prefix(2)
+            .map { "物語の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
+            + selectedMemories
+                .sorted { $0.importance > $1.importance }
+                .prefix(1)
+                .map { "共通の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
+        if !memoryFacts.isEmpty {
+            lines.append("重要な過去: \(memoryFacts.joined(separator: " / "))。説明せず自然に整合させる。")
+        }
+
+        let sceneDetails = [
+            scene.location.isEmpty ? nil : "場所: \(utf8Prefix(scene.location, byteLimit: 84))",
+            scene.timeOfDay.isEmpty ? nil : "時間: \(utf8Prefix(scene.timeOfDay, byteLimit: 48))",
+            scene.mood.isEmpty ? nil : "空気: \(utf8Prefix(scene.mood, byteLimit: 72))",
+            scene.sceneGoal.isEmpty ? nil : "目的: \(utf8Prefix(scene.sceneGoal, byteLimit: 72))"
+        ].compactMap { $0 }
+        if !sceneDetails.isEmpty { lines.append("現在の場面: " + sceneDetails.joined(separator: " / ")) }
+
+        let characterDetails = [
+            profile?.shortDescription,
+            profile?.personality,
+            profile?.speakingStyle,
+            profile?.relationshipToUser
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .map { utf8Prefix($0, byteLimit: 72) }
+        if !characterDetails.isEmpty {
+            lines.append("\(npcName)の設定: " + characterDetails.joined(separator: " / "))
+        }
+
+        lines.append("物語タイトル: \(utf8Prefix(world.title, byteLimit: 96))")
+
+        // LiteRT側でも1,400 UTF-8 bytesへ上限を設けている。重要な出力規則を
+        // 先頭に置いたうえで、ここでも余裕を持って切り詰める。
+        return utf8Prefix(lines.joined(separator: "\n"), byteLimit: 1_250)
+    }
+
     // MARK: - Lorebook selection
 
     /// ユーザー入力・シーン情報に触れたキーワードだけを優先度順で返す。
@@ -362,6 +432,20 @@ struct StoryPromptBuilder {
             "描写",
             "段階的"
         ].contains { rule.localizedCaseInsensitiveContains($0) }
+    }
+
+    private func utf8Prefix(_ value: String, byteLimit: Int) -> String {
+        guard value.lengthOfBytes(using: .utf8) > byteLimit else { return value }
+        var bytes = 0
+        var result = ""
+        for character in value {
+            let piece = String(character)
+            let pieceBytes = piece.lengthOfBytes(using: .utf8)
+            guard bytes + pieceBytes <= byteLimit else { break }
+            bytes += pieceBytes
+            result += piece
+        }
+        return result
     }
 
     private func conversationAnchors(from messages: [StoryMessage]) -> String {
