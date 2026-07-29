@@ -142,26 +142,11 @@ private struct StoryGenerationModelPill: View {
     @ObservedObject var vm: StorySessionViewModel
     @ObservedObject private var localModelManager = LocalAssistantModelManager.shared
     @State private var isShowingDetails = false
+    @State private var isShowingModelPicker = false
 
     var body: some View {
-        Menu {
-            ForEach(StoryGenerationModel.allCases) { model in
-                Button {
-                    vm.generationModel = model
-                } label: {
-                    Label(
-                        "\(model.detailLabel) - \(modelAvailabilityText(model))",
-                        systemImage: vm.generationModel == model ? "checkmark" : "cpu"
-                    )
-                }
-                .help(modelHelpText(model))
-            }
-            Divider()
-            Button {
-                isShowingDetails = true
-            } label: {
-                Label("モデル詳細", systemImage: "info.circle")
-            }
+        Button {
+            isShowingModelPicker = true
         } label: {
             HStack(spacing: 5) {
                 Text(vm.generationModel.displayName)
@@ -179,6 +164,21 @@ private struct StoryGenerationModelPill: View {
         }
         .buttonStyle(.plain)
         .help(modelHelpText(vm.generationModel))
+        .confirmationDialog("モデルを選択", isPresented: $isShowingModelPicker, titleVisibility: .visible) {
+            ForEach(StoryGenerationModel.allCases) { model in
+                Button {
+                    vm.selectGenerationModel(model)
+                } label: {
+                    Text("\(model.detailLabel) — \(modelAvailabilityText(model))")
+                }
+            }
+            Button("モデル詳細") {
+                isShowingDetails = true
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("選択はこのストーリー内で保持されます。利用可否にかかわらず、NAGIとioriをいつでも選べます。")
+        }
         .sheet(isPresented: $isShowingDetails) {
             NavigationStack {
                 modelDetailPopover
@@ -806,7 +806,7 @@ private struct StorySessionChatBody: View {
                         .controlSize(.small)
                         if shouldOfferNAGISwitch(for: message) {
                             Button {
-                                vm.generationModel = .b31
+                                vm.selectGenerationModel(.b31)
                                 vm.retryLastMessage()
                             } label: {
                                 Label(

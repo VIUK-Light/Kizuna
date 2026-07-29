@@ -945,6 +945,14 @@ final class StorySessionViewModel: ObservableObject {
         consumePendingDebugSafetyConcernRequest()
     }
 
+    /// モデル選択は実行可否の状態と独立して保持する。起動確認中・APIキー未設定でも
+    /// UIの選択値を別モデルへ勝手に戻さない。
+    func selectGenerationModel(_ model: StoryGenerationModel) {
+        guard generationModel != model else { return }
+        generationModel = model
+        NSLog("[StoryModel] selected=%@ world=%@", model.rawValue, world.id.uuidString)
+    }
+
     /// 通知を取り逃しても、Story画面が生きている間は予約キーを拾えるようにする。
     private func startDebugRequestPolling() {
         guard debugRequestPollingTask == nil else { return }

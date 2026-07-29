@@ -188,30 +188,14 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     static let shared = LocalAssistantLiteRTLMRuntime()
 
     private enum Tuning {
-        // Gemma 4 E2B's published iOS benchmark uses a 2,048-token context.
+        // Gemma 4 E2B LiteRT-LMの標準エンジン設定。
         nonisolated static let contextTokenLimit = 2_048
-        // Gemma 4 E2B's compiled prefill tensors need a context at least as
-        // large as their 1,024-token prefill shape. Keep the canary at the
-        // same 2,048-token production context so it validates the path users
-        // will actually run and the prepared Engine can be reused.
         nonisolated static let runtimeCheckContextTokenLimit = 2_048
-        // Story turns need enough room for Gemma 4's native reasoning plus
-        // a visible narration/dialogue pair. 512 cut the conversation short
-        // before the model could reliably reach the answer channel.
-        nonisolated static let maximumOutputTokens = 1_024
+        nonisolated static let maximumOutputTokens = 768
         nonisolated static let minimumOutputTokens = 64
-        // A conservative byte budget preserves the most recent user context
-        // without allowing a character-count-based prompt to overrun the KV cache.
-        // 2,048-token KV cacheのうち、最大1,024 tokenを生成に残す。日本語では
-        // UTF-8 byte数がほぼ文字数の3倍になるため、入力全体は約3KBへ収める。
-        nonisolated static let maximumInputUTF8Bytes = 3_000
-        nonisolated static let maximumSystemUTF8Bytes = 1_250
-        nonisolated static let maximumHistoryMessages = 3
-        nonisolated static let maximumHistoryMessageUTF8Bytes = 240
-        nonisolated static let minimumPromptUTF8Bytes = 480
-        // Separate this cache from the earlier 512-token experiment so the
-        // next launch compiles the official 2,048-token configuration fresh.
-        nonisolated static let runtimeCacheVersion = "v0.14.0-cpu-baseline-1"
+        // 会話テンプレート・roleタグに使われる分を必ず残す。
+        nonisolated static let chatTemplateReserveTokens = 128
+        nonisolated static let runtimeCacheVersion = "v0.17.0-gemma4-token-budget"
     }
 
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
@@ -394,13 +378,18 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         do {
             NSLog("[KizunaLiteRTLM] starting native CPU turn (input=%d bytes, output<=%d)", sizedRequest.prompt.lengthOfBytes(using: .utf8), sizedRequest.maxTokens)
             let engine = try await engineStore.engine(for: configuration)
+            let fittedRequest = try await fitInputToNativeContext(
+                sizedRequest,
+                engine: engine,
+                engineCapacity: configuration.maxNumTokens
+            )
             let sampler = try SamplerConfig(
                 topK: max(sizedRequest.topK, 1),
                 topP: max(0, min(sizedRequest.topP, 1)),
                 temperature: max(sizedRequest.temperature, 0),
                 seed: Int(sizedRequest.seed)
             )
-            let initialMessages = sizedRequest.initialMessages.map { message -> Message in
+            let initialMessages = fittedRequest.initialMessages.map { message -> Message in
                 switch message.role {
                 case .user:
                     return Message(message.text, role: .user)
@@ -408,19 +397,19 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     return Message(message.text, role: .model)
                 }
             }
-            NSLog("[KizunaLiteRTLM] creating conversation (system=%d bytes, history=%d)", sizedRequest.systemPrompt?.lengthOfBytes(using: .utf8) ?? 0, initialMessages.count)
+            NSLog("[KizunaLiteRTLM] creating conversation (system=%d bytes, history=%d)", fittedRequest.systemPrompt?.lengthOfBytes(using: .utf8) ?? 0, initialMessages.count)
             let conversation = try await engine.createConversation(
                 with: ConversationConfig(
-                    systemMessage: sizedRequest.systemPrompt.map { Message($0, role: .system) },
+                    systemMessage: fittedRequest.systemPrompt.map { Message($0, role: .system) },
                     initialMessages: initialMessages,
                     samplerConfig: sampler,
-                    maxOutputTokens: sizedRequest.maxTokens
+                    maxOutputTokens: fittedRequest.maxTokens
                 )
             )
             activeConversation.set(conversation)
             defer { activeConversation.clear(conversation) }
             NSLog("[KizunaLiteRTLM] conversation ready; sending message")
-            let response = try await conversation.sendMessage(Message(sizedRequest.prompt))
+            let response = try await conversation.sendMessage(Message(fittedRequest.prompt))
             let cleaned = response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
             let hasMeaningfulText = hasMeaningfulResponseText(cleaned)
             let outputPreview = String(cleaned.prefix(180)).replacingOccurrences(of: "\n", with: "\\n")
@@ -480,28 +469,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated private func runtimeSizedRequest(
         _ request: LocalAssistantLiteRTLMRequest
     ) -> LocalAssistantLiteRTLMRequest {
-        let systemPrompt = request.systemPrompt.map {
-            clipped($0, maxUTF8Bytes: Tuning.maximumSystemUTF8Bytes, keepingTail: false)
-        }
-        let systemByteCount = systemPrompt?.lengthOfBytes(using: .utf8) ?? 0
-        let initialMessages = request.initialMessages
-            .suffix(Tuning.maximumHistoryMessages)
-            .map { message in
-                LocalAssistantLiteRTLMHistoryMessage(
-                    role: message.role,
-                    text: clipped(message.text, maxUTF8Bytes: Tuning.maximumHistoryMessageUTF8Bytes, keepingTail: true)
-                )
-            }
-        let historyByteCount = initialMessages.reduce(0) {
-            $0 + $1.text.lengthOfBytes(using: .utf8)
-        }
-        let promptByteBudget = max(
-            Tuning.minimumPromptUTF8Bytes,
-            Tuning.maximumInputUTF8Bytes - systemByteCount - historyByteCount
-        )
         return LocalAssistantLiteRTLMRequest(
-            prompt: clipped(request.prompt, maxUTF8Bytes: promptByteBudget, keepingTail: true),
-            systemPrompt: systemPrompt,
+            prompt: request.prompt,
+            systemPrompt: request.systemPrompt,
             modelPath: request.modelPath,
             maxTokens: request.isRuntimeCheck
                 ? min(max(request.maxTokens, 1), 32)
@@ -510,43 +480,113 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             topP: request.topP,
             topK: request.topK,
             seed: request.seed,
-            initialMessages: initialMessages,
+            initialMessages: request.initialMessages,
             isRuntimeCheck: request.isRuntimeCheck,
             preferGPU: false
         )
     }
 
-    nonisolated private func clipped(
-        _ value: String,
-        maxUTF8Bytes: Int,
-        keepingTail: Bool
-    ) -> String {
-        guard value.lengthOfBytes(using: .utf8) > maxUTF8Bytes else { return value }
+    nonisolated private func fitInputToNativeContext(
+        _ request: LocalAssistantLiteRTLMRequest,
+        engine: Engine,
+        engineCapacity: Int
+    ) async throws -> LocalAssistantLiteRTLMRequest {
+        // EngineConfigの総枠から生成予約とテンプレート予約を引いた、実トークン予算。
+        let inputBudget = max(
+            128,
+            engineCapacity - request.maxTokens - Tuning.chatTemplateReserveTokens
+        )
+        var remaining = inputBudget
 
-        var bytes = 0
-        var result = ""
-        if keepingTail {
-            for character in value.reversed() {
-                let piece = String(character)
-                let pieceBytes = piece.lengthOfBytes(using: .utf8)
-                guard bytes + pieceBytes <= maxUTF8Bytes else { break }
-                bytes += pieceBytes
-                result = piece + result
-            }
+        let systemPrompt: String?
+        if let value = request.systemPrompt,
+           !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let capped = try await trimmedToTokenBudget(
+                value,
+                maxTokens: min(1_024, max(1, remaining / 2)),
+                keepingSuffix: false,
+                engine: engine
+            )
+            remaining -= try await engine.tokenCount(for: capped)
+            systemPrompt = capped
         } else {
-            for character in value {
-                let piece = String(character)
-                let pieceBytes = piece.lengthOfBytes(using: .utf8)
-                guard bytes + pieceBytes <= maxUTF8Bytes else { break }
-                bytes += pieceBytes
-                result += piece
-            }
+            systemPrompt = nil
         }
 
-        if keepingTail {
-            return "（長い文脈は直近の内容を優先しています）\n\n\(result)"
+        let prompt = try await trimmedToTokenBudget(
+            request.prompt,
+            maxTokens: min(512, max(1, remaining)),
+            keepingSuffix: true,
+            engine: engine
+        )
+        remaining -= try await engine.tokenCount(for: prompt)
+
+        var retainedHistory: [LocalAssistantLiteRTLMHistoryMessage] = []
+        for message in request.initialMessages.reversed() where remaining > 0 {
+            let text = try await trimmedToTokenBudget(
+                message.text,
+                maxTokens: min(160, remaining),
+                keepingSuffix: true,
+                engine: engine
+            )
+            let tokenCount = try await engine.tokenCount(for: text)
+            guard tokenCount > 0, tokenCount <= remaining else { continue }
+            remaining -= tokenCount
+            retainedHistory.insert(
+                LocalAssistantLiteRTLMHistoryMessage(role: message.role, text: text),
+                at: 0
+            )
         }
-        return "\(result)\n\n（ここまでが重要な前提です）"
+
+        let systemTokens: Int
+        if let systemPrompt {
+            systemTokens = try await engine.tokenCount(for: systemPrompt)
+        } else {
+            systemTokens = 0
+        }
+        let promptTokens = try await engine.tokenCount(for: prompt)
+        let historyTokens = inputBudget - remaining - systemTokens - promptTokens
+        NSLog("[KizunaLiteRTLM] token budget system=%d user=%d history=%d input=%d total=%d", systemTokens, promptTokens, historyTokens, inputBudget, systemTokens + promptTokens + historyTokens)
+
+        return LocalAssistantLiteRTLMRequest(
+            prompt: prompt,
+            systemPrompt: systemPrompt,
+            modelPath: request.modelPath,
+            maxTokens: request.maxTokens,
+            temperature: request.temperature,
+            topP: request.topP,
+            topK: request.topK,
+            seed: request.seed,
+            initialMessages: retainedHistory,
+            isRuntimeCheck: request.isRuntimeCheck,
+            preferGPU: request.preferGPU
+        )
+    }
+
+    nonisolated private func trimmedToTokenBudget(
+        _ value: String,
+        maxTokens: Int,
+        keepingSuffix: Bool,
+        engine: Engine
+    ) async throws -> String {
+        guard try await engine.tokenCount(for: value) > maxTokens else { return value }
+        let characters = Array(value)
+        var lowerBound = 0
+        var upperBound = characters.count
+        while lowerBound < upperBound {
+            let count = (lowerBound + upperBound + 1) / 2
+            let candidate = keepingSuffix
+                ? String(characters.suffix(count))
+                : String(characters.prefix(count))
+            if try await engine.tokenCount(for: candidate) <= maxTokens {
+                lowerBound = count
+            } else {
+                upperBound = count - 1
+            }
+        }
+        return keepingSuffix
+            ? String(characters.suffix(lowerBound))
+            : String(characters.prefix(lowerBound))
     }
 
     /// 空白や句読点だけ（例: "…" / "..."）は、会話の本文として成立していない。
