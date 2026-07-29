@@ -427,23 +427,36 @@ final class StorySessionService: ObservableObject {
 
         // 7) StoryPromptBuilder
         streamingStatusText = "物語コンテキストを構築中"
-        let prompt = promptBuilder.build(
-            world: world,
-            scene: scene,
-            activeCast: aiCastForTurn,
-            inactiveCast: inactiveAICast,
-            characterIndex: charIndex,
-            selectedMemories: selectedMemories,
-            session: session,
-            recentMessages: Array(storyContentMessages(from: session.messages).suffix(96)),
-            userInput: effectiveUserText,
-            generationModel: generationModel,
-            safetyDecision: inSafety,
-            storyState: session.storyState,
-            selectedLorebookEntries: selectedLorebookEntries,
-            selectedStoryMemories: selectedStoryMemories,
-            userCharacterName: userCharacterName
-        )
+        let contentMessages = Array(storyContentMessages(from: session.messages).suffix(96))
+        let prompt: String
+        if generationModel == .b31 {
+            prompt = promptBuilder.build(
+                world: world,
+                scene: scene,
+                activeCast: aiCastForTurn,
+                inactiveCast: inactiveAICast,
+                characterIndex: charIndex,
+                selectedMemories: selectedMemories,
+                session: session,
+                recentMessages: contentMessages,
+                userInput: effectiveUserText,
+                generationModel: generationModel,
+                safetyDecision: inSafety,
+                storyState: session.storyState,
+                selectedLorebookEntries: selectedLorebookEntries,
+                selectedStoryMemories: selectedStoryMemories,
+                userCharacterName: userCharacterName
+            )
+        } else {
+            prompt = promptBuilder.buildLocalRuntimePrompt(
+                world: world,
+                scene: scene,
+                activeCast: aiCastForTurn,
+                characterIndex: charIndex,
+                recentMessages: contentMessages,
+                userCharacterName: userCharacterName
+            )
+        }
         guard isGenerationActive(generationID) else { return }
 
         // 8) Story model 生成。31B を明示選択した時だけ Gemma4 API を使う。
@@ -506,10 +519,13 @@ final class StorySessionService: ObservableObject {
                     }
                 )
                 if reply == nil {
-                    streamingStatusText = "ローカル起動失敗"
+                    let runtimeError = LocalAssistantRuntimeBridge.shared.latestDebugSnapshot().errorMessage
+                    streamingStatusText = runtimeError?.contains("記号だけ") == true
+                        ? "ローカル出力が無効"
+                        : "ローカル起動失敗"
                     isRuntimeNotice = true
                     usedBackendName = "iori ローカル生成失敗"
-                    reply = localStoryGenerationFailureMessage()
+                    reply = localStoryGenerationFailureMessage(runtimeError: runtimeError)
                 }
             }
         }
@@ -522,6 +538,13 @@ final class StorySessionService: ObservableObject {
         var rawFinal = (reply?.isEmpty == false ? reply! : streamingResponse)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         rawFinal = sanitizedFinalText(rawFinal)
+        if !isMeaningfulStoryText(rawFinal) {
+            isRuntimeNotice = true
+            usedBackendName += "・無効出力"
+            rawFinal = generationModel == .b31
+                ? "Gemma4 31B API が有効な本文を返しませんでした。もう一度試してください。"
+                : localStoryGenerationFailureMessage(runtimeError: "記号だけの本文")
+        }
         if isRuntimeNotice {
             guard isGenerationActive(generationID) else { return }
             let notice = StoryMessage(author: .system, text: textAfterSpeakerDelimiter(rawFinal))
@@ -1028,8 +1051,11 @@ final class StorySessionService: ObservableObject {
         }
     }
 
-    private func localStoryGenerationFailureMessage() -> String {
-        return "ローカル生成が止まりました。もう一度試すか、NAGIで続けられます。"
+    private func localStoryGenerationFailureMessage(runtimeError: String? = nil) -> String {
+        if runtimeError?.contains("記号だけ") == true {
+            return "ローカルモデルが「…」のような記号だけを返しました。これは本文ではないため保存していません。もう一度試すか、NAGIで続けられます。"
+        }
+        return "ローカルモデルが本文を生成できませんでした。会話は変更していません。もう一度試すか、NAGIで続けられます。"
     }
 
     private func sanitize(_ text: String) -> String {
@@ -1111,6 +1137,12 @@ final class StorySessionService: ObservableObject {
             return "ナレーション: 返事は短く途切れた。もう少しはっきり言葉にしてほしそうだ。"
         }
         return cleaned
+    }
+
+    private func isMeaningfulStoryText(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            scalar.properties.isAlphabetic || scalar.properties.numericType != nil
+        }
     }
 
     private func ensureStoryNarration(in text: String, scene: StoryScene) -> String {
