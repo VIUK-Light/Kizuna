@@ -253,7 +253,7 @@ private struct StoryGenerationModelPill: View {
         case .executable:
             return "端末内で実行できます。選択中は iori がローカルで応答します。"
         case .savedOnly:
-            return "モデルは保存済みです。端末内の実行確認を自動で開始します。"
+            return "ioriを準備中です。完了後、このまま会話を続けます。"
         case .recentFailure:
             return "端末内実行を確認できませんでした。NAGIへ切り替える場合はモデルメニューから選択してください。"
         case .modelMissing:
@@ -786,12 +786,12 @@ private struct StorySessionChatBody: View {
             HStack {
                 Spacer(minLength: 28)
                 HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
+                    Image(systemName: "info.circle.fill")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.orange.opacity(0.9))
+                        .foregroundStyle(storyMuted.opacity(0.8))
                         .frame(width: 18)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("モデル状態")
+                        Text("会話を続けられませんでした")
                             .font(.system(size: 10, weight: .heavy))
                             .foregroundStyle(storyMuted)
                         Text(message.text)
@@ -804,22 +804,6 @@ private struct StorySessionChatBody: View {
                         .font(.system(size: 11.5, weight: .bold))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        if shouldOfferNAGISwitch(for: message) {
-                            Button {
-                                vm.selectGenerationModel(.b31)
-                                vm.retryLastMessage()
-                            } label: {
-                                Label(
-                                    StoryGemma31BAPIService.shared.hasAPIKey ? "NAGIで再試行" : "NAGI APIキー未設定",
-                                    systemImage: "arrow.triangle.2.circlepath"
-                                )
-                                .font(.system(size: 11.5, weight: .bold))
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .disabled(!StoryGemma31BAPIService.shared.hasAPIKey)
-                            .padding(.top, 4)
-                        }
                     }
                 }
                 .frame(maxWidth: 560, alignment: .leading)
@@ -827,11 +811,11 @@ private struct StorySessionChatBody: View {
                 .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.orange.opacity(0.10))
+                        .fill(Color.white.opacity(0.05))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.orange.opacity(0.18), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
                 Spacer(minLength: 28)
             }
@@ -882,12 +866,6 @@ private struct StorySessionChatBody: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private func shouldOfferNAGISwitch(for message: StoryMessage) -> Bool {
-        guard case .system = message.author else { return false }
-        let text = message.text
-        return text.contains("iori") || text.contains("ローカル")
     }
 
     @ViewBuilder

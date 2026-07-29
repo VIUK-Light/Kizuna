@@ -578,6 +578,29 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         startRuntimeAvailabilityCheck(for: currentModelURL)
     }
 
+    /// 会話を止めずにローカルモデルの起動確認が終わるのを待つ。
+    /// 保存済み・確認中を会話内のエラーとして扱わないため、送信時にも利用する。
+    func waitForRuntimeAvailability() async -> LocalAssistantRuntimeAvailability {
+        switch runtimeAvailability {
+        case .executable, .modelMissing:
+            return runtimeAvailability
+        case .savedOnly, .recentFailure:
+            // モデル保存直後や前回の軽い起動失敗は、ユーザーが送信した時点で
+            // もう一度自動確認する。設定画面を開かせない。
+            recheckRuntimeAvailability()
+        case .checking:
+            break
+        }
+
+        if automaticRuntimeCheckTask == nil {
+            recheckRuntimeAvailability()
+        }
+        if let automaticRuntimeCheckTask {
+            await automaticRuntimeCheckTask.value
+        }
+        return runtimeAvailability
+    }
+
     private func scheduleEnvironmentRefresh() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
             guard let self else { return }

@@ -506,20 +506,25 @@ final class StorySessionService: ObservableObject {
             let advanced = voiceOptimizedAdvancedSettings()
             let localModelManager = LocalAssistantModelManager.shared
             let selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
+            // 保存済み・起動確認中は失敗ではない。ここで確認完了を待ってから
+            // 同じユーザー発話をそのままローカル生成へ渡す。
+            streamingStatusText = "ioriを準備中"
+            let runtimeAvailability = await localModelManager.waitForRuntimeAvailability()
+            guard isGenerationActive(generationID) else { return }
             if let localUnavailableMessage = localStoryRuntimeUnavailableMessage(
-                availability: localModelManager.runtimeAvailability,
+                availability: runtimeAvailability,
                 selectedModelURL: selectedModelURL
             ) {
                 streamingStatusText = "ローカル未起動"
                 isRuntimeNotice = true
                 usedBackendName = localStoryBackendStatusName(
-                    availability: localModelManager.runtimeAvailability,
+                    availability: runtimeAvailability,
                     selectedModelURL: selectedModelURL
                 )
                 reply = localUnavailableMessage
             } else {
                 usedBackendName = localStoryBackendStatusName(
-                    availability: localModelManager.runtimeAvailability,
+                    availability: runtimeAvailability,
                     selectedModelURL: selectedModelURL
                 )
                 reply = await LocalAssistantRuntimeBridge.shared.generateReply(
