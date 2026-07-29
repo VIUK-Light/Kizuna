@@ -116,8 +116,8 @@ struct KizunaSettingsView: View {
                             .foregroundStyle(.red)
                     }
 
-                    // Form内で隣接ボタンを同じ行に置くと、iOSでタップ領域が広がり
-                    // 起動確認がダウンロード操作として扱われることがあるため、別行にする。
+                    // ダウンロード後の端末内runtime確認はモデル検出時に自動で行う。
+                    // ユーザーにself-checkを押させる導線は置かない。
                     VStack(alignment: .leading, spacing: 8) {
                         if modelManager.isDownloading {
                             Button("一時停止") {
@@ -139,15 +139,16 @@ struct KizunaSettingsView: View {
                             .disabled(!canDownload)
                         }
 
-                        Button("起動確認") {
-                            // 起動確認は「現在保存されているモデル」を検査するだけ。
-                            // ここでフォームのURLを保存すると、URL差し替え扱いになり、
-                            // 途中状態や既存モデルを消してしまうことがある。
-                            modelManager.updateAccessToken(modelAccessToken)
-                            modelManager.recheckRuntimeAvailability()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(modelManager.installedModelURL == nil || modelManager.isDownloading)
+                        Label(
+                            modelManager.runtimeAvailability == .checking
+                                ? "端末内で実行確認中"
+                                : "端末内の実行確認は自動で行われます",
+                            systemImage: modelManager.runtimeAvailability == .checking
+                                ? "arrow.triangle.2.circlepath"
+                                : "checkmark.seal"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
 
                     if modelManager.installedModelURL != nil {

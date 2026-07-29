@@ -54,6 +54,11 @@ private struct KizunaMigrationGateView: View {
             }.value
             isReady = true
             PersonaSettings.shared.primeBridge()
+            // Do not wait for Settings or a Story view to instantiate the model
+            // manager.  A saved local model must be discovered and checked as
+            // soon as migration finishes, without asking the user to press a
+            // separate confirmation button.
+            LocalAssistantModelManager.shared.refreshEnvironment()
             LocalAssistantRuntimeBridge.shared.prewarmIfPossible()
         }
     }

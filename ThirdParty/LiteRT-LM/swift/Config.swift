@@ -57,6 +57,16 @@ public struct EngineConfig {
   /// The directory for placing cache files. It should be a directory where the
   /// application has write access. If `nil`, it uses the directory of the `modelPath`.
   public let cacheDir: String?
+  /// Whether model-file sections are loaded concurrently. `false` trades a
+  /// little load speed for a substantially lower peak allocation on phones.
+  public let parallelFileSectionLoading: Bool?
+  /// CPU prefill batch size. Smaller values reduce a single prefill allocation.
+  /// This only applies to dynamic CPU models.
+  public let prefillChunkSize: Int?
+  /// The rank of the text LoRA weights. If 0 or nil, LoRA is disabled.
+  public let loraRank: Int?
+  /// The rank of the audio LoRA weights. If 0 or nil, audio LoRA is disabled.
+  public let audioLoraRank: Int?
 
   /// - Parameters:
   ///   - modelPath: The file path to the LiteRT-LM model.
@@ -70,12 +80,20 @@ public struct EngineConfig {
   ///     model or the engine.
   ///   - cacheDir: The directory for placing cache files. It should be a directory where the
   ///     application has write access. If `nil`, it uses the directory of the `modelPath`.
+  ///   - parallelFileSectionLoading: Whether file sections load concurrently.
+  ///   - prefillChunkSize: CPU prefill batch size for dynamic models.
+  ///   - loraRank: The rank of the text LoRA weights.
+  ///   - audioLoraRank: The rank of the audio LoRA weights.
   /// - Throws: `LiteRTLMError` if `maxNumTokens` is less than or equal to 0.
   public init(
     modelPath: String, backend: Backend = .cpu(), visionBackend: Backend? = nil,
     audioBackend: Backend? = nil,
     maxNumTokens: Int? = nil,
-    cacheDir: String? = nil
+    cacheDir: String? = nil,
+    parallelFileSectionLoading: Bool? = nil,
+    prefillChunkSize: Int? = nil,
+    loraRank: Int? = nil,
+    audioLoraRank: Int? = nil
   ) throws {
     if let maxNumTokens, maxNumTokens <= 0 {
       throw LiteRTLMError.config(.invalidMaxNumTokens)
@@ -86,6 +104,10 @@ public struct EngineConfig {
     self.audioBackend = audioBackend
     self.maxNumTokens = maxNumTokens
     self.cacheDir = cacheDir
+    self.parallelFileSectionLoading = parallelFileSectionLoading
+    self.prefillChunkSize = prefillChunkSize
+    self.loraRank = loraRank
+    self.audioLoraRank = audioLoraRank
   }
 }
 
@@ -149,24 +171,50 @@ public struct ConversationConfig {
   // If `nil`, then uses the engine's default values.
   public let samplerConfig: SamplerConfig?
 
+  // Hard cap for generated tokens in this conversation. This is independent
+  // from `EngineConfig.maxNumTokens`, which is the complete KV-cache budget.
+  public let maxOutputTokens: Int?
+
+  // The file path to the Text LoRA weights file.
+  public let loraPath: String?
+
+  // The file path to the Audio LoRA weights file.
+  public let audioLoraPath: String?
+  public let enableToolCallStreaming: Bool
+
   /// - Parameters:
   ///   - systemMessage: The system message to be used in the conversation.
   ///   - initialMessages: The initial messages to populate the conversation history.
   ///   - tools: The list of tool instances to be used in the conversation.
   ///   - samplerConfig: Configuration for the sampling process. If `nil`, then uses the engine's
   ///     default values.
+  ///   - maxOutputTokens: Maximum generated tokens for this conversation.
+  ///   - loraPath: The file path to the Text LoRA weights file.
+  ///   - audioLoraPath: The file path to the Audio LoRA weights file.
+  ///   - enableToolCallStreaming: Whether to enable conversation tool call streaming.
   public init(
     systemMessage: Message? = nil,
     initialMessages: [Message] = [],
     tools: [Tool] = [],
-    samplerConfig: SamplerConfig? = nil
+    samplerConfig: SamplerConfig? = nil,
+    maxOutputTokens: Int? = nil,
+    loraPath: String? = nil,
+    audioLoraPath: String? = nil,
+    enableToolCallStreaming: Bool = false
   ) {
-    self.systemMessage = systemMessage.map { msg in
-      msg.role == .system
+    self.systemMessage = systemMessage.flatMap { msg in
+      if msg.toString.isEmpty {
+        return nil
+      }
+      return msg.role == .system
         ? msg : Message(contents: msg.contents, role: .system, channels: msg.channels)
     }
     self.initialMessages = initialMessages
     self.tools = tools
     self.samplerConfig = samplerConfig
+    self.maxOutputTokens = maxOutputTokens
+    self.loraPath = loraPath
+    self.audioLoraPath = audioLoraPath
+    self.enableToolCallStreaming = enableToolCallStreaming
   }
 }

@@ -147,10 +147,20 @@ targets:
           - Accelerate
         "SWIFT_OBJC_BRIDGING_HEADER[sdk=macosx*]": KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h
         "SWIFT_OBJC_BRIDGING_HEADER[sdk=iphone*]": KizunaAI/AI/LocalRuntimeEmbedded/LocalAssistantEmbeddedRuntime-Bridging-Header.h
+        # LiteRT-LM v0.14.0 is enabled on iPhone.  The app starts the native
+        # runtime on CPU and performs its short readiness check automatically.
         "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]": $(inherited) VIUK_ENABLE_LITERTLM_NATIVE USE_LITERTLM
     postBuildScripts:
       - name: Bundle Local AI Runtime
-        basedOnDependencyAnalysis: false
+        basedOnDependencyAnalysis: true
+        inputFiles:
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-cli
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-server
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-cli.source-revision
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-cli
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-server
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-cli.source-revision
         script: |
           set -euo pipefail
           if [[ "${PLATFORM_NAME:-}" != "macosx" ]]; then

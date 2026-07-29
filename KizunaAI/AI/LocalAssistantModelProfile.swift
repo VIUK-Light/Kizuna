@@ -50,7 +50,7 @@ enum LocalAssistantModelProfile {
         DownloadOption(
             title: "Gemma 4 E2B LiteRT-LM",
             url: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true",
-            detail: "スマホ向けの公開Gemma 4軽量モデル。LiteRT-LMで端末内実行"
+            detail: "スマホ向けLiteRT-LM形式。保存後、端末内で自動確認してから利用できます"
         )
     ]
     private static let defaultModelFileName = "gemma-4-E2B-it.litertlm"
@@ -96,7 +96,7 @@ enum LocalAssistantModelProfile {
     static let storageFolderName = defaultStorageFolderName
     static let legacyFolderNames = ["Gemma4E2B4bit", "Gemma4E4B4bit", "Gemma3nE4B4bit", "VIUKAItiny", "VIUK AI tiny"]
     static let expectedModelSizeBytes: Int64 = defaultExpectedModelSizeBytes
-    static let minimumAcceptedModelSizeBytes: Int64 = 50 * 1024 * 1024
+    nonisolated static let minimumAcceptedModelSizeBytes: Int64 = 50 * 1024 * 1024
 
     private static let physicalMemoryBytes = ProcessInfo.processInfo.physicalMemory
     private static let prefersAggressiveGPUOffload = physicalMemoryBytes >= 15 * 1024 * 1024 * 1024

@@ -572,18 +572,23 @@
 /* Begin PBXShellScriptBuildPhase section */
 		E0261590512177A92AC5483C /* Bundle Local AI Runtime */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-cli",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-server",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-cli.source-revision",
 			);
 			name = "Bundle Local AI Runtime";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-cli",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-server",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-cli.source-revision",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
