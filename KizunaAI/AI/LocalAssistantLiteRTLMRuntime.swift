@@ -145,7 +145,10 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         // same 2,048-token production context so it validates the path users
         // will actually run and the prepared Engine can be reused.
         nonisolated static let runtimeCheckContextTokenLimit = 2_048
-        nonisolated static let maximumOutputTokens = 512
+        // Story turns need enough room for Gemma 4's native reasoning plus
+        // a visible narration/dialogue pair. 512 cut the conversation short
+        // before the model could reliably reach the answer channel.
+        nonisolated static let maximumOutputTokens = 1_024
         nonisolated static let minimumOutputTokens = 64
         // A conservative byte budget preserves the most recent user context
         // without allowing a character-count-based prompt to overrun the KV cache.
@@ -328,11 +331,15 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             NSLog("[KizunaLiteRTLM] conversation ready; sending message")
             let response = try await conversation.sendMessage(Message(sizedRequest.prompt))
             let cleaned = response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
-            NSLog("[KizunaLiteRTLM] native CPU turn finished (empty=%@)", cleaned.isEmpty ? "true" : "false")
+            let hasMeaningfulText = hasMeaningfulResponseText(cleaned)
+            let outputPreview = String(cleaned.prefix(180)).replacingOccurrences(of: "\n", with: "\\n")
+            NSLog("[KizunaLiteRTLM] native CPU turn finished (empty=%@, meaningful=%@, chars=%d, preview=%@)", cleaned.isEmpty ? "true" : "false", hasMeaningfulText ? "true" : "false", cleaned.count, outputPreview)
             return VIUKEmbeddedRuntimeResult(
-                success: !cleaned.isEmpty,
-                text: cleaned.isEmpty ? nil : cleaned,
-                errorMessage: cleaned.isEmpty ? "LiteRT-LM runtime の応答が空でした。" : nil
+                success: hasMeaningfulText,
+                text: hasMeaningfulText ? cleaned : nil,
+                errorMessage: cleaned.isEmpty
+                    ? "LiteRT-LM runtime の応答が空でした。"
+                    : "LiteRT-LM runtime が記号だけの応答を返しました。"
             )
         } catch {
             NSLog("[KizunaLiteRTLM] native CPU turn failed: %@", error.localizedDescription)
@@ -437,6 +444,15 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             return "（長い文脈は直近の内容を優先しています）\n\n\(result)"
         }
         return "\(result)\n\n（ここまでが重要な前提です）"
+    }
+
+    /// 空白や句読点だけ（例: "…" / "..."）は、会話の本文として成立していない。
+    /// これを成功扱いするとStory側の補正が同じ場面描写を足してしまうため、
+    /// runtime段階で失敗として返し、再試行・NAGI切替の正しい導線へ流す。
+    nonisolated private func hasMeaningfulResponseText(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            scalar.properties.isAlphabetic || scalar.properties.numericType != nil
+        }
     }
 #endif
 #endif

@@ -810,7 +810,16 @@ final class LocalAssistantRuntimeBridge {
     }
 
     private func usesSplitPromptTransport(_ engine: RuntimeEngine) -> Bool {
-        usesBundledCLI(engine) || usesBundledServer(engine)
+        // LiteRT-LM's ConversationConfig has a first-class systemMessage.
+        // Passing a serialized `<start_of_turn>system` prompt as a user message
+        // made the small on-device model treat the formatting instructions as
+        // ordinary text and occasionally answer with only an ellipsis.
+        switch engine {
+        case .bundledCLI, .bundledServer, .liteRTLM:
+            return true
+        case .embedded, .unavailable:
+            return false
+        }
     }
 
     private func warmModelFileCache(modelPath: String, maxBytes: Int64) {
@@ -2709,6 +2718,10 @@ final class BundledServerLogAggregator {
         startedAt: Date,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> VIUKEmbeddedRuntimeResult {
+        // A fixed seed made every retry repeat the same poor first token path.
+        // Story chat is intentionally creative, so vary the sampler per turn
+        // while retaining the preset as its reproducible base.
+        let turnSeed = parameters.seed &+ UInt32(truncatingIfNeeded: Int64(Date().timeIntervalSince1970 * 1_000))
         let warmState = warmState(for: .liteRTLM, modelPath: modelPath)
         let runnerLabel = runtimeRunnerLabel(for: .liteRTLM, runnerPath: nil)
         emitStatus(
@@ -2758,7 +2771,7 @@ final class BundledServerLogAggregator {
                 temperature: parameters.temperature,
                 topP: parameters.topP,
                 topK: parameters.topK,
-                seed: parameters.seed
+                seed: turnSeed
             )
         )
     }
