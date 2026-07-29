@@ -37,26 +37,21 @@ enum LocalAssistantModelProfile {
     static let modelName = "VIUK AI tiny"
 
     #if os(iOS)
-    private static let defaultInternalModelName = "VIUK Story v2.5 "
-    private static let defaultCapabilitySummary = "VIUKによる物語のために開発されたモデル"
-    // iOSの既定値はスマホ向けGemma 4 E2B。LiteRT-LMで実行できる本体直リンク。
-    private static let defaultModelURL = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true"
+    private static let defaultInternalModelName = "Gemma 3n E2B 4bit"
+    private static let defaultCapabilitySummary = "Google Gemmaの端末内チャットモデル"
+    // iOS標準はGoogle公式のGemma 3n E2B 4bit。LiteRT-LMで4,096 tokenの
+    // 会話コンテキストを扱える通常モデルを使う。
+    private static let defaultModelURL = "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm?download=true"
     private static let platformDownloadOptions = [
         DownloadOption(
-            title: "VIUK Story v2.5 GGUF",
-            url: "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF/resolve/main/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf?download=true",
-            detail: "4bit Q4_K_M・iPhoneで最大10,240トークンの会話枠"
-        ),
-        DownloadOption(
-            title: "Gemma 4 E2B LiteRT-LM",
-            url: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true",
-            detail: "スマホ向けLiteRT-LM形式。保存後、端末内で自動確認してから利用できます"
+            title: "Gemma 3n E2B LiteRT-LM",
+            url: defaultModelURL,
+            detail: "Google公式・4bit・4,096 token文脈。初回だけHugging Faceの利用規約承認が必要"
         )
     ]
-    private static let defaultModelFileName = "gemma-4-E2B-it.litertlm"
-    private static let defaultStorageFolderName = "Gemma4E2BLiteRTLM"
-    // Gemma 4 E2B LiteRT-LMの配布サイズ目安。
-    private static let defaultExpectedModelSizeBytes: Int64 = 2_588_147_712
+    private static let defaultModelFileName = "gemma-3n-E2B-it-int4.litertlm"
+    private static let defaultStorageFolderName = "Gemma3nE2BLiteRTLM"
+    private static let defaultExpectedModelSizeBytes: Int64 = 3_655_827_456
     #else
     private static let defaultInternalModelName = "Gemma 4 E4B 4bit"
     private static let defaultCapabilitySummary = "4bit量子化 / 推論品質重視 / コードと複数条件に強い"
@@ -90,7 +85,8 @@ enum LocalAssistantModelProfile {
     // 以前のリポジトリページURLだけは直リンクへ移行する。Gemmaなどの
     // alternate URLは選択肢として有効なので、旧URL扱いして上書きしない。
     static let legacyDefaultDownloadURLs: [String] = [
-        "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF"
+        "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF",
+        "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true"
     ]
     static let defaultFileName = defaultModelFileName
     static let storageFolderName = defaultStorageFolderName

@@ -188,18 +188,14 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     static let shared = LocalAssistantLiteRTLMRuntime()
 
     private enum Tuning {
-        // この配布済み .litertlm は実機で入力 1,280 token を超えると
-        // INVALID_ARGUMENT を返す。Engine設定を2,048にしてもモデル側の
-        // 上限は広がらないため、実際に受け付ける値を使う。
-        nonisolated static let contextTokenLimit = 1_280
-        nonisolated static let runtimeCheckContextTokenLimit = 1_280
-        // LiteRT版では本文を512 token以内に留め、残りを入力へ確保する。
-        // 10kの会話枠はQ4 GGUF経路で提供する。
-        nonisolated static let maximumOutputTokens = 512
+        // Google公式Gemma 3n E2B LiteRT-LMの通常コンテキスト。
+        nonisolated static let contextTokenLimit = 4_096
+        nonisolated static let runtimeCheckContextTokenLimit = 4_096
+        nonisolated static let maximumOutputTokens = 768
         nonisolated static let minimumOutputTokens = 64
         // 会話テンプレート・roleタグに使われる分を必ず残す。
-        nonisolated static let chatTemplateReserveTokens = 96
-        nonisolated static let runtimeCacheVersion = "v0.15.0-token-budget"
+        nonisolated static let chatTemplateReserveTokens = 128
+        nonisolated static let runtimeCacheVersion = "v0.16.0-gemma3n-4096"
     }
 
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
@@ -269,7 +265,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         guard fileSize >= LocalAssistantModelProfile.minimumAcceptedModelSizeBytes else {
             return "モデルファイルが小さすぎます。ダウンロードが途中で止まっている可能性があります。"
         }
-        guard ProcessInfo.processInfo.physicalMemory >= 4 * 1024 * 1024 * 1024 else {
+        guard ProcessInfo.processInfo.physicalMemory >= 8 * 1024 * 1024 * 1024 else {
             return "この端末のメモリでは LiteRT-LM ローカル実行を開始しません。"
         }
         return nil
@@ -507,7 +503,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let capped = try await trimmedToTokenBudget(
                 value,
-                maxTokens: min(320, max(1, remaining)),
+                maxTokens: min(1_024, max(1, remaining / 2)),
                 keepingSuffix: false,
                 engine: engine
             )
@@ -519,7 +515,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
 
         let prompt = try await trimmedToTokenBudget(
             request.prompt,
-            maxTokens: min(320, max(1, remaining)),
+            maxTokens: min(512, max(1, remaining)),
             keepingSuffix: true,
             engine: engine
         )
