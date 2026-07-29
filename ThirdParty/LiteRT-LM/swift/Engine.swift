@@ -251,19 +251,6 @@ public actor Engine {
     return Conversation(handle: conversationHandle, toolManager: toolManager)
   }
 
-  /// Counts tokens using the tokenizer bundled with the loaded model.
-  /// Character and UTF-8 byte counts are not a valid proxy for Japanese text.
-  public func tokenCount(for text: String) throws -> Int {
-    guard let handle else {
-      throw LiteRTLMError.engine(.notInitialized)
-    }
-    guard let result = litert_lm_engine_tokenize(handle, text) else {
-      throw LiteRTLMError.engine(.failedToTokenize)
-    }
-    defer { litert_lm_tokenize_result_delete(result) }
-    return Int(litert_lm_tokenize_result_get_num_tokens(result))
-  }
-
   deinit {
     if let handle = handle {
       litert_lm_engine_delete(handle)
