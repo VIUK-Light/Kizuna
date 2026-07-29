@@ -321,7 +321,6 @@ struct StoryPromptBuilder {
         scene: StoryScene,
         activeCast: [CastMember],
         characterIndex: [UUID: CharacterProfile],
-        recentMessages: [StoryMessage],
         userCharacterName: String?
     ) -> String {
         let npc = activeCast.compactMap { member -> (String, CharacterProfile)? in
@@ -361,19 +360,6 @@ struct StoryPromptBuilder {
             lines.append("\(npcName)の設定: " + characterDetails.joined(separator: " / "))
         }
 
-        let history = recentMessages.suffix(3).compactMap { message -> String? in
-            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            let speaker: String
-            switch message.author {
-            case .user: speaker = "ユーザー"
-            case .narrator: speaker = "ナレーション"
-            case .cast(_, let name): speaker = name
-            case .system: return nil
-            }
-            return "\(speaker): \(utf8Prefix(text, byteLimit: 144))"
-        }
-        if !history.isEmpty { lines.append("直近の流れ:\n" + history.joined(separator: "\n")) }
         lines.append("物語タイトル: \(utf8Prefix(world.title, byteLimit: 96))")
 
         // LiteRT側でも1,400 UTF-8 bytesへ上限を設けている。重要な出力規則を

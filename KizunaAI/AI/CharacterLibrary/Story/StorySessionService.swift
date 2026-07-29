@@ -428,6 +428,25 @@ final class StorySessionService: ObservableObject {
         // 7) StoryPromptBuilder
         streamingStatusText = "物語コンテキストを構築中"
         let contentMessages = Array(storyContentMessages(from: session.messages).suffix(96))
+        // 現在のユーザー発言は別途sendMessageへ渡す。直前3件だけをSDK本来の
+        // user/model roleで初期履歴にし、巨大な文字列テンプレートへ混ぜない。
+        let localConversationHistory: [LocalAssistantLiteRTLMHistoryMessage] = contentMessages
+            .dropLast()
+            .suffix(3)
+            .compactMap { message in
+                let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                switch message.author {
+                case .user:
+                    return LocalAssistantLiteRTLMHistoryMessage(role: .user, text: text)
+                case .narrator:
+                    return LocalAssistantLiteRTLMHistoryMessage(role: .model, text: text)
+                case .cast(_, _):
+                    return LocalAssistantLiteRTLMHistoryMessage(role: .model, text: text)
+                case .system:
+                    return nil
+                }
+            }
         let prompt: String
         if generationModel == .b31 {
             prompt = promptBuilder.build(
@@ -453,7 +472,6 @@ final class StorySessionService: ObservableObject {
                 scene: scene,
                 activeCast: aiCastForTurn,
                 characterIndex: charIndex,
-                recentMessages: contentMessages,
                 userCharacterName: userCharacterName
             )
         }
@@ -513,6 +531,7 @@ final class StorySessionService: ObservableObject {
                     safetySnapshot: nil,
                     advancedSettings: advanced,
                     overrideSystemPrompt: prompt,
+                    initialMessages: localConversationHistory,
                     overrideModelURL: selectedModelURL,
                     onUpdate: { @MainActor [weak self] update in
                         self?.handleStreamUpdate(update, generationID: generationID)
