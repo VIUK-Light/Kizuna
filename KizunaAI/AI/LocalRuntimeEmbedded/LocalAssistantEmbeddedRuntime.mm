@@ -266,13 +266,16 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
 
     llama_context_params contextParams = llama_context_default_params();
     const int32_t modelCtx = std::max<int32_t>(llama_model_n_ctx_train(model), 1024);
+    // 4bit GGUFでは会話の継続性とiPhoneのKVキャッシュ量を両立するため、
+    // 10,240 tokenを上限にする。モデル固有の学習時上限が小さい場合はそちらを優先する。
+    const int32_t runtimeCtxLimit = std::min<int32_t>(modelCtx, 10'240);
     const int32_t reservedOutputTokens = std::max<int32_t>(static_cast<int32_t>(maxTokens) + 16, 160);
-    const int32_t maxPromptTokens = std::max<int32_t>(128, modelCtx - reservedOutputTokens);
+    const int32_t maxPromptTokens = std::max<int32_t>(128, runtimeCtxLimit - reservedOutputTokens);
     if (static_cast<int32_t>(promptTokens.size()) > maxPromptTokens) {
         NSLog(@"[KizunaContext] prompt truncated: tokens=%d maxPrompt=%d modelCtx=%d maxTokens=%ld",
               static_cast<int32_t>(promptTokens.size()),
               maxPromptTokens,
-              modelCtx,
+              runtimeCtxLimit,
               static_cast<long>(maxTokens));
         promptTokens.erase(
             promptTokens.begin(),
@@ -281,7 +284,7 @@ static void VIUKAddTokenToBatch(struct llama_batch &batch, llama_token token, in
     }
 
     const int32_t promptCount = static_cast<int32_t>(promptTokens.size());
-    const int32_t desiredCtx = std::min<int32_t>(modelCtx, std::max<int32_t>(1024, promptCount + static_cast<int32_t>(maxTokens) + 64));
+    const int32_t desiredCtx = std::min<int32_t>(runtimeCtxLimit, std::max<int32_t>(1024, promptCount + static_cast<int32_t>(maxTokens) + 64));
 #if TARGET_OS_IOS && !TARGET_OS_SIMULATOR
     // Two threads made prompt prefill and short story turns unnecessarily slow
     // on real iPhones. Cap below the full core count to avoid saturating the UI.

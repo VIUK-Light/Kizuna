@@ -45,7 +45,7 @@ enum LocalAssistantModelProfile {
         DownloadOption(
             title: "VIUK Story v2.5 GGUF",
             url: "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF/resolve/main/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf?download=true",
-            detail: "Hugging FaceのVIUK標準モデル"
+            detail: "4bit Q4_K_M・iPhoneで最大10,240トークンの会話枠"
         ),
         DownloadOption(
             title: "Gemma 4 E2B LiteRT-LM",
