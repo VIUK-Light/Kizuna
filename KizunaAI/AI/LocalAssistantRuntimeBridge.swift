@@ -810,7 +810,16 @@ final class LocalAssistantRuntimeBridge {
     }
 
     private func usesSplitPromptTransport(_ engine: RuntimeEngine) -> Bool {
-        usesBundledCLI(engine) || usesBundledServer(engine)
+        // LiteRT-LM's ConversationConfig has a first-class systemMessage.
+        // Passing a serialized `<start_of_turn>system` prompt as a user message
+        // made the small on-device model treat the formatting instructions as
+        // ordinary text and occasionally answer with only an ellipsis.
+        switch engine {
+        case .bundledCLI, .bundledServer, .liteRTLM:
+            return true
+        case .embedded, .unavailable:
+            return false
+        }
     }
 
     private func warmModelFileCache(modelPath: String, maxBytes: Int64) {
@@ -1748,6 +1757,8 @@ final class BundledServerLogAggregator {
         /// 指定した場合 `runtimeSystemPrompt(...)` をスキップして直接この文字列を system prompt に使う。
         /// 音声会話など、ガイドライン/フォーマット指示を極小に保ちたい用途向け。
         overrideSystemPrompt: String? = nil,
+        /// LiteRT-LMへrole付きで渡す短い会話履歴。SDK非対応のruntimeでは使わない。
+        initialMessages: [LocalAssistantLiteRTLMHistoryMessage] = [],
         overrideModelURL: URL? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> String? {
@@ -1804,6 +1815,7 @@ final class BundledServerLogAggregator {
                 parameters: parameters,
                 stage: .generation,
                 startedAt: startedAt,
+                initialMessages: initialMessages,
                 onUpdate: onUpdate
             )
             return await withCheckedContinuation { continuation in
@@ -2037,7 +2049,8 @@ final class BundledServerLogAggregator {
                 reasoningMode: reasoningMode,
                 parameters: parameters,
                 stage: .supportBrief,
-                startedAt: Date()
+                startedAt: Date(),
+                initialMessages: []
             )
             return await withCheckedContinuation { continuation in
                 queue.async {
@@ -2707,8 +2720,13 @@ final class BundledServerLogAggregator {
         parameters: (maxTokens: Int, temperature: Float, topP: Float, topK: Int, seed: UInt32),
         stage: LocalAssistantRuntimeDiagnostic.Stage,
         startedAt: Date,
+        initialMessages: [LocalAssistantLiteRTLMHistoryMessage],
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> VIUKEmbeddedRuntimeResult {
+        // A fixed seed made every retry repeat the same poor first token path.
+        // Story chat is intentionally creative, so vary the sampler per turn
+        // while retaining the preset as its reproducible base.
+        let turnSeed = parameters.seed &+ UInt32(truncatingIfNeeded: Int64(Date().timeIntervalSince1970 * 1_000))
         let warmState = warmState(for: .liteRTLM, modelPath: modelPath)
         let runnerLabel = runtimeRunnerLabel(for: .liteRTLM, runnerPath: nil)
         emitStatus(
@@ -2758,7 +2776,8 @@ final class BundledServerLogAggregator {
                 temperature: parameters.temperature,
                 topP: parameters.topP,
                 topK: parameters.topK,
-                seed: parameters.seed
+                seed: turnSeed,
+                initialMessages: initialMessages
             )
         )
     }
