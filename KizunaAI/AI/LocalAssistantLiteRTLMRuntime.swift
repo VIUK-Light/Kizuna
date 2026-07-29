@@ -18,6 +18,19 @@ import LiteRTLM
 #endif
 #endif
 
+/// LiteRT-LMへroleを保ったまま渡す短い会話履歴。
+/// 文字列へ疑似chat templateを埋め込むのではなく、SDKのConversationConfigへ
+/// `user` / `model` として渡す。
+struct LocalAssistantLiteRTLMHistoryMessage: Sendable {
+    enum Role: Sendable {
+        case user
+        case model
+    }
+
+    let role: Role
+    let text: String
+}
+
 struct LocalAssistantLiteRTLMRequest {
     let prompt: String
     let systemPrompt: String?
@@ -27,6 +40,7 @@ struct LocalAssistantLiteRTLMRequest {
     let topP: Float
     let topK: Int
     let seed: UInt32
+    let initialMessages: [LocalAssistantLiteRTLMHistoryMessage]
     // The automatic readiness check keeps a short decode budget while using
     // the same production-shaped context as ordinary conversations. It proves
     // the full Engine -> Conversation -> sendMessage path before UI enables
@@ -47,6 +61,7 @@ struct LocalAssistantLiteRTLMRequest {
         topP: Float,
         topK: Int,
         seed: UInt32,
+        initialMessages: [LocalAssistantLiteRTLMHistoryMessage] = [],
         isRuntimeCheck: Bool = false,
         preferGPU: Bool = false
     ) {
@@ -58,6 +73,7 @@ struct LocalAssistantLiteRTLMRequest {
         self.topP = topP
         self.topK = topK
         self.seed = seed
+        self.initialMessages = initialMessages
         self.isRuntimeCheck = isRuntimeCheck
         self.preferGPU = preferGPU
     }
@@ -152,9 +168,13 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         nonisolated static let minimumOutputTokens = 64
         // A conservative byte budget preserves the most recent user context
         // without allowing a character-count-based prompt to overrun the KV cache.
-        nonisolated static let maximumInputUTF8Bytes = 4_200
-        nonisolated static let maximumSystemUTF8Bytes = 1_400
-        nonisolated static let minimumPromptUTF8Bytes = 1_200
+        // 2,048-token KV cacheのうち、最大1,024 tokenを生成に残す。日本語では
+        // UTF-8 byte数がほぼ文字数の3倍になるため、入力全体は約3KBへ収める。
+        nonisolated static let maximumInputUTF8Bytes = 3_000
+        nonisolated static let maximumSystemUTF8Bytes = 1_250
+        nonisolated static let maximumHistoryMessages = 3
+        nonisolated static let maximumHistoryMessageUTF8Bytes = 240
+        nonisolated static let minimumPromptUTF8Bytes = 480
         // Separate this cache from the earlier 512-token experiment so the
         // next launch compiles the official 2,048-token configuration fresh.
         nonisolated static let runtimeCacheVersion = "v0.14.0-cpu-baseline-1"
@@ -320,10 +340,19 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                 temperature: max(sizedRequest.temperature, 0),
                 seed: Int(sizedRequest.seed)
             )
-            NSLog("[KizunaLiteRTLM] creating conversation")
+            let initialMessages = sizedRequest.initialMessages.map { message -> Message in
+                switch message.role {
+                case .user:
+                    return Message(message.text, role: .user)
+                case .model:
+                    return Message(message.text, role: .model)
+                }
+            }
+            NSLog("[KizunaLiteRTLM] creating conversation (system=%d bytes, history=%d)", sizedRequest.systemPrompt?.lengthOfBytes(using: .utf8) ?? 0, initialMessages.count)
             let conversation = try await engine.createConversation(
                 with: ConversationConfig(
                     systemMessage: sizedRequest.systemPrompt.map { Message($0, role: .system) },
+                    initialMessages: initialMessages,
                     samplerConfig: sampler,
                     maxOutputTokens: sizedRequest.maxTokens
                 )
@@ -393,9 +422,20 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             clipped($0, maxUTF8Bytes: Tuning.maximumSystemUTF8Bytes, keepingTail: false)
         }
         let systemByteCount = systemPrompt?.lengthOfBytes(using: .utf8) ?? 0
+        let initialMessages = request.initialMessages
+            .suffix(Tuning.maximumHistoryMessages)
+            .map { message in
+                LocalAssistantLiteRTLMHistoryMessage(
+                    role: message.role,
+                    text: clipped(message.text, maxUTF8Bytes: Tuning.maximumHistoryMessageUTF8Bytes, keepingTail: true)
+                )
+            }
+        let historyByteCount = initialMessages.reduce(0) {
+            $0 + $1.text.lengthOfBytes(using: .utf8)
+        }
         let promptByteBudget = max(
             Tuning.minimumPromptUTF8Bytes,
-            Tuning.maximumInputUTF8Bytes - systemByteCount
+            Tuning.maximumInputUTF8Bytes - systemByteCount - historyByteCount
         )
         return LocalAssistantLiteRTLMRequest(
             prompt: clipped(request.prompt, maxUTF8Bytes: promptByteBudget, keepingTail: true),
@@ -408,6 +448,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             topP: request.topP,
             topK: request.topK,
             seed: request.seed,
+            initialMessages: initialMessages,
             isRuntimeCheck: request.isRuntimeCheck,
             preferGPU: false
         )

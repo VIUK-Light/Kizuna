@@ -1757,6 +1757,8 @@ final class BundledServerLogAggregator {
         /// 指定した場合 `runtimeSystemPrompt(...)` をスキップして直接この文字列を system prompt に使う。
         /// 音声会話など、ガイドライン/フォーマット指示を極小に保ちたい用途向け。
         overrideSystemPrompt: String? = nil,
+        /// LiteRT-LMへrole付きで渡す短い会話履歴。SDK非対応のruntimeでは使わない。
+        initialMessages: [LocalAssistantLiteRTLMHistoryMessage] = [],
         overrideModelURL: URL? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> String? {
@@ -1813,6 +1815,7 @@ final class BundledServerLogAggregator {
                 parameters: parameters,
                 stage: .generation,
                 startedAt: startedAt,
+                initialMessages: initialMessages,
                 onUpdate: onUpdate
             )
             return await withCheckedContinuation { continuation in
@@ -2046,7 +2049,8 @@ final class BundledServerLogAggregator {
                 reasoningMode: reasoningMode,
                 parameters: parameters,
                 stage: .supportBrief,
-                startedAt: Date()
+                startedAt: Date(),
+                initialMessages: []
             )
             return await withCheckedContinuation { continuation in
                 queue.async {
@@ -2716,6 +2720,7 @@ final class BundledServerLogAggregator {
         parameters: (maxTokens: Int, temperature: Float, topP: Float, topK: Int, seed: UInt32),
         stage: LocalAssistantRuntimeDiagnostic.Stage,
         startedAt: Date,
+        initialMessages: [LocalAssistantLiteRTLMHistoryMessage],
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> VIUKEmbeddedRuntimeResult {
         // A fixed seed made every retry repeat the same poor first token path.
@@ -2771,7 +2776,8 @@ final class BundledServerLogAggregator {
                 temperature: parameters.temperature,
                 topP: parameters.topP,
                 topK: parameters.topK,
-                seed: turnSeed
+                seed: turnSeed,
+                initialMessages: initialMessages
             )
         )
     }
