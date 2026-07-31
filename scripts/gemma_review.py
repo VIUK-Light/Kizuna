@@ -38,6 +38,7 @@ MAX_COMMENT_CHARS = 30_000
 MAX_TEXT_CHARS = 2_000
 MAX_TITLE_CHARS = 240
 MAX_API_RETRIES = 2
+GEMMA_API_RETRIES = 1
 DEFAULT_TIMEOUT = 60
 
 EXCLUDED_PATTERNS = (
@@ -389,25 +390,20 @@ class GeminiClient(JsonHttpClient):
         path = f"/{quote(self.model, safe='')}:generateContent"
         # The key is sent only as a URL parameter and is never included in errors/logs.
         url_base = f"{self.base_url}{path}?key={quote(self.api_key, safe='')}"
+        thinking_level = os.getenv("GEMMA_THINKING_LEVEL", "minimal").strip().lower()
+        if thinking_level not in {"minimal", "high"}:
+            thinking_level = "minimal"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 4_000,
-                "responseMimeType": "application/json",
+                "maxOutputTokens": 2_500,
+                "thinkingConfig": {"thinkingLevel": thinking_level},
             },
         }
-        try:
-            response = self._request_url("POST", url_base, payload)
-        except ApiStatusError as exc:
-            if exc.status_code != 400:
-                raise
-            # Some Gemma API deployments accept generateContent but reject
-            # Gemini's JSON-mode generationConfig. Keep the JSON-only parser,
-            # but retry once without the optional response MIME hint.
-            logging.warning("Gemma JSON mode was rejected; retrying without responseMimeType.")
-            payload["generationConfig"].pop("responseMimeType", None)
-            response = self._request_url("POST", url_base, payload)
+        # Gemma does not consistently accept Gemini's JSON-mode MIME hint.
+        # Ask for JSON in the prompt and validate it locally instead, avoiding
+        # a failed request followed by a slower fallback request.
         if not isinstance(response, dict):
             raise ReviewError("Gemma returned an empty response.")
         candidates = response.get("candidates")
@@ -424,7 +420,7 @@ class GeminiClient(JsonHttpClient):
         headers = {"Content-Type": "application/json", "Accept": "application/json",
                    "User-Agent": "viuk-gemma-code-review"}
         last_error: Exception | None = None
-        for attempt in range(MAX_API_RETRIES + 1):
+        for attempt in range(GEMMA_API_RETRIES + 1):
             try:
                 request = Request(url, data=data, headers=headers, method=method)
                 with urlopen(request, timeout=self.timeout) as response:
