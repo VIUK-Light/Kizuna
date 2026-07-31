@@ -1,0 +1,50 @@
+name: Gemma Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: gemma-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Secrets are unavailable to forks. The repository equality check also avoids
+    # accidentally sending untrusted fork changes to a secret-backed job.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report missing API key
+        if: ${{ secrets.GEMINI_API_KEY == '' }}
+        run: echo "::warning::GEMINI_API_KEY is not configured; Gemma review was skipped."
+
+      - name: Check out pull request
+        if: ${{ secrets.GEMINI_API_KEY != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python
+        if: ${{ secrets.GEMINI_API_KEY != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Review pull request with Gemma
+        if: ${{ secrets.GEMINI_API_KEY != '' }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMMA_MODEL: ${{ vars.GEMMA_MODEL }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/gemma_review.py
