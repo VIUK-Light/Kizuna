@@ -404,6 +404,7 @@ class GeminiClient(JsonHttpClient):
         # Gemma does not consistently accept Gemini's JSON-mode MIME hint.
         # Ask for JSON in the prompt and validate it locally instead, avoiding
         # a failed request followed by a slower fallback request.
+        response = self._request_url("POST", url_base, payload)
         if not isinstance(response, dict):
             raise ReviewError("Gemma returned an empty response.")
         candidates = response.get("candidates")
