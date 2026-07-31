@@ -58,6 +58,21 @@ class GemmaReviewTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_gemma_json_mode_fallback(self):
+        client = review.GeminiClient("test-key", "gemma-4-26b-a4b-it", 5)
+        payloads = []
+
+        def fake_request(method, url, payload):
+            payloads.append(json.loads(json.dumps(payload)))
+            if len(payloads) == 1:
+                raise review.ApiStatusError("Gemma", 400)
+            return {"candidates": [{"content": {"parts": [{"text": '{"severity":"clean"}'}]}}]}
+
+        client._request_url = fake_request
+        self.assertEqual(client.review("review"), {"severity": "clean"})
+        self.assertIn("responseMimeType", payloads[0]["generationConfig"])
+        self.assertNotIn("responseMimeType", payloads[1]["generationConfig"])
+
 
 if __name__ == "__main__":
     unittest.main()
