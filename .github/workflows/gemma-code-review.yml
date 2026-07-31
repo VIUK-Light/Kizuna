@@ -46,6 +46,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMMA_MODEL: ${{ vars.GEMMA_MODEL }}
+          GEMMA_THINKING_LEVEL: ${{ vars.GEMMA_THINKING_LEVEL }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
           GITHUB_REPOSITORY: ${{ github.repository }}
