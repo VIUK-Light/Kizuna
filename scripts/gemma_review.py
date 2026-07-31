@@ -62,6 +62,14 @@ class ReviewError(RuntimeError):
     """A safe, non-secret error suitable for workflow logs."""
 
 
+class ApiStatusError(ReviewError):
+    """An HTTP error with a status code but without exposing response data."""
+
+    def __init__(self, service: str, status_code: int) -> None:
+        super().__init__(f"{service} API request failed with HTTP {status_code}.")
+        self.status_code = status_code
+
+
 @dataclass(frozen=True)
 class ChangedFile:
     filename: str
@@ -389,7 +397,17 @@ class GeminiClient(JsonHttpClient):
                 "responseMimeType": "application/json",
             },
         }
-        response = self._request_url("POST", url_base, payload)
+        try:
+            response = self._request_url("POST", url_base, payload)
+        except ApiStatusError as exc:
+            if exc.status_code != 400:
+                raise
+            # Some Gemma API deployments accept generateContent but reject
+            # Gemini's JSON-mode generationConfig. Keep the JSON-only parser,
+            # but retry once without the optional response MIME hint.
+            logging.warning("Gemma JSON mode was rejected; retrying without responseMimeType.")
+            payload["generationConfig"].pop("responseMimeType", None)
+            response = self._request_url("POST", url_base, payload)
         if not isinstance(response, dict):
             raise ReviewError("Gemma returned an empty response.")
         candidates = response.get("candidates")
@@ -421,7 +439,7 @@ class GeminiClient(JsonHttpClient):
             if attempt < MAX_API_RETRIES:
                 time.sleep(2 ** attempt)
         if isinstance(last_error, HTTPError):
-            raise ReviewError(f"Gemma API request failed with HTTP {last_error.code}.")
+            raise ApiStatusError("Gemma", last_error.code)
         raise ReviewError("Gemma API request failed due to a network or response error.")
 
 
