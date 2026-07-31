@@ -14,6 +14,8 @@ concurrency:
 
 jobs:
   review:
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
     # Secrets are unavailable to forks. The repository equality check also avoids
     # accidentally sending untrusted fork changes to a secret-backed job.
     if: >-
@@ -22,11 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Report missing API key
-        if: ${{ secrets.GEMINI_API_KEY == '' }}
+        if: ${{ env.GEMINI_API_KEY == '' }}
         run: echo "::warning::GEMINI_API_KEY is not configured; Gemma review was skipped."
 
       - name: Check out pull request
-        if: ${{ secrets.GEMINI_API_KEY != '' }}
+        if: ${{ env.GEMINI_API_KEY != '' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -34,13 +36,13 @@ jobs:
           fetch-depth: 1
 
       - name: Set up Python
-        if: ${{ secrets.GEMINI_API_KEY != '' }}
+        if: ${{ env.GEMINI_API_KEY != '' }}
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Review pull request with Gemma
-        if: ${{ secrets.GEMINI_API_KEY != '' }}
+        if: ${{ env.GEMINI_API_KEY != '' }}
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMMA_MODEL: ${{ vars.GEMMA_MODEL }}
