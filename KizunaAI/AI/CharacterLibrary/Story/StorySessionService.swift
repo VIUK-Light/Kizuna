@@ -398,14 +398,23 @@ final class StorySessionService: ObservableObject {
                   !legacy.isEmpty else { continue }
             let keywords = (legacy.importantPeople + legacy.importantPlaces + legacy.importantEvents)
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            let content = [
-                legacy.worldSetting,
-                legacy.importantPeople.isEmpty ? "" : "重要人物: " + legacy.importantPeople.joined(separator: " / "),
-                legacy.importantPlaces.isEmpty ? "" : "重要な場所: " + legacy.importantPlaces.joined(separator: " / "),
-                legacy.importantEvents.isEmpty ? "" : "重要な出来事: " + legacy.importantEvents.joined(separator: " / "),
-                legacy.worldRules.isEmpty ? "" : "世界のルール: " + legacy.worldRules.joined(separator: " / "),
-                legacy.forbiddenBreaks.isEmpty ? "" : "壊してはいけない設定: " + legacy.forbiddenBreaks.joined(separator: " / ")
-            ].filter { !$0.isEmpty }.joined(separator: "\n")
+            var contentParts: [String] = [legacy.worldSetting]
+            if !legacy.importantPeople.isEmpty {
+                contentParts.append("重要人物: " + legacy.importantPeople.joined(separator: " / "))
+            }
+            if !legacy.importantPlaces.isEmpty {
+                contentParts.append("重要な場所: " + legacy.importantPlaces.joined(separator: " / "))
+            }
+            if !legacy.importantEvents.isEmpty {
+                contentParts.append("重要な出来事: " + legacy.importantEvents.joined(separator: " / "))
+            }
+            if !legacy.worldRules.isEmpty {
+                contentParts.append("世界のルール: " + legacy.worldRules.joined(separator: " / "))
+            }
+            if !legacy.forbiddenBreaks.isEmpty {
+                contentParts.append("壊してはいけない設定: " + legacy.forbiddenBreaks.joined(separator: " / "))
+            }
+            let content = contentParts.filter { !$0.isEmpty }.joined(separator: "\n")
             if !content.isEmpty {
                 lorebookEntries.append(
                     StoryLorebookEntry(
