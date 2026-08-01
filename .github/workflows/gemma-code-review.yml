@@ -23,13 +23,15 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - name: Report missing API key
+      - name: Verify API key
         if: ${{ env.GEMINI_API_KEY == '' }}
-        run: echo "::warning::GEMINI_API_KEY is not configured; Gemma review was skipped."
+        run: |
+          echo "::error::GEMINI_API_KEY is not configured; Gemma review cannot run."
+          exit 1
 
       - name: Check out pull request
         if: ${{ env.GEMINI_API_KEY != '' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
@@ -37,7 +39,7 @@ jobs:
 
       - name: Set up Python
         if: ${{ env.GEMINI_API_KEY != '' }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
