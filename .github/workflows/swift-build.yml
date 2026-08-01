@@ -32,3 +32,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO
+
+  gemma-script-tests:
+    name: Gemma Script Tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Gemma script tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
