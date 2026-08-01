@@ -38,8 +38,9 @@ MAX_COMMENT_CHARS = 30_000
 MAX_TEXT_CHARS = 2_000
 MAX_TITLE_CHARS = 240
 MAX_API_RETRIES = 2
-GEMMA_API_RETRIES = 1
+GEMMA_API_RETRIES = 4
 DEFAULT_TIMEOUT = 60
+RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 EXCLUDED_PATTERNS = (
     "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.bmp", "*.ico",
@@ -429,12 +430,15 @@ class GeminiClient(JsonHttpClient):
                 return json.loads(raw) if raw else None
             except HTTPError as exc:
                 last_error = exc
-                if exc.code not in {408, 425, 429, 500, 502, 503, 504}:
+                if exc.code not in RETRYABLE_STATUS_CODES:
                     break
             except (URLError, TimeoutError, json.JSONDecodeError) as exc:
                 last_error = exc
-            if attempt < MAX_API_RETRIES:
-                time.sleep(2 ** attempt)
+            if attempt < GEMMA_API_RETRIES:
+                delay = min(30, 2 ** attempt)
+                logging.warning("Gemma API returned a retryable error; retrying in %ss (attempt %d/%d).",
+                                delay, attempt + 1, GEMMA_API_RETRIES)
+                time.sleep(delay)
         if isinstance(last_error, HTTPError):
             raise ApiStatusError("Gemma", last_error.code)
         raise ReviewError("Gemma API request failed due to a network or response error.")
@@ -610,7 +614,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     if not args.event_path or not args.repo:
         logging.error("GITHUB_EVENT_PATH and GITHUB_REPOSITORY are required.")
-        return 0
+        return 1
     try:
         event = parse_event(args.event_path)
         pr = event.get("pull_request")
@@ -623,8 +627,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         token = os.getenv("GITHUB_TOKEN", "")
         api_key = os.getenv("GEMINI_API_KEY", "")
         if not token or not api_key:
-            logging.warning("Required secret/token is not configured; review skipped.")
-            return 0
+            logging.error("Required secret/token is not configured; review cannot run.")
+            return 1
         timeout = env_int("GEMMA_REVIEW_TIMEOUT_SECONDS", DEFAULT_TIMEOUT, 5, 180)
         max_files = env_int("GEMMA_REVIEW_MAX_FILES", MAX_FILES, 1, 100)
         max_diff = env_int("GEMMA_REVIEW_MAX_DIFF_CHARS", MAX_DIFF_CHARS, 10_000, 500_000)
@@ -644,6 +648,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
             gemma = GeminiClient(api_key, os.getenv("GEMMA_MODEL"), timeout)
             results: list[dict[str, Any]] = []
+            review_failed = False
             for index, chunk in enumerate(chunks, start=1):
                 logging.info("Reviewing chunk %d/%d (%d files).", index, len(chunks), len(chunk.files))
                 try:
@@ -651,19 +656,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                     results.append(validate_result(raw_result, chunk))
                 except ReviewError as exc:
                     logging.warning("Gemma chunk %d failed: %s", index, exc)
+                    review_failed = True
                     skipped.extend(f.filename + "（APIレビュー失敗）" for f in chunk.files)
             final = merge_results(results, skipped)
             upsert_review_comment(github, args.repo, number, render_comment(final, len(files)))
+            if review_failed:
+                logging.error("Gemma review failed for one or more chunks; the check is failing.")
+                return 1
         except ReviewError as exc:
             logging.error("Review could not be completed: %s", exc)
             try:
                 upsert_review_comment(github, args.repo, number, error_comment(str(exc)))
             except ReviewError as comment_exc:
                 logging.error("Could not publish the diagnostic comment: %s", comment_exc)
+            return 1
         return 0
     except ReviewError as exc:
-        logging.error("Review skipped safely: %s", exc)
-        return 0
+        logging.error("Review failed safely: %s", exc)
+        return 1
 
 
 if __name__ == "__main__":
