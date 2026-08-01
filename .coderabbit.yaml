@@ -1,0 +1,35 @@
+language: "ja"
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+  path_filters:
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.gif"
+    - "!**/DerivedData/**"
+    - "!**/.build/**"
+    - "!**/Generated/**"
+  path_instructions:
+    - path: "**/*.swift"
+      instructions: |
+        優先して確認すること: Swift concurrency、MainActor、Taskのキャンセル、状態所有権、SwiftUIの再描画、永続化、入力検証、認証情報と個人情報の漏えい、クラッシュ、テスト不足。
+        スタイルだけの指摘は避け、再現可能な不具合・セキュリティ問題・データ損失につながる問題を優先する。
+    - path: ".github/workflows/**"
+      instructions: |
+        pull_request_target、権限過剰、未固定の外部Action、PR由来の入力をshellへ渡す処理、秘密情報のfork PRへの露出、失敗を成功扱いにする条件を重点的に確認する。
+    - path: "scripts/**"
+      instructions: |
+        外部APIのリトライ、HTTPステータス処理、エラー時の終了コード、ログへの秘密情報混入、未信頼なPR本文や差分のプロンプトインジェクションを確認する。
+
+chat:
+  auto_reply: true
+  allow_non_org_members: false
