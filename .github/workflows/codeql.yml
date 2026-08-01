@@ -1,0 +1,79 @@
+name: CodeQL Security Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift:
+    name: CodeQL / Swift
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-15
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: swift
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build KizunaAI for analysis
+        run: |
+          xcodebuild \
+            -project "KizunaAI.xcodeproj" \
+            -scheme "KizunaAI" \
+            -configuration Debug \
+            -destination "platform=macOS" \
+            -derivedDataPath "$RUNNER_TEMP/codeql-derived" \
+            -jobs 2 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            build
+
+      - name: Analyze Swift
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:swift"
+
+  actions:
+    name: CodeQL / GitHub Actions
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: actions
+          queries: security-extended
+
+      - name: Analyze GitHub Actions
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:actions"
