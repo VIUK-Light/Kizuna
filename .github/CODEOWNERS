@@ -1,0 +1,9 @@
+# Default maintainer review
+* @VIUK-XV
+
+# Security-sensitive areas
+/.github/ @VIUK-XV
+/KizunaAI/Security/ @VIUK-XV
+/KizunaAI/AI/LocalAssistantRuntimeBridge.swift @VIUK-XV
+/KizunaAI/AI/LocalAssistantModelManager.swift @VIUK-XV
+/project.yml @VIUK-XV
