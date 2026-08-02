@@ -1,0 +1,45 @@
+name: Feature request
+description: 新機能や改善案を提案する
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい問題
+      description: 機能そのものではなく、まず困っていることや不足している体験を説明してください。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案内容
+      description: 望ましい動作やUIを説明してください。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 検討した代替案
+  - type: textarea
+    id: impact
+    attributes:
+      label: 安全性・プライバシー・キャラクター体験への影響
+      description: 利用者の意思、依存、データ保存、外部送信、通常の創作会話への影響を記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: implementation
+    attributes:
+      label: 実装案
+      description: 分かる範囲で、変更対象や技術的な案を記載してください。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 確認
+      options:
+        - label: 既存Issueに同じ提案がないか確認しました
+          required: true
+        - label: この提案は利用者を不必要に拘束・依存させることを目的としていません
+          required: true
