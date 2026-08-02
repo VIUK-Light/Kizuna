@@ -2,7 +2,26 @@
 
 [日本語](README.md) | English
 
-Kizuna is an iOS / macOS application for building character relationships and stories through conversations with AI. It is developed by VIUK-Light with a focus on responsible AI, user agency, privacy, and a balance between safety and expressive character experiences.
+**A SwiftUI application for building relationships and stories with AI characters while respecting user agency and real life.**
+
+Kizuna is an open-source iOS and macOS character AI application developed by VIUK-Light. It focuses on responsible AI, privacy, user control, and maintaining expressive character experiences without optimizing for dependency or excessive screen time.
+
+## Features
+
+- Persistent AI character relationships and stories
+- Safety behavior designed to preserve character consistency
+- Architecture that separates local and remote model providers
+- User-controlled conversations, memories, models, and secrets
+- Native SwiftUI support for iOS and macOS
+- Open development with Issues and Pull Requests welcome
+
+> Kizuna is designed neither to control users nor to push them away.
+
+## Project status
+
+Kizuna is under active development. Feature proposals, bug reports, documentation improvements, and Pull Requests are welcome.
+
+Requirements currently include Xcode 26.1 or later, XcodeGen, and iOS 26.0 / macOS 26.0 or later.
 
 ## Design principles
 
