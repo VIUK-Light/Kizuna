@@ -1,0 +1,65 @@
+name: Bug report
+description: 再現可能な不具合を報告する
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        報告ありがとうございます。秘密情報や個人の会話履歴は掲載しないでください。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 不具合の概要
+      description: 何が起きたかを簡潔に説明してください。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した結果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の結果
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 実行環境
+      description: OS、端末またはSimulator、Xcodeバージョンを記載してください。
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: モデル・生成経路
+      description: 分かる場合のみ、モデル形式、サイズ、ローカルまたはリモートを記載してください。
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ・画像
+      description: APIキー、トークン、個人情報、会話履歴を除去してください。
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 確認
+      options:
+        - label: 秘密情報や個人情報を含めていません
+          required: true
+        - label: 既存Issueに同じ報告がないか確認しました
+          required: true
