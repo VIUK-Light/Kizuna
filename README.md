@@ -169,29 +169,17 @@ Kizunaは、利用者を支配するAIでも、利用者を突き放すAIでも�
 
 Kizunaは、SwiftUIの画面から特定のAIサービスや推論ランタイムを直接呼び出す構成にはしていません。アプリ起動、データ移行、会話、モデル管理、秘密情報管理をそれぞれの責務に分け、iOSとmacOSで異なる実装を境界の内側に閉じ込めています。
 
-### 起動とデータ移行
+### 起動と初期化
 
-アプリのエントリーポイントは KizunaAI/App/KizunaAIApp.swift です。起動直後は KizunaMigrationGateView を表示し、KizunaDataMigration.performIfNeeded() を完了してから VIUKKizunaWorkspaceView を表示します。
+アプリのエントリーポイントはKizunaAI/App/KizunaAIApp.swiftです。起動直後はKizunaMigrationGateViewを表示し、必要な初期化とランタイム準備を完了してからVIUKKizunaWorkspaceViewを表示します。
 
     KizunaAIApp
       └─ KizunaMigrationGateView
-           ├─ KizunaDataMigration
            └─ VIUKKizunaWorkspaceView
                 ├─ Character Library
                 ├─ Persona Chat
                 ├─ Story Session
                 └─ Settings / Model Management
-
-KizunaDataMigrationは、旧VIUK Oneのキャラクターライブラリ、ローカルモデル、ペルソナのUserDefaultsを新アプリの保存領域へ移行します。移行元を直接削除するのではなく、一時ディレクトリへコピーしてから最終パスへ移動します。キャラクターとモデルの両方が完了した場合だけ、kizuna.migration.viuk-one.v1という完了マーカーを保存します。片方が失敗したときは、次回起動時に再試行できるようにしています。
-
-| データ | 旧アプリ側 | Kizuna側 |
-| --- | --- | --- |
-| キャラクター・物語 | ~/Library/Application Support/VIUK/CharacterLibrary | ~/Library/Application Support/VIUK/KizunaAI/CharacterLibrary |
-| ローカルモデル | ~/Library/Application Support/VIUK One/LocalModels | ~/Library/Application Support/VIUK/KizunaAI/LocalModels |
-| ペルソナスレッド | 旧Bundle IDのUserDefaults | KizunaのUserDefaults |
-| 物語ごとの生成モデル設定 | 旧Bundle IDのUserDefaults | KizunaのUserDefaults |
-
-iOSはBundle IDごとにアプリコンテナが分離されるため、macOSのように旧アプリのユーザーデータを直接読むことはできません。iOSでは同梱コード・アセットを利用し、新しいアプリ領域から開始します。
 
 ### 会話生成パイプライン
 
@@ -265,7 +253,6 @@ AISecretStoreはAPIキーとモデルアクセストークンの用途を定義�
     KizunaAI/
     ├── App/
     │   ├── KizunaAIApp.swift          # 起動と移行ゲート
-    │   ├── KizunaDataMigration.swift  # VIUK Oneからの初回移行
     │   └── KizunaSettingsView.swift   # モデル・キー・ランタイム設定
     ├── AI/
     │   ├── PersonaChatService.swift   # ペルソナ会話とストリーミング
@@ -282,6 +269,21 @@ AISecretStoreはAPIキーとモデルアクセストークンの用途を定義�
     │   └── llama.cpp/
     ├── project.yml
     └── THIRD_PARTY_NOTICES.md
+
+## PR・Issue・問題報告で集めたいデータ
+
+Kizunaの改善では、PR、Issue、不具合報告、ランタイムの問題報告に、次のデータがあると原因を追いやすくなります。分かる範囲で記載してください。
+
+- 関連するPR・Issue・コミットのURL
+- 何が起きたか、いつから起きたか、再現する頻度
+- 再現手順と、期待した結果・実際の結果
+- iOS / macOS、実機 / Simulator、端末、OS、Xcodeのバージョン
+- 使用したモデル形式、モデルサイズ、ローカル / リモートの生成経路
+- ダウンロード状態、ランタイム状態、直前に行った操作
+- APIキーやアクセストークンを除いたログ、クラッシュ情報、スクリーンショット
+- 直前まで動作していたコミットや、再現しなくなるコミットが分かる場合の情報
+
+会話内容や個人情報を貼り付ける必要がある場合は、先に匿名化・要約してください。APIキー、アクセストークン、Cookie、秘密のURL、モデルファイル、個人の会話履歴をPRやIssueへ直接添付しないでください。
 
 ## 開発・Pull Request時の確認事項
 
