@@ -165,6 +165,138 @@ AIの安全性に、唯一の正解や完成形はありません。
 Kizunaは、利用者を支配するAIでも、利用者を突き放すAIでもありません。
 
 人とAIが適切な距離を保ちながら、関係や物語を育てられる未来を目指します。
+## 技術設計と実装
+
+Kizunaは、SwiftUIの画面から特定のAIサービスや推論ランタイムを直接呼び出す構成にはしていません。アプリ起動、初期化、会話、モデル管理、秘密情報管理をそれぞれの責務に分け、iOSとmacOSで異なる実装を境界の内側に閉じ込めています。
+
+### 起動と初期化
+
+アプリのエントリーポイントはKizunaAI/App/KizunaAIApp.swiftです。起動直後はKizunaMigrationGateViewを表示し、必要な初期化とランタイム準備を完了してからVIUKKizunaWorkspaceViewを表示します。
+
+    KizunaAIApp
+      └─ KizunaMigrationGateView
+           └─ VIUKKizunaWorkspaceView
+                ├─ Character Library
+                ├─ Persona Chat
+                ├─ Story Session
+                └─ Settings / Model Management
+
+### 会話生成パイプライン
+
+ペルソナ会話の主な入口は KizunaAI/AI/PersonaChatService.swift です。送信時には、ユーザー発話と空のアシスタント発話を先に PersonaChatStore へ追加します。その後、キャラクター、ペルソナ、記憶、安全性情報を使ってプロンプトを組み立て、LocalAssistantRuntimeBridge 経由で応答を生成します。
+
+    ユーザー入力
+      → PersonaChatService
+      → PersonaChatStoreへ発話を保存
+      → キャラクター・記憶・安全性を含むプロンプトを構築
+      → LocalAssistantRuntimeBridge
+      → ローカルまたはリモートの生成経路
+      → ストリーミング表示
+      → 完了した応答を履歴へ保存
+
+キャラクターIDを持つスレッドでは、Character Libraryのリポジトリ、記憶選択、要約、安全性チェック、プロンプト構築を通るパイプラインを利用します。既存のペルソナ設定から作られたスレッドでは、従来のストリーミング経路との互換性を保ちます。
+
+生成中はPhase.thinkingを保持し、二重送信を防ぎます。ストリーミング中の応答は一時状態として表示し、完了時に会話ストアへ確定します。生成タスクをキャンセルした場合や古いタスクが終了した場合に、新しい会話表示を上書きしないことも重要な保守ポイントです。
+
+### Character Libraryと安全性
+
+AI/CharacterLibrary/には、キャラクターのプロフィール、ロアブック、記憶、テンプレート、物語、セッション、レポートの責務を分けた型があります。JSONリポジトリとプロトコルを介してアクセスするため、画面がファイル形式に直接依存しない構成です。
+
+会話にキャラクターを反映するときは、次の順序を意識します。
+
+1. キャラクターと物語の設定を読み込む
+2. 現在のスレッドに必要な記憶を選択する
+3. プロンプトへ反映する内容を組み立てる
+4. 安全性パイプラインで会話の状態を確認する
+5. 選択されたランタイムへ生成を依頼する
+6. 応答とセッション状態を保存する
+
+安全性は、すべての会話を同じ拒否文に置き換えるための機能ではありません。危険度、創作・ロールプレイの文脈、キャラクター性、利用者の意思を考慮し、必要な場合に安全な方向へ導きながら会話の自然さを保つことを目指します。安全性に関する変更では、通常の創作会話が不必要に遮断されていないかと、現実の危険に対する案内が弱くなっていないかの両方を確認してください。
+
+### ローカルモデルのライフサイクル
+
+AI/LocalAssistantModelManager.swiftは、モデルのURL、アクセストークン、保存先、導入状態、ダウンロード進捗を管理します。モデルファイルを取得できたかどうかだけではなく、「再開できるか」「保存されているが実行できないか」「最近失敗したか」を区別します。
+
+主な状態は次のとおりです。
+
+- preflighting: サイズ、ETag、ファイル名、再開可否を確認中
+- downloading: ダウンロード中
+- paused / resumable: 中断後に再開可能
+- failed: エラーを保持した失敗状態
+- completed: モデルファイルの導入完了
+
+ダウンロード状態と再開データを保存するため、通信が中断した場合でも数GBのモデルを毎回最初から取得する必要がありません。導入前には空き容量の余裕も確認します。モデル管理の変更では、HTTPのRange / ETag、部分ファイル、再開データの破棄条件、ファイル名の確定タイミングを一緒に確認してください。
+
+### 推論ランタイムの境界
+
+AI/LocalAssistantRuntimeBridge.swiftは、会話サービスと推論実装の間の境界です。画面や会話サービスは「応答を生成する」「モデルの状態を確認する」という責務に集中し、macOSとiOSの異なるランタイム実装をブリッジ側へ閉じ込めます。
+
+- macOSでは、同梱された llama-cli / llama-server とarm64向けllama.cppライブラリを利用します
+- iOSでは、iOS向けのllama.cppライブラリとLiteRT-LMのネイティブ経路を利用します
+- GGUFなどのモデルファイルは、保存済み・実行可能・未導入・失敗・利用不可を区別して表示します
+- ランタイム起動エラーは、可能な限りアプリ全体のクラッシュではなく復旧可能な状態として扱います
+
+project.ymlのポストビルドスクリプトは、macOS向けのランタイム実行ファイルをアプリバンドルのResourcesへコピーします。署名が有効なビルドでは必要に応じて同梱バイナリを再署名します。生成されたビルド成果物、DerivedData、モデルキャッシュはリポジトリへ追加しません。
+
+### 秘密情報の保存
+
+AISecretStoreはAPIキーとモデルアクセストークンの用途を定義し、KeychainHelperを通じてKeychainへ保存します。通常の設定値やUserDefaultsを秘密情報の正本にはしません。
+
+    Keychain
+      → 実行時の環境変数
+      → 秘密を含まない設定値
+
+旧形式の設定値を検出した場合は、Keychainへ移行してから旧形式の値を削除します。Keychainサービス名が変わった場合も、旧サービスを読み取り対象にして現在のサービスへ移行します。APIキー、アクセストークン、個人データをInfo.plist、ソースコード、UserDefaults、ログへ平文で追加しないでください。
+
+## 技術者向けディレクトリ案内
+
+    KizunaAI/
+    ├── App/
+    │   ├── KizunaAIApp.swift          # 起動と移行ゲート
+    │   └── KizunaSettingsView.swift   # モデル・キー・ランタイム設定
+    ├── AI/
+    │   ├── PersonaChatService.swift   # ペルソナ会話とストリーミング
+    │   ├── PersonaChatStore.swift     # 会話履歴
+    │   ├── CharacterLibrary/          # キャラクター、記憶、物語、安全性
+    │   ├── LocalAssistantModelManager.swift
+    │   ├── LocalAssistantRuntimeBridge.swift
+    │   ├── LocalRuntimeEmbedded/      # ネイティブランタイム境界
+    │   └── LocalRuntime/              # macOS向け同梱CLI
+    ├── Security/
+    │   └── KeychainHelper.swift
+    ├── ThirdParty/
+    │   ├── LiteRT-LM/
+    │   └── llama.cpp/
+    ├── project.yml
+    └── THIRD_PARTY_NOTICES.md
+
+## PR・Issue・問題報告で集めたいデータ
+
+Kizunaの改善では、PR、Issue、不具合報告、ランタイムの問題報告に、次のデータがあると原因を追いやすくなります。分かる範囲で記載してください。
+
+- 関連するPR・Issue・コミットのURL
+- 何が起きたか、いつから起きたか、再現する頻度
+- 再現手順と、期待した結果・実際の結果
+- iOS / macOS、実機 / Simulator、端末、OS、Xcodeのバージョン
+- 使用したモデル形式、モデルサイズ、ローカル / リモートの生成経路
+- ダウンロード状態、ランタイム状態、直前に行った操作
+- APIキーやアクセストークンを除いたログ、クラッシュ情報、スクリーンショット
+- 直前まで動作していたコミットや、再現しなくなるコミットが分かる場合の情報
+
+会話内容や個人情報を貼り付ける必要がある場合は、先に匿名化・要約してください。APIキー、アクセストークン、Cookie、秘密のURL、モデルファイル、個人の会話履歴をPRやIssueへ直接添付しないでください。
+
+## 開発・Pull Request時の確認事項
+
+Pull Requestでは、可能な範囲で次の情報を含めてください。
+
+- iOS / macOS、実機 / Simulator、Apple Siliconなどの実行環境
+- 使用したモデル形式、モデルサイズ、ローカル / リモートの生成経路
+- 再現手順、期待した結果、実際の結果
+- ダウンロードやランタイム起動に失敗した場合の状態とエラーメッセージ
+- APIキーやアクセストークンを含まないログ
+
+UIだけの変更でも、移行状態、モデル導入状態、ストリーミング中の状態、Keychainの読み書きに影響しないか確認してください。project.ymlを変更した場合はXcodeGenでプロジェクトを再生成し、対応するプラットフォームのビルド確認を行います。
+
 ## オープンソースとして
 
 OSSだからこそ、さまざまな人が自由に参加し、それぞれの考えや技術でこの世界を少しずつ作り変えていけます。
@@ -215,7 +347,7 @@ xcodebuild \
 ## APIキーと秘密情報
 
 
-開発実行では、必要に応じて `GEMMA_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`、`OLLAMA_WEB_SEARCH_API_KEY`、`OLLAMA_API_KEY`、`TEXTRAZOR_API_KEY` の環境変数を使用できます。永続保存する秘密情報は `AISecretStore` を通して Keychain に保存し、`Info.plist`、ソースコード、UserDefaultsへ平文で追加しないでください。。
+開発実行では、必要に応じて `GEMMA_API_KEY`、`GOOGLE_API_KEY`、`GEMINI_API_KEY`、`OLLAMA_WEB_SEARCH_API_KEY`、`OLLAMA_API_KEY`、`TEXTRAZOR_API_KEY` の環境変数を使用できます。永続保存する秘密情報は `AISecretStore` を通して Keychain に保存し、`Info.plist`、ソースコード、UserDefaultsへ平文で追加しないでください。
 
 ## サードパーティー
 
