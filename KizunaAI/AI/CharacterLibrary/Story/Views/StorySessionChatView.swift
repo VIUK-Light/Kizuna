@@ -840,16 +840,15 @@ private struct StorySessionChatBody: View {
                 Spacer(minLength: 28)
                 HStack(alignment: .top, spacing: 12) {
                     VStack(spacing: 3) {
-                        Image(systemName: "text.quote")
+                        Image(systemName: "decrease.quotelevel")
                             .font(.system(size: 14, weight: .semibold))
-                        Text("場面")
-                            .font(.system(size: 9, weight: .heavy))
+                        
                     }
                     .foregroundStyle(storyWarmAccent.opacity(0.78))
                     .frame(width: 34)
                     Text(message.text)
                         .font(.system(size: horizontalSizeClass == .compact ? 17 : 18, weight: .medium))
-                        .foregroundStyle(storyText.opacity(0.80))
+                        .foregroundStyle(storyText.opacity(0.50))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: 620, alignment: .leading)

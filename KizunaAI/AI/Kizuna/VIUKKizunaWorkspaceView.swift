@@ -128,7 +128,7 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .stories: return "ストーリー"
-        case .chat: return "単体チャット"
+        case .chat: return "あなたの物語"
         }
     }
 

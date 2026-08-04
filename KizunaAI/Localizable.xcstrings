@@ -158,6 +158,20 @@
         }
       }
     },
+    "Kizuna" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna"
+          }
+        }
+      }
+    },
+    "Kizunaを探す" : {
+
+    },
     "Kizuna内の表示だけが切り替わります。端末全体の言語は変更しません。" : {
       "localizations" : {
         "en" : {
@@ -167,6 +181,9 @@
           }
         }
       }
+    },
+    "VIUK Kizuna" : {
+
     },
     "VIUK 絆" : {
       "localizations" : {
@@ -857,6 +874,9 @@
         }
       }
     },
+    "始めましょう" : {
+
+    },
     "安全性をチェック中…" : {
       "localizations" : {
         "en" : {
@@ -965,6 +985,9 @@
     "物語や返答を自動的に削除・終了せず、必要な場合だけ相談先への導線を追加します。" : {
 
     },
+    "物語を見つける" : {
+
+    },
     "物語内メモリー" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1063,6 +1086,7 @@
       }
     },
     "相手や場面を保ったまま、会話の続きを始められます。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1136,6 +1160,7 @@
       }
     },
     "絆を始めましょう" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1146,6 +1171,7 @@
       }
     },
     "絆を探す" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1175,7 +1201,14 @@
         }
       }
     },
+    "継続中のKizuna" : {
+
+    },
+    "継続中の物語" : {
+
+    },
     "継続中の絆" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

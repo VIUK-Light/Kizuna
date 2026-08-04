@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-VIUK 絆は、以下のサードパーティーソフトウェアを含みます。
+VIUK Kizunaは、以下のサードパーティーソフトウェアを含みます。
 
 ## llama.cpp
 

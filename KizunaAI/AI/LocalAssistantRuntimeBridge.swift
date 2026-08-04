@@ -5761,7 +5761,7 @@ final class BundledServerLogAggregator {
         advancedSettings: GemmaAdvancedSettings
     ) -> String {
         // 恋愛モードは AI Studio の汎用アシスタントとは振る舞いが大きく異なるので、
-        // 通常の指示文を組み立てずに絆専用プロンプトを返す。
+        // 通常の指示文を組み立てずにKizuna専用プロンプトを返す。
         if reasoningMode == .persona {
             return buildPersonaSystemPrompt(
                 advancedSettings: advancedSettings

@@ -10,7 +10,7 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
     case fast
     case thinking
     case deepThinking
-    /// 絆会話モード。設定したキャラ (名前・性格・口調) と自由に会話する。
+    /// Kizuna会話モード。設定したキャラ (名前・性格・口調) と自由に会話する。
     /// Gemma 4 の Thinking を内部で有効にしつつ、短い会話本文だけを表示する。
     case persona
 
@@ -30,7 +30,7 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
         case .fast: return "高速"
         case .thinking: return "Thinking"
         case .deepThinking: return "高精度"
-        case .persona: return "絆"
+        case .persona: return "Kizuna"
         }
     }
 

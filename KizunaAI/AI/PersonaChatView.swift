@@ -112,7 +112,7 @@ struct PersonaChatView: View {
     private var compactTopSwitchBar: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("絆")
+                Text("Kizuna")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(.primary)
                 Text("続きから会話")
@@ -132,7 +132,7 @@ struct PersonaChatView: View {
                     .foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("絆ライブラリー")
+            .accessibilityLabel("Kizunaライブラリー")
 
             Menu {
                 Button {
@@ -165,7 +165,7 @@ struct PersonaChatView: View {
             HStack(spacing: 7) {
                 Image(systemName: "infinity.circle.fill")
                     .font(.system(size: 13, weight: .semibold))
-                Text("VIUK 絆")
+                Text("VIUK Kizuna")
                     .font(.system(size: 13, weight: .bold))
             }
             .foregroundStyle(Color.accentColor)
@@ -266,7 +266,7 @@ struct PersonaChatView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles.rectangle.stack.fill")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("絆を探す")
+                    Text("Kizunaを探す")
                         .font(.system(size: 12, weight: .semibold))
                     Spacer()
                 }
@@ -282,7 +282,7 @@ struct PersonaChatView: View {
     private var compactStoryList: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text("継続中の絆")
+                Text("継続中の物語")
                     .font(.system(size: 12, weight: .bold))
                     .tracking(0.4)
                     .foregroundStyle(.secondary)
@@ -323,13 +323,13 @@ struct PersonaChatView: View {
     @ViewBuilder
     private var storyListSections: some View {
         if !storyHistoryItems.isEmpty {
-            sidebarSectionTitle("継続中の絆")
+            sidebarSectionTitle("継続中のKizuna")
             ForEach(storyHistoryItems) { item in
                 storyHistoryRow(item)
             }
         }
         if !store.threads.isEmpty {
-            sidebarSectionTitle("単体チャット")
+            sidebarSectionTitle("あなたの物語")
             ForEach(store.threads) { thread in
                 threadRow(thread)
             }
@@ -584,17 +584,13 @@ struct PersonaChatView: View {
             Image(systemName: "sparkles.rectangle.stack.fill")
                 .font(.system(size: 40))
                 .foregroundStyle(.tertiary)
-            Text("絆を始めましょう")
+            Text("始めましょう")
                 .font(.system(size: 16, weight: .semibold))
-            Text("相手や場面を保ったまま、会話の続きを始められます。")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+          
             Button {
                 showWorldLibrary = true
             } label: {
-                Text("絆ライブラリーを開く")
+                Text("物語を見つける")
                     .font(.system(size: 13, weight: .semibold))
                     .padding(.horizontal, 18)
                     .padding(.vertical, 10)
