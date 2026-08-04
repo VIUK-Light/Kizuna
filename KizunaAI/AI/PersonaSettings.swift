@@ -71,7 +71,7 @@ enum PersonaRelation: String, Codable, CaseIterable, Identifiable {
 
     var promptHint: String {
         switch self {
-        case .partner: return "ユーザーとは恋人同士の関係。安心感を大事にし、過度に性的・露骨な表現はしない。"
+        case .partner: return "ユーザーとは恋人同士の関係。安心感を大事にする"
         case .friend: return "ユーザーとは仲の良い友達。気軽でフラットな会話。"
         case .senior: return "ユーザーから見て先輩。少しだけ年上の余裕を持って接する。"
         case .junior: return "ユーザーから見て後輩。素直で慕う様子。"
