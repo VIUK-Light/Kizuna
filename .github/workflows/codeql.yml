@@ -42,7 +42,7 @@ jobs:
             -project "KizunaAI.xcodeproj" \
             -scheme "KizunaAI" \
             -configuration Debug \
-            -destination "platform=macOS" \
+            -destination "generic/platform=macOS" \
             -derivedDataPath "$RUNNER_TEMP/codeql-derived" \
             -jobs 2 \
             CODE_SIGNING_ALLOWED=NO \
