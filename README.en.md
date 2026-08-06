@@ -6,9 +6,28 @@
 
 Kizuna is an open-source character AI application for iOS and macOS. It supports persistent conversations, relationships, and stories while aiming to preserve expressive character experiences without optimizing for dependency or isolation from real-world relationships.
 
-<p align="center">
-  <img src="docs/screenshots/kizuna-overview.svg" width="520" alt="Kizuna story, chat, support, and safety screens">
-</p>
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/story-library.jpg" width="210" alt="Kizuna story library"><br>
+      <strong>Story library</strong>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/character-chat.jpg" width="210" alt="Kizuna character chat"><br>
+      <strong>Character chat</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/story-history.jpg" width="210" alt="Kizuna ongoing stories"><br>
+      <strong>Ongoing stories</strong>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/character-profile.jpg" width="210" alt="Kizuna character profile"><br>
+      <strong>Character profile</strong>
+    </td>
+  </tr>
+</table>
 
 > Kizuna is designed neither to control users nor to push them away.
 
