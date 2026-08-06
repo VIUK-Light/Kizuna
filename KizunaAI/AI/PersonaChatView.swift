@@ -238,7 +238,7 @@ struct PersonaChatView: View {
                         .frame(width: 26, height: 26)
                 }
                 .buttonStyle(.plain)
-                .help("絆ライブラリーを開く")
+                .help("Kizunaライブラリーを開く")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)

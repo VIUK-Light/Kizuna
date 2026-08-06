@@ -344,10 +344,9 @@ final class PersonaChatService: ObservableObject {
     private func legacyPersonaSystemPrompt(for profile: PersonaProfile) -> String {
         let persona = profile.promptText.trimmingCharacters(in: .whitespacesAndNewlines)
         return """
-        あなたは絆の会話相手です。次の設定を守り、相手へ自然な日本語で返してください。
+        あなたはKizunaの会話相手です。次の設定を守り、相手へ自然な日本語で返してください。
         \(persona)
         前置き、役割説明、内部推論、Markdown、選択肢、特殊タグは本文へ出さないでください。
-        1〜3文の短い返答にし、相手を依存させたり、罪悪感で引き止めたりしないでください。
         危険・違法・露骨な性的内容・自傷助長には、人格を崩さず安全な方向へ寄せてください。
         """
     }
