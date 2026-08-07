@@ -9,21 +9,21 @@ Kizuna is an open-source character AI application for iOS and macOS. It supports
 <table>
   <tr>
     <td align="center">
-      <img src="docs/screenshots/story-library.jpg" width="210" alt="Kizuna story library"><br>
+      <img src="docs/screenshots/story-library.png" width="210" alt="Kizuna story library"><br>
       <strong>Story library</strong>
     </td>
     <td align="center">
-      <img src="docs/screenshots/character-chat.jpg" width="210" alt="Kizuna character chat"><br>
+      <img src="docs/screenshots/character-chat.png" width="210" alt="Kizuna character chat"><br>
       <strong>Character chat</strong>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <img src="docs/screenshots/story-history.jpg" width="210" alt="Kizuna ongoing stories"><br>
+      <img src="docs/screenshots/story-history.png" width="210" alt="Kizuna ongoing stories"><br>
       <strong>Ongoing stories</strong>
     </td>
     <td align="center">
-      <img src="docs/screenshots/character-profile.jpg" width="210" alt="Kizuna character profile"><br>
+      <img src="docs/screenshots/character-profile.png" width="210" alt="Kizuna character profile"><br>
       <strong>Character profile</strong>
     </td>
   </tr>

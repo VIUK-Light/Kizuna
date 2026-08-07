@@ -10,21 +10,21 @@ Kizunaは、キャラクターとの継続的な会話・関係・物語を楽�
 <table>
   <tr>
     <td align="center">
-      <img src="docs/screenshots/story-library.jpg" width="210" alt="Kizunaのストーリーライブラリー"><br>
+      <img src="docs/screenshots/story-library.png" width="210" alt="Kizunaのストーリーライブラリー"><br>
       <strong>ストーリーライブラリー</strong>
     </td>
     <td align="center">
-      <img src="docs/screenshots/character-chat.jpg" width="210" alt="Kizunaのキャラクター会話"><br>
+      <img src="docs/screenshots/character-chat.png" width="210" alt="Kizunaのキャラクター会話"><br>
       <strong>キャラクターとの会話</strong>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <img src="docs/screenshots/story-history.jpg" width="210" alt="Kizunaの継続中の物語"><br>
+      <img src="docs/screenshots/story-history.png" width="210" alt="Kizunaの継続中の物語"><br>
       <strong>継続中の物語</strong>
     </td>
     <td align="center">
-      <img src="docs/screenshots/character-profile.jpg" width="210" alt="Kizunaのキャラクター詳細"><br>
+      <img src="docs/screenshots/character-profile.png" width="210" alt="Kizunaのキャラクター詳細"><br>
       <strong>キャラクター詳細</strong>
     </td>
   </tr>
