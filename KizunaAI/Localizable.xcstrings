@@ -1,6 +1,2406 @@
 {
   "sourceLanguage" : "ja",
   "strings" : {
+    " ・ " : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : " · "
+          }
+        }
+      }
+    },
+    "(プレビューなし)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(No preview)"
+          }
+        }
+      }
+    },
+    "%@人" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ people"
+          }
+        }
+      }
+    },
+    "『私だけを見て』『他の人と話さないで』『アプリを閉じないで』のような誘導は、利用者の不安や孤独を利用して、現実の人間関係や判断を狭めます。短期的に利用時間が伸びても、利用者の自由・尊厳・生活を損なうため、責任あるAIの目標とは両立しません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guiding phrases such as “Only look at me,” “Don’t talk to other people,” and “Don’t close the app” exploit the user’s anxiety and loneliness and narrow their real-world relationships and judgment. Even if engagement rises in the short term, it damages the user’s freedom, dignity, and life, so it is incompatible with responsible AI goals."
+          }
+        }
+      }
+    },
+    "・" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "·"
+          }
+        }
+      }
+    },
+    "31B Thinkingでテンプレート作成" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create Template with 31B Thinking"
+          }
+        }
+      }
+    },
+    "BL 部活" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "BL Club"
+          }
+        }
+      }
+    },
+    "BL。放課後の部活で、無口な先輩と少しずつ信頼を深める青春ストーリー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "BL. A youth story about gradually building trust with a quiet senior at an after-school club."
+          }
+        }
+      }
+    },
+    "BL。幼なじみと夏祭りで再会し、昔の約束を少しずつ思い出す話" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "BL. A story about reuniting with a childhood friend at a summer festival and slowly recalling old promises."
+          }
+        }
+      }
+    },
+    "Gemma4 31B API。描写、関係性の機微、場面の空気をより丁寧に出します。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemma4 31B API. Produces more careful descriptions, relationship nuances, and scene atmosphere."
+          }
+        }
+      }
+    },
+    "Gemma4 APIキー検出済み" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemma4 API Key Detected"
+          }
+        }
+      }
+    },
+    "Gemma4 APIキー未設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemma4 API Key Not Set"
+          }
+        }
+      }
+    },
+    "GL 寮生活" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GL Dorm Life"
+          }
+        }
+      }
+    },
+    "GL。女子寮の夜、同室の先輩と秘密を共有して距離が近づく日常ストーリー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GL. A slice-of-life story set in a girls’ dorm, where sharing secrets with a roommate senior draws you closer."
+          }
+        }
+      }
+    },
+    "Google AI APIキー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google AI API Key"
+          }
+        }
+      }
+    },
+    "Hugging Faceから選択" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose from Hugging Face"
+          }
+        }
+      }
+    },
+    "Hugging FaceのファイルURL" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face File URL"
+          }
+        }
+      }
+    },
+    "KizunaとVIUK-Lightは、『責任あるAIアプリケーションと倫理』を掲げています。AIとの対話を創作・娯楽・気持ちの整理に役立てながら、人の生活や選択を支配するものにはしないことを安全対策の前提にしています。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna and VIUK-Light uphold “Responsible AI Applications and Ethics.” While helping you use conversations with AI for creative work, entertainment, and sorting out your feelings, we base our safety measures on never letting AI control your life or choices."
+          }
+        }
+      }
+    },
+    "Kizunaの安全対策" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna Safety Measures"
+          }
+        }
+      }
+    },
+    "Kizunaライブラリー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna Library"
+          }
+        }
+      }
+    },
+    "Kizunaライブラリーを開く" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Kizuna Library"
+          }
+        }
+      }
+    },
+    "Lorebook / キーワード設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lorebook / Keyword Settings"
+          }
+        }
+      }
+    },
+    "NAGIで再試行" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry with NAGI"
+          }
+        }
+      }
+    },
+    "アクセストークン（必要な場合）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Access Token (if needed)"
+          }
+        }
+      }
+    },
+    "あなたの物語" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Story"
+          }
+        }
+      }
+    },
+    "オープニングシーン" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening Scene"
+          }
+        }
+      }
+    },
+    "カテゴリー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Category"
+          }
+        }
+      }
+    },
+    "キーワード（例: 図書館、禁書、夜）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keywords (e.g. library, banned books, night)"
+          }
+        }
+      }
+    },
+    "キャスト" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cast"
+          }
+        }
+      }
+    },
+    "キャラを編集" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit Character"
+          }
+        }
+      }
+    },
+    "キャラ同士の関係" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Character Relationships"
+          }
+        }
+      }
+    },
+    "クイック選択" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quick Select"
+          }
+        }
+      }
+    },
+    "クリア" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear"
+          }
+        }
+      }
+    },
+    "グループ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Group"
+          }
+        }
+      }
+    },
+    "ここまでの要約 / 初期状況" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Summary So Far / Initial Situation"
+          }
+        }
+      }
+    },
+    "このキャラを削除しますか?" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete this character?"
+          }
+        }
+      }
+    },
+    "このシーンの目的" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Purpose of This Scene"
+          }
+        }
+      }
+    },
+    "このまま保存" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save As Is"
+          }
+        }
+      }
+    },
+    "この休憩提案について" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About This Break Suggestion"
+          }
+        }
+      }
+    },
+    "この世界を削除しますか？" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete this world?"
+          }
+        }
+      }
+    },
+    "この相談サポートについて" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About This Support Contact"
+          }
+        }
+      }
+    },
+    "この単体キャラを編集" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit This Standalone Character"
+          }
+        }
+      }
+    },
+    "この物語でのユーザーとの関係" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "User’s Relationship in This Story"
+          }
+        }
+      }
+    },
+    "シーンと初回メッセージ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scene and First Message"
+          }
+        }
+      }
+    },
+    "シーン名" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scene Name"
+          }
+        }
+      }
+    },
+    "シナリオ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scenario"
+          }
+        }
+      }
+    },
+    "シナリオ: " : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scenario: "
+          }
+        }
+      }
+    },
+    "ストーリー・世界観・タグ検索" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search Stories, Worlds, Tags"
+          }
+        }
+      }
+    },
+    "ストーリーはまだありません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Stories Yet"
+          }
+        }
+      }
+    },
+    "ストーリーを開始できません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cannot Start the Story"
+          }
+        }
+      }
+    },
+    "ストーリーを作る" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create a Story"
+          }
+        }
+      }
+    },
+    "ストーリーを編集" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit Story"
+          }
+        }
+      }
+    },
+    "すべて" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All"
+          }
+        }
+      }
+    },
+    "セッション" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sessions"
+          }
+        }
+      }
+    },
+    "ゼロから作る" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create From Scratch"
+          }
+        }
+      }
+    },
+    "タイトル（例: 夜の図書館のルール）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Title (e.g. The Rules of the Night Library)"
+          }
+        }
+      }
+    },
+    "タグ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tags"
+          }
+        }
+      }
+    },
+    "タグを追加" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Tag"
+          }
+        }
+      }
+    },
+    "タグを追加 (Enter で確定)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Tag (Press Enter to confirm)"
+          }
+        }
+      }
+    },
+    "デバッグ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Debug"
+          }
+        }
+      }
+    },
+    "デバッグオプションを有効化" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Debug Options"
+          }
+        }
+      }
+    },
+    "テンプレ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Templates"
+          }
+        }
+      }
+    },
+    "トークを続ける" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Talking"
+          }
+        }
+      }
+    },
+    "なぜ依存を促してはいけないのか" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Why Dependency Should Not Be Encouraged"
+          }
+        }
+      }
+    },
+    "ひとこと説明" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Short Description"
+          }
+        }
+      }
+    },
+    "プライバシーと利用者の管理権" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Privacy and User Control"
+          }
+        }
+      }
+    },
+    "プロンプトプレビュー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prompt Preview"
+          }
+        }
+      }
+    },
+    "まだキャストが設定されていません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No cast has been set yet."
+          }
+        }
+      }
+    },
+    "まだキャラがいません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Characters Yet"
+          }
+        }
+      }
+    },
+    "まだシーンがありません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No scenes yet."
+          }
+        }
+      }
+    },
+    "まだ会話セッションはありません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No conversation sessions yet."
+          }
+        }
+      }
+    },
+    "まだ始まっていません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Started Yet"
+          }
+        }
+      }
+    },
+    "ムード" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mood"
+          }
+        }
+      }
+    },
+    "ムード (例: 切ない、爽やか、緊張感)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mood (e.g. bittersweet, refreshing, tense)"
+          }
+        }
+      }
+    },
+    "メッセージを送る…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send a Message…"
+          }
+        }
+      }
+    },
+    "もう一度試す" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try Again"
+          }
+        }
+      }
+    },
+    "モデル" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model"
+          }
+        }
+      }
+    },
+    "モデルは保存済みです。端末内の実行確認を自動で開始します。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model saved. Automatic on-device verification will begin."
+          }
+        }
+      }
+    },
+    "モデル詳細" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model Details"
+          }
+        }
+      }
+    },
+    "モデル保存後に端末内で自動確認しています。完了まで生成は開始しません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verifying on device after saving the model. Generation will not start until verification is complete."
+          }
+        }
+      }
+    },
+    "モデル保存済み・自動確認待ち" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model Saved · Awaiting Auto-Verification"
+          }
+        }
+      }
+    },
+    "ユーザーとの関係" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relationship with User"
+          }
+        }
+      }
+    },
+    "ユーザーの役" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "User’s Role"
+          }
+        }
+      }
+    },
+    "ユーザーの役割" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "User’s Role"
+          }
+        }
+      }
+    },
+    "ユーザーへの最初の一言。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First words to the user."
+          }
+        }
+      }
+    },
+    "ルール" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rules"
+          }
+        }
+      }
+    },
+    "ルール / 安全" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rules / Safety"
+          }
+        }
+      }
+    },
+    "ルールを追加" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Rule"
+          }
+        }
+      }
+    },
+    "ロアブック" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lorebook"
+          }
+        }
+      }
+    },
+    "ローカル" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local"
+          }
+        }
+      }
+    },
+    "ローカル iori。モデル保存後に端末内の実行可否を自動確認します。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local iori. After you save the model, on-device compatibility is checked automatically."
+          }
+        }
+      }
+    },
+    "ローカルモデルが未導入です。モデルを保存すると端末内で自動確認します。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No local model installed. Saving a model will trigger an automatic on-device check."
+          }
+        }
+      }
+    },
+    "ローカルモデルを削除しますか？" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete the local model?"
+          }
+        }
+      }
+    },
+    "ローカルモデル未導入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Local Model"
+          }
+        }
+      }
+    },
+    "ローカル自動確認失敗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local Auto-Check Failed"
+          }
+        }
+      }
+    },
+    "ローカル未導入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local Not Installed"
+          }
+        }
+      }
+    },
+    "安全ルール (このキャラ専用)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Safety Rules (specific to this character)"
+          }
+        }
+      }
+    },
+    "安全レーティング" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Safety Rating"
+          }
+        }
+      }
+    },
+    "安全性と体験を対立させない理由" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Why Safety and Experience Don’t Have to Conflict"
+          }
+        }
+      }
+    },
+    "安全性は、拒否する回数を増やせば完成するものではありません。必要以上に冷たく突き放したり、キャラクター性を消したりすれば、別のかたちで利用者の体験を傷つけます。Kizunaは、危険を見逃さず、同時に過剰な制限も減らすことを安全設計の課題として扱います。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Safety is not achieved simply by refusing more often. Rejecting users too coldly or erasing a character’s personality harms the experience in a different way. Kizuna treats not missing dangers while also reducing excessive restrictions as the core challenge of its safety design."
+          }
+        }
+      }
+    },
+    "安全対策の基本方針" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Basic Safety Policy"
+          }
+        }
+      }
+    },
+    "夏祭り" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Summer Festival"
+          }
+        }
+      }
+    },
+    "過度な安全性も安全性の失敗" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excessive Safety Is Also a Safety Failure"
+          }
+        }
+      }
+    },
+    "画像" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Image"
+          }
+        }
+      }
+    },
+    "画像を削除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove Image"
+          }
+        }
+      }
+    },
+    "画像を入れる" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Image"
+          }
+        }
+      }
+    },
+    "画像を変更" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Change Image"
+          }
+        }
+      }
+    },
+    "会話は止まりません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Conversation Doesn’t Stop"
+          }
+        }
+      }
+    },
+    "会話ルール (任意)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversation Rules (optional)"
+          }
+        }
+      }
+    },
+    "壊さない約束" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Promises Not to Break"
+          }
+        }
+      }
+    },
+    "開始シーンがありません。世界観の詳細からシーンを確認してください。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No opening scene. Check the scenes under the world details."
+          }
+        }
+      }
+    },
+    "概要" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Overview"
+          }
+        }
+      }
+    },
+    "確認が必要です" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requires Confirmation"
+          }
+        }
+      }
+    },
+    "葛藤" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conflict"
+          }
+        }
+      }
+    },
+    "関係メモ (例: 古い相棒だが、互いに秘密を持っている)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relationship Notes (e.g. old partners, but each keeps secrets)"
+          }
+        }
+      }
+    },
+    "関係性と口調" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relationship and Tone"
+          }
+        }
+      }
+    },
+    "関係性を継続できる絆シナリオを開く" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open a Kizuna Story That Can Continue the Relationship"
+          }
+        }
+      }
+    },
+    "危険を避けるために、すべての親密な会話や感情表現を機械的に止めると、キャラクターAIとしての価値や、利用者が得られる居場所まで失われます。だからKizunaは、危険度と文脈を見ながら必要な場面だけ安全な方向へ導き、通常の創作や物語はできるだけ続けられる設計を目指します。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If every intimate conversation or expression of emotion were mechanically stopped to avoid danger, the value of the character AI and even the safe space users find here would be lost. That is why Kizuna aims for a design that guides only the scenes that need it in a safer direction while checking the risk level and context, letting ordinary creative work and stories continue as much as possible."
+          }
+        }
+      }
+    },
+    "危険相談サポートを30秒後に表示" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Crisis Support After 30 Seconds"
+          }
+        }
+      }
+    },
+    "基本情報" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Basic Info"
+          }
+        }
+      }
+    },
+    "気になること" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Things on Your Mind"
+          }
+        }
+      }
+    },
+    "休憩提案について" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About Break Suggestions"
+          }
+        }
+      }
+    },
+    "休憩提案を30秒後に表示" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Break Suggestions After 30 Seconds"
+          }
+        }
+      }
+    },
+    "緊急時" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In an Emergency"
+          }
+        }
+      }
+    },
+    "具体的な内容を書いてください" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please describe the details"
+          }
+        }
+      }
+    },
+    "空気 (例: 静かで透明な不安)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Atmosphere (e.g. a quiet, translucent unease)"
+          }
+        }
+      }
+    },
+    "空欄なら名前を使う" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use Name If Blank"
+          }
+        }
+      }
+    },
+    "検索 (名前・説明・タグ)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search (name, description, tags)"
+          }
+        }
+      }
+    },
+    "幻想図書館" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fantasy Library"
+          }
+        }
+      }
+    },
+    "公開設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visibility"
+          }
+        }
+      }
+    },
+    "口調" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tone"
+          }
+        }
+      }
+    },
+    "今回" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Time"
+          }
+        }
+      }
+    },
+    "再ダウンロード" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Re-download"
+          }
+        }
+      }
+    },
+    "再開できます" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can Resume"
+          }
+        }
+      }
+    },
+    "再表示について" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About Re-display"
+          }
+        }
+      }
+    },
+    "最初のストーリーを作る" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create Your First Story"
+          }
+        }
+      }
+    },
+    "最初の会話前に共有しておく状況" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Situation to Share Before the First Conversation"
+          }
+        }
+      }
+    },
+    "作る" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create"
+          }
+        }
+      }
+    },
+    "作成" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create"
+          }
+        }
+      }
+    },
+    "時間 (例: 深夜 / 放課後 / 雨上がり)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Time (e.g. midnight / after school / after the rain)"
+          }
+        }
+      }
+    },
+    "次" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next"
+          }
+        }
+      }
+    },
+    "次の会話を進める" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue the Conversation"
+          }
+        }
+      }
+    },
+    "自動確認中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto-verifying"
+          }
+        }
+      }
+    },
+    "自由記述" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Free Text"
+          }
+        }
+      }
+    },
+    "修正に戻る" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back to Edit"
+          }
+        }
+      }
+    },
+    "出力形式" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Output Format"
+          }
+        }
+      }
+    },
+    "初回: " : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First: "
+          }
+        }
+      }
+    },
+    "初回の一言" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First Words"
+          }
+        }
+      }
+    },
+    "初回メッセージ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First Message"
+          }
+        }
+      }
+    },
+    "初期シーンに出す" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Include in Opening Scene"
+          }
+        }
+      }
+    },
+    "詳細 (任意)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Details (optional)"
+          }
+        }
+      }
+    },
+    "場所 (例: 閉鎖された記憶駅)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Place (e.g. a sealed memory station)"
+          }
+        }
+      }
+    },
+    "条件に合うキャラがいません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Characters Match Your Filters"
+          }
+        }
+      }
+    },
+    "条件に合うストーリーがありません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Stories Match Your Filters"
+          }
+        }
+      }
+    },
+    "状態" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Status"
+          }
+        }
+      }
+    },
+    "新しい会話" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Conversation"
+          }
+        }
+      }
+    },
+    "新しい物語" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Story"
+          }
+        }
+      }
+    },
+    "親密な会話を便利さのために必要以上に集めたり、意図せず外部へ送ったりしないことを重視します。ローカルモデル、保存データ、接続先、記憶、設定を利用者が確認・変更・削除できる方向へ進めます。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We place importance on not collecting intimate conversations more than necessary for convenience and never sending them outside unintentionally. We aim to let users view, change, and delete their local models, saved data, connection destinations, memories, and settings."
+          }
+        }
+      }
+    },
+    "進行中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In Progress"
+          }
+        }
+      }
+    },
+    "人物" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Person"
+          }
+        }
+      }
+    },
+    "人物像" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Character Profile"
+          }
+        }
+      }
+    },
+    "世界のルール" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "World Rules"
+          }
+        }
+      }
+    },
+    "世界を読み込んでいます..." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading world..."
+          }
+        }
+      }
+    },
+    "世界観" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "World Setting"
+          }
+        }
+      }
+    },
+    "世界観 \u0026 物語" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "World \u0026 Story"
+          }
+        }
+      }
+    },
+    "性格" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Personality"
+          }
+        }
+      }
+    },
+    "生成プレビュー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generation Preview"
+          }
+        }
+      }
+    },
+    "生成を停止" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop Generating"
+          }
+        }
+      }
+    },
+    "生成中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generating"
+          }
+        }
+      }
+    },
+    "生成中..." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generating..."
+          }
+        }
+      }
+    },
+    "責任あるAIアプリケーションと倫理" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Responsible AI Applications and Ethics"
+          }
+        }
+      }
+    },
+    "設定を保存しました" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings Saved"
+          }
+        }
+      }
+    },
+    "選ぶ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose"
+          }
+        }
+      }
+    },
+    "選択肢" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choices"
+          }
+        }
+      }
+    },
+    "前回: " : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Previous: "
+          }
+        }
+      }
+    },
+    "全体メモリー (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All Memories (%@)"
+          }
+        }
+      }
+    },
+    "相手との関係" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relationship with Partner"
+          }
+        }
+      }
+    },
+    "相談サポートについて" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About Support Contacts"
+          }
+        }
+      }
+    },
+    "相談先は任意で開けます" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Support contacts can be opened anytime"
+          }
+        }
+      }
+    },
+    "送信" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send"
+          }
+        }
+      }
+    },
+    "続きから" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        }
+      }
+    },
+    "第1場面" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scene 1"
+          }
+        }
+      }
+    },
+    "単体キャラなどの補助メニュー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auxiliary Menu for Standalone Characters"
+          }
+        }
+      }
+    },
+    "単体キャラ設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standalone Character Settings"
+          }
+        }
+      }
+    },
+    "探す" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search"
+          }
+        }
+      }
+    },
+    "端末内で自動確認中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verifying on Device"
+          }
+        }
+      }
+    },
+    "端末内で実行できます。選択中は iori がローカルで応答します。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Runs on device. While selected, iori responds locally."
+          }
+        }
+      }
+    },
+    "端末内で実行可能" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Runs on Device"
+          }
+        }
+      }
+    },
+    "端末内で実行確認中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verifying On-Device Execution"
+          }
+        }
+      }
+    },
+    "端末内で実行中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Running on Device"
+          }
+        }
+      }
+    },
+    "端末内の実行確認は自動で行われます" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On-device verification runs automatically"
+          }
+        }
+      }
+    },
+    "端末内実行を確認できません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cannot Verify On-Device Execution"
+          }
+        }
+      }
+    },
+    "端末内実行を確認できませんでした。NAGIへ切り替える場合はモデルメニューから選択してください。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not verify on-device execution. To switch to NAGI, select it from the model menu."
+          }
+        }
+      }
+    },
+    "追加" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add"
+          }
+        }
+      }
+    },
+    "追加の安全ルール" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Additional Safety Rules"
+          }
+        }
+      }
+    },
+    "追加安全ルールはありません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No additional safety rules."
+          }
+        }
+      }
+    },
+    "通報" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report"
+          }
+        }
+      }
+    },
+    "通報理由" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reason for Report"
+          }
+        }
+      }
+    },
+    "年齢 (任意)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Age (optional)"
+          }
+        }
+      }
+    },
+    "背景" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Background"
+          }
+        }
+      }
+    },
+    "発動条件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trigger Condition"
+          }
+        }
+      }
+    },
+    "標準ストーリー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standard Story"
+          }
+        }
+      }
+    },
+    "表示名" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Display Name"
+          }
+        }
+      }
+    },
+    "物語が始まったところ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Where the Story Begins"
+          }
+        }
+      }
+    },
+    "物語の主人公や関係性をAIが勝手に決めるのではなく、利用者が選び、断り、変えられる余地を残します。キャラクターは個性を持ちますが、同意していない関係性を押し付けたり、現実の行動を決めつけたりしません。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instead of the AI deciding the story’s protagonist and relationships on its own, we leave room for the user to choose, decline, and change them. Characters have their own personalities, but they never force relationships the user hasn’t consented to or presume to dictate real-world behavior."
+          }
+        }
+      }
+    },
+    "物語の幕開け。最初のナレーション。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The story begins. The first narration."
+          }
+        }
+      }
+    },
+    "物語の目標" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Story Goal"
+          }
+        }
+      }
+    },
+    "物語状態" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Story State"
+          }
+        }
+      }
+    },
+    "編集" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit"
+          }
+        }
+      }
+    },
+    "保存できません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cannot Save"
+          }
+        }
+      }
+    },
+    "保存済み・自動確認待ち" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saved · Awaiting Auto-Verification"
+          }
+        }
+      }
+    },
+    "未開始" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Started"
+          }
+        }
+      }
+    },
+    "未設定" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Set"
+          }
+        }
+      }
+    },
+    "未登録キャラ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unregistered Character"
+          }
+        }
+      }
+    },
+    "無題のシーン" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Untitled Scene"
+          }
+        }
+      }
+    },
+    "名前" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name"
+          }
+        }
+      }
+    },
+    "夜だけ開く魔法図書館で、契約者と秘密の本を探すファンタジー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A fantasy about a magic library that opens only at night, where you search for secret books together with a contractor."
+          }
+        }
+      }
+    },
+    "利用者が中心であること" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "User-Centered Design"
+          }
+        }
+      }
+    },
+    "理由" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reason"
+          }
+        }
+      }
+    },
+    "例: 22" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. 22"
+          }
+        }
+      }
+    },
+    "例: BL系。弓道部の無口な先輩と、放課後に少しずつ距離が近づく話" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. BL. A story about slowly growing close to a quiet senior from the archery club after school"
+          }
+        }
+      }
+    },
+    "例: アオイ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. Aoi"
+          }
+        }
+      }
+    },
+    "例: ノアがユーザーに最初の違和感を伝える" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. Noah tells the user about his first sense of unease"
+          }
+        }
+      }
+    },
+    "例: 趣味は読書。寒がり。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. Likes reading. Feels the cold easily."
+          }
+        }
+      }
+    },
+    "例: 柔らかく、少し甘い。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. Soft, a little sweet."
+          }
+        }
+      }
+    },
+    "例: 新しく転校してきた生徒" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. A student who just transferred in"
+          }
+        }
+      }
+    },
+    "例: 卒業までに気持ちを伝える" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. Confess your feelings before graduation"
+          }
+        }
+      }
+    },
+    "例: 大学生。バイトで知り合った。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. A college student. We met at a part-time job."
+          }
+        }
+      }
+    },
+    "例: 端末は真実を示すが、ノアはそれを隠したがっている" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. The device shows the truth, but Noah wants to hide it"
+          }
+        }
+      }
+    },
+    "例: 平凡な現代の高校に魔法が存在する世界" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. A world where magic exists in an ordinary modern high school"
+          }
+        }
+      }
+    },
+    "例: 放課後、雨の教室で二人きり。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. After school, alone together in a classroom in the rain."
+          }
+        }
+      }
+    },
+    "例: 幼なじみ。最近距離が近い。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. Childhood friends. We’ve been getting closer lately."
+          }
+        }
+      }
+    },
+    "例: 落ち着いた幼なじみ" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. A composed childhood friend"
+          }
+        }
+      }
+    },
+    "例: 落ち着いていて聞き上手。少し天然。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. Calm and a good listener. A little airheaded."
+          }
+        }
+      }
+    },
+    "絆AI" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna AI"
+          }
+        }
+      }
+    },
+    "絆シナリオ/単体キャラの操作" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna Stories / Standalone Characters"
+          }
+        }
+      }
+    },
+    "絆シナリオを探す" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find Kizuna Stories"
+          }
+        }
+      }
+    },
+    "絆チャットを始める" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Kizuna Chat"
+          }
+        }
+      }
+    },
+    "絆チャット開始" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Kizuna Chat"
+          }
+        }
+      }
+    },
+    "絆メニュー" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna Menu"
+          }
+        }
+      }
+    },
     "" : {
 
     },
@@ -35,13 +2435,34 @@
       }
     },
     "「このまま続ける」を選んだ場合、次の120分は再提案しません。モデルが自主的に休憩や終了を提案することもありません。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If you choose \"Continue as is\", no further suggestions will be made for the next 120 minutes. The model will not proactively propose breaks or endings either."
+          }
+        }
+      }
     },
     "「少し休む」または「このまま続ける」を選べます。続ける場合も、キャラクターが短く了承して直前の会話へ戻ります。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can choose \"Take a break\" or \"Continue as is\". If you continue, the character briefly acknowledges and returns to the conversation."
+          }
+        }
+      }
     },
     "「相談先を見る」から公的窓口などを確認できます。カードを閉じても、会話そのものは続けられます。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can check public support contacts under \"View Support Contacts\". Closing the card does not end the conversation."
+          }
+        }
+      }
     },
     "%@ ・ %@" : {
       "localizations" : {
@@ -106,7 +2527,14 @@
       }
     },
     "•" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "•"
+          }
+        }
+      }
     },
     "2人以上のキャラを追加すると、キャラ同士の関係を設定できます。" : {
       "localizations" : {
@@ -170,7 +2598,14 @@
       }
     },
     "Kizunaを探す" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find Kizuna"
+          }
+        }
+      }
     },
     "Kizuna内の表示だけが切り替わります。端末全体の言語は変更しません。" : {
       "localizations" : {
@@ -183,7 +2618,14 @@
       }
     },
     "VIUK Kizuna" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VIUK Kizuna"
+          }
+        }
+      }
     },
     "VIUK 絆" : {
       "localizations" : {
@@ -350,7 +2792,14 @@
       }
     },
     "このカードは、会話の中に個人的な悩みや安全に関わる相談の可能性があるとアプリ側が判断した時に表示されます。診断や断定をするものではありません。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This card appears when the app detects a possible personal concern or safety-related topic in the conversation. It is not a diagnosis or a definitive judgment."
+          }
+        }
+      }
     },
     "このキャラに紐づき、物語をまたいで使われる思い出" : {
       "localizations" : {
@@ -363,7 +2812,14 @@
       }
     },
     "このまま続ける" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep Going"
+          }
+        }
+      }
     },
     "この世界だけ" : {
       "extractionState" : "stale",
@@ -409,10 +2865,24 @@
       }
     },
     "この表示について" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About This Card"
+          }
+        }
+      }
     },
     "これは診断ではありません。今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This is not a diagnosis. If you are in immediate danger, do not wait for the AI's response. Contact local emergency services or someone close to you."
+          }
+        }
+      }
     },
     "これまでの流れの目印" : {
       "extractionState" : "stale",
@@ -676,16 +3146,44 @@
       }
     },
     "今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If you are in immediate danger, do not wait for the AI's response. Contact local emergency services or someone close to you."
+          }
+        }
+      }
     },
     "休憩提案" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Break Suggestion"
+          }
+        }
+      }
     },
     "休憩提案は、連続利用が長くなった時に会話画面内へ表示される案内です。会話を止めたり、強制終了したりはしません。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Break suggestions appear within the conversation when you have been using the app continuously for a long time. They do not stop or force-end the conversation."
+          }
+        }
+      }
     },
     "会話はそのまま続けられます。必要なら相談先を確認してください。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can keep chatting. Check the support contacts if needed."
+          }
+        }
+      }
     },
     "会話はまだありません" : {
       "localizations" : {
@@ -811,7 +3309,14 @@
       }
     },
     "利用状況や社会の変化を見ながら、なぜ問題が起きたのか、必要以上に拒否していないか、キャラクター性と利用者の意思を守れているかを検証し続けます。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "While monitoring usage trends and changes in society, we continuously review why issues occur, whether we are rejecting more than necessary, and whether we are protecting character integrity and user autonomy."
+          }
+        }
+      }
     },
     "削除" : {
       "localizations" : {
@@ -875,7 +3380,14 @@
       }
     },
     "始めましょう" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Let's Get Started"
+          }
+        }
+      }
     },
     "安全性をチェック中…" : {
       "localizations" : {
@@ -888,7 +3400,14 @@
       }
     },
     "完成した安全性は存在しない" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Perfect safety does not exist"
+          }
+        }
+      }
     },
     "実際は会話モードの基本指示 (1〜2文・記号禁止・安全ルール) と合わせて送られます。" : {
       "localizations" : {
@@ -901,7 +3420,14 @@
       }
     },
     "少し休む" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Take a Break"
+          }
+        }
+      }
     },
     "応答を生成中" : {
       "extractionState" : "stale",
@@ -937,10 +3463,24 @@
       }
     },
     "押すと設定を閉じ、最初のストーリーを開いて30秒後に画面内カードを表示します。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Press to close Settings, open your first story, and show the in-screen card after 30 seconds."
+          }
+        }
+      }
     },
     "押すと設定を閉じ、最初のストーリーを開いて30秒後に相談サポートカードを表示します。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Press to close Settings, open your first story, and show the support card after 30 seconds."
+          }
+        }
+      }
     },
     "日本語" : {
       "localizations" : {
@@ -983,10 +3523,24 @@
       }
     },
     "物語や返答を自動的に削除・終了せず、必要な場合だけ相談先への導線を追加します。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stories and replies are never automatically deleted or ended. Links to support contacts are added only when needed."
+          }
+        }
+      }
     },
     "物語を見つける" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find a Story"
+          }
+        }
+      }
     },
     "物語内メモリー" : {
       "extractionState" : "stale",
@@ -1021,7 +3575,14 @@
       }
     },
     "物語形式" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Story Format"
+          }
+        }
+      }
     },
     "現在のStoryState" : {
       "extractionState" : "stale",
@@ -1097,7 +3658,14 @@
       }
     },
     "相談先" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Support Contacts"
+          }
+        }
+      }
     },
     "短い一文から、世界観・初期シーン・キャラ・ルールまで自動で組み立てます。" : {
       "localizations" : {
@@ -1202,10 +3770,24 @@
       }
     },
     "継続中のKizuna" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ongoing Kizuna"
+          }
+        }
+      }
     },
     "継続中の物語" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ongoing Stories"
+          }
+        }
+      }
     },
     "継続中の絆" : {
       "extractionState" : "stale",
@@ -1309,7 +3891,14 @@
       }
     },
     "連続利用が60分に達した後、キャラクターの発言に続けて1回だけ表示されます。判定はアプリ側で行います。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After 60 minutes of continuous use, it appears once following a character's message. The app decides when to show it."
+          }
+        }
+      }
     },
     "進行" : {
       "localizations" : {
