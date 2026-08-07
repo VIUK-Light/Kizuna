@@ -6,7 +6,13 @@
 
 Kizunaは、キャラクターとの継続的な会話・関係・物語を楽しめる、iOS / macOS向けのオープンソースAIアプリです。
 安全性を理由に体験を壊しすぎず、同時に依存や現実の人間関係からの孤立を促さない設計を目指しています。
-<img width="780" height="1780" alt="Simulator Screenshot - iPhone 17 Pro Max - 2026-08-07 at 08 07 07" src="https://github.com/user-attachments/assets/ad662dd4-9b05-46ea-bb28-abaca04a2a94" />
+<p align="center">
+  <img
+    src="https://github.com/user-attachments/assets/ad662dd4-9b05-46ea-bb28-abaca04a2a94"
+    alt="Kizuna Simulator Screenshot"
+    width="300"
+  />
+</p>
 
 
 > Kizunaは、利用者を支配するAIでも、利用者を突き放すAIでもありません。
