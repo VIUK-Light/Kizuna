@@ -32,7 +32,9 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          from PIL import Image
+          from PIL import Image, ImageFile
+
+          ImageFile.LOAD_TRUNCATED_IMAGES = True
 
           names = [
               "story-library",
@@ -46,7 +48,8 @@ jobs:
               source = directory / f"{name}.jpg"
               target = directory / f"{name}.png"
               with Image.open(source) as image:
-                  image.save(target, format="PNG", optimize=True, compress_level=9)
+                  image.load()
+                  image.convert("RGB").save(target, format="PNG", optimize=True, compress_level=9)
               source.unlink()
 
           for readme_path in (Path("README.md"), Path("README.en.md")):
