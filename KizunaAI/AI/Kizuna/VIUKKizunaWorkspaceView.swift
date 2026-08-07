@@ -125,7 +125,7 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
+    var title: LocalizedStringKey {
         switch self {
         case .stories: return "ストーリー"
         case .chat: return "あなたの物語"
