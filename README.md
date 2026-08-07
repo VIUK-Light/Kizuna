@@ -19,6 +19,7 @@ Kizunaは、キャラクターとの継続的な会話・関係・物語を楽�
 - **利用者が管理できる** — 会話、記憶、モデル、接続先、秘密情報を利用者側で管理できる構成です。
 - **ローカル / リモートモデル対応** — UIと推論ランタイムを分離し、モデル提供元へ直接依存しない設計です。
 - **SwiftUIネイティブ** — iOSとmacOSで共通のプロダクト体験を提供します。
+<img width="1320" height="2868" alt="Simulator Screenshot - iPhone 17 Pro Max - 2026-08-07 at 08 06 53" src="https://github.com/user-attachments/assets/17ba22c4-18af-4423-b630-d812da5271b0" />
 
 ## Kizunaが目指す安全性
 
@@ -29,6 +30,7 @@ Kizunaは、キャラクターとの継続的な会話・関係・物語を楽�
 - 「私だけを見て」「他の人と話さないで」など、孤立や依存を促す継続的な誘導を避ける
 - AIであること、回答に誤りがあり得ることを隠さない
 - 個人的な会話や秘密情報を、体験の代償として必要以上に収集しない
+<img width="1179" height="2556" alt="C5BF1352-4849-48C7-BEC7-887E6B52308D" src="https://github.com/user-attachments/assets/767ff58c-a5f1-4962-aa28-947454626def" />
 
 ## 開発状況
 
