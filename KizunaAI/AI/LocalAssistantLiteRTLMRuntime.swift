@@ -161,7 +161,7 @@ private actor LiteRTLMEngineStore {
             cacheDir: configuration.cacheDirectory
         )
         let nextEngine = Engine(engineConfig: engineConfig)
-        NSLog("[KizunaLiteRTLM] initializing CPU engine with %d-token context", configuration.maxNumTokens)
+        NSLog("[KizunaLiteRTLM] initializing CPU engine with %ld-token context", configuration.maxNumTokens)
         try await nextEngine.initialize()
         NSLog("[KizunaLiteRTLM] CPU engine initialized")
         engine = nextEngine
@@ -393,7 +393,13 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
 
         do {
             let modelName = URL(fileURLWithPath: sizedRequest.modelPath).lastPathComponent
-            NSLog("[KizunaLiteRTLM] starting native CPU turn (model=%@, input=%d bytes, output<=%d)", modelName, sizedRequest.prompt.lengthOfBytes(using: .utf8), sizedRequest.maxTokens)
+            let promptBytes = sizedRequest.prompt.lengthOfBytes(using: .utf8)
+            let systemBytes = sizedRequest.systemPrompt?.lengthOfBytes(using: .utf8) ?? 0
+            let historyBytes = sizedRequest.initialMessages.reduce(0) {
+                $0 + $1.text.lengthOfBytes(using: .utf8)
+            }
+            let inputBytes = promptBytes + systemBytes + historyBytes
+            NSLog("[KizunaLiteRTLM] starting native CPU turn (model=%@, input=%ld bytes, prompt=%ld, system=%ld, history=%ld, output<=%ld)", modelName, inputBytes, promptBytes, systemBytes, historyBytes, sizedRequest.maxTokens)
             let engine = try await engineStore.engine(for: configuration)
             let sampler = try SamplerConfig(
                 topK: max(sizedRequest.topK, 1),
@@ -409,7 +415,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     return Message(message.text, role: .model)
                 }
             }
-            NSLog("[KizunaLiteRTLM] creating conversation (system=%d bytes, history=%d)", sizedRequest.systemPrompt?.lengthOfBytes(using: .utf8) ?? 0, initialMessages.count)
+            NSLog("[KizunaLiteRTLM] creating conversation (system=%ld bytes, history=%ld)", systemBytes, initialMessages.count)
             let conversation = try await engine.createConversation(
                 with: ConversationConfig(
                     systemMessage: sizedRequest.systemPrompt.map { Message($0, role: .system) },
@@ -426,7 +432,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             let hasMeaningfulText = hasMeaningfulResponseText(cleaned)
             // 本文や個人情報はログへ出さない。LiteRT-LM側で停止理由を取得できないため、
             // その事実を明示しつつ、後段の StorySession が保存IDと照合できる長さだけ記録する。
-            NSLog("[KizunaLiteRTLM] native CPU turn finished (empty=%@, meaningful=%@, chars=%d, stopReason=unavailable)", cleaned.isEmpty ? "true" : "false", hasMeaningfulText ? "true" : "false", cleaned.count)
+            NSLog("[KizunaLiteRTLM] native CPU turn finished (empty=%@, meaningful=%@, chars=%ld, stopReason=unavailable)", cleaned.isEmpty ? "true" : "false", hasMeaningfulText ? "true" : "false", cleaned.count)
             return VIUKEmbeddedRuntimeResult(
                 success: hasMeaningfulText,
                 text: hasMeaningfulText ? cleaned : nil,

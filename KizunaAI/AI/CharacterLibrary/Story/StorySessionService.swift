@@ -48,6 +48,9 @@ final class StorySessionService: ObservableObject {
     private var generationTask: Task<Void, Never>?
     private var lastVisibleText: String = ""
     private var activeGenerationID: UUID?
+    private var generationWatchdogDeadline: Date?
+    private static let generationWatchdogDuration: TimeInterval = 75
+    private static let localRuntimeSystemPromptLimit = 1_250
     private let progressDecoder = JSONDecoder()
 
     private struct StoryProgressUpdate: Codable {
@@ -78,6 +81,7 @@ final class StorySessionService: ObservableObject {
         lastVisibleText = ""
         let generationID = UUID()
         activeGenerationID = generationID
+        generationWatchdogDeadline = Date().addingTimeInterval(Self.generationWatchdogDuration)
 
         generationTask = Task { [weak self] in
             await self?.runPipeline(
@@ -197,6 +201,7 @@ final class StorySessionService: ObservableObject {
         generationTask = nil
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
         activeGenerationID = nil
+        generationWatchdogDeadline = nil
         phase = .idle
         streamingSpeakerName = nil
         streamingStatusText = ""
@@ -519,10 +524,16 @@ final class StorySessionService: ObservableObject {
                 )
             }
 
+            let runtimeWaitStartedAt = Date()
             let availability = await waitForLocalRuntime(
                 manager: localModelManager,
                 selectedModelURL: selectedModelURL,
                 generationID: generationID
+            )
+            // 起動確認は生成処理ではないため、待機に要した時間をwatchdogへ足し戻す。
+            extendWatchdogDeadline(
+                generationID: generationID,
+                by: Date().timeIntervalSince(runtimeWaitStartedAt)
             )
             guard isGenerationActive(generationID) else {
                 return (reply: nil, runtimeNotice: true, backend: "iori 生成キャンセル")
@@ -616,7 +627,10 @@ final class StorySessionService: ObservableObject {
                     rawFinal.count,
                     firstMessages.count
                 )
-                generationPrompt += "\n\n再生成指示: 直前のNPCやナレーションと同じ本文を返さない。今回のユーザー発言へ直接反応し、別の短い台詞を1行で返す。場面が変わっていない限りナレーションは追加しない。"
+                let retryInstruction = "再生成指示: 直前のNPCやナレーションと同じ本文を返さない。今回のユーザー発言へ直接反応し、別の短い台詞を1行で返す。場面が変わっていない限りナレーションは追加しない。"
+                generationPrompt = generationModel == .e4b
+                    ? localRetrySystemPrompt(base: prompt, instruction: retryInstruction)
+                    : "\(retryInstruction)\n\n\(prompt)"
                 lastVisibleText = ""
                 streamingResponse = ""
                 streamingStatusText = "重複を避けて再生成中"
@@ -986,34 +1000,53 @@ final class StorySessionService: ObservableObject {
         }
     }
 
+    private func extendWatchdogDeadline(generationID: UUID, by duration: TimeInterval) {
+        guard activeGenerationID == generationID,
+              let currentDeadline = generationWatchdogDeadline else { return }
+        generationWatchdogDeadline = currentDeadline.addingTimeInterval(max(0, duration))
+    }
+
     private func startWatchdog(session: StorySession, generationID: UUID) {
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 75_000_000_000)
-            await MainActor.run {
+        Task { @MainActor [weak self] in
+            while true {
                 guard let self,
                       self.activeGenerationID == generationID,
-                      self.phase == .thinking else { return }
-                self.generationTask?.cancel()
-                self.generationTask = nil
-                LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
-                let notice = "ローカル生成を75秒で停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。"
-                Task { [weak self] in
-                    guard let self else { return }
-                    var next = ((try? await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId)) ?? [])
-                        .first(where: { $0.id == session.id }) ?? session
-                    // timeoutは物語上の出来事ではない。UI上のsystem通知としてだけ残す。
-                    next.messages.append(StoryMessage(author: .system, text: notice))
-                    try? await self.sessionRepo.saveSession(next)
-                    await MainActor.run {
-                        self.savedTurnRevision += 1
-                    }
+                      self.phase == .thinking,
+                      let deadline = self.generationWatchdogDeadline else { return }
+                let remaining = deadline.timeIntervalSinceNow
+                if remaining <= 0 { break }
+                do {
+                    let nanoseconds = UInt64(min(remaining, 1.0) * 1_000_000_000)
+                    try await Task.sleep(nanoseconds: nanoseconds)
+                } catch {
+                    return
                 }
-                self.streamingResponse = notice
-                self.streamingSpeakerName = "システム"
-                self.streamingStatusText = ""
-                self.phase = .idle
-                self.activeGenerationID = nil
             }
+
+            guard let self,
+                  self.activeGenerationID == generationID,
+                  self.phase == .thinking else { return }
+            self.generationTask?.cancel()
+            self.generationTask = nil
+            self.generationWatchdogDeadline = nil
+            LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
+            let notice = "ローカル生成の待機上限を超えたため停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。"
+            Task { [weak self] in
+                guard let self else { return }
+                var next = ((try? await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId)) ?? [])
+                    .first(where: { $0.id == session.id }) ?? session
+                // timeoutは物語上の出来事ではない。UI上のsystem通知としてだけ残す。
+                next.messages.append(StoryMessage(author: .system, text: notice))
+                try? await self.sessionRepo.saveSession(next)
+                await MainActor.run {
+                    self.savedTurnRevision += 1
+                }
+            }
+            self.streamingResponse = notice
+            self.streamingSpeakerName = "システム"
+            self.streamingStatusText = ""
+            self.phase = .idle
+            self.activeGenerationID = nil
         }
     }
 
@@ -1201,6 +1234,32 @@ final class StorySessionService: ObservableObject {
         return manager.runtimeAvailability
     }
 
+    /// LiteRT-LMはsystem promptを1,250 UTF-8 bytesへ切り詰めるため、
+    /// 再生成指示を先頭へ置き、指示そのものが消えないようにベースを後ろから短くする。
+    private func localRetrySystemPrompt(base: String, instruction: String) -> String {
+        let prefix = instruction + "\n\n"
+        let remainingBytes = max(
+            0,
+            Self.localRuntimeSystemPromptLimit - prefix.lengthOfBytes(using: .utf8)
+        )
+        return prefix + utf8Prefix(base, byteLimit: remainingBytes)
+    }
+
+    private func utf8Prefix(_ value: String, byteLimit: Int) -> String {
+        guard byteLimit > 0 else { return "" }
+        guard value.lengthOfBytes(using: .utf8) > byteLimit else { return value }
+        var result = ""
+        var usedBytes = 0
+        for character in value {
+            let piece = String(character)
+            let pieceBytes = piece.lengthOfBytes(using: .utf8)
+            guard usedBytes + pieceBytes <= byteLimit else { break }
+            result.append(contentsOf: piece)
+            usedBytes += pieceBytes
+        }
+        return result
+    }
+
     private func localStoryBackendStatusName(
         availability: LocalAssistantRuntimeAvailability,
         selectedModelURL: URL?
@@ -1339,7 +1398,26 @@ final class StorySessionService: ObservableObject {
 
         // ナレーションと台詞が揃って同じ場合は同一応答とみなす。
         // 1メッセージ構成のローカル応答も同じ判定で再生成する。
-        return candidateTexts.allSatisfy { previousTexts.contains($0) }
+        if candidateTexts.allSatisfy({ previousTexts.contains($0) }) {
+            return true
+        }
+
+        // 台詞が新しくても、ナレーションだけが直近と同じなら場面描写の反復である。
+        let previousNarrations = Set(
+            storyContentMessages(from: session.messages)
+                .suffix(12)
+                .filter { message in
+                    if case .narrator = message.author { return true }
+                    return false
+                }
+                .map { normalizedStoryComparisonText($0.text) }
+                .filter { $0.count >= 4 }
+        )
+        return candidates.contains { message in
+            guard case .narrator = message.author else { return false }
+            let text = normalizedStoryComparisonText(message.text)
+            return text.count >= 4 && previousNarrations.contains(text)
+        }
     }
 
     private func isMeaningfulStoryText(_ text: String) -> Bool {
