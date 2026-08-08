@@ -163,8 +163,8 @@ struct StoryWorldLibraryView: View {
                 Text("一部の初期ストーリーを読み込めませんでした")
                     .font(.system(size: 11, weight: .semibold))
                 if let error = vm.seedError {
-                    Text(error)
-                        .font(.system(size: 10, design: .monospaced))
+                    Text(LocalizedStringKey(error.messageKey))
+                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -196,18 +196,24 @@ struct StoryWorldLibraryView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(40)
-        } else if vm.worlds.isEmpty, let error = vm.loadError ?? vm.seedError {
+        } else if vm.worlds.isEmpty, vm.loadError != nil || vm.seedError != nil {
             VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.system(size: 34))
                     .foregroundStyle(.orange)
                 Text("ストーリーを読み込めませんでした")
                     .font(.system(size: 14, weight: .semibold))
-                Text(error)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(4)
+                if let loadError = vm.loadError {
+                    Text(LocalizedStringKey(loadError.messageKey))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                } else if let seedError = vm.seedError {
+                    Text(LocalizedStringKey(seedError.messageKey))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
                 Button("もう一度読み込む") {
                     Task { await vm.retryBootstrap() }
                 }

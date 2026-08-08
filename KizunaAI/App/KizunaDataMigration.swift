@@ -73,10 +73,33 @@ enum KizunaDataMigration {
             for fileName in fileNames {
                 let source = legacyURL.appendingPathComponent(fileName)
                 let destination = characterLibraryURL.appendingPathComponent(fileName)
-                guard isUsableDataFile(source), !isUsableDataFile(destination) else { continue }
+                switch dataFileState(source) {
+                case .missing:
+                    continue
+                case .invalid:
+                    // 壊れた旧ファイルを有効な移行元として扱わない。内容を
+                    // 推測して上書きせず、次回起動でも再確認できるよう失敗を返す。
+                    NSLog("[KizunaDataMigration] legacy file is invalid JSON: %@", source.path)
+                    return false
+                case .validArray:
+                    break
+                }
 
-                // 空ファイルまたは未作成のファイルだけを補完する。非空ファイルは
-                // 壊れていても上書きせず、loadRecoveringCorruptRecords()へ委ねる。
+                switch dataFileState(destination) {
+                case .validArray:
+                    // 空配列を含む有効なJSON配列は、ユーザーが現在使っている
+                    // 保存先として扱い、旧データで上書きしない。
+                    continue
+                case .missing:
+                    break
+                case .invalid:
+                    // 既存の壊れた保存先を置き換える場合でも、元ファイルを
+                    // 同じディレクトリへ退避してから原子的に復元する。
+                    let backupURL = invalidBackupURL(for: destination)
+                    try fileManager.copyItem(at: destination, to: backupURL)
+                    NSLog("[KizunaDataMigration] backed up invalid destination %@ to %@", fileName, backupURL.lastPathComponent)
+                }
+
                 let data = try Data(contentsOf: source)
                 try data.write(to: destination, options: [.atomic])
                 NSLog("[KizunaDataMigration] restored %@ from legacy CharacterLibrary", fileName)
@@ -88,13 +111,26 @@ enum KizunaDataMigration {
         }
     }
 
-    nonisolated private static func isUsableDataFile(_ url: URL) -> Bool {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = attributes[.size] as? NSNumber else {
-            return false
+    private enum DataFileState {
+        case missing
+        case validArray
+        case invalid
+    }
+
+    nonisolated private static func dataFileState(_ url: URL) -> DataFileState {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else { return .missing }
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+              object is [Any] else {
+            return .invalid
         }
-        // JSONの空配列は数バイトなので、空の保存先として扱う。
-        return size.intValue > 2
+        return .validArray
+    }
+
+    nonisolated private static func invalidBackupURL(for url: URL) -> URL {
+        url.deletingPathExtension()
+            .appendingPathExtension("invalid-\(UUID().uuidString).json")
     }
 
     @discardableResult
