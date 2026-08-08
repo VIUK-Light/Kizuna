@@ -3960,6 +3960,38 @@
         }
       }
     },
+    "初期ストーリーのデータが見つかりません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Initial story data could not be found"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "初期ストーリーのデータが見つかりません"
+          }
+        }
+      }
+    },
+    "初期ストーリーのデータを読み込めません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Initial story data could not be loaded"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "初期ストーリーのデータを読み込めません"
+          }
+        }
+      }
+    },
     "初期ストーリーを準備中…" : {
       "localizations" : {
         "en" : {
@@ -3986,6 +4018,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Could not load stories"
+          }
+        }
+      }
+    },
+    "ストーリーの保存データを読み込めません" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saved story data could not be loaded"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ストーリーの保存データを読み込めません"
           }
         }
       }

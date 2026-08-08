@@ -33,13 +33,19 @@ enum KizunaDebugOptions {
 
 // MARK: - Library
 
+enum StoryLibraryLoadIssue: String, Equatable, Sendable {
+    case storageFailure
+
+    var messageKey: String { "ストーリーの保存データを読み込めません" }
+}
+
 @MainActor
 final class StoryWorldLibraryViewModel: ObservableObject {
     @Published private(set) var worlds: [StoryWorld] = []
     @Published private(set) var charactersById: [UUID: CharacterProfile] = [:]
     @Published private(set) var isBootstrapping = false
-    @Published private(set) var loadError: String?
-    @Published private(set) var seedError: String?
+    @Published private(set) var loadError: StoryLibraryLoadIssue?
+    @Published private(set) var seedError: CharacterLibrarySeed.SeedIssue?
     @Published var searchText: String = ""
     @Published var groupFilter: CategoryGroup? = nil
 
@@ -79,7 +85,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
             loadError = nil
         } catch {
             let message = String(describing: error)
-            loadError = message
+            loadError = .storageFailure
             NSLog("[StoryLibraryVM] reload failed: %@", message)
         }
     }

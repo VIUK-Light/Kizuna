@@ -44,7 +44,7 @@ enum CharacterLibrarySeed {
         worldRepo: StoryWorldRepository? = nil,
         castRepo: CastRepository? = nil,
         sceneRepo: StorySceneRepository? = nil
-    ) async -> String? {
+    ) async -> SeedIssue? {
         await seedGate.enter()
         let result = await performSeed(
             characterRepo: characterRepo,
@@ -61,7 +61,7 @@ enum CharacterLibrarySeed {
         worldRepo: StoryWorldRepository? = nil,
         castRepo: CastRepository? = nil,
         sceneRepo: StorySceneRepository? = nil
-    ) async -> String? {
+    ) async -> SeedIssue? {
         let worldRepo = worldRepo ?? LocalJSONStoryWorldRepository()
         let castRepo = castRepo ?? LocalJSONCastRepository()
         let sceneRepo = sceneRepo ?? LocalJSONStorySceneRepository()
@@ -87,7 +87,7 @@ enum CharacterLibrarySeed {
 
             existingCharacters = try await characterRepo.fetchCharacters()
             existingByName = dictionaryByName(existingCharacters)
-            var bundledPackError: String?
+            var bundledPackIssue: SeedIssue?
             do {
                 try await seedBundledStoryPacks(
                     characterRepo: characterRepo,
@@ -100,8 +100,8 @@ enum CharacterLibrarySeed {
                 // Bundleリソースが古いビルドに入っていなくても、後段の標準
                 // Story seed は続行して一覧を完全に空にしない。原因は呼び出し
                 // 側へ返し、リソース構成の不備を見逃さない。
-                bundledPackError = String(describing: error)
-                NSLog("[CharacterLibrarySeed] bundled story pack failed: %@", bundledPackError ?? "unknown")
+                bundledPackIssue = (error as? SeedError)?.issue ?? .storageFailure
+                NSLog("[CharacterLibrarySeed] bundled story pack failed: %@", String(describing: error))
             }
 
             let allCharacters = try await characterRepo.fetchCharacters()
@@ -144,11 +144,11 @@ enum CharacterLibrarySeed {
                     }
                 }
             }
-            return bundledPackError
+            return bundledPackIssue
         } catch {
             let message = String(describing: error)
             NSLog("[CharacterLibrarySeed] seed failed: %@", message)
-            return message
+            return .storageFailure
         }
     }
 
@@ -213,6 +213,12 @@ enum CharacterLibrarySeed {
             .precomposedStringWithCanonicalMapping
     }
 
+    private struct PreparedBundledStory {
+        let item: BundledStoryItem
+        let characters: [CharacterProfile]
+        let world: StoryWorld
+    }
+
     private static func seedBundledStoryPacks(
         characterRepo: CharacterRepository,
         worldRepo: StoryWorldRepository,
@@ -223,7 +229,7 @@ enum CharacterLibrarySeed {
         let pack = try loadBundledStoryPack()
         var charactersByName = existingCharactersByName
         var charactersToSaveByID: [UUID: CharacterProfile] = [:]
-        var worldsByTitle = dictionaryByTitle(try await worldRepo.fetchWorlds())
+        var preparedStories: [PreparedBundledStory] = []
 
         for item in pack.stories {
             var storyCharacters: [CharacterProfile] = []
@@ -243,8 +249,6 @@ enum CharacterLibrarySeed {
             }
 
             guard !storyCharacters.isEmpty else { continue }
-            let characterByDisplayName = dictionaryByDisplayName(storyCharacters)
-            let characterByName = dictionaryByName(storyCharacters)
             let main = storyCharacters.first
             let world = StoryWorld(
                 title: item.story.title,
@@ -265,6 +269,22 @@ enum CharacterLibrarySeed {
                 safetyRules: item.generationRules + category(from: item.story.genre).defaultSafetyRules + relationship(from: item.story.relationshipGenre).safetyRules,
                 visibility: .private
             )
+            preparedStories.append(PreparedBundledStory(item: item, characters: storyCharacters, world: world))
+        }
+
+        // キャラクターを全件保存してから、World/Cast/Sceneの保存を開始する。
+        // 依存レコードが先に書かれると、途中終了時に存在しないUUIDを参照するため、
+        // シード処理を「キャラクター準備・保存」と「依存データ保存」に分ける。
+        try await saveCharacters(Array(charactersToSaveByID.values), using: characterRepo)
+
+        var worldsByTitle = dictionaryByTitle(try await worldRepo.fetchWorlds())
+        for preparedStory in preparedStories {
+            let item = preparedStory.item
+            let storyCharacters = preparedStory.characters
+            let world = preparedStory.world
+            let characterByDisplayName = dictionaryByDisplayName(storyCharacters)
+            let characterByName = dictionaryByName(storyCharacters)
+            let main = storyCharacters.first
 
             let targetWorld: StoryWorld
             if var existing = worldsByTitle[titleKey(world.title)] {
@@ -371,20 +391,35 @@ enum CharacterLibrarySeed {
                 try await sceneRepo.saveScene(scene)
             }
         }
-
-        try await saveCharacters(Array(charactersToSaveByID.values), using: characterRepo)
     }
 
-    private enum SeedError: LocalizedError {
+    enum SeedIssue: String, Equatable, Sendable {
+        case bundledStoryPackMissing
+        case bundledStoryPackInvalid
+        case storageFailure
+
+        var messageKey: String {
+            switch self {
+            case .bundledStoryPackMissing:
+                return "初期ストーリーのデータが見つかりません"
+            case .bundledStoryPackInvalid:
+                return "初期ストーリーのデータを読み込めません"
+            case .storageFailure:
+                return "ストーリーの保存データを読み込めません"
+            }
+        }
+    }
+
+    private enum SeedError: Error {
         case bundledStoryPackMissing
         case bundledStoryPackInvalid(underlying: Error)
 
-        var errorDescription: String? {
+        var issue: SeedIssue {
             switch self {
             case .bundledStoryPackMissing:
-                return "SeedStoryPacks.json がアプリのリソースにありません。"
-            case .bundledStoryPackInvalid(let underlying):
-                return "SeedStoryPacks.json の読み込みに失敗しました: \(underlying)"
+                return .bundledStoryPackMissing
+            case .bundledStoryPackInvalid:
+                return .bundledStoryPackInvalid
             }
         }
     }
