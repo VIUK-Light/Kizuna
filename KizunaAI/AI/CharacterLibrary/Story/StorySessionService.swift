@@ -81,7 +81,6 @@ final class StorySessionService: ObservableObject {
         lastVisibleText = ""
         let generationID = UUID()
         activeGenerationID = generationID
-        generationWatchdogDeadline = Date().addingTimeInterval(Self.generationWatchdogDuration)
 
         generationTask = Task { [weak self] in
             await self?.runPipeline(
@@ -93,7 +92,6 @@ final class StorySessionService: ObservableObject {
                 generationID: generationID
             )
         }
-        startWatchdog(session: session, generationID: generationID)
     }
 
     func addNarration(_ text: String, session: StorySession) {
@@ -496,6 +494,14 @@ final class StorySessionService: ObservableObject {
         // 8) Story model 生成。31B を明示選択した時だけ Gemma4 API を使う。
         // 端末内モデルは、保存直後の自動 self-check が終わるまで同じターンを待つ。
         // 「保存済みだが未確認」を会話失敗として即保存しない。
+        // リポジトリ読込・安全確認・シーン選定・プロンプト構築は生成予算に含めない。
+        // ここからAPI呼び出しまたは端末内モデルの実行確認を監視する。
+        generationWatchdogDeadline = Date().addingTimeInterval(Self.generationWatchdogDuration)
+        startWatchdog(
+            session: session,
+            generationID: generationID,
+            generationModel: generationModel
+        )
         streamingStatusText = generationModel == .b31 ? "Gemma4 31Bで発話生成中" : "ローカルモデルで発話生成中"
         let localModelManager = LocalAssistantModelManager.shared
         let selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
@@ -1006,7 +1012,11 @@ final class StorySessionService: ObservableObject {
         generationWatchdogDeadline = currentDeadline.addingTimeInterval(max(0, duration))
     }
 
-    private func startWatchdog(session: StorySession, generationID: UUID) {
+    private func startWatchdog(
+        session: StorySession,
+        generationID: UUID,
+        generationModel: StoryGenerationModel
+    ) {
         Task { @MainActor [weak self] in
             while true {
                 guard let self,
@@ -1028,23 +1038,50 @@ final class StorySessionService: ObservableObject {
                   self.phase == .thinking else { return }
             self.generationTask?.cancel()
             self.generationTask = nil
-            self.generationWatchdogDeadline = nil
-            LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
-            let notice = "ローカル生成の待機上限を超えたため停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。"
-            Task { [weak self] in
-                guard let self else { return }
-                var next = ((try? await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId)) ?? [])
-                    .first(where: { $0.id == session.id }) ?? session
-                // timeoutは物語上の出来事ではない。UI上のsystem通知としてだけ残す。
-                next.messages.append(StoryMessage(author: .system, text: notice))
-                try? await self.sessionRepo.saveSession(next)
-                await MainActor.run {
-                    self.savedTurnRevision += 1
-                }
+            if generationModel == .e4b {
+                LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
+            }
+            let notice: String
+            let backendName: String
+            switch generationModel {
+            case .e4b:
+                notice = "iori ローカル生成の待機上限を超えたため停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。"
+                backendName = "iori ローカル・タイムアウト"
+            case .b31:
+                notice = "Gemma4 31B APIの生成が時間内に完了しませんでした。本文は保存していません。もう一度試してください。"
+                backendName = "Gemma4 31B API・タイムアウト"
             }
             self.streamingResponse = notice
             self.streamingSpeakerName = "システム"
+            self.streamingStatusText = "タイムアウト通知を保存中"
+
+            // 通知保存が終わるまで phase/activeGenerationID を維持する。
+            // そうしないと次の send が古いセッションを読み、保存結果を上書きできる。
+            guard self.activeGenerationID == generationID else { return }
+            var next: StorySession?
+            do {
+                next = (try await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId))
+                    .first(where: { $0.id == session.id }) ?? session
+            } catch {
+                NSLog("[StorySession] timeout notice fetch failed: %@", error.localizedDescription)
+                // 最新セッションを取得できない場合は、古いスナップショットを
+                // saveSessionして新しいターンを上書きしない。UI通知だけで終了する。
+                next = nil
+            }
+            if var next {
+                next.messages.append(StoryMessage(author: .system, text: notice))
+                next.lastSelectedModelName = generationModel.displayName
+                next.lastUsedBackendName = backendName
+                do {
+                    try await self.sessionRepo.saveSession(next)
+                } catch {
+                    NSLog("[StorySession] timeout notice save failed: %@", error.localizedDescription)
+                }
+            }
+            guard self.activeGenerationID == generationID else { return }
+            self.generationWatchdogDeadline = nil
             self.streamingStatusText = ""
+            self.savedTurnRevision += 1
             self.phase = .idle
             self.activeGenerationID = nil
         }

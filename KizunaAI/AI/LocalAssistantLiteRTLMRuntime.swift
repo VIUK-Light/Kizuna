@@ -415,7 +415,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     return Message(message.text, role: .model)
                 }
             }
-            NSLog("[KizunaLiteRTLM] creating conversation (system=%ld bytes, history=%ld)", systemBytes, initialMessages.count)
+            NSLog("[KizunaLiteRTLM] creating conversation (system=%ld bytes, historyMessages=%ld)", systemBytes, initialMessages.count)
             let conversation = try await engine.createConversation(
                 with: ConversationConfig(
                     systemMessage: sizedRequest.systemPrompt.map { Message($0, role: .system) },
