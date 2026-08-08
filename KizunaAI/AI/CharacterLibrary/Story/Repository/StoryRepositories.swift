@@ -113,11 +113,11 @@ protocol StoryMemoryRepository: AnyObject {
 final class LocalJSONStoryWorldRepository: StoryWorldRepository {
     private let store = LocalJSONStore<StoryWorld>(fileName: "story_worlds.json")
     func fetchWorlds() async throws -> [StoryWorld] {
-        try await store.load().sorted { $0.updatedAt > $1.updatedAt }
+        try await store.loadRecoveringCorruptRecords().sorted { $0.updatedAt > $1.updatedAt }
     }
     func saveWorld(_ world: StoryWorld) async throws {
         var w = world
-        if let existing = (try? await store.load().first(where: { $0.id == world.id })),
+        if let existing = (try? await store.loadRecoveringCorruptRecords().first(where: { $0.id == world.id })),
            existing.isSystemProtected == true {
             w.isSystemProtected = true
         }
@@ -125,7 +125,7 @@ final class LocalJSONStoryWorldRepository: StoryWorldRepository {
         try await store.appendOrReplace(w, idEquals: { $0.id == $1.id })
     }
     func deleteWorld(id: UUID) async throws {
-        if let existing = (try? await store.load().first(where: { $0.id == id })),
+        if let existing = (try? await store.loadRecoveringCorruptRecords().first(where: { $0.id == id })),
            existing.isSystemProtected == true {
             return
         }
@@ -136,7 +136,7 @@ final class LocalJSONStoryWorldRepository: StoryWorldRepository {
 final class LocalJSONCastRepository: CastRepository {
     private let store = LocalJSONStore<CastMember>(fileName: "story_cast.json")
     func fetchCast(storyWorldId: UUID) async throws -> [CastMember] {
-        try await store.load().filter { $0.storyWorldId == storyWorldId }
+        try await store.loadRecoveringCorruptRecords().filter { $0.storyWorldId == storyWorldId }
     }
     func saveCast(_ cast: CastMember) async throws {
         try await store.appendOrReplace(cast, idEquals: { $0.id == $1.id })
@@ -152,7 +152,7 @@ final class LocalJSONCastRepository: CastRepository {
 final class LocalJSONStorySceneRepository: StorySceneRepository {
     private let store = LocalJSONStore<StoryScene>(fileName: "story_scenes.json")
     func fetchScenes(storyWorldId: UUID) async throws -> [StoryScene] {
-        try await store.load()
+        try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.createdAt < $1.createdAt }
     }
@@ -174,7 +174,7 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
 final class LocalJSONStorySessionRepository: StorySessionRepository {
     private let store = LocalJSONStore<StorySession>(fileName: "story_sessions.json")
     func fetchSessions(storyWorldId: UUID) async throws -> [StorySession] {
-        try await store.load()
+        try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -195,13 +195,13 @@ final class LocalJSONStoryLorebookRepository: StoryLorebookRepository {
     private let store = LocalJSONStore<StoryLorebookEntry>(fileName: "story_lorebook.json")
 
     func fetchEntries(storyWorldId: UUID) async throws -> [StoryLorebookEntry] {
-        try await store.load()
+        try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId && $0.isEnabled }
             .sorted { $0.priority > $1.priority }
     }
 
     func fetchAllEntries(storyWorldId: UUID) async throws -> [StoryLorebookEntry] {
-        try await store.load()
+        try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.priority > $1.priority }
     }
@@ -225,7 +225,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
     private let perWorldLimit = 120
 
     func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] {
-        try await store.load()
+        try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { lhs, rhs in
                 if lhs.importance != rhs.importance { return lhs.importance > rhs.importance }

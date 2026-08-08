@@ -3949,6 +3949,82 @@
           }
         }
       }
+    },
+    "一部の初期ストーリーを読み込めませんでした" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Some initial stories could not be loaded"
+          }
+        }
+      }
+    },
+    "初期ストーリーを準備中…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing initial stories…"
+          }
+        }
+      }
+    },
+    "ストーリーを準備しています…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing stories…"
+          }
+        }
+      }
+    },
+    "ストーリーを読み込めませんでした" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not load stories"
+          }
+        }
+      }
+    },
+    "初回だけ少し時間がかかります。画面を閉じずにお待ちください。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The first launch may take a little longer. Please keep this window open."
+          }
+        }
+      }
+    },
+    "NAGI（Gemma4 31B API）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "NAGI (Gemma4 31B API)"
+          }
+        }
+      }
+    },
+    "Custom Story Builder" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Custom Story Builder"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カスタムストーリービルダー"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

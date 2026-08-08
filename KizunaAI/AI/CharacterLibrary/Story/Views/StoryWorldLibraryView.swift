@@ -46,6 +46,10 @@ struct StoryWorldLibraryView: View {
             Divider()
             filterBar
             Divider()
+            if vm.seedError != nil {
+                seedErrorBanner
+                Divider()
+            }
             content
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
@@ -95,7 +99,11 @@ struct StoryWorldLibraryView: View {
             .buttonStyle(.plain)
             VStack(alignment: .leading, spacing: 2) {
                 Text("ストーリーライブラリー").font(.system(size: 15, weight: .semibold))
-                Text("世界観から選ぶ ・ \(vm.worlds.count) 件").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(vm.isBootstrapping && vm.worlds.isEmpty
+                     ? "初期ストーリーを準備中…"
+                     : "世界観から選ぶ ・ \(vm.worlds.count) 件")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             Button {
@@ -147,9 +155,67 @@ struct StoryWorldLibraryView: View {
         .padding(.vertical, 8)
     }
 
+    private var seedErrorBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("一部の初期ストーリーを読み込めませんでした")
+                    .font(.system(size: 11, weight: .semibold))
+                if let error = vm.seedError {
+                    Text(error)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 8)
+            Button("再試行") {
+                Task { await vm.retryBootstrap() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.10))
+    }
+
     @ViewBuilder
     private var content: some View {
-        if vm.filtered.isEmpty {
+        if vm.isBootstrapping && vm.worlds.isEmpty {
+            VStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.regular)
+                Text("ストーリーを準備しています…")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("初回だけ少し時間がかかります。画面を閉じずにお待ちください。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(40)
+        } else if vm.worlds.isEmpty, let error = vm.loadError ?? vm.seedError {
+            VStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.orange)
+                Text("ストーリーを読み込めませんでした")
+                    .font(.system(size: 14, weight: .semibold))
+                Text(error)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(4)
+                Button("もう一度読み込む") {
+                    Task { await vm.retryBootstrap() }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(40)
+        } else if vm.filtered.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "sparkles.rectangle.stack.fill")
                     .font(.system(size: 38))
