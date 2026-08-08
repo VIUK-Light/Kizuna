@@ -48,6 +48,9 @@ final class StorySessionService: ObservableObject {
     private var generationTask: Task<Void, Never>?
     private var lastVisibleText: String = ""
     private var activeGenerationID: UUID?
+    private var generationWatchdogDeadline: Date?
+    private static let generationWatchdogDuration: TimeInterval = 75
+    private static let localRuntimeSystemPromptLimit = 1_250
     private let progressDecoder = JSONDecoder()
 
     private struct StoryProgressUpdate: Codable {
@@ -89,7 +92,6 @@ final class StorySessionService: ObservableObject {
                 generationID: generationID
             )
         }
-        startWatchdog(session: session, generationID: generationID)
     }
 
     func addNarration(_ text: String, session: StorySession) {
@@ -197,6 +199,7 @@ final class StorySessionService: ObservableObject {
         generationTask = nil
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
         activeGenerationID = nil
+        generationWatchdogDeadline = nil
         phase = .idle
         streamingSpeakerName = nil
         streamingStatusText = ""
@@ -489,85 +492,186 @@ final class StorySessionService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
 
         // 8) Story model 生成。31B を明示選択した時だけ Gemma4 API を使う。
+        // 端末内モデルは、保存直後の自動 self-check が終わるまで同じターンを待つ。
+        // 「保存済みだが未確認」を会話失敗として即保存しない。
+        // リポジトリ読込・安全確認・シーン選定・プロンプト構築は生成予算に含めない。
+        // ここからAPI呼び出しまたは端末内モデルの実行確認を監視する。
+        generationWatchdogDeadline = Date().addingTimeInterval(Self.generationWatchdogDuration)
+        startWatchdog(
+            session: session,
+            generationID: generationID,
+            generationModel: generationModel
+        )
         streamingStatusText = generationModel == .b31 ? "Gemma4 31Bで発話生成中" : "ローカルモデルで発話生成中"
-        var reply: String?
-        var isRuntimeNotice = false
-        var usedBackendName: String
-        if generationModel == .b31 {
-            if StoryGemma31BAPIService.shared.hasAPIKey {
-                usedBackendName = "Gemma4 31B API"
-                reply = await generateWithGemma31BAPI(
-                    systemPrompt: prompt,
-                    userPrompt: effectiveUserText,
-                    generationID: generationID
-                )
-                if isGemma31BRuntimeNotice(reply) {
-                    isRuntimeNotice = true
-                    usedBackendName = "Gemma4 31B API失敗"
+        let localModelManager = LocalAssistantModelManager.shared
+        let selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
+
+        func generateStoryReply(systemPrompt: String) async -> (reply: String?, runtimeNotice: Bool, backend: String) {
+            if generationModel == .b31 {
+                if StoryGemma31BAPIService.shared.hasAPIKey {
+                    let reply = await generateWithGemma31BAPI(
+                        systemPrompt: systemPrompt,
+                        userPrompt: effectiveUserText,
+                        generationID: generationID
+                    )
+                    let isNotice = isGemma31BRuntimeNotice(reply)
+                    return (
+                        reply: reply,
+                        runtimeNotice: isNotice,
+                        backend: isNotice ? "Gemma4 31B API失敗" : "Gemma4 31B API"
+                    )
                 }
-            } else {
+
                 streamingStatusText = "NAGI APIキー未設定"
-                isRuntimeNotice = true
-                usedBackendName = "Gemma4 31B API未設定"
-                reply = "NAGI の Gemma4 31B APIキーが未設定です。モデル詳細からAPIキーを設定してから続けてください。"
+                return (
+                    reply: "NAGI の Gemma4 31B APIキーが未設定です。モデル詳細からAPIキーを設定してから続けてください。",
+                    runtimeNotice: true,
+                    backend: "Gemma4 31B API未設定"
+                )
             }
-        } else {
-            let advanced = voiceOptimizedAdvancedSettings()
-            let localModelManager = LocalAssistantModelManager.shared
-            let selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
+
+            let runtimeWaitStartedAt = Date()
+            let availability = await waitForLocalRuntime(
+                manager: localModelManager,
+                selectedModelURL: selectedModelURL,
+                generationID: generationID
+            )
+            // 起動確認は生成処理ではないため、待機に要した時間をwatchdogへ足し戻す。
+            extendWatchdogDeadline(
+                generationID: generationID,
+                by: Date().timeIntervalSince(runtimeWaitStartedAt)
+            )
+            guard isGenerationActive(generationID) else {
+                return (reply: nil, runtimeNotice: true, backend: "iori 生成キャンセル")
+            }
+
+            // self-check が保存状態を復元した後のURLを再取得する。起動直後に
+            // manager の非同期更新が間に合わなくても、保存済みモデルを未導入扱いにしない。
+            let availableModelURL = selectedModelURL ?? localModelManager.installedModelURL
+
             if let localUnavailableMessage = localStoryRuntimeUnavailableMessage(
-                availability: localModelManager.runtimeAvailability,
-                selectedModelURL: selectedModelURL
+                availability: availability,
+                selectedModelURL: availableModelURL
             ) {
                 streamingStatusText = "ローカル未起動"
-                isRuntimeNotice = true
-                usedBackendName = localStoryBackendStatusName(
-                    availability: localModelManager.runtimeAvailability,
-                    selectedModelURL: selectedModelURL
+                return (
+                    reply: localUnavailableMessage,
+                    runtimeNotice: true,
+                    backend: localStoryBackendStatusName(
+                        availability: availability,
+                        selectedModelURL: availableModelURL
+                    )
                 )
-                reply = localUnavailableMessage
-            } else {
-                usedBackendName = localStoryBackendStatusName(
-                    availability: localModelManager.runtimeAvailability,
-                    selectedModelURL: selectedModelURL
-                )
-                reply = await LocalAssistantRuntimeBridge.shared.generateReply(
-                    prompt: effectiveUserText,
-                    contextPrompt: nil,
-                    coachMode: .studio,
-                    reasoningMode: .persona,
-                    researchMode: .off,
-                    childAge: 12,
-                    pageInfo: nil,
-                    safetySnapshot: nil,
-                    advancedSettings: advanced,
-                    overrideSystemPrompt: prompt,
-                    initialMessages: localConversationHistory,
-                    overrideModelURL: selectedModelURL,
-                    onUpdate: { @MainActor [weak self] update in
-                        self?.handleStreamUpdate(update, generationID: generationID)
-                    }
-                )
-                if reply == nil {
-                    let runtimeError = LocalAssistantRuntimeBridge.shared.latestDebugSnapshot().errorMessage
-                    streamingStatusText = runtimeError?.contains("記号だけ") == true
-                        ? "ローカル出力が無効"
-                        : "ローカル起動失敗"
-                    isRuntimeNotice = true
-                    usedBackendName = "iori ローカル生成失敗"
-                    reply = localStoryGenerationFailureMessage(runtimeError: runtimeError)
-                }
             }
+
+            let advanced = voiceOptimizedAdvancedSettings()
+            let backend = localStoryBackendStatusName(
+                availability: availability,
+                selectedModelURL: availableModelURL
+            )
+            let reply = await LocalAssistantRuntimeBridge.shared.generateReply(
+                prompt: effectiveUserText,
+                contextPrompt: nil,
+                coachMode: .studio,
+                reasoningMode: .persona,
+                researchMode: .off,
+                childAge: 12,
+                pageInfo: nil,
+                safetySnapshot: nil,
+                advancedSettings: advanced,
+                overrideSystemPrompt: systemPrompt,
+                initialMessages: localConversationHistory,
+                overrideModelURL: availableModelURL,
+                onUpdate: { @MainActor [weak self] update in
+                    self?.handleStreamUpdate(update, generationID: generationID)
+                }
+            )
+            guard let reply else {
+                let runtimeError = LocalAssistantRuntimeBridge.shared.latestDebugSnapshot().errorMessage
+                streamingStatusText = runtimeError?.contains("記号だけ") == true
+                    ? "ローカル出力が無効"
+                    : "ローカル起動失敗"
+                return (
+                    reply: localStoryGenerationFailureMessage(runtimeError: runtimeError),
+                    runtimeNotice: true,
+                    backend: "iori ローカル生成失敗"
+                )
+            }
+            return (reply: reply, runtimeNotice: false, backend: backend)
         }
+
+        var generationPrompt = prompt
+        var generated = await generateStoryReply(systemPrompt: generationPrompt)
+        var reply = generated.reply
+        var isRuntimeNotice = generated.runtimeNotice
+        var usedBackendName = generated.backend
 
         // キャンセルやウォッチドッグ後に、古い生成結果を後段へ保存しない。
         guard isGenerationActive(generationID) else { return }
 
         // 9) 出力 safety
         streamingStatusText = "発話を整形中"
-        var rawFinal = (reply?.isEmpty == false ? reply! : streamingResponse)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        rawFinal = sanitizedFinalText(rawFinal)
+        var rawFinal = sanitizedFinalText(
+            (reply?.isEmpty == false ? reply! : streamingResponse)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+
+        // 前ターンと同じ本文を保存しない。最初の重複は一度だけ再生成し、
+        // それでも同じなら原因を隠さず system 通知として保存する。
+        if !isRuntimeNotice,
+           isMeaningfulStoryText(rawFinal) {
+            let firstMessages = parseSpeakerLines(
+                rawFinal,
+                cast: aiCastForTurn,
+                characterIndex: charIndex,
+                forbiddenCharacterID: userCharacterID,
+                forbiddenCharacterName: userCharacterName
+            )
+            if isDuplicateStoryOutput(firstMessages, in: session) {
+                NSLog(
+                    "[StorySession] duplicate output rejected attempt=1 chars=%ld messages=%ld",
+                    rawFinal.count,
+                    firstMessages.count
+                )
+                let retryInstruction = "再生成指示: 直前のNPCやナレーションと同じ本文を返さない。今回のユーザー発言へ直接反応し、別の短い台詞を1行で返す。場面が変わっていない限りナレーションは追加しない。"
+                generationPrompt = generationModel == .e4b
+                    ? localRetrySystemPrompt(base: prompt, instruction: retryInstruction)
+                    : "\(retryInstruction)\n\n\(prompt)"
+                lastVisibleText = ""
+                streamingResponse = ""
+                streamingStatusText = "重複を避けて再生成中"
+                generated = await generateStoryReply(systemPrompt: generationPrompt)
+                reply = generated.reply
+                isRuntimeNotice = generated.runtimeNotice
+                usedBackendName = generated.backend + "・重複再試行"
+                rawFinal = sanitizedFinalText(
+                    (reply?.isEmpty == false ? reply! : streamingResponse)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+
+                if !isRuntimeNotice,
+                   isMeaningfulStoryText(rawFinal) {
+                    let retriedMessages = parseSpeakerLines(
+                        rawFinal,
+                        cast: aiCastForTurn,
+                        characterIndex: charIndex,
+                        forbiddenCharacterID: userCharacterID,
+                        forbiddenCharacterName: userCharacterName
+                    )
+                    if isDuplicateStoryOutput(retriedMessages, in: session) {
+                        NSLog(
+                            "[StorySession] duplicate output rejected attempt=2 chars=%ld messages=%ld",
+                            rawFinal.count,
+                            retriedMessages.count
+                        )
+                        isRuntimeNotice = true
+                        usedBackendName += "・重複失敗"
+                        rawFinal = "直前と同じ本文が続いたため、重複した発話は保存していません。もう一度送信してください。"
+                    }
+                }
+            }
+        }
+
         if !isMeaningfulStoryText(rawFinal) {
             isRuntimeNotice = true
             usedBackendName += "・無効出力"
@@ -652,6 +756,13 @@ final class StorySessionService: ObservableObject {
         for m in newMessages {
             session.messages.append(m)
         }
+        let savedMessageIDs = newMessages.map(\.id.uuidString).joined(separator: ",")
+        NSLog(
+            "[StorySession] saved generated messages count=%ld ids=%@ backend=%@",
+            newMessages.count,
+            savedMessageIDs,
+            usedBackendName
+        )
         session.lastSelectedModelName = generationModel.displayName
         session.lastUsedBackendName = usedBackendName
         try? await sessionRepo.saveSession(session)
@@ -895,34 +1006,84 @@ final class StorySessionService: ObservableObject {
         }
     }
 
-    private func startWatchdog(session: StorySession, generationID: UUID) {
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 75_000_000_000)
-            await MainActor.run {
+    private func extendWatchdogDeadline(generationID: UUID, by duration: TimeInterval) {
+        guard activeGenerationID == generationID,
+              let currentDeadline = generationWatchdogDeadline else { return }
+        generationWatchdogDeadline = currentDeadline.addingTimeInterval(max(0, duration))
+    }
+
+    private func startWatchdog(
+        session: StorySession,
+        generationID: UUID,
+        generationModel: StoryGenerationModel
+    ) {
+        Task { @MainActor [weak self] in
+            while true {
                 guard let self,
                       self.activeGenerationID == generationID,
-                      self.phase == .thinking else { return }
-                self.generationTask?.cancel()
-                self.generationTask = nil
-                LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
-                let notice = "ローカル生成を75秒で停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。"
-                Task { [weak self] in
-                    guard let self else { return }
-                    var next = ((try? await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId)) ?? [])
-                        .first(where: { $0.id == session.id }) ?? session
-                    // timeoutは物語上の出来事ではない。UI上のsystem通知としてだけ残す。
-                    next.messages.append(StoryMessage(author: .system, text: notice))
-                    try? await self.sessionRepo.saveSession(next)
-                    await MainActor.run {
-                        self.savedTurnRevision += 1
-                    }
+                      self.phase == .thinking,
+                      let deadline = self.generationWatchdogDeadline else { return }
+                let remaining = deadline.timeIntervalSinceNow
+                if remaining <= 0 { break }
+                do {
+                    let nanoseconds = UInt64(min(remaining, 1.0) * 1_000_000_000)
+                    try await Task.sleep(nanoseconds: nanoseconds)
+                } catch {
+                    return
                 }
-                self.streamingResponse = notice
-                self.streamingSpeakerName = "システム"
-                self.streamingStatusText = ""
-                self.phase = .idle
-                self.activeGenerationID = nil
             }
+
+            guard let self,
+                  self.activeGenerationID == generationID,
+                  self.phase == .thinking else { return }
+            self.generationTask?.cancel()
+            self.generationTask = nil
+            if generationModel == .e4b {
+                LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
+            }
+            let notice: String
+            let backendName: String
+            switch generationModel {
+            case .e4b:
+                notice = "iori ローカル生成の待機上限を超えたため停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。"
+                backendName = "iori ローカル・タイムアウト"
+            case .b31:
+                notice = "Gemma4 31B APIの生成が時間内に完了しませんでした。本文は保存していません。もう一度試してください。"
+                backendName = "Gemma4 31B API・タイムアウト"
+            }
+            self.streamingResponse = notice
+            self.streamingSpeakerName = "システム"
+            self.streamingStatusText = "タイムアウト通知を保存中"
+
+            // 通知保存が終わるまで phase/activeGenerationID を維持する。
+            // そうしないと次の send が古いセッションを読み、保存結果を上書きできる。
+            guard self.activeGenerationID == generationID else { return }
+            var next: StorySession?
+            do {
+                next = (try await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId))
+                    .first(where: { $0.id == session.id }) ?? session
+            } catch {
+                NSLog("[StorySession] timeout notice fetch failed: %@", error.localizedDescription)
+                // 最新セッションを取得できない場合は、古いスナップショットを
+                // saveSessionして新しいターンを上書きしない。UI通知だけで終了する。
+                next = nil
+            }
+            if var next {
+                next.messages.append(StoryMessage(author: .system, text: notice))
+                next.lastSelectedModelName = generationModel.displayName
+                next.lastUsedBackendName = backendName
+                do {
+                    try await self.sessionRepo.saveSession(next)
+                } catch {
+                    NSLog("[StorySession] timeout notice save failed: %@", error.localizedDescription)
+                }
+            }
+            guard self.activeGenerationID == generationID else { return }
+            self.generationWatchdogDeadline = nil
+            self.streamingStatusText = ""
+            self.savedTurnRevision += 1
+            self.phase = .idle
+            self.activeGenerationID = nil
         }
     }
 
@@ -1073,6 +1234,69 @@ final class StorySessionService: ObservableObject {
         }
     }
 
+    /// 保存直後のモデルは自動 self-check が進行中のため、会話側で即時失敗にしない。
+    /// 既存の75秒 watchdogを越えないよう、最大60秒だけ状態を待ってから
+    /// 実行不可の診断を表示する。待機中にユーザーがキャンセルした場合は保存しない。
+    private func waitForLocalRuntime(
+        manager: LocalAssistantModelManager,
+        selectedModelURL: URL?,
+        generationID: UUID
+    ) async -> LocalAssistantRuntimeAvailability {
+        // 起動直後は manager のURL復元も非同期なため、URLがまだnilでも
+        // 一度だけ同期的な再確認入口を呼び、保存済みファイルを再発見させる。
+        var didRequestRecheck = selectedModelURL == nil
+        if didRequestRecheck {
+            manager.recheckRuntimeAvailability()
+        }
+        for attempt in 0..<120 {
+            guard isGenerationActive(generationID) else { return .recentFailure }
+            let availability = manager.runtimeAvailability
+            switch availability {
+            case .executable, .recentFailure, .modelMissing:
+                return availability
+            case .savedOnly:
+                // 自動確認がまだ起動していない古い状態でも、会話開始時に再確認を依頼する。
+                if !didRequestRecheck {
+                    didRequestRecheck = true
+                    manager.recheckRuntimeAvailability()
+                }
+            case .checking:
+                break
+            }
+
+            let elapsed = Int(Double(attempt + 1) * 0.5)
+            streamingStatusText = "端末内モデルを確認中（\(elapsed)秒）"
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return manager.runtimeAvailability
+    }
+
+    /// LiteRT-LMはsystem promptを1,250 UTF-8 bytesへ切り詰めるため、
+    /// 再生成指示を先頭へ置き、指示そのものが消えないようにベースを後ろから短くする。
+    private func localRetrySystemPrompt(base: String, instruction: String) -> String {
+        let prefix = instruction + "\n\n"
+        let remainingBytes = max(
+            0,
+            Self.localRuntimeSystemPromptLimit - prefix.lengthOfBytes(using: .utf8)
+        )
+        return prefix + utf8Prefix(base, byteLimit: remainingBytes)
+    }
+
+    private func utf8Prefix(_ value: String, byteLimit: Int) -> String {
+        guard byteLimit > 0 else { return "" }
+        guard value.lengthOfBytes(using: .utf8) > byteLimit else { return value }
+        var result = ""
+        var usedBytes = 0
+        for character in value {
+            let piece = String(character)
+            let pieceBytes = piece.lengthOfBytes(using: .utf8)
+            guard usedBytes + pieceBytes <= byteLimit else { break }
+            result.append(contentsOf: piece)
+            usedBytes += pieceBytes
+        }
+        return result
+    }
+
     private func localStoryBackendStatusName(
         availability: LocalAssistantRuntimeAvailability,
         selectedModelURL: URL?
@@ -1177,6 +1401,60 @@ final class StorySessionService: ObservableObject {
         // 整形は記法の除去だけに留める。空・記号だけの応答を物語本文へ
         // 差し替えると、障害を隠したまま存在しない会話を保存してしまう。
         sanitize(text).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 話者ラベルや句読点を外した比較用テキスト。本文そのものはログへ出さない。
+    private func normalizedStoryComparisonText(_ text: String) -> String {
+        text.localizedLowercase.unicodeScalars
+            .filter { scalar in
+                scalar.properties.isAlphabetic || scalar.properties.numericType != nil
+            }
+            .map(String.init)
+            .joined()
+    }
+
+    /// 直近の物語本文と同じ応答、または一つの応答内で同じ本文を繰り返す場合を検出する。
+    /// 「うん」など極端に短い相づちは意図的な反復もあり得るため、4文字以上だけを比較する。
+    private func isDuplicateStoryOutput(_ candidates: [StoryMessage], in session: StorySession) -> Bool {
+        let candidateTexts = candidates
+            .map { normalizedStoryComparisonText($0.text) }
+            .filter { $0.count >= 4 }
+        guard !candidateTexts.isEmpty else { return false }
+
+        if Set(candidateTexts).count != candidateTexts.count {
+            return true
+        }
+
+        let previousTexts = Set(
+            storyContentMessages(from: session.messages)
+                .suffix(12)
+                .map { normalizedStoryComparisonText($0.text) }
+                .filter { $0.count >= 4 }
+        )
+        guard !previousTexts.isEmpty else { return false }
+
+        // ナレーションと台詞が揃って同じ場合は同一応答とみなす。
+        // 1メッセージ構成のローカル応答も同じ判定で再生成する。
+        if candidateTexts.allSatisfy({ previousTexts.contains($0) }) {
+            return true
+        }
+
+        // 台詞が新しくても、ナレーションだけが直近と同じなら場面描写の反復である。
+        let previousNarrations = Set(
+            storyContentMessages(from: session.messages)
+                .suffix(12)
+                .filter { message in
+                    if case .narrator = message.author { return true }
+                    return false
+                }
+                .map { normalizedStoryComparisonText($0.text) }
+                .filter { $0.count >= 4 }
+        )
+        return candidates.contains { message in
+            guard case .narrator = message.author else { return false }
+            let text = normalizedStoryComparisonText(message.text)
+            return text.count >= 4 && previousNarrations.contains(text)
+        }
     }
 
     private func isMeaningfulStoryText(_ text: String) -> Bool {
