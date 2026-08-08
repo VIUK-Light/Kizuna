@@ -37,6 +37,9 @@ enum KizunaDebugOptions {
 final class StoryWorldLibraryViewModel: ObservableObject {
     @Published private(set) var worlds: [StoryWorld] = []
     @Published private(set) var charactersById: [UUID: CharacterProfile] = [:]
+    @Published private(set) var isBootstrapping = false
+    @Published private(set) var loadError: String?
+    @Published private(set) var seedError: String?
     @Published var searchText: String = ""
     @Published var groupFilter: CategoryGroup? = nil
 
@@ -49,20 +52,54 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     private let storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository()
 
     func bootstrap() async {
-        await CharacterLibrarySeed.seedIfNeeded(characterRepo: characterRepo, worldRepo: worldRepo)
+        guard !isBootstrapping else { return }
+        isBootstrapping = true
+        loadError = nil
+        seedError = nil
+
+        // 既存データは初期シードを待たずに表示する。大きなJSONを持つMacでも
+        // 一覧が空のまま固まったように見えないようにする。
         await reload()
+
+        let error = await CharacterLibrarySeed.seedIfNeeded(characterRepo: characterRepo, worldRepo: worldRepo)
+        seedError = error
+        await reload()
+        isBootstrapping = false
     }
 
     func reload() async {
         do {
-            self.worlds = try await worldRepo.fetchWorlds()
+            let fetchedWorlds = try await worldRepo.fetchWorlds()
+            self.worlds = deduplicatedSystemWorlds(fetchedWorlds)
             let characters = try await characterRepo.fetchCharacters()
             self.charactersById = characters.reduce(into: [:]) { result, character in
                 guard result[character.id] == nil else { return }
                 result[character.id] = character
             }
+            loadError = nil
         } catch {
-            NSLog("[StoryLibraryVM] reload failed: %@", String(describing: error))
+            let message = String(describing: error)
+            loadError = message
+            NSLog("[StoryLibraryVM] reload failed: %@", message)
+        }
+    }
+
+    func retryBootstrap() async {
+        await bootstrap()
+    }
+
+    private func deduplicatedSystemWorlds(_ fetchedWorlds: [StoryWorld]) -> [StoryWorld] {
+        var seenSystemTitles = Set<String>()
+        return fetchedWorlds.filter { world in
+            guard world.isSystemProtected == true else { return true }
+            let key = world.title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .precomposedStringWithCanonicalMapping
+            guard seenSystemTitles.insert(key).inserted else {
+                NSLog("[StoryLibraryVM] hiding duplicate system world title: %@ (%@)", world.title, world.id.uuidString)
+                return false
+            }
+            return true
         }
     }
 

@@ -25,7 +25,10 @@ enum KizunaDataMigration {
             .appendingPathComponent("LocalModels", isDirectory: true)
     }()
 
-    nonisolated private static let migrationMarker = "kizuna.migration.viuk-one.v1"
+    // v2 は、v1で「ディレクトリが存在するだけ」の移行先を有効と判定して
+    // しまったMacを一度だけ再確認する。既存ファイルを上書きしないため、
+    // すでにKizuna側で作成されたデータは保持される。
+    nonisolated private static let migrationMarker = "kizuna.migration.viuk-one.v2"
     nonisolated private static let personaKeys = [
         "persona.threads.v1",
         "persona.activeThreadID.v1",
@@ -53,31 +56,45 @@ enum KizunaDataMigration {
     @discardableResult
     nonisolated private static func migrateCharacterLibraryIfAvailable() -> Bool {
         let fileManager = FileManager.default
-        guard !fileManager.fileExists(atPath: characterLibraryURL.path) else { return true }
-
         let legacyURL = characterLibraryURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("CharacterLibrary", isDirectory: true)
 
-        let parentURL = characterLibraryURL.deletingLastPathComponent()
-        let stagingURL = parentURL.appendingPathComponent(".CharacterLibrary.migrating", isDirectory: true)
-
         do {
-            try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
-            if fileManager.fileExists(atPath: stagingURL.path) {
-                try fileManager.removeItem(at: stagingURL)
-            }
-            if fileManager.fileExists(atPath: legacyURL.path) {
-                try fileManager.copyItem(at: legacyURL, to: stagingURL)
-                try fileManager.moveItem(at: stagingURL, to: characterLibraryURL)
-            } else {
-                try fileManager.createDirectory(at: characterLibraryURL, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: characterLibraryURL, withIntermediateDirectories: true)
+            guard fileManager.fileExists(atPath: legacyURL.path) else { return true }
+
+            let fileNames = [
+                "characters.json", "lorebooks.json", "memories.json", "reports.json", "templates.json",
+                "story_cast.json", "story_lorebook.json", "story_memories.json", "story_scenes.json",
+                "story_sessions.json", "story_worlds.json"
+            ]
+            for fileName in fileNames {
+                let source = legacyURL.appendingPathComponent(fileName)
+                let destination = characterLibraryURL.appendingPathComponent(fileName)
+                guard isUsableDataFile(source), !isUsableDataFile(destination) else { continue }
+
+                // 空ファイルまたは未作成のファイルだけを補完する。非空ファイルは
+                // 壊れていても上書きせず、loadRecoveringCorruptRecords()へ委ねる。
+                let data = try Data(contentsOf: source)
+                try data.write(to: destination, options: [.atomic])
+                NSLog("[KizunaDataMigration] restored %@ from legacy CharacterLibrary", fileName)
             }
             return true
         } catch {
+            NSLog("[KizunaDataMigration] character library migration failed: %@", String(describing: error))
             return false
         }
+    }
+
+    nonisolated private static func isUsableDataFile(_ url: URL) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber else {
+            return false
+        }
+        // JSONの空配列は数バイトなので、空の保存先として扱う。
+        return size.intValue > 2
     }
 
     @discardableResult

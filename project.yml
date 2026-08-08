@@ -63,6 +63,11 @@ targets:
         buildPhase: resources
       - path: Licenses
         buildPhase: resources
+      # XcodeGenで再生成しても、Storyの初期パックをiOS/macOS両方へ同梱する。
+      # Seed処理はBundle.mainからこのファイルを読むため、明示しないと
+      # 生成後のmacOSアプリだけ一覧が空になる。
+      - path: KizunaAI/AI/CharacterLibrary/SeedData/SeedStoryPacks.json
+        buildPhase: resources
     dependencies:
       - package: LiteRTLM
         destinationFilters:

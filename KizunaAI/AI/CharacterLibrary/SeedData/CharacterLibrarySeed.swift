@@ -7,12 +7,61 @@
 import Foundation
 
 enum CharacterLibrarySeed {
+    /// StoryWorldLibraryView と PersonaChatView など複数の入口から同時に
+    /// seed が呼ばれても、同じJSONを並行して読み書きしないためのゲート。
+    /// 並行実行を許すと、両方が「まだ無い」と判断して同じ初期ストーリーを
+    /// 別UUIDで追加する。
+    private actor SeedGate {
+        private var isRunning = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func enter() async {
+            if !isRunning {
+                isRunning = true
+                return
+            }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                waiters.append(continuation)
+            }
+        }
+
+        func leave() {
+            if waiters.isEmpty {
+                isRunning = false
+            } else {
+                waiters.removeFirst().resume()
+            }
+        }
+    }
+
+    private static let seedGate = SeedGate()
+
+    /// 初期データを準備する。失敗理由は呼び出し側へ返し、一覧画面が
+    /// 「空のライブラリー」と誤認しないようにする。
+    @discardableResult
     static func seedIfNeeded(
         characterRepo: CharacterRepository,
         worldRepo: StoryWorldRepository? = nil,
         castRepo: CastRepository? = nil,
         sceneRepo: StorySceneRepository? = nil
-    ) async {
+    ) async -> String? {
+        await seedGate.enter()
+        let result = await performSeed(
+            characterRepo: characterRepo,
+            worldRepo: worldRepo,
+            castRepo: castRepo,
+            sceneRepo: sceneRepo
+        )
+        await seedGate.leave()
+        return result
+    }
+
+    private static func performSeed(
+        characterRepo: CharacterRepository,
+        worldRepo: StoryWorldRepository? = nil,
+        castRepo: CastRepository? = nil,
+        sceneRepo: StorySceneRepository? = nil
+    ) async -> String? {
         let worldRepo = worldRepo ?? LocalJSONStoryWorldRepository()
         let castRepo = castRepo ?? LocalJSONCastRepository()
         let sceneRepo = sceneRepo ?? LocalJSONStorySceneRepository()
@@ -20,28 +69,40 @@ enum CharacterLibrarySeed {
             let seeds = characterSeeds()
             var existingCharacters = try await characterRepo.fetchCharacters()
             var existingByName = dictionaryByName(existingCharacters)
+            var initialCharactersToSave: [CharacterProfile] = []
 
             for seed in seeds {
                 if var existing = existingByName[seed.name] {
                     if mergeSeedCharacter(seed, into: &existing) {
-                        try await characterRepo.saveCharacter(existing)
+                        initialCharactersToSave.append(existing)
                         existingByName[existing.name] = existing
                     }
                 } else {
-                    try await characterRepo.saveCharacter(seed)
+                    initialCharactersToSave.append(seed)
                     existingByName[seed.name] = seed
                 }
             }
 
+            try await saveCharacters(initialCharactersToSave, using: characterRepo)
+
             existingCharacters = try await characterRepo.fetchCharacters()
             existingByName = dictionaryByName(existingCharacters)
-            try await seedBundledStoryPacks(
-                characterRepo: characterRepo,
-                worldRepo: worldRepo,
-                castRepo: castRepo,
-                sceneRepo: sceneRepo,
-                existingCharactersByName: existingByName
-            )
+            var bundledPackError: String?
+            do {
+                try await seedBundledStoryPacks(
+                    characterRepo: characterRepo,
+                    worldRepo: worldRepo,
+                    castRepo: castRepo,
+                    sceneRepo: sceneRepo,
+                    existingCharactersByName: existingByName
+                )
+            } catch {
+                // Bundleリソースが古いビルドに入っていなくても、後段の標準
+                // Story seed は続行して一覧を完全に空にしない。原因は呼び出し
+                // 側へ返し、リソース構成の不備を見逃さない。
+                bundledPackError = String(describing: error)
+                NSLog("[CharacterLibrarySeed] bundled story pack failed: %@", bundledPackError ?? "unknown")
+            }
 
             let allCharacters = try await characterRepo.fetchCharacters()
             let characterIndex = dictionaryByName(allCharacters)
@@ -49,7 +110,7 @@ enum CharacterLibrarySeed {
             let existingWorlds = try await worldRepo.fetchWorlds()
             let existingWorldByTitle = dictionaryByTitle(existingWorlds)
             for package in storyWorldSeeds(characterIndex: characterIndex) {
-                if let existingWorld = existingWorldByTitle[package.world.title] {
+                if let existingWorld = existingWorldByTitle[titleKey(package.world.title)] {
                     let existingCast = try await castRepo.fetchCast(storyWorldId: existingWorld.id)
                     if existingCast.isEmpty {
                         for cast in package.cast {
@@ -83,8 +144,23 @@ enum CharacterLibrarySeed {
                     }
                 }
             }
+            return bundledPackError
         } catch {
-            NSLog("[CharacterLibrarySeed] seed failed: %@", String(describing: error))
+            let message = String(describing: error)
+            NSLog("[CharacterLibrarySeed] seed failed: %@", message)
+            return message
+        }
+    }
+
+    private static func saveCharacters(_ characters: [CharacterProfile], using repository: CharacterRepository) async throws {
+        guard !characters.isEmpty else { return }
+        if let batchRepository = repository as? BatchCharacterRepository {
+            try await batchRepository.saveCharacters(characters)
+        } else {
+            // テスト用・将来のリポジトリ向けの後方互換フォールバック。
+            for character in characters {
+                try await repository.saveCharacter(character)
+            }
         }
     }
 
@@ -125,9 +201,16 @@ enum CharacterLibrarySeed {
 
     private static func dictionaryByTitle(_ worlds: [StoryWorld]) -> [String: StoryWorld] {
         worlds.reduce(into: [:]) { result, world in
-            guard result[world.title] == nil else { return }
-            result[world.title] = world
+            let key = titleKey(world.title)
+            guard result[key] == nil else { return }
+            result[key] = world
         }
+    }
+
+    private static func titleKey(_ title: String) -> String {
+        title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
     }
 
     private static func seedBundledStoryPacks(
@@ -137,8 +220,9 @@ enum CharacterLibrarySeed {
         sceneRepo: StorySceneRepository,
         existingCharactersByName: [String: CharacterProfile]
     ) async throws {
-        guard let pack = loadBundledStoryPack() else { return }
+        let pack = try loadBundledStoryPack()
         var charactersByName = existingCharactersByName
+        var charactersToSaveByID: [UUID: CharacterProfile] = [:]
         var worldsByTitle = dictionaryByTitle(try await worldRepo.fetchWorlds())
 
         for item in pack.stories {
@@ -147,12 +231,12 @@ enum CharacterLibrarySeed {
                 let profile = makeCharacter(from: characterSeed, story: item.story)
                 if var existing = charactersByName[profile.name] {
                     if mergeSeedCharacter(profile, into: &existing) {
-                        try await characterRepo.saveCharacter(existing)
+                        charactersToSaveByID[existing.id] = existing
                     }
                     charactersByName[existing.name] = existing
                     storyCharacters.append(existing)
                 } else {
-                    try await characterRepo.saveCharacter(profile)
+                    charactersToSaveByID[profile.id] = profile
                     charactersByName[profile.name] = profile
                     storyCharacters.append(profile)
                 }
@@ -183,7 +267,7 @@ enum CharacterLibrarySeed {
             )
 
             let targetWorld: StoryWorld
-            if var existing = worldsByTitle[world.title] {
+            if var existing = worldsByTitle[titleKey(world.title)] {
                 var changed = false
                 if existing.isSystemProtected != true {
                     existing.isSystemProtected = true
@@ -206,10 +290,10 @@ enum CharacterLibrarySeed {
                     try await worldRepo.saveWorld(existing)
                 }
                 targetWorld = existing
-                worldsByTitle[existing.title] = existing
+                worldsByTitle[titleKey(existing.title)] = existing
             } else {
                 try await worldRepo.saveWorld(world)
-                worldsByTitle[world.title] = world
+                worldsByTitle[titleKey(world.title)] = world
                 targetWorld = world
             }
 
@@ -287,14 +371,34 @@ enum CharacterLibrarySeed {
                 try await sceneRepo.saveScene(scene)
             }
         }
+
+        try await saveCharacters(Array(charactersToSaveByID.values), using: characterRepo)
     }
 
-    private static func loadBundledStoryPack() -> BundledStoryPack? {
-        guard let url = Bundle.main.url(forResource: "SeedStoryPacks", withExtension: "json"),
-              let data = try? Data(contentsOf: url) else {
-            return nil
+    private enum SeedError: LocalizedError {
+        case bundledStoryPackMissing
+        case bundledStoryPackInvalid(underlying: Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .bundledStoryPackMissing:
+                return "SeedStoryPacks.json がアプリのリソースにありません。"
+            case .bundledStoryPackInvalid(let underlying):
+                return "SeedStoryPacks.json の読み込みに失敗しました: \(underlying)"
+            }
         }
-        return try? JSONDecoder().decode(BundledStoryPack.self, from: data)
+    }
+
+    private static func loadBundledStoryPack() throws -> BundledStoryPack {
+        guard let url = Bundle.main.url(forResource: "SeedStoryPacks", withExtension: "json") else {
+            throw SeedError.bundledStoryPackMissing
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(BundledStoryPack.self, from: data)
+        } catch {
+            throw SeedError.bundledStoryPackInvalid(underlying: error)
+        }
     }
 
     private static func makeCharacter(from seed: BundledCharacter, story: BundledStory) -> CharacterProfile {

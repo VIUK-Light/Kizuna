@@ -60,6 +60,44 @@ actor LocalJSONStore<T: Codable> {
         }
     }
 
+    /// 配列内の一部レコードだけが壊れている場合に、読めるレコードを救出する。
+    ///
+    /// 旧バージョンで保存された enum 値や途中終了したJSONが1件あるだけで
+    /// ファイル全体の decode が失敗し、一覧が空になる問題を防ぐ。壊れた
+    /// レコードは削除せず、インデックスと原因だけをログへ残す。書き戻しは
+    /// 行わないため、ユーザーのデータを自動的に失わない。
+    func loadRecoveringCorruptRecords() async throws -> [T] {
+        try LocalJSONStoreFileLock.shared.withLock {
+            do {
+                return try loadUnlocked()
+            } catch let decodeError as LocalJSONStoreError {
+                guard case .decode = decodeError else { throw decodeError }
+                guard fm.fileExists(atPath: fileURL.path) else { throw decodeError }
+
+                let data = try Data(contentsOf: fileURL)
+                guard let rawItems = try JSONSerialization.jsonObject(with: data) as? [Any] else {
+                    throw decodeError
+                }
+
+                var validItems: [T] = []
+                var invalidCount = 0
+                for (index, rawItem) in rawItems.enumerated() {
+                    do {
+                        let itemData = try JSONSerialization.data(withJSONObject: rawItem, options: [.fragmentsAllowed])
+                        validItems.append(try decoder.decode(T.self, from: itemData))
+                    } catch {
+                        invalidCount += 1
+                        NSLog("[LocalJSONStore] skipped invalid %@ record at index %ld: %@", fileName, index, String(describing: error))
+                    }
+                }
+
+                guard invalidCount > 0 else { throw decodeError }
+                NSLog("[LocalJSONStore] recovered %@ for read: %ld valid, %ld invalid; source was not modified", fileName, validItems.count, invalidCount)
+                return validItems
+            }
+        }
+    }
+
     func save(_ items: [T]) async throws {
         try LocalJSONStoreFileLock.shared.withLock {
             try saveUnlocked(items)
