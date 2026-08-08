@@ -63,8 +63,8 @@ struct KizunaSettingsView: View {
                         }
                     }
                     Text(KizunaCopy.text(
-                        japanese: "プロフィールは端末内だけに保存され、会話を自然にするために必要な場合だけ使われます。",
-                        english: "Your profile stays on this device and is used only when it helps make a conversation natural."
+                        japanese: "プロフィールは端末内の設定として保存されます。生成時は会話に必要な範囲だけ、選択中のモデル（NAGIを含む）へ渡されます。",
+                        english: "Your profile is stored in this app. Only relevant fields are included in the selected model request, including NAGI."
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -26,8 +26,8 @@ struct KizunaUserProfileView: View {
                                  : draft.visibleName)
                                 .font(.headline)
                             Text(KizunaCopy.text(
-                                japanese: "入力した内容は端末内に保存されます。空欄のままでも使えます。",
-                                english: "Your entries stay on this device. You can leave everything blank."
+                                japanese: "入力した内容は端末内に保存されます。生成時は必要な項目だけ選択中のモデルへ渡ります。空欄のままでも使えます。",
+                                english: "Your entries are stored in this app. Only relevant fields are sent with a generation request. You can leave everything blank."
                             ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
