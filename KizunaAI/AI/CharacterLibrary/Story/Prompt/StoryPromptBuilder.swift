@@ -284,7 +284,7 @@ struct StoryPromptBuilder {
             profile.rules.forEach(push)
         }
         safetyDecision?.addedPromptRules.forEach(push)
-        push("出力は2〜7行。基本形は「ナレーション: 短い場面描写」→「NPC名: 発話」。通常はNPC 1人だけが返す。")
+        push("出力は1〜3行。基本は「NPC名: 発話」を1行だけ返す。場所・時間・目的が実際に変化した時、またはユーザーが明示的に求めた時だけ、その前に「ナレーション: 短い場面描写」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答を繰り返さない。通常はNPC 1人だけが返す。")
         if world.isSoloStory {
             push("これは単体物語。active NPCは必ず1人だけにし、inactiveのキャラを勝手に登場させない。")
         } else {
@@ -323,8 +323,7 @@ struct StoryPromptBuilder {
         sections.append(
             """
             ## \(copy("出力開始", "Output start"))
-            \(copy("1行目は「ナレーション: 本文」。", "The first line must be Narration: text."))
-            \(copy("その後は必要な人数だけ「\(speakerHint): 発話」を続ける。ユーザー操作キャラの名前は使わない。", "Then use only the necessary speakers as \(speakerHint): dialogue. Never use the user's character name."))
+            \(copy("まず「\(speakerHint): 発話」を返す。場所・時間・目的が実際に変化した時だけ、必要なら前置きに「ナレーション: 本文」を1行添える。ユーザー操作キャラの名前は使わない。", "Start with \(speakerHint): dialogue. Add one Narration: text line only when the location, time, or goal actually changes. Never use the user's character name."))
             """
         )
 
@@ -357,8 +356,8 @@ struct StoryPromptBuilder {
                 ? "You are the scene partner in a Kizuna story chat. Reply in English only; no reasoning, explanations, translations, lists, or symbol-only output."
                 : "あなたは絆の物語チャットの相手役です。本文は日本語だけを返す。思考、説明、翻訳、箇条書き、記号だけの返答は禁止。",
             isEnglish
-                ? "Reply in exactly two lines: first \"Narration: a short scene description\", then \"\(npcName): a natural reply\". Never invent the user's dialogue, actions, or feelings."
-                : "必ず2行で返す: 1行目は「ナレーション: 短い場面描写」、2行目は「\(npcName): 自然な返事」。ユーザーの台詞・行動・感情は代弁しない。"
+                ? "Start with \(npcName): a natural reply. Add one Narration: text line only when the location, time, or goal changes or the user explicitly asks for it. Do not repeat the previous scene, greeting, or reply. Never invent the user's dialogue, actions, or feelings."
+                : "基本は「\(npcName): 自然な返事」を1行だけ返す。場所・時間・目的が実際に変化した時、またはユーザーが明示した時だけ、その前に短い「ナレーション: 本文」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答は禁止。ユーザーの台詞・行動・感情は代弁しない。"
         ]
         if let userCharacterName, !userCharacterName.isEmpty {
             lines.append(isEnglish
