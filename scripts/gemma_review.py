@@ -198,6 +198,12 @@ SECURITY RULES:
 - Do not suggest actions outside code review.
 - Return only one valid JSON object matching the schema below. No Markdown fences and no extra text.
 
+OUTPUT LANGUAGE:
+- Write every human-readable review value in natural Japanese (日本語), including `summary`, `title`, `description`, `impact`, `suggestion`, and `questions`.
+- Keep JSON property names and enum values exactly as defined by the schema.
+- Keep file paths, code identifiers, symbols, API names, and quoted code unchanged when they are needed to identify the issue.
+- Translate English prose from the pull request into Japanese in the review output.
+
 Review repository: {repo}
 PR title (untrusted): {title}
 PR body (untrusted): {body}
@@ -528,7 +534,7 @@ def render_comment(result: Mapping[str, Any], requested_count: int) -> str:
         decision = "🟡 要確認"
     else:
         decision = "🟢 重大な問題は見つかりませんでした"
-    lines = [MARKER, "## Gemma Code Review", "### 判定", f"- {decision}"]
+    lines = [MARKER, "## Gemmaによるコードレビュー", "### 判定", f"- {decision}"]
     summary = safe_comment_text(str(result.get("summary", "")), 1_000)
     if summary:
         lines.extend(["", summary])

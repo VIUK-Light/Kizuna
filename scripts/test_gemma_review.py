@@ -23,6 +23,17 @@ class GemmaReviewTests(unittest.TestCase):
         self.assertEqual(sum(len(chunk.files) for chunk in chunks), 4)
         self.assertFalse(skipped)
 
+    def test_prompt_requires_japanese_output(self):
+        changed = review.ChangedFile("A.swift", "modified", "@@ -1 +1 @@\n+let value = 1")
+        prompt = review.prompt_for(
+            "VIUK-Light/Kizuna",
+            "Test",
+            "",
+            review.ReviewChunk((changed,), changed.patch),
+        )
+        self.assertIn("日本語", prompt)
+        self.assertIn("`summary`", prompt)
+
     def test_invalid_line_is_removed(self):
         changed = review.ChangedFile("A.swift", "modified", "@@ -1 +10 @@\n+let value = 1")
         result = review.validate_result({"severity": "critical", "findings": [{"severity": "critical", "file": "A.swift", "line": 1}]}, review.ReviewChunk((changed,), changed.patch))
