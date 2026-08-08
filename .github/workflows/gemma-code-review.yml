@@ -1,4 +1,4 @@
-name: Gemma Code Review
+name: Gemmaによるコードレビュー
 
 on:
   pull_request:
@@ -43,7 +43,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Review pull request with Gemma
+      - name: Gemmaでプルリクエストをレビュー
         if: ${{ env.GEMINI_API_KEY != '' }}
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
