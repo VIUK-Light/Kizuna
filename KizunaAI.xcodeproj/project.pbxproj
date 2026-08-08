@@ -55,6 +55,7 @@
 		8C633EAE45E94C4520E03651 /* LocalAssistantModelProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */; };
 		8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */ = {isa = PBXBuildFile; fileRef = E98EDDBA3B31E35BEC97A9F6 /* SmallModelClassifying.swift */; };
 		8FDCB3669503DEDD95786DA0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */; };
+		95168A37B2B238D2C0275B1C /* StoryCoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF83E846745A39722C75FF61 /* StoryCoverView.swift */; };
 		982F92EFA64D2780DE84F242 /* StoryViewModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4021480B714F2F541000C5DD /* StoryViewModels.swift */; };
 		9887C1FE76FBC8C15A077800 /* StoryWorldCreateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */; };
 		99EEED1D246FEA523C1D6D17 /* CharacterLibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FB7C20DBE13F7AA0FD7580B /* CharacterLibraryViewModel.swift */; };
@@ -180,6 +181,7 @@
 		F85DE09496F7B036AD13EE3A /* MockSceneAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSceneAdapters.swift; sourceTree = "<group>"; };
 		F91A09679C3C6E56FF05DEBE /* cpp-httplib-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "cpp-httplib-MIT.txt"; sourceTree = "<group>"; };
 		FD2D05C43FEC8B0D00124179 /* CharacterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterDetailView.swift; sourceTree = "<group>"; };
+		FF83E846745A39722C75FF61 /* StoryCoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryCoverView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -349,6 +351,7 @@
 		5E6EDD362DE7317D83CAE157 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				FF83E846745A39722C75FF61 /* StoryCoverView.swift */,
 				7BD3421C167EB41A06E443C2 /* StorySessionChatView.swift */,
 				A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */,
 				3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */,
@@ -676,6 +679,7 @@
 				43A8E84FD2A1382EA5583EFB /* SafetyTypes.swift in Sources */,
 				06D0D93E289A58585617D2D9 /* SceneProtocols.swift in Sources */,
 				8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */,
+				95168A37B2B238D2C0275B1C /* StoryCoverView.swift in Sources */,
 				8AFDA9C31775F30993E618BB /* StoryGemma31BAPIService.swift in Sources */,
 				56BA4549A1AF6BB5C5DCF65D /* StoryLocalization.swift in Sources */,
 				869DABD7EBE6CAFDFFA95FB5 /* StoryModels.swift in Sources */,

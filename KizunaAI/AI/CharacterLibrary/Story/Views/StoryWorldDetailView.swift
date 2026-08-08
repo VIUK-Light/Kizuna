@@ -196,18 +196,10 @@ struct StoryWorldDetailView: View {
     }
 
     private var relationshipHero: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.40, green: 0.46, blue: 0.70),
-                            Color(red: 0.12, green: 0.13, blue: 0.18)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+        let coverCharacter = vm.characterIndex[world.mainCharacterId ?? UUID()]
+            ?? vm.characterIndex.values.first
+        return VStack(alignment: .leading, spacing: 18) {
+            StoryCoverView(world: displayedWorld, character: coverCharacter)
                 .aspectRatio(1.22, contentMode: .fit)
                 .overlay(alignment: .topLeading) {
                     Image(systemName: world.genre.group.iconName)
@@ -217,7 +209,7 @@ struct StoryWorldDetailView: View {
                 }
                 .overlay(alignment: .bottomLeading) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(vm.characterIndex[world.mainCharacterId ?? UUID()]?.displayName ?? displayedWorld.genre.group.localizedDisplayName)
+                        Text(coverCharacter?.displayName ?? displayedWorld.genre.group.localizedDisplayName)
                             .font(.system(size: 15, weight: .bold))
                         Text(displayedWorld.mood.isEmpty ? displayedWorld.relationshipGenre.localizedDisplayName : displayedWorld.mood)
                             .font(.system(size: 12, weight: .semibold))

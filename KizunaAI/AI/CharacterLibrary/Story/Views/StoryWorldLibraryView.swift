@@ -5,30 +5,6 @@
 */
 
 import SwiftUI
-#if canImport(AppKit)
-import AppKit
-#endif
-#if canImport(UIKit)
-import UIKit
-#endif
-
-#if canImport(AppKit)
-private typealias StoryLibraryPlatformImage = NSImage
-#elseif canImport(UIKit)
-private typealias StoryLibraryPlatformImage = UIImage
-#endif
-
-private extension Image {
-    init(storyLibraryPlatformImage: StoryLibraryPlatformImage) {
-        #if canImport(AppKit)
-        self.init(nsImage: storyLibraryPlatformImage)
-        #elseif canImport(UIKit)
-        self.init(uiImage: storyLibraryPlatformImage)
-        #else
-        self.init(systemName: "person.crop.rectangle")
-        #endif
-    }
-}
 
 struct StoryWorldLibraryView: View {
     @StateObject private var vm = StoryWorldLibraryViewModel()
@@ -257,7 +233,7 @@ struct StoryWorldLibraryView: View {
         return Button { selected = w } label: {
             VStack(alignment: .leading, spacing: 12) {
                 ZStack(alignment: .bottomLeading) {
-                    coverImage(for: coverCharacter, genre: w.genre)
+                    StoryCoverView(world: displayedWorld, character: coverCharacter)
                         .frame(maxWidth: .infinity)
                         .frame(height: 230)
                         .clipped()
@@ -346,53 +322,4 @@ struct StoryWorldLibraryView: View {
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private func coverImage(for character: CharacterProfile?, genre: CharacterCategory) -> some View {
-        if let data = character?.avatarImageData,
-           let image = storyLibraryPlatformImage(from: data) {
-            Image(storyLibraryPlatformImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let key = character?.imageKey,
-                  !key.isEmpty,
-                  let image = storyLibraryPlatformImage(named: key) {
-            Image(storyLibraryPlatformImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ZStack {
-                LinearGradient(
-                    colors: [Color.accentColor.opacity(0.72), Color.primary.opacity(0.18)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                Image(systemName: genre.group.iconName)
-                    .font(.system(size: 48, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.82))
-            }
-        }
-    }
-
-    private func storyLibraryPlatformImage(from data: Data) -> StoryLibraryPlatformImage? {
-        #if canImport(AppKit)
-        return NSImage(data: data)
-        #elseif canImport(UIKit)
-        return UIImage(data: data)
-        #else
-        return nil
-        #endif
-    }
-
-    // 未登録の画像名をSwiftUIへ渡さず、ログを発生させない。
-    private func storyLibraryPlatformImage(named name: String) -> StoryLibraryPlatformImage? {
-        #if canImport(AppKit)
-        return NSImage(named: name)
-        #elseif canImport(UIKit)
-        return UIImage(named: name)
-        #else
-        return nil
-        #endif
-    }
 }

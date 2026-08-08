@@ -51,6 +51,11 @@ struct KizunaSettingsView: View {
                             )
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            if profileStore.profile.hasUsefulContent {
+                                Text(profileStore.profile.storyPreference.displayName)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tint)
+                            }
                         }
                         Spacer()
                         Button(KizunaCopy.text(japanese: "編集", english: "Edit")) {
