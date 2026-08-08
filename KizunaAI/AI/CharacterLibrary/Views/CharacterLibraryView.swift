@@ -188,14 +188,14 @@ struct CharacterLibraryView: View {
                     pickerChip(
                         label: "グループ",
                         icon: "square.grid.2x2",
-                        selection: vm.groupFilter?.displayName
+                        selection: vm.groupFilter?.localizedDisplayName
                     ) {
                         Menu {
                             Button("すべて") { vm.groupFilter = nil; vm.categoryFilter = nil }
                             Divider()
                             ForEach(CategoryGroup.allCases) { g in
                                 Button(action: { vm.groupFilter = g; vm.categoryFilter = nil }) {
-                                    Label(g.displayName, systemImage: g.iconName)
+                                    Label(g.localizedDisplayName, systemImage: g.iconName)
                                 }
                             }
                         } label: { EmptyView() }
@@ -206,13 +206,13 @@ struct CharacterLibraryView: View {
                         pickerChip(
                             label: "カテゴリー",
                             icon: "tag",
-                            selection: vm.categoryFilter?.displayName
+                        selection: vm.categoryFilter?.localizedDisplayName
                         ) {
                             Menu {
                                 Button("すべて") { vm.categoryFilter = nil }
                                 Divider()
                                 ForEach(cats) { c in
-                                    Button(c.displayName) { vm.categoryFilter = c }
+                                    Button(c.localizedDisplayName) { vm.categoryFilter = c }
                                 }
                             } label: { EmptyView() }
                         }
@@ -221,13 +221,13 @@ struct CharacterLibraryView: View {
                     pickerChip(
                         label: "ジャンル",
                         icon: "heart.text.square",
-                        selection: vm.genreFilter?.displayName
+                        selection: vm.genreFilter?.localizedDisplayName
                     ) {
                         Menu {
                             Button("すべて") { vm.genreFilter = nil }
                             Divider()
                             ForEach(RelationshipGenre.allCases) { g in
-                                Button(g.displayName) { vm.genreFilter = g }
+                                Button(g.localizedDisplayName) { vm.genreFilter = g }
                             }
                         } label: { EmptyView() }
                     }
@@ -366,7 +366,7 @@ struct CharacterLibraryView: View {
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
-                        Text(c.category.displayName + "・" + c.relationshipGenre.displayName)
+                        Text(c.category.localizedDisplayName + "・" + c.relationshipGenre.localizedDisplayName)
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

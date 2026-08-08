@@ -74,6 +74,14 @@ struct PromptBuilder {
             )
         }
 
+        let userProfile = LocalAssistantRuntimeBridge.userProfileAddendum
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !userProfile.isEmpty {
+            sections.append(
+                "## 相手が共有したプロフィール\n\(userProfile)\n(この情報を必要な時だけ自然に活かし、プロフィールを読み上げたり、保存を主張したりしない)"
+            )
+        }
+
         // 直近会話
         if !recentMessages.isEmpty {
             let convo = recentMessages.map { msg -> String in

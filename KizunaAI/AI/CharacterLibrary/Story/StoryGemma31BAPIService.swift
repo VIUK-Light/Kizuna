@@ -74,18 +74,12 @@ final class StoryGemma31BAPIService {
         \(userPrompt)
         """
 
-        let body = try encoder.encode(GenerateContentRequest(
-            contents: [
-                Content(role: "user", parts: [Part(text: prompt)])
-            ],
-            generationConfig: GenerationConfig(
-                temperature: temperature,
-                topP: 0.92,
-                maxOutputTokens: maxOutputTokens,
-                // Gemma 4 APIではThinkingをgenerationConfigで明示的に有効化する。
-                thinkingConfig: ThinkingConfig(thinkingLevel: "high")
-            )
-        ))
+        let body = try makeRequestBody(
+            prompt: prompt,
+            temperature: temperature,
+            maxOutputTokens: maxOutputTokens,
+            thinkingLevel: "high"
+        )
 
         let data = try await performRequestWithRetry(
             apiKey: apiKey,
@@ -94,17 +88,84 @@ final class StoryGemma31BAPIService {
         )
 
         let decoded = try decoder.decode(GenerateContentResponse.self, from: data)
-        let text = decoded.candidates?
+        if let text = visibleText(from: decoded), !text.isEmpty {
+            return text
+        }
+
+        logEmptyResponse(decoded)
+
+        // 高いThinking予算が候補を使い切る端末・入力では、Thinkingを切らずに
+        // 中程度へ下げて本文の余白を確保する。空本文の時だけ一度実行するため、
+        // 通常ターンの待ち時間やAPI使用量は増やさない。
+        let fallbackBody = try makeRequestBody(
+            prompt: prompt,
+            temperature: temperature,
+            maxOutputTokens: max(maxOutputTokens, 1_536),
+            thinkingLevel: "medium"
+        )
+        let fallbackData = try await performRequestWithRetry(
+            apiKey: apiKey,
+            body: fallbackBody,
+            modelNames: [primaryModelName] + fallbackModelNames
+        )
+        let fallbackResponse = try decoder.decode(GenerateContentResponse.self, from: fallbackData)
+        if let text = visibleText(from: fallbackResponse), !text.isEmpty {
+            return text
+        }
+        logEmptyResponse(fallbackResponse)
+        throw StoryGemma31BAPIError.emptyText
+    }
+
+    private func makeRequestBody(
+        prompt: String,
+        temperature: Double,
+        maxOutputTokens: Int,
+        thinkingLevel: String
+    ) throws -> Data {
+        try encoder.encode(GenerateContentRequest(
+            contents: [
+                Content(role: "user", parts: [Part(text: prompt)])
+            ],
+            generationConfig: GenerationConfig(
+                temperature: temperature,
+                topP: 0.92,
+                maxOutputTokens: maxOutputTokens,
+                // Gemma 4 APIではThinkingを常に有効化する。medium は空本文時だけの復旧用。
+                thinkingConfig: ThinkingConfig(thinkingLevel: thinkingLevel)
+            )
+        ))
+    }
+
+    private func visibleText(from response: GenerateContentResponse) -> String? {
+        response.candidates?
             .flatMap { $0.content?.parts ?? [] }
             // 思考過程は会話本文・次ターンの履歴へ保存しない。
             .filter { $0.thought != true }
             .compactMap(\.text)
             .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !text.isEmpty else {
-            throw StoryGemma31BAPIError.emptyText
-        }
-        return text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func logEmptyResponse(_ response: GenerateContentResponse) {
+        let candidates = response.candidates ?? []
+        let parts = candidates.flatMap { $0.content?.parts ?? [] }
+        let thoughtParts = parts.filter { $0.thought == true }.count
+        let textParts = parts.filter { !($0.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) }.count
+        let finishReasons = candidates.compactMap(\.finishReason).joined(separator: ",")
+        let blockReason = response.promptFeedback?.blockReason ?? "none"
+        let promptTokens = response.usageMetadata?.promptTokenCount ?? -1
+        let outputTokens = response.usageMetadata?.candidatesTokenCount ?? -1
+        NSLog(
+            "[StoryGemma31B] empty visible text candidates=%d parts=%d textParts=%d thoughtParts=%d finish=%@ block=%@ promptTokens=%d outputTokens=%d",
+            candidates.count,
+            parts.count,
+            textParts,
+            thoughtParts,
+            finishReasons.isEmpty ? "none" : finishReasons,
+            blockReason,
+            promptTokens,
+            outputTokens
+        )
     }
 
     private func performRequestWithRetry(
@@ -196,9 +257,23 @@ final class StoryGemma31BAPIService {
 
     private struct GenerateContentResponse: Decodable {
         let candidates: [Candidate]?
+        let promptFeedback: PromptFeedback?
+        let usageMetadata: UsageMetadata?
     }
 
     private struct Candidate: Decodable {
+        let index: Int?
         let content: Content?
+        let finishReason: String?
+    }
+
+    private struct PromptFeedback: Decodable {
+        let blockReason: String?
+    }
+
+    private struct UsageMetadata: Decodable {
+        let promptTokenCount: Int?
+        let candidatesTokenCount: Int?
+        let thoughtsTokenCount: Int?
     }
 }

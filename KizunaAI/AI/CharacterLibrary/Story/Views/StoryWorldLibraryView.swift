@@ -252,6 +252,7 @@ struct StoryWorldLibraryView: View {
     }
 
     private func worldCard(_ w: StoryWorld) -> some View {
+        let displayedWorld = w.localizedForCurrentLanguage
         let coverCharacter = vm.coverCharacter(for: w)
         return Button { selected = w } label: {
             VStack(alignment: .leading, spacing: 12) {
@@ -270,11 +271,11 @@ struct StoryWorldLibraryView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         HStack(alignment: .bottom) {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(w.title)
+                                Text(displayedWorld.title)
                                     .font(.system(size: 18, weight: .bold))
                                     .foregroundStyle(.white)
                                     .lineLimit(2)
-                                Text(coverCharacter?.displayName ?? w.genre.group.displayName)
+                                Text(coverCharacter?.displayName ?? displayedWorld.genre.group.localizedDisplayName)
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.white.opacity(0.86))
                             }
@@ -283,7 +284,7 @@ struct StoryWorldLibraryView: View {
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.white.opacity(0.84))
                         }
-                        Text(w.mood.isEmpty ? w.genre.group.displayName : w.mood)
+                        Text(displayedWorld.mood.isEmpty ? displayedWorld.genre.group.localizedDisplayName : displayedWorld.mood)
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(1)
@@ -292,12 +293,12 @@ struct StoryWorldLibraryView: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                if !w.shortDescription.isEmpty {
-                    Text(w.shortDescription)
+                if !displayedWorld.shortDescription.isEmpty {
+                    Text(displayedWorld.shortDescription)
                         .font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary).lineLimit(2)
                 }
-                if !w.openingScene.isEmpty {
-                    Text("「\(w.openingScene)」")
+                if !displayedWorld.openingScene.isEmpty {
+                    Text("「\(displayedWorld.openingScene)」")
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(.primary.opacity(0.82))
                         .lineLimit(3)
@@ -309,23 +310,26 @@ struct StoryWorldLibraryView: View {
                         )
                 }
                 HStack(spacing: 4) {
-                    Text(w.genre.displayName)
+                    Text(displayedWorld.genre.localizedDisplayName)
                         .font(.system(size: 10, weight: .semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentColor.opacity(0.12)))
                         .foregroundStyle(Color.accentColor)
-                    Text(w.relationshipGenre.displayName)
+                    Text(displayedWorld.relationshipGenre.localizedDisplayName)
                         .font(.system(size: 10, weight: .semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.purple.opacity(0.12)))
                         .foregroundStyle(.purple)
                     Spacer()
-                    Label("\(w.characterIds.count)人", systemImage: "person.3.fill")
+                    Label(
+                        KizunaCopy.language == .english ? "\(w.characterIds.count) people" : "\(w.characterIds.count)人",
+                        systemImage: "person.3.fill"
+                    )
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
-                if !w.tags.isEmpty {
-                    Text(w.tags.prefix(4).map { "#\($0)" }.joined(separator: "  "))
+                if !displayedWorld.tags.isEmpty {
+                    Text(displayedWorld.tags.prefix(4).map { "#\($0)" }.joined(separator: "  "))
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)

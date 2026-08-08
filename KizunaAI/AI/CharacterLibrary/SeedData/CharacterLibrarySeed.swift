@@ -211,6 +211,8 @@ enum CharacterLibrarySeed {
         title
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .precomposedStringWithCanonicalMapping
+            .lowercased()
+            .filter { !$0.isWhitespace && !$0.isPunctuation && $0 != "\u{200B}" }
     }
 
     private struct PreparedBundledStory {

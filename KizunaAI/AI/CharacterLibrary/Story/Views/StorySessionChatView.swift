@@ -52,9 +52,12 @@ struct StorySessionChatView: View {
     @State private var isShowingRestHelp = false
 
     init(world: StoryWorld, initialSessionID: UUID? = nil) {
-        self.world = world
+        // 一覧・詳細以外の入口から直接開かれても、現在の表示言語を
+        // セッション生成へ引き継ぐ。保存データ自体は日本語のまま保持する。
+        let localizedWorld = world.localizedForCurrentLanguage
+        self.world = localizedWorld
         self.initialSessionID = initialSessionID
-        _detailVM = StateObject(wrappedValue: StoryWorldDetailViewModel(world: world))
+        _detailVM = StateObject(wrappedValue: StoryWorldDetailViewModel(world: localizedWorld))
     }
 
     var body: some View {
@@ -541,12 +544,23 @@ private struct StorySessionChatBody: View {
             if let previous = result.last,
                case let .cast(previousID, _) = previous.author,
                case let .cast(currentID, _) = message.author,
-               previousID == currentID {
+               previousID == currentID,
+               normalizedDuplicateText(previous.text) == normalizedDuplicateText(message.text) {
+                // 同じ生成ターンの再試行や古い保存データで完全に同じ本文が
+                // 連続している場合だけ隠す。別内容の同一キャラ発話は残す。
                 continue
             }
             result.append(message)
         }
         return result
+    }
+
+    private func normalizedDuplicateText(_ text: String) -> String {
+        text
+            .precomposedStringWithCanonicalMapping
+            .localizedLowercase
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined()
     }
 
     private var sceneStrip: some View {

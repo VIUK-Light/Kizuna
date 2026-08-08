@@ -33,63 +33,81 @@ struct StoryPromptBuilder {
         userCharacterName: String? = nil
     ) -> String {
         var sections: [String] = []
+        let isEnglish = KizunaCopy.language == .english
+        func copy(_ japanese: String, _ english: String) -> String {
+            isEnglish ? english : japanese
+        }
+        let narratorLabel = copy("ナレーション", "Narration")
 
         // ── 冒頭 ──
         sections.append(
-            """
-            あなたは下記の物語世界を進める語り手です。ユーザーは物語内の相手役です。
-            返答は絆チャットとして、今の場面から自然に続く本文だけを書きます。
-            出力言語は日本語です。英語、翻訳、内部メモ、思考過程、計画、候補、前置き、自己説明は出しません。
-            ユーザーが操作する主人公の行動・感情・台詞は、ユーザーの入力に書かれたものだけです。AIは主人公を代弁しません。
-            基本は現在の相手役であるNPC 1人が返します。場面上の反応が必要な時だけ、NPCを最大2人まで短く返します。
-            場面描写は必要に応じて「ナレーション: 本文」として添えます。
-            """
+            isEnglish
+                ? """
+                  You are the narrator and scene partner for the story world below. The user controls the protagonist.
+                  Continue naturally from the current scene and write only the next story text for the Kizuna chat.
+                  Output only English. Do not output translations, hidden notes, reasoning, plans, choices, preambles, or self-explanations.
+                  Never invent the user's actions, feelings, or dialogue. Normally one active NPC replies; add a second NPC only when the scene truly needs it.
+                  When useful, add a short scene description as "Narration: text".
+                  """
+                : """
+                  あなたは下記の物語世界を進める語り手です。ユーザーは物語内の相手役です。
+                  返答は絆チャットとして、今の場面から自然に続く本文だけを書きます。
+                  出力言語は日本語です。翻訳、内部メモ、思考過程、計画、候補、前置き、自己説明は出しません。
+                  ユーザーが操作する主人公の行動・感情・台詞は、ユーザーの入力に書かれたものだけです。AIは主人公を代弁しません。
+                  基本は現在の相手役であるNPC 1人が返します。場面上の反応が必要な時だけ、NPCを最大2人まで短く返します。
+                  場面描写は必要に応じて「ナレーション: 本文」として添えます。
+                  """
         )
 
         if let userCharacterName {
             sections.append(
                 """
-                ## ユーザー操作キャラ
+                ## \(copy("ユーザー操作キャラ", "User-controlled character"))
                 \(userCharacterName)
-                このキャラはユーザー本人です。AIは「\(userCharacterName):」という発話行を絶対に生成しません。
-                ユーザーの返答が必要な場面では、ナレーションで間を残して止めます。
+                \(copy("このキャラはユーザー本人です。AIは「\(userCharacterName):」という発話行を絶対に生成しません。ユーザーの返答が必要な場面では、ナレーションで間を残して止めます。", "This is the user's character. Never generate a line beginning with \(userCharacterName):. Leave space for the user when their response is needed."))
                 """
             )
         }
 
         // ── 世界観 ──
         var worldLines: [String] = []
-        worldLines.append("タイトル: \(world.title)")
-        if !world.shortDescription.isEmpty { worldLines.append("概要: \(world.shortDescription)") }
-        if !world.worldSetting.isEmpty { worldLines.append("世界観: \(world.worldSetting)") }
-        if !world.userRole.isEmpty { worldLines.append("あなた (相手 = ユーザー) の役: \(world.userRole)") }
-        if !world.storyGoal.isEmpty { worldLines.append("物語の目標: \(world.storyGoal)") }
-        if !world.mood.isEmpty { worldLines.append("ムード: \(world.mood)") }
-        worldLines.append("ジャンル: \(world.genre.displayName) ・ 関係性: \(world.relationshipGenre.displayName)")
-        worldLines.append(generationModel.promptHint)
-        sections.append("## 世界\n" + worldLines.joined(separator: "\n"))
+        worldLines.append("\(copy("タイトル", "Title")): \(world.title)")
+        if !world.shortDescription.isEmpty { worldLines.append("\(copy("概要", "Summary")): \(world.shortDescription)") }
+        if !world.worldSetting.isEmpty { worldLines.append("\(copy("世界観", "World setting")): \(world.worldSetting)") }
+        if !world.userRole.isEmpty { worldLines.append("\(copy("あなた (相手 = ユーザー) の役", "User's role")): \(world.userRole)") }
+        if !world.storyGoal.isEmpty { worldLines.append("\(copy("物語の目標", "Story goal")): \(world.storyGoal)") }
+        if !world.mood.isEmpty { worldLines.append("\(copy("ムード", "Mood")): \(world.mood)") }
+        worldLines.append("\(copy("ジャンル", "Genre")): \(world.genre.localizedDisplayName) ・ \(copy("関係性", "Relationship")): \(world.relationshipGenre.localizedDisplayName)")
+        worldLines.append(generationModel.localizedPromptHint)
+        sections.append("## \(copy("世界", "World"))\n" + worldLines.joined(separator: "\n"))
 
         // ── シーン ──
         var sceneLines: [String] = []
-        if !scene.title.isEmpty { sceneLines.append("シーン名: \(scene.title)") }
-        if !scene.location.isEmpty { sceneLines.append("場所: \(scene.location)") }
-        if !scene.timeOfDay.isEmpty { sceneLines.append("時間: \(scene.timeOfDay)") }
-        if !scene.mood.isEmpty { sceneLines.append("空気: \(scene.mood)") }
-        if !scene.sceneGoal.isEmpty { sceneLines.append("このシーンの目的: \(scene.sceneGoal)") }
-        if let conflict = scene.conflict, !conflict.isEmpty { sceneLines.append("葛藤: \(conflict)") }
-        if !scene.summary.isEmpty { sceneLines.append("ここまでの要約: \(scene.summary)") }
-        sections.append("## 現在のシーン\n" + sceneLines.joined(separator: "\n"))
+        if !scene.title.isEmpty { sceneLines.append("\(copy("シーン名", "Scene")): \(scene.title)") }
+        if !scene.location.isEmpty { sceneLines.append("\(copy("場所", "Location")): \(scene.location)") }
+        if !scene.timeOfDay.isEmpty { sceneLines.append("\(copy("時間", "Time")): \(scene.timeOfDay)") }
+        if !scene.mood.isEmpty { sceneLines.append("\(copy("空気", "Atmosphere")): \(scene.mood)") }
+        if !scene.sceneGoal.isEmpty { sceneLines.append("\(copy("このシーンの目的", "Scene goal")): \(scene.sceneGoal)") }
+        if let conflict = scene.conflict, !conflict.isEmpty { sceneLines.append("\(copy("葛藤", "Conflict")): \(conflict)") }
+        if !scene.summary.isEmpty { sceneLines.append("\(copy("ここまでの要約", "Summary so far")): \(scene.summary)") }
+        sections.append("## \(copy("現在のシーン", "Current scene"))\n" + sceneLines.joined(separator: "\n"))
 
         var sessionLines: [String] = []
-        if let progress = session.progressLabel, !progress.isEmpty { sessionLines.append("進行: \(progress)") }
-        if let objective = session.currentObjective, !objective.isEmpty { sessionLines.append("現在の目的: \(objective)") }
-        if let turnProgress = session.lastTurnProgress, !turnProgress.isEmpty { sessionLines.append("前回動いたこと: \(turnProgress)") }
-        if let summary = session.lastSceneSummary, !summary.isEmpty { sessionLines.append("前回までの要約: \(summary)") }
+        if let progress = session.progressLabel, !progress.isEmpty { sessionLines.append("\(copy("進行", "Progress")): \(progress)") }
+        if let objective = session.currentObjective, !objective.isEmpty { sessionLines.append("\(copy("現在の目的", "Current objective")): \(objective)") }
+        if let turnProgress = session.lastTurnProgress, !turnProgress.isEmpty { sessionLines.append("\(copy("前回動いたこと", "Last turn")): \(turnProgress)") }
+        if let summary = session.lastSceneSummary, !summary.isEmpty { sessionLines.append("\(copy("前回までの要約", "Summary so far")): \(summary)") }
         if let hooks = session.unresolvedHooks, !hooks.isEmpty {
-            sessionLines.append("未回収の要素: " + hooks.prefix(6).joined(separator: " / "))
+            sessionLines.append("\(copy("未回収の要素", "Unresolved hooks")): " + hooks.prefix(6).joined(separator: " / "))
         }
-        sessionLines.append("累計メッセージ数: \(session.messages.count)")
-        sections.append("## 物語の進行状態\n" + sessionLines.joined(separator: "\n"))
+        sessionLines.append("\(copy("累計メッセージ数", "Message count")): \(session.messages.count)")
+        sections.append("## \(copy("物語の進行状態", "Story progress"))\n" + sessionLines.joined(separator: "\n"))
+
+        let userProfile = LocalAssistantRuntimeBridge.userProfileAddendum
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !userProfile.isEmpty {
+            sections.append("## \(copy("ユーザープロフィール", "User profile"))\n\(userProfile)\n\(copy("プロフィールを読み上げず、必要な時だけ自然に反映する。", "Do not recite the profile; use it naturally only when relevant."))")
+        }
 
         // ── 構造化されたStoryState ──
         // 会話全文ではなく、今の状態だけを短く渡して長期整合性を保つ。
@@ -240,13 +258,13 @@ struct StoryPromptBuilder {
             // 会話の連続性を早く失ってしまう。
             let convo = storyRecentMessages.suffix(48).compactMap { msg -> String? in
                 switch msg.author {
-                case .user: return "ユーザー: " + msg.text
+                case .user: return copy("ユーザー", "User") + ": " + msg.text
                 case .system: return nil
-                case .narrator: return "ナレーション: " + msg.text
+                case .narrator: return narratorLabel + ": " + msg.text
                 case .cast(_, let name): return name + ": " + msg.text
                 }
             }.joined(separator: "\n")
-            sections.append("## 直近の会話 (重要。ここから自然に続ける)\n" + convo)
+            sections.append("## \(copy("直近の会話 (重要。ここから自然に続ける)", "Recent conversation (important; continue naturally from here)"))\n" + convo)
         }
 
         // ── ルール ──
@@ -293,10 +311,10 @@ struct StoryPromptBuilder {
         push("罪悪感や依存を誘う表現、「必ず戻ってきて」「待っている」などの引き留めは禁止。")
         push("箇条書き、選択肢、Markdown、ルール説明、メタ発言は禁止。「Wait」「User is」「I should」「the prompt says」「Usually」などの英語や、AIの迷い・自己解説を絶対に出さない。")
         push("性的露骨・暴力煽動・自傷助長・違法加担・医療法律の確定診断は禁止。話題が来たらキャラのまま自然に逸らす。")
-        sections.append("## 守ること\n" + rules.map { "- " + $0 }.joined(separator: "\n"))
+        sections.append("## \(copy("守ること", "Rules to follow"))\n" + rules.map { "- " + $0 }.joined(separator: "\n"))
 
         // ── 今回のユーザー入力 + プライム ──
-        sections.append("## 今回のユーザー発言\n" + userInput)
+        sections.append("## \(copy("今回のユーザー発言", "Current user message"))\n" + userInput)
         let activeNames = activeCast.prefix(StoryConstants.maxActiveCharacters).compactMap { member -> String? in
             guard let profile = characterIndex[member.characterId] else { return nil }
             return profile.displayName.isEmpty ? profile.name : profile.displayName
@@ -304,9 +322,9 @@ struct StoryPromptBuilder {
         let speakerHint = activeNames.isEmpty ? "キャラ名" : activeNames.joined(separator: " / ")
         sections.append(
             """
-            ## 出力開始
-            1行目は「ナレーション: 本文」。
-            その後は必要な人数だけ「\(speakerHint): 発話」を続ける。ユーザー操作キャラの名前は使わない。
+            ## \(copy("出力開始", "Output start"))
+            \(copy("1行目は「ナレーション: 本文」。", "The first line must be Narration: text."))
+            \(copy("その後は必要な人数だけ「\(speakerHint): 発話」を続ける。ユーザー操作キャラの名前は使わない。", "Then use only the necessary speakers as \(speakerHint): dialogue. Never use the user's character name."))
             """
         )
 
@@ -333,12 +351,19 @@ struct StoryPromptBuilder {
         let npcName = npc?.0 ?? "相手"
         let profile = npc?.1
 
+        let isEnglish = KizunaCopy.language == .english
         var lines = [
-            "あなたは絆の物語チャットの相手役です。日本語の本文だけを返す。思考、説明、英語、箇条書き、記号だけの返答は禁止。",
-            "必ず2行で返す: 1行目は「ナレーション: 短い場面描写」、2行目は「\(npcName): 自然な返事」。ユーザーの台詞・行動・感情は代弁しない。"
+            isEnglish
+                ? "You are the scene partner in a Kizuna story chat. Reply in English only; no reasoning, explanations, translations, lists, or symbol-only output."
+                : "あなたは絆の物語チャットの相手役です。本文は日本語だけを返す。思考、説明、翻訳、箇条書き、記号だけの返答は禁止。",
+            isEnglish
+                ? "Reply in exactly two lines: first \"Narration: a short scene description\", then \"\(npcName): a natural reply\". Never invent the user's dialogue, actions, or feelings."
+                : "必ず2行で返す: 1行目は「ナレーション: 短い場面描写」、2行目は「\(npcName): 自然な返事」。ユーザーの台詞・行動・感情は代弁しない。"
         ]
         if let userCharacterName, !userCharacterName.isEmpty {
-            lines.append("ユーザー操作キャラ: \(utf8Prefix(userCharacterName, byteLimit: 72))。この名前で発話を生成しない。")
+            lines.append(isEnglish
+                         ? "User-controlled character: \(utf8Prefix(userCharacterName, byteLimit: 72)). Never generate a line for this character."
+                         : "ユーザー操作キャラ: \(utf8Prefix(userCharacterName, byteLimit: 72))。この名前で発話を生成しない。")
         }
 
         // ローカル実行でも、既に選別済みの記憶を小さな状態カプセルとして渡す。
@@ -346,22 +371,24 @@ struct StoryPromptBuilder {
         let memoryFacts = selectedStoryMemories
             .sorted { $0.importance > $1.importance }
             .prefix(2)
-            .map { "物語の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
+            .map { isEnglish ? "Story memory: \(utf8Prefix($0.text, byteLimit: 84))" : "物語の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
             + selectedMemories
                 .sorted { $0.importance > $1.importance }
                 .prefix(1)
-                .map { "共通の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
+                .map { isEnglish ? "Shared memory: \(utf8Prefix($0.text, byteLimit: 84))" : "共通の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
         if !memoryFacts.isEmpty {
-            lines.append("重要な過去: \(memoryFacts.joined(separator: " / "))。説明せず自然に整合させる。")
+            lines.append(isEnglish
+                         ? "Important past: \(memoryFacts.joined(separator: " / ")). Keep it consistent without explaining it."
+                         : "重要な過去: \(memoryFacts.joined(separator: " / "))。説明せず自然に整合させる。")
         }
 
         let sceneDetails = [
-            scene.location.isEmpty ? nil : "場所: \(utf8Prefix(scene.location, byteLimit: 84))",
-            scene.timeOfDay.isEmpty ? nil : "時間: \(utf8Prefix(scene.timeOfDay, byteLimit: 48))",
-            scene.mood.isEmpty ? nil : "空気: \(utf8Prefix(scene.mood, byteLimit: 72))",
-            scene.sceneGoal.isEmpty ? nil : "目的: \(utf8Prefix(scene.sceneGoal, byteLimit: 72))"
+            scene.location.isEmpty ? nil : "\(isEnglish ? "Location" : "場所"): \(utf8Prefix(scene.location, byteLimit: 84))",
+            scene.timeOfDay.isEmpty ? nil : "\(isEnglish ? "Time" : "時間"): \(utf8Prefix(scene.timeOfDay, byteLimit: 48))",
+            scene.mood.isEmpty ? nil : "\(isEnglish ? "Atmosphere" : "空気"): \(utf8Prefix(scene.mood, byteLimit: 72))",
+            scene.sceneGoal.isEmpty ? nil : "\(isEnglish ? "Goal" : "目的"): \(utf8Prefix(scene.sceneGoal, byteLimit: 72))"
         ].compactMap { $0 }
-        if !sceneDetails.isEmpty { lines.append("現在の場面: " + sceneDetails.joined(separator: " / ")) }
+        if !sceneDetails.isEmpty { lines.append((isEnglish ? "Current scene: " : "現在の場面: ") + sceneDetails.joined(separator: " / ")) }
 
         let characterDetails = [
             profile?.shortDescription,
@@ -373,10 +400,18 @@ struct StoryPromptBuilder {
         .filter { !$0.isEmpty }
         .map { utf8Prefix($0, byteLimit: 72) }
         if !characterDetails.isEmpty {
-            lines.append("\(npcName)の設定: " + characterDetails.joined(separator: " / "))
+            lines.append((isEnglish ? "\(npcName)'s traits: " : "\(npcName)の設定: ") + characterDetails.joined(separator: " / "))
         }
 
-        lines.append("物語タイトル: \(utf8Prefix(world.title, byteLimit: 96))")
+        let userProfile = LocalAssistantRuntimeBridge.userProfileAddendum
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !userProfile.isEmpty {
+            lines.append(isEnglish
+                         ? "User profile: \(utf8Prefix(userProfile, byteLimit: 260)). Use it naturally only when relevant."
+                         : "ユーザープロフィール: \(utf8Prefix(userProfile, byteLimit: 260))。必要な時だけ自然に使う。")
+        }
+
+        lines.append("\(isEnglish ? "Story title" : "物語タイトル"): \(utf8Prefix(world.title, byteLimit: 96))")
 
         // LiteRT側でも1,400 UTF-8 bytesへ上限を設けている。重要な出力規則を
         // 先頭に置いたうえで、ここでも余裕を持って切り詰める。
