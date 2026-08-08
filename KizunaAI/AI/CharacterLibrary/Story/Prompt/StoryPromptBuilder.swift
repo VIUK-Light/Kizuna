@@ -266,7 +266,7 @@ struct StoryPromptBuilder {
             profile.rules.forEach(push)
         }
         safetyDecision?.addedPromptRules.forEach(push)
-        push("出力は2〜7行。基本形は「ナレーション: 短い場面描写」→「NPC名: 発話」。通常はNPC 1人だけが返す。")
+        push("出力は1〜3行。基本は「NPC名: 発話」を1行だけ返す。場所・時間・目的が実際に変化した時、またはユーザーが明示的に求めた時だけ、その前に「ナレーション: 短い場面描写」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答を繰り返さない。通常はNPC 1人だけが返す。")
         if world.isSoloStory {
             push("これは単体物語。active NPCは必ず1人だけにし、inactiveのキャラを勝手に登場させない。")
         } else {
@@ -305,8 +305,9 @@ struct StoryPromptBuilder {
         sections.append(
             """
             ## 出力開始
-            1行目は「ナレーション: 本文」。
-            その後は必要な人数だけ「\(speakerHint): 発話」を続ける。ユーザー操作キャラの名前は使わない。
+            まず「\(speakerHint): 発話」を返す。
+            場所・時間・目的が実際に変化した時だけ、必要なら前置きに「ナレーション: 本文」を1行添える。
+            ユーザー操作キャラの名前は使わない。
             """
         )
 
@@ -335,7 +336,7 @@ struct StoryPromptBuilder {
 
         var lines = [
             "あなたは絆の物語チャットの相手役です。日本語の本文だけを返す。思考、説明、英語、箇条書き、記号だけの返答は禁止。",
-            "必ず2行で返す: 1行目は「ナレーション: 短い場面描写」、2行目は「\(npcName): 自然な返事」。ユーザーの台詞・行動・感情は代弁しない。"
+            "基本は「\(npcName): 自然な返事」を1行だけ返す。場所・時間・目的が実際に変化した時、またはユーザーが明示した時だけ、その前に短い「ナレーション: 本文」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答は禁止。ユーザーの台詞・行動・感情は代弁しない。"
         ]
         if let userCharacterName, !userCharacterName.isEmpty {
             lines.append("ユーザー操作キャラ: \(utf8Prefix(userCharacterName, byteLimit: 72))。この名前で発話を生成しない。")

@@ -392,7 +392,8 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         )
 
         do {
-            NSLog("[KizunaLiteRTLM] starting native CPU turn (input=%d bytes, output<=%d)", sizedRequest.prompt.lengthOfBytes(using: .utf8), sizedRequest.maxTokens)
+            let modelName = URL(fileURLWithPath: sizedRequest.modelPath).lastPathComponent
+            NSLog("[KizunaLiteRTLM] starting native CPU turn (model=%@, input=%d bytes, output<=%d)", modelName, sizedRequest.prompt.lengthOfBytes(using: .utf8), sizedRequest.maxTokens)
             let engine = try await engineStore.engine(for: configuration)
             let sampler = try SamplerConfig(
                 topK: max(sizedRequest.topK, 1),
@@ -423,8 +424,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             let response = try await conversation.sendMessage(Message(sizedRequest.prompt))
             let cleaned = response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
             let hasMeaningfulText = hasMeaningfulResponseText(cleaned)
-            let outputPreview = String(cleaned.prefix(180)).replacingOccurrences(of: "\n", with: "\\n")
-            NSLog("[KizunaLiteRTLM] native CPU turn finished (empty=%@, meaningful=%@, chars=%d, preview=%@)", cleaned.isEmpty ? "true" : "false", hasMeaningfulText ? "true" : "false", cleaned.count, outputPreview)
+            // 本文や個人情報はログへ出さない。LiteRT-LM側で停止理由を取得できないため、
+            // その事実を明示しつつ、後段の StorySession が保存IDと照合できる長さだけ記録する。
+            NSLog("[KizunaLiteRTLM] native CPU turn finished (empty=%@, meaningful=%@, chars=%d, stopReason=unavailable)", cleaned.isEmpty ? "true" : "false", hasMeaningfulText ? "true" : "false", cleaned.count)
             return VIUKEmbeddedRuntimeResult(
                 success: hasMeaningfulText,
                 text: hasMeaningfulText ? cleaned : nil,
