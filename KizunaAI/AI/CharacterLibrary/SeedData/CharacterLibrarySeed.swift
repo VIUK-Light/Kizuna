@@ -54,7 +54,14 @@ enum CharacterLibrarySeed {
         "生徒会室の秘密協定": "StorySceneStudentCouncil",
         "コミュ障女警官は職質ができません": "StorySceneSeasideBusStop",
         "雨上がりの屋上前": "StorySceneRainUmbrella",
-        "雨の駅で、最後の電車を待つ": "StorySceneSeasideBusStop"
+        "雨の駅で、最後の電車を待つ": "StorySceneSeasideBusStop",
+        "午前0時のラジオ、きみの声": "StorySceneMidnightRadio",
+        "同居契約は、雨のち晴れ": "StorySceneRainyCohabitation",
+        "未送信の写真展": "StorySceneUnsentPhoto",
+        "深海研究船の帰港日": "StorySceneDeepSeaResearch",
+        "演劇部の代役は幕が下りても": "StorySceneTheaterUnderstudy",
+        "星降る温室の管理人": "StorySceneStarlitGreenhouse",
+        "青いバス停で、次の季節を待つ": "StorySceneBlueBusStop"
     ]
 
     private static func sceneImageKey(for title: String) -> String? {
@@ -460,7 +467,13 @@ enum CharacterLibrarySeed {
         }
         do {
             let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(BundledStoryPack.self, from: data)
+            var pack = try JSONDecoder().decode(BundledStoryPack.self, from: data)
+            if let expansionURL = Bundle.main.url(forResource: "SeedStoryPacksExpansion", withExtension: "json") {
+                let expansionData = try Data(contentsOf: expansionURL)
+                let expansion = try JSONDecoder().decode(BundledStoryPack.self, from: expansionData)
+                pack.stories.append(contentsOf: expansion.stories)
+            }
+            return pack
         } catch {
             throw SeedError.bundledStoryPackInvalid(underlying: error)
         }
