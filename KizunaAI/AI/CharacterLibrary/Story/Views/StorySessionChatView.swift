@@ -590,12 +590,36 @@ private struct StorySessionChatBody: View {
     }
 
     private var selectedModelIsReady: Bool {
-        switch vm.generationModel {
+        isModelReady(vm.generationModel)
+    }
+
+    private func isModelReady(_ model: StoryGenerationModel) -> Bool {
+        switch model {
         case .e4b:
             return localModelManager.runtimeAvailability == .executable
         case .b31:
             return StoryGemma31BAPIService.shared.hasAPIKey
         }
+    }
+
+    private var availableFallbackModel: StoryGenerationModel? {
+        StoryGenerationModel.allCases.first { model in
+            model != vm.generationModel && isModelReady(model)
+        }
+    }
+
+    private func handleUnavailableModelBeforeSubmission() {
+        let unavailableModel = vm.generationModel
+        guard let fallback = availableFallbackModel else {
+            showUnavailableModelAlert()
+            return
+        }
+
+        // APIキーの削除や端末内セルフチェックの失敗は、メニューを開いた後にも
+        // 起こり得る。送信を失敗させる前に、次回送信のモデルを切り替える。
+        vm.generationModel = fallback
+        unavailableModelMessage = "\(unavailableModel.displayName) は現在利用できないため、\(fallback.displayName) に切り替えました。内容を確認して、もう一度送信してください。"
+        isShowingUnavailableModelAlert = true
     }
 
     private func showUnavailableModelAlert() {
@@ -1124,7 +1148,7 @@ private struct StorySessionChatBody: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, service.phase != .thinking else { return }
         guard selectedModelIsReady else {
-            showUnavailableModelAlert()
+            handleUnavailableModelBeforeSubmission()
             return
         }
         // 送信準備中の二重タップでは受付されないため、受理された時だけ入力を消す。

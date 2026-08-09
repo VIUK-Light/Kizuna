@@ -175,6 +175,17 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         s.activeCharacterIds = Array(s.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters))
         try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
     }
+
+    /// 重複Worldの移行専用。関連付けだけをcanonical Worldへ変更し、
+    /// 元シーンのcreatedAt/updatedAtやactiveキャラの内容はそのまま保持する。
+    /// 通常の編集経路（saveScene）はupdatedAtを更新するため、移行では使わない。
+    func moveScene(id: UUID, toStoryWorldId: UUID) async throws {
+        try await store.mutate { scenes in
+            guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
+            scenes[index].storyWorldId = toStoryWorldId
+        }
+    }
+
     func deleteScene(id: UUID) async throws {
         try await store.delete(matching: { $0.id == id })
     }
@@ -195,6 +206,17 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         s.updatedAt = Date()
         try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
     }
+
+    /// 重複Worldの移行専用。セッションの所属Worldだけを変更し、
+    /// 会話のcreatedAt/updatedAtを移行時刻で上書きしない。
+    /// 通常の編集経路（saveSession）はupdatedAtを更新するため、移行では使わない。
+    func moveSession(id: UUID, toStoryWorldId: UUID) async throws {
+        try await store.mutate { sessions in
+            guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+            sessions[index].storyWorldId = toStoryWorldId
+        }
+    }
+
     func deleteSession(id: UUID) async throws {
         try await store.delete(matching: { $0.id == id })
     }

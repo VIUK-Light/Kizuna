@@ -101,6 +101,10 @@ final class StorySessionService: ObservableObject {
     private var generationTask: Task<Void, Never>?
     private var lastVisibleText: String = ""
     private var activeGenerationID: UUID?
+    /// Timeout notice persistence has its own validity token. A watchdog may
+    /// suspend at a repository await; cancellation or a newer turn must then
+    /// invalidate the pending save before it can write a stale snapshot.
+    private var timeoutSaveToken: UUID?
     private var generationWatchdogDeadline: Date?
     private static let generationWatchdogDuration: TimeInterval = 75
     private static let localRuntimeSystemPromptLimit = 1_250
@@ -138,6 +142,7 @@ final class StorySessionService: ObservableObject {
         lastVisibleText = ""
         let generationID = UUID()
         activeGenerationID = generationID
+        timeoutSaveToken = nil
         let userMessageID = existingUserMessageID ?? UUID()
 
         generationTask = Task { [weak self] in
@@ -256,6 +261,10 @@ final class StorySessionService: ObservableObject {
     }
 
     func cancel() {
+        // Invalidate an in-flight timeout persistence task before cancelling
+        // the backend. Repository calls may already be suspended at await and
+        // cannot be assumed to observe Task cancellation immediately.
+        timeoutSaveToken = nil
         generationTask?.cancel()
         generationTask = nil
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
@@ -1132,6 +1141,8 @@ final class StorySessionService: ObservableObject {
             guard let self,
                   self.activeGenerationID == generationID,
                   self.phase == .thinking else { return }
+            let timeoutToken = UUID()
+            self.timeoutSaveToken = timeoutToken
             // Invalidate the pipeline before cancelling it. Some native/API
             // backends do not observe cancellation immediately; keeping the
             // generation ID valid would let a late result pass the guards and
@@ -1160,7 +1171,8 @@ final class StorySessionService: ObservableObject {
             // 通知保存が終わるまで phase は thinking のままにする。
             // activeGenerationID は先に無効化済みなので、遅れて返る本文は
             // pipeline側のguardで破棄され、次のsendも保存完了まで受付しない。
-            guard self.phase == .thinking else { return }
+            guard self.timeoutSaveToken == timeoutToken,
+                  self.phase == .thinking else { return }
             var next: StorySession?
             do {
                 next = (try await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId))
@@ -1171,19 +1183,27 @@ final class StorySessionService: ObservableObject {
                 // saveSessionして新しいターンを上書きしない。UI通知だけで終了する。
                 next = nil
             }
+            // The user may have cancelled while fetchSessions was suspended.
+            // Never append/save the timeout card after that point.
+            guard self.timeoutSaveToken == timeoutToken,
+                  self.phase == .thinking else { return }
             if var next {
                 next.messages.append(self.retryableSystemMessage(notice, userMessageID: userMessageID))
                 next.lastSelectedModelName = generationModel.displayName
                 next.lastUsedBackendName = backendName
+                guard self.timeoutSaveToken == timeoutToken,
+                      self.phase == .thinking else { return }
                 do {
                     try await self.sessionRepo.saveSession(next)
                 } catch {
                     NSLog("[StorySession] timeout notice save failed: %@", error.localizedDescription)
                 }
             }
-            guard self.phase == .thinking else { return }
+            guard self.timeoutSaveToken == timeoutToken,
+                  self.phase == .thinking else { return }
             self.streamingStatusText = ""
             self.savedTurnRevision += 1
+            self.timeoutSaveToken = nil
             self.phase = .idle
             self.activeGenerationID = nil
         }
