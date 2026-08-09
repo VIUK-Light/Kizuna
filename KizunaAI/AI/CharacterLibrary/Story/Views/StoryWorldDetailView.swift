@@ -473,6 +473,10 @@ struct StoryWorldDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(vm.scenes) { scene in
                         VStack(alignment: .leading, spacing: 4) {
+                            StorySceneImageView(scene: scene, world: displayedWorld)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 150)
+                                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                             Text(scene.title.isEmpty ? "無題のシーン" : scene.title)
                                 .font(.system(size: 13, weight: .semibold))
                             HStack(spacing: 8) {

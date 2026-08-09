@@ -577,13 +577,16 @@ private struct StorySessionChatBody: View {
     }
 
     private var regularSceneStrip: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(vm.scene.title.isEmpty ? "現在のシーン" : vm.scene.title)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(storyText)
-                .lineLimit(1)
-            Spacer()
-            activeCharacterChips
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .center, spacing: 12) {
+                Text(vm.scene.title.isEmpty ? "現在のシーン" : vm.scene.title)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(storyText)
+                    .lineLimit(1)
+                Spacer()
+                activeCharacterChips
+            }
+            sceneVisual
         }
     }
 
@@ -600,7 +603,23 @@ private struct StorySessionChatBody: View {
                 activeCharacterChips
                     .frame(maxWidth: 210, alignment: .trailing)
             }
+            sceneVisual
         }
+    }
+
+    private var sceneVisual: some View {
+        StorySceneImageView(scene: vm.scene, world: vm.world)
+            .frame(maxWidth: .infinity)
+            .frame(height: horizontalSizeClass == .compact ? 92 : 126)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.26)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
     }
 
     private func compactSceneMeta(icon: String, text: String) -> some View {

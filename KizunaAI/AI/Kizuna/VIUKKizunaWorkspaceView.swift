@@ -9,7 +9,7 @@ import SwiftUI
 
 struct VIUKKizunaWorkspaceView: View {
     @State private var selectedSection: KizunaWorkspaceSection = .stories
-    @State private var isShowingSettings = false
+    @StateObject private var storyLibraryViewModel = StoryWorldLibraryViewModel()
     @State private var activeStoryWorld: StoryWorld?
 
     var body: some View {
@@ -19,10 +19,6 @@ struct VIUKKizunaWorkspaceView: View {
             sectionContent
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
-        .sheet(isPresented: $isShowingSettings) {
-            KizunaSettingsView()
-                .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 680)
-        }
         // 設定画面はStoryの外側にあるため、デバッグ要求時はStoryを自動で開く。
         // これで「設定を閉じる → Storyを探す」の間に予約が消えることを防ぐ。
         .onReceive(NotificationCenter.default.publisher(for: KizunaDebugOptions.restSuggestionRequestNotification)) { _ in
@@ -42,18 +38,18 @@ struct VIUKKizunaWorkspaceView: View {
 #endif
     }
 
-    private var settingsButton: some View {
+    private var myPageButton: some View {
         Button {
-            isShowingSettings = true
+            selectedSection = .myPage
         } label: {
-            Image(systemName: "gearshape.fill")
+            Image(systemName: "person.crop.circle.fill")
                 .font(.system(size: 15, weight: .bold))
                 .frame(width: 36, height: 36)
                 .background(Circle().fill(Color.primary.opacity(0.08)))
         }
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
-        .accessibilityLabel("設定")
+        .accessibilityLabel("マイページ")
     }
 
     private func openDebugStory() {
@@ -96,7 +92,7 @@ struct VIUKKizunaWorkspaceView: View {
                     }
                 }
             }
-            settingsButton
+            myPageButton
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -107,7 +103,10 @@ struct VIUKKizunaWorkspaceView: View {
     private var sectionContent: some View {
         switch selectedSection {
         case .stories:
-            StoryWorldLibraryView { world in
+            StoryWorldLibraryView(
+                viewModel: storyLibraryViewModel,
+                showsDismissButton: false
+            ) { world in
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 500_000_000)
                     activeStoryWorld = world
@@ -115,6 +114,8 @@ struct VIUKKizunaWorkspaceView: View {
             }
         case .chat:
             PersonaChatView()
+        case .myPage:
+            KizunaMyPageView()
         }
     }
 }
@@ -122,6 +123,7 @@ struct VIUKKizunaWorkspaceView: View {
 private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
     case stories
     case chat
+    case myPage
 
     var id: String { rawValue }
 
@@ -129,6 +131,7 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
         switch self {
         case .stories: return "ストーリー"
         case .chat: return "あなたの物語"
+        case .myPage: return "マイページ"
         }
     }
 
@@ -136,6 +139,7 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
         switch self {
         case .stories: return "sparkles.rectangle.stack.fill"
         case .chat: return "bubble.left.and.bubble.right.fill"
+        case .myPage: return "person.crop.circle.fill"
         }
     }
 }

@@ -44,6 +44,8 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     @Published private(set) var worlds: [StoryWorld] = []
     @Published private(set) var charactersById: [UUID: CharacterProfile] = [:]
     @Published private(set) var isBootstrapping = false
+    /// Workspaceが表示を切り替えても、同じViewModelのメモリー上の一覧を再利用する。
+    @Published private(set) var didBootstrap = false
     @Published private(set) var loadError: StoryLibraryLoadIssue?
     @Published private(set) var seedError: CharacterLibrarySeed.SeedIssue?
     @Published var searchText: String = ""
@@ -59,6 +61,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
 
     func bootstrap() async {
         guard !isBootstrapping else { return }
+        guard !didBootstrap else { return }
         isBootstrapping = true
         loadError = nil
         seedError = nil
@@ -71,6 +74,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         seedError = error
         await reload()
         isBootstrapping = false
+        didBootstrap = true
     }
 
     func reload() async {
@@ -91,6 +95,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     }
 
     func retryBootstrap() async {
+        didBootstrap = false
         await bootstrap()
     }
 

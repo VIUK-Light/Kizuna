@@ -453,6 +453,8 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
     var conflict: String?
     /// 270M が更新する短い要約。次の Scene へのコンテキストにも使う。
     var summary: String
+    /// シーン背景のアセットキー。旧保存データでは nil のまま読み込める。
+    var imageKey: String?
     var createdAt: Date
     var updatedAt: Date
 
@@ -467,6 +469,7 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
         sceneGoal: String = "",
         conflict: String? = nil,
         summary: String = "",
+        imageKey: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -480,6 +483,7 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
         self.sceneGoal = sceneGoal
         self.conflict = conflict
         self.summary = summary
+        self.imageKey = imageKey
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
