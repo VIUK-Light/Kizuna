@@ -61,6 +61,7 @@
 		95168A37B2B238D2C0275B1C /* StoryCoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF83E846745A39722C75FF61 /* StoryCoverView.swift */; };
 		982F92EFA64D2780DE84F242 /* StoryViewModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4021480B714F2F541000C5DD /* StoryViewModels.swift */; };
 		9887C1FE76FBC8C15A077800 /* StoryWorldCreateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */; };
+		99C89B66D82889CF73E13F9D /* SeedStoryPacksExpansion.json in Resources */ = {isa = PBXBuildFile; fileRef = 20F6110BA881E36CBCAC5288 /* SeedStoryPacksExpansion.json */; };
 		99EEED1D246FEA523C1D6D17 /* CharacterLibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FB7C20DBE13F7AA0FD7580B /* CharacterLibraryViewModel.swift */; };
 		9A8CE4D58FDECCE2E073009F /* KizunaUserProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020CE8BED9824994F91D7145 /* KizunaUserProfileView.swift */; };
 		9E82C3EAA3CAC4A63F28DF02 /* MemoryProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 757985556F2B3FAB58006C1C /* MemoryProtocols.swift */; };
@@ -113,6 +114,7 @@
 		19449F3273FBD99643962AF5 /* CharacterTemplateSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterTemplateSeed.swift; sourceTree = "<group>"; };
 		1FB7C20DBE13F7AA0FD7580B /* CharacterLibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLibraryViewModel.swift; sourceTree = "<group>"; };
 		208B4E1949CC5B273BB335A7 /* CharacterMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterMemory.swift; sourceTree = "<group>"; };
+		20F6110BA881E36CBCAC5288 /* SeedStoryPacksExpansion.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = SeedStoryPacksExpansion.json; sourceTree = "<group>"; };
 		2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaSettingsView.swift; sourceTree = "<group>"; };
 		24DDE9C0180DDB8FD296DC8F /* PersonaSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaSettings.swift; sourceTree = "<group>"; };
 		26955C791E26219A2224961B /* AppBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBrand.swift; sourceTree = "<group>"; };
@@ -501,6 +503,7 @@
 				0F704141DA8C5E0FCA2CBBEF /* CharacterLibrarySeed.swift */,
 				19449F3273FBD99643962AF5 /* CharacterTemplateSeed.swift */,
 				9EEA37DA62CCCFB218D48C7C /* SeedStoryPacks.json */,
+				20F6110BA881E36CBCAC5288 /* SeedStoryPacksExpansion.json */,
 			);
 			path = SeedData;
 			sourceTree = "<group>";
@@ -587,6 +590,7 @@
 				41E3307E2DD22AF0123D2469 /* LiteRT-LM-COPYRIGHT.txt in Resources */,
 				D4D38A3ABE7E479A12ACA51D /* Localizable.xcstrings in Resources */,
 				FF358BF04BF87756CE4B881F /* SeedStoryPacks.json in Resources */,
+				99C89B66D82889CF73E13F9D /* SeedStoryPacksExpansion.json in Resources */,
 				D7C05C6DE100F03A79A02CCC /* THIRD_PARTY_NOTICES.md in Resources */,
 				39F796C9FFDF72D566506CB6 /* cpp-httplib-MIT.txt in Resources */,
 				EEC5EF2337298255BFF8AC27 /* llama.cpp-MIT.txt in Resources */,

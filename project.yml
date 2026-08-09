@@ -68,6 +68,8 @@ targets:
       # 生成後のmacOSアプリだけ一覧が空になる。
       - path: KizunaAI/AI/CharacterLibrary/SeedData/SeedStoryPacks.json
         buildPhase: resources
+      - path: KizunaAI/AI/CharacterLibrary/SeedData/SeedStoryPacksExpansion.json
+        buildPhase: resources
     dependencies:
       - package: LiteRTLM
         destinationFilters:
