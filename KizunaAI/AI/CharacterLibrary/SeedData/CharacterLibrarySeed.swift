@@ -36,6 +36,31 @@ enum CharacterLibrarySeed {
 
     private static let seedGate = SeedGate()
 
+    // 標準物語の初期シーンに紐づく背景画像。画像が増えても
+    // JSON本体の会話設定と分離できるよう、アセットキーだけをここで管理する。
+    private static let bundledSceneImageKeys: [String: String] = [
+        "放課後ミステリー研究会": "StorySceneAfterSchoolMystery",
+        "夕暮れ喫茶と記憶のレシピ": "StorySceneTwilightCafe",
+        "影を売る街の案内人": "StorySceneShadowMarket",
+        "未来郵便局の配達係": "StorySceneFuturePost",
+        "廃部寸前、ロボット研究班": "StorySceneRobotLab",
+        "保健室の午後、言えなかったこと": "StorySceneInfirmary",
+        "放課後、弓道場の静けさで": "StorySceneKyudo",
+        "白百合寮の夜更かし会議": "StorySceneDormNight",
+        "美術室、未完成の肖像": "StorySceneArtRoom",
+        "魔法図書館と眠れる契約者": "StorySceneMagicLibrary",
+        "幼なじみと夏祭りの約束": "StorySceneSummerFestival",
+        "雨の日、傘を貸した先輩": "StorySceneRainUmbrella",
+        "生徒会室の秘密協定": "StorySceneStudentCouncil",
+        "コミュ障女警官は職質ができません": "StorySceneSeasideBusStop",
+        "雨上がりの屋上前": "StorySceneRainUmbrella",
+        "雨の駅で、最後の電車を待つ": "StorySceneSeasideBusStop"
+    ]
+
+    private static func sceneImageKey(for title: String) -> String? {
+        bundledSceneImageKeys[title.trimmingCharacters(in: .whitespacesAndNewlines)]
+    }
+
     /// 初期データを準備する。失敗理由は呼び出し側へ返し、一覧画面が
     /// 「空のライブラリー」と誤認しないようにする。
     @discardableResult
@@ -372,11 +397,13 @@ enum CharacterLibrarySeed {
                 activeCharacterIds: initialActiveIds.isEmpty ? Array(storyCharacters.prefix(1).map(\.id)) : initialActiveIds,
                 sceneGoal: item.initialScene.sceneGoal,
                 conflict: item.initialScene.conflict,
-                summary: item.initialScene.summary
+                summary: item.initialScene.summary,
+                imageKey: item.initialScene.imageKey ?? sceneImageKey(for: item.story.title)
             )
             if let existingScene = existingScenes.first {
                 // 旧キャストIDが残っている場合だけ、開始シーンの参照も張り直す。
-                if Set(existingScene.activeCharacterIds) != Set(scene.activeCharacterIds) {
+                if Set(existingScene.activeCharacterIds) != Set(scene.activeCharacterIds)
+                    || existingScene.imageKey != scene.imageKey {
                     var repairedScene = existingScene
                     repairedScene.title = scene.title
                     repairedScene.location = scene.location
@@ -386,6 +413,7 @@ enum CharacterLibrarySeed {
                     repairedScene.sceneGoal = scene.sceneGoal
                     repairedScene.conflict = scene.conflict
                     repairedScene.summary = scene.summary
+                    repairedScene.imageKey = scene.imageKey
                     repairedScene.updatedAt = Date()
                     try await sceneRepo.saveScene(repairedScene)
                 }
@@ -572,6 +600,7 @@ enum CharacterLibrarySeed {
         var sceneGoal: String
         var conflict: String
         var summary: String
+        var imageKey: String?
     }
 
     private struct BundledCharacter: Decodable {
@@ -1727,7 +1756,8 @@ enum CharacterLibrarySeed {
             activeCharacterIds: [main.id],
             sceneGoal: sceneGoal,
             conflict: conflict,
-            summary: summary
+            summary: summary,
+            imageKey: sceneImageKey(for: sceneTitle)
         )
 
         packages.append(WorldPackage(world: world, cast: cast, scenes: [scene]))
@@ -1798,7 +1828,8 @@ enum CharacterLibrarySeed {
             activeCharacterIds: activeIDs,
             sceneGoal: goal,
             conflict: nil,
-            summary: opening
+            summary: opening,
+            imageKey: sceneImageKey(for: title)
         )
         packages.append(WorldPackage(world: world, cast: cast, scenes: [scene]))
     }

@@ -7,14 +7,38 @@
 import SwiftUI
 
 struct StoryWorldLibraryView: View {
-    @StateObject private var vm = StoryWorldLibraryViewModel()
+    @ObservedObject private var vm: StoryWorldLibraryViewModel
     @Environment(\.dismiss) private var dismiss
+    private let showsDismissButton: Bool
     @State private var showCreate = false
     @State private var editing: StoryWorld? = nil
     @State private var selected: StoryWorld? = nil
 
     /// セッション開始時に呼ぶ。呼び出し側 (PersonaChatView 等) がシート閉じてセッション画面へ。
     var onStartSession: ((StoryWorld) -> Void)?
+
+    @MainActor
+    init(
+        viewModel: StoryWorldLibraryViewModel,
+        showsDismissButton: Bool = true,
+        onStartSession: ((StoryWorld) -> Void)? = nil
+    ) {
+        _vm = ObservedObject(wrappedValue: viewModel)
+        self.showsDismissButton = showsDismissButton
+        self.onStartSession = onStartSession
+    }
+
+    @MainActor
+    init(
+        showsDismissButton: Bool = true,
+        onStartSession: ((StoryWorld) -> Void)? = nil
+    ) {
+        self.init(
+            viewModel: StoryWorldLibraryViewModel(),
+            showsDismissButton: showsDismissButton,
+            onStartSession: onStartSession
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -69,10 +93,12 @@ struct StoryWorldLibraryView: View {
 
     private var header: some View {
         HStack {
-            Button { dismiss() } label: {
-                Image(systemName: "chevron.down").frame(width: 32, height: 32)
+            if showsDismissButton {
+                Button { dismiss() } label: {
+                    Image(systemName: "chevron.down").frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             VStack(alignment: .leading, spacing: 2) {
                 Text("ストーリーライブラリー").font(.system(size: 15, weight: .semibold))
                 Text(vm.isBootstrapping && vm.worlds.isEmpty
