@@ -88,43 +88,21 @@ struct KizunaMyPageView: View {
     }
 
     private var profileHero: some View {
-        HStack(alignment: .center, spacing: 18) {
-            KizunaAvatarView(symbol: profileStore.profile.avatarSymbol, size: 88)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 18) {
+                KizunaAvatarView(symbol: profileStore.profile.avatarSymbol, size: 88)
+                profileSummary
+                Spacer(minLength: 16)
+                profileEditButton
+            }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(profileStore.profile.visibleName.isEmpty
-                     ? KizunaCopy.text(japanese: "名前を決めずに始めています", english: "No profile name yet")
-                     : profileStore.profile.visibleName)
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-
-                Text(profileStore.profile.hasUsefulContent
-                     ? KizunaCopy.text(japanese: "あなた向けの設定が保存されています", english: "Your preferences are saved")
-                     : KizunaCopy.text(japanese: "プロフィールは任意です", english: "A profile is optional"))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                if !profileStore.profile.about.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(profileStore.profile.about)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .center, spacing: 18) {
+                    KizunaAvatarView(symbol: profileStore.profile.avatarSymbol, size: 76)
+                    profileSummary
                 }
+                profileEditButton
             }
-
-            Spacer(minLength: 16)
-
-            Button {
-                isShowingProfileEditor = true
-            } label: {
-                Label(
-                    KizunaCopy.text(japanese: "プロフィールを編集", english: "Edit profile"),
-                    systemImage: "pencil"
-                )
-                .font(.system(size: 13, weight: .semibold))
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
         }
         .padding(22)
         .background(
@@ -143,6 +121,44 @@ struct KizunaMyPageView: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
         }
+    }
+
+    private var profileSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(profileStore.profile.visibleName.isEmpty
+                 ? KizunaCopy.text(japanese: "名前を決めずに始めています", english: "No profile name yet")
+                 : profileStore.profile.visibleName)
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .lineLimit(2)
+
+            Text(profileStore.profile.hasUsefulContent
+                 ? KizunaCopy.text(japanese: "あなた向けの設定が保存されています", english: "Your preferences are saved")
+                 : KizunaCopy.text(japanese: "プロフィールは任意です", english: "A profile is optional"))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            if !profileStore.profile.about.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(profileStore.profile.about)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var profileEditButton: some View {
+        Button {
+            isShowingProfileEditor = true
+        } label: {
+            Label(
+                KizunaCopy.text(japanese: "プロフィールを編集", english: "Edit profile"),
+                systemImage: "pencil"
+            )
+            .font(.system(size: 13, weight: .semibold))
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
     }
 
     private var storyPreferenceCard: some View {

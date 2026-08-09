@@ -6,14 +6,14 @@ enum KizunaAvatarCatalog {
     static let defaultID = "person.crop.circle.fill"
 
     static let options: [KizunaAvatarOption] = [
-        KizunaAvatarOption(id: defaultID, title: KizunaCopy.text(japanese: "ベーシック", english: "Basic")),
-        KizunaAvatarOption(id: "sparkles", title: KizunaCopy.text(japanese: "きらめき", english: "Spark")),
-        KizunaAvatarOption(id: "leaf.fill", title: KizunaCopy.text(japanese: "リーフ", english: "Leaf")),
-        KizunaAvatarOption(id: "moon.stars.fill", title: KizunaCopy.text(japanese: "ナイト", english: "Night")),
-        KizunaAvatarOption(id: "headphones", title: KizunaCopy.text(japanese: "サウンド", english: "Sound")),
-        KizunaAvatarOption(id: "book.closed.fill", title: KizunaCopy.text(japanese: "ストーリー", english: "Story")),
-        KizunaAvatarOption(id: "compass.drawing", title: KizunaCopy.text(japanese: "コンパス", english: "Compass")),
-        KizunaAvatarOption(id: "sun.max.fill", title: KizunaCopy.text(japanese: "デイライト", english: "Daylight"))
+        KizunaAvatarOption(id: defaultID, japaneseTitle: "ベーシック", englishTitle: "Basic"),
+        KizunaAvatarOption(id: "sparkles", japaneseTitle: "きらめき", englishTitle: "Spark"),
+        KizunaAvatarOption(id: "leaf.fill", japaneseTitle: "リーフ", englishTitle: "Leaf"),
+        KizunaAvatarOption(id: "moon.stars.fill", japaneseTitle: "ナイト", englishTitle: "Night"),
+        KizunaAvatarOption(id: "headphones", japaneseTitle: "サウンド", englishTitle: "Sound"),
+        KizunaAvatarOption(id: "book.closed.fill", japaneseTitle: "ストーリー", englishTitle: "Story"),
+        KizunaAvatarOption(id: "compass.drawing", japaneseTitle: "コンパス", englishTitle: "Compass"),
+        KizunaAvatarOption(id: "sun.max.fill", japaneseTitle: "デイライト", englishTitle: "Daylight")
     ]
 
     static func option(for id: String) -> KizunaAvatarOption? {
@@ -23,7 +23,13 @@ enum KizunaAvatarCatalog {
 
 struct KizunaAvatarOption: Identifiable, Hashable {
     let id: String
-    let title: String
+    let japaneseTitle: String
+    let englishTitle: String
+
+    /// 言語設定を切り替えた後の再描画でも、現在の言語でラベルを返す。
+    var title: String {
+        KizunaCopy.text(japanese: japaneseTitle, english: englishTitle)
+    }
 }
 
 struct KizunaAvatarView: View {

@@ -140,6 +140,8 @@ struct KizunaUserProfile: Codable, Equatable {
     var hasUsefulContent: Bool {
         !visibleName.isEmpty
             || !about.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || (KizunaAvatarCatalog.option(for: avatarSymbol) != nil
+                && avatarSymbol != KizunaAvatarCatalog.defaultID)
             || conversationPreference != .balanced
             || storyPreference != .everyday
     }
