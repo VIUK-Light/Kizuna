@@ -157,6 +157,10 @@ private struct StoryGenerationModelPill: View {
                         systemImage: vm.generationModel == model ? "checkmark" : "cpu"
                     )
                 }
+                // 選択後に初めて失敗させると、未導入の iori や API キー未設定の
+                // NAGI が「使えるモデル」として保存されてしまう。状態表示は残しつつ、
+                // 送信可能なモデルだけを選択できるようにする。
+                .disabled(!isModelSelectable(model))
                 .help(modelHelpText(model))
             }
             Divider()
@@ -195,6 +199,27 @@ private struct StoryGenerationModelPill: View {
             }
             .presentationDetents([.medium])
         }
+        .onAppear(perform: selectUsableModelIfNeeded)
+        .onChange(of: localModelManager.runtimeAvailability) { _, _ in
+            selectUsableModelIfNeeded()
+        }
+    }
+
+    private func isModelSelectable(_ model: StoryGenerationModel) -> Bool {
+        switch model {
+        case .e4b:
+            return localModelManager.runtimeAvailability == .executable
+        case .b31:
+            return StoryGemma31BAPIService.shared.hasAPIKey
+        }
+    }
+
+    private func selectUsableModelIfNeeded() {
+        guard !isModelSelectable(vm.generationModel),
+              let fallback = StoryGenerationModel.allCases.first(where: { isModelSelectable($0) }) else {
+            return
+        }
+        vm.generationModel = fallback
     }
 
     private var modelDetailPopover: some View {
@@ -342,18 +367,22 @@ private struct StorySessionChatBody: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ObservedObject var vm: StorySessionViewModel
     @ObservedObject private var service: StorySessionService
+    @ObservedObject private var localModelManager: LocalAssistantModelManager
     @Binding var isShowingRestHelp: Bool
     @State private var draft = ""
     @State private var selectedCharacterID: UUID?
     @State private var isShowingCharacterSheet = false
     @State private var isShowingSafetyResources = false
     @State private var isShowingSafetyHelp = false
+    @State private var unavailableModelMessage = ""
+    @State private var isShowingUnavailableModelAlert = false
     @FocusState private var composerFocused: Bool
 
     init(vm: StorySessionViewModel, isShowingRestHelp: Binding<Bool>) {
         self.vm = vm
         _isShowingRestHelp = isShowingRestHelp
         _service = ObservedObject(wrappedValue: vm.service)
+        _localModelManager = ObservedObject(wrappedValue: LocalAssistantModelManager.shared)
     }
 
     var body: some View {
@@ -377,6 +406,11 @@ private struct StorySessionChatBody: View {
                     .padding(18)
                 }
                 .background(storyCanvas)
+                .alert("モデルを準備してください", isPresented: $isShowingUnavailableModelAlert) {
+                    Button("閉じる", role: .cancel) { }
+                } message: {
+                    Text(unavailableModelMessage)
+                }
                 .onChange(of: vm.session.messages.count) { _, _ in
                     if let last = vm.session.messages.last?.id {
                         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
@@ -553,6 +587,60 @@ private struct StorySessionChatBody: View {
             result.append(message)
         }
         return result
+    }
+
+    private var selectedModelIsReady: Bool {
+        isModelReady(vm.generationModel)
+    }
+
+    private func isModelReady(_ model: StoryGenerationModel) -> Bool {
+        switch model {
+        case .e4b:
+            return localModelManager.runtimeAvailability == .executable
+        case .b31:
+            return StoryGemma31BAPIService.shared.hasAPIKey
+        }
+    }
+
+    private var availableFallbackModel: StoryGenerationModel? {
+        StoryGenerationModel.allCases.first { model in
+            model != vm.generationModel && isModelReady(model)
+        }
+    }
+
+    private func handleUnavailableModelBeforeSubmission() {
+        let unavailableModel = vm.generationModel
+        guard let fallback = availableFallbackModel else {
+            showUnavailableModelAlert()
+            return
+        }
+
+        // APIキーの削除や端末内セルフチェックの失敗は、メニューを開いた後にも
+        // 起こり得る。送信を失敗させる前に、次回送信のモデルを切り替える。
+        vm.generationModel = fallback
+        unavailableModelMessage = "\(unavailableModel.displayName) は現在利用できないため、\(fallback.displayName) に切り替えました。内容を確認して、もう一度送信してください。"
+        isShowingUnavailableModelAlert = true
+    }
+
+    private func showUnavailableModelAlert() {
+        switch vm.generationModel {
+        case .e4b:
+            switch localModelManager.runtimeAvailability {
+            case .checking:
+                unavailableModelMessage = "iori は端末内で起動確認中です。確認が終わるまで待つか、モデルメニューから利用可能なモデルを選択してください。"
+            case .savedOnly:
+                unavailableModelMessage = "iori のモデルは保存済みですが、端末内の起動確認がまだ完了していません。確認が終わるまで待つか、モデルメニューから利用可能なモデルを選択してください。"
+            case .recentFailure:
+                unavailableModelMessage = localModelManager.runtimeDiagnosticSummary ?? "iori を端末内で起動できませんでした。モデル詳細で状態を確認するか、利用可能なモデルを選択してください。"
+            case .modelMissing:
+                unavailableModelMessage = "iori のモデルが端末にありません。設定でモデルを保存するか、モデルメニューから利用可能なモデルを選択してください。"
+            case .executable:
+                unavailableModelMessage = "iori は利用できます。もう一度送信してください。"
+            }
+        case .b31:
+            unavailableModelMessage = "NAGI を使うには Gemma4 API キーが必要です。設定で API キーを登録するか、モデルメニューから iori を選択してください。"
+        }
+        isShowingUnavailableModelAlert = true
     }
 
     private func normalizedDuplicateText(_ text: String) -> String {
@@ -827,12 +915,12 @@ private struct StorySessionChatBody: View {
                         Text("モデル状態")
                             .font(.system(size: 10, weight: .heavy))
                             .foregroundStyle(storyMuted)
-                        Text(message.text)
+                        Text(StoryRetryMetadata.removingMetadata(from: message.text))
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(storyText.opacity(0.78))
                             .fixedSize(horizontal: false, vertical: true)
                         Button("もう一度試す") {
-                            vm.retryLastMessage()
+                            vm.retryLastMessage(for: message.id)
                         }
                         .font(.system(size: 11.5, weight: .bold))
                         .buttonStyle(.bordered)
@@ -840,7 +928,7 @@ private struct StorySessionChatBody: View {
                         if shouldOfferNAGISwitch(for: message) {
                             Button {
                                 vm.generationModel = .b31
-                                vm.retryLastMessage()
+                                vm.retryLastMessage(for: message.id)
                             } label: {
                                 Label(
                                     StoryGemma31BAPIService.shared.hasAPIKey ? "NAGIで再試行" : "NAGI APIキー未設定",
@@ -1059,6 +1147,10 @@ private struct StorySessionChatBody: View {
     private func submit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, service.phase != .thinking else { return }
+        guard selectedModelIsReady else {
+            handleUnavailableModelBeforeSubmission()
+            return
+        }
         // 送信準備中の二重タップでは受付されないため、受理された時だけ入力を消す。
         guard vm.send(text) else { return }
         draft = ""

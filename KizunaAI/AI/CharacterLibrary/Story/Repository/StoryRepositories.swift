@@ -131,6 +131,18 @@ final class LocalJSONStoryWorldRepository: StoryWorldRepository {
         }
         try await store.delete(matching: { $0.id == id })
     }
+
+    /// 起動時の重複標準データ移行専用。通常のユーザー操作からは
+    /// system protected Worldを削除できないが、canonical UUIDへ関連レコードを
+    /// 移した後の余剰レコードだけは、移行処理から明示的に消せるようにする。
+    func purgeSystemWorld(id: UUID) async throws {
+        guard let world = try await store.loadRecoveringCorruptRecords().first(where: { $0.id == id }),
+              world.isSystemProtected == true else {
+            NSLog("[StoryWorldRepo] refused to purge non-system world: %@", id.uuidString)
+            return
+        }
+        try await store.delete(matching: { $0.id == id })
+    }
 }
 
 final class LocalJSONCastRepository: CastRepository {
@@ -163,6 +175,17 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         s.activeCharacterIds = Array(s.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters))
         try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
     }
+
+    /// 重複Worldの移行専用。関連付けだけをcanonical Worldへ変更し、
+    /// 元シーンのcreatedAt/updatedAtやactiveキャラの内容はそのまま保持する。
+    /// 通常の編集経路（saveScene）はupdatedAtを更新するため、移行では使わない。
+    func moveScene(id: UUID, toStoryWorldId: UUID) async throws {
+        try await store.mutate { scenes in
+            guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
+            scenes[index].storyWorldId = toStoryWorldId
+        }
+    }
+
     func deleteScene(id: UUID) async throws {
         try await store.delete(matching: { $0.id == id })
     }
@@ -183,6 +206,17 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         s.updatedAt = Date()
         try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
     }
+
+    /// 重複Worldの移行専用。セッションの所属Worldだけを変更し、
+    /// 会話のcreatedAt/updatedAtを移行時刻で上書きしない。
+    /// 通常の編集経路（saveSession）はupdatedAtを更新するため、移行では使わない。
+    func moveSession(id: UUID, toStoryWorldId: UUID) async throws {
+        try await store.mutate { sessions in
+            guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+            sessions[index].storyWorldId = toStoryWorldId
+        }
+    }
+
     func deleteSession(id: UUID) async throws {
         try await store.delete(matching: { $0.id == id })
     }
@@ -248,6 +282,41 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             }
 
             // 物語ごとの上限を設け、古く重要度の低いものから自然に整理する。
+            let grouped = Dictionary(grouping: all, by: { $0.storyWorldId })
+            all = grouped.values.flatMap { values in
+                values.sorted {
+                    if $0.importance != $1.importance { return $0.importance > $1.importance }
+                    return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
+                }.prefix(perWorldLimit)
+            }
+        }
+    }
+
+    /// Move a memory without changing its UUID. `saveMemory` intentionally
+    /// de-duplicates by world and normalized text, so saving a copy and then
+    /// deleting the old UUID can delete the newly moved record as well.
+    /// This operation keeps the move atomic inside the JSON store and merges
+    /// an existing same-text memory in the destination world.
+    func moveMemory(_ memory: StoryMemory, to storyWorldId: UUID) async throws {
+        try await store.mutate { all in
+            guard let sourceIndex = all.firstIndex(where: { $0.id == memory.id }) else { return }
+            let normalized = normalize(memory.text)
+            if let targetIndex = all.indices.first(where: {
+                $0 != sourceIndex
+                    && all[$0].storyWorldId == storyWorldId
+                    && normalize(all[$0].text) == normalized
+            }) {
+                var target = all[targetIndex]
+                target.importance = max(target.importance, memory.importance)
+                target.lastUsedAt = max(target.lastUsedAt ?? target.createdAt, memory.lastUsedAt ?? memory.createdAt)
+                all[targetIndex] = target
+                all.remove(at: sourceIndex)
+            } else {
+                var moved = memory
+                moved.storyWorldId = storyWorldId
+                all[sourceIndex] = moved
+            }
+
             let grouped = Dictionary(grouping: all, by: { $0.storyWorldId })
             all = grouped.values.flatMap { values in
                 values.sorted {

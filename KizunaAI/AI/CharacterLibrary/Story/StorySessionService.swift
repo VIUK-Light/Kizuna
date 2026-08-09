@@ -10,6 +10,59 @@
 import Foundation
 import Combine
 
+/// Runtime error cards carry their retry target inside the persisted message text.
+/// StoryMessage is shared by older stores and cannot gain a new field here, so use
+/// invisible variation selectors instead of exposing implementation metadata in UI.
+/// The parser deliberately tolerates missing metadata and callers can fall back to
+/// the closest preceding user message for records written by older versions.
+enum StoryRetryMetadata {
+    private static let startMarker = "\u{2063}\u{2060}"
+    private static let endMarker = "\u{2060}\u{2063}"
+
+    static func attachingUserMessageID(_ id: UUID, to text: String) -> String {
+        let hex = id.uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        var encoded = ""
+        for character in hex {
+            guard let nibble = Int(String(character), radix: 16),
+                  let scalar = UnicodeScalar(0xFE00 + nibble) else { continue }
+            encoded.unicodeScalars.append(scalar)
+        }
+        return text + startMarker + encoded + endMarker
+    }
+
+    static func userMessageID(in text: String) -> UUID? {
+        guard let start = text.range(of: startMarker),
+              let end = text.range(of: endMarker, range: start.upperBound..<text.endIndex) else {
+            return nil
+        }
+        var hex = ""
+        for scalar in text[start.upperBound..<end.lowerBound].unicodeScalars {
+            let value = Int(scalar.value)
+            guard (0xFE00...0xFE0F).contains(value) else { return nil }
+            hex.append(String(format: "%x", value - 0xFE00))
+        }
+        guard hex.count == 32 else { return nil }
+        let part1 = String(hex.prefix(8))
+        let part2 = String(hex.dropFirst(8).prefix(4))
+        let part3 = String(hex.dropFirst(12).prefix(4))
+        let part4 = String(hex.dropFirst(16).prefix(4))
+        let part5 = String(hex.dropFirst(20).prefix(12))
+        let uuidText = "\(part1)-\(part2)-\(part3)-\(part4)-\(part5)"
+        return UUID(uuidString: uuidText)
+    }
+
+    /// Removes metadata for presentation/debug output. The marker is invisible,
+    /// but stripping it keeps exports and future UI surfaces clean as well.
+    static func removingMetadata(from text: String) -> String {
+        var result = text
+        while let start = result.range(of: startMarker),
+              let end = result.range(of: endMarker, range: start.upperBound..<result.endIndex) {
+            result.removeSubrange(start.lowerBound..<end.upperBound)
+        }
+        return result
+    }
+}
+
 @MainActor
 final class StorySessionService: ObservableObject {
     enum Phase: Equatable {
@@ -48,6 +101,10 @@ final class StorySessionService: ObservableObject {
     private var generationTask: Task<Void, Never>?
     private var lastVisibleText: String = ""
     private var activeGenerationID: UUID?
+    /// Timeout notice persistence has its own validity token. A watchdog may
+    /// suspend at a repository await; cancellation or a newer turn must then
+    /// invalidate the pending save before it can write a stale snapshot.
+    private var timeoutSaveToken: UUID?
     private var generationWatchdogDeadline: Date?
     private static let generationWatchdogDuration: TimeInterval = 75
     private static let localRuntimeSystemPromptLimit = 1_250
@@ -64,15 +121,19 @@ final class StorySessionService: ObservableObject {
     }
 
     /// 入口: ユーザー発話を送る。session/scene は呼び出し側で確定済み前提。
+    /// `existingUserMessageID` が指定された場合は保存済みターンを再利用し、
+    /// ユーザー発話を再 append せず生成だけを再実行する。
+    @discardableResult
     func send(
         _ userText: String,
         session: StorySession,
         world: StoryWorld,
         scene: StoryScene,
-        generationModel: StoryGenerationModel = .e4b
-    ) {
+        generationModel: StoryGenerationModel = .e4b,
+        existingUserMessageID: UUID? = nil
+    ) -> UUID? {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, phase != .thinking else { return }
+        guard !trimmed.isEmpty, phase != .thinking else { return nil }
         phase = .thinking
         streamingResponse = ""
         streamingSpeakerName = nil
@@ -81,6 +142,8 @@ final class StorySessionService: ObservableObject {
         lastVisibleText = ""
         let generationID = UUID()
         activeGenerationID = generationID
+        timeoutSaveToken = nil
+        let userMessageID = existingUserMessageID ?? UUID()
 
         generationTask = Task { [weak self] in
             await self?.runPipeline(
@@ -89,9 +152,12 @@ final class StorySessionService: ObservableObject {
                 world: world,
                 scene: scene,
                 generationModel: generationModel,
-                generationID: generationID
+                generationID: generationID,
+                userMessageID: userMessageID,
+                existingUserMessageID: existingUserMessageID
             )
         }
+        return userMessageID
     }
 
     func addNarration(_ text: String, session: StorySession) {
@@ -195,6 +261,10 @@ final class StorySessionService: ObservableObject {
     }
 
     func cancel() {
+        // Invalidate an in-flight timeout persistence task before cancelling
+        // the backend. Repository calls may already be suspended at await and
+        // cannot be assumed to observe Task cancellation immediately.
+        timeoutSaveToken = nil
         generationTask?.cancel()
         generationTask = nil
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
@@ -213,7 +283,9 @@ final class StorySessionService: ObservableObject {
         world: StoryWorld,
         scene: StoryScene,
         generationModel: StoryGenerationModel,
-        generationID: UUID
+        generationID: UUID,
+        userMessageID: UUID,
+        existingUserMessageID: UUID?
     ) async {
         guard isGenerationActive(generationID) else { return }
         var session = session
@@ -229,11 +301,25 @@ final class StorySessionService: ObservableObject {
             )
         }
 
-        // user メッセージ append + 空 narration ストリーム先を確保
+        // user メッセージ append + 空 narration ストリーム先を確保。
+        // 再試行では既存の保存済み入力を再利用し、同じIDの発話を重複保存しない。
         streamingStatusText = statusText("会話を保存中", "Saving conversation")
-        let userMsg = StoryMessage(author: .user, text: userText)
-        session.messages.append(userMsg)
-        try? await sessionRepo.saveSession(session)
+        if let existingUserMessageID {
+            guard session.messages.contains(where: { message in
+                message.id == existingUserMessageID && message.author.isUser
+            }) else {
+                NSLog("[StorySession] retry target user message not found: %@", existingUserMessageID.uuidString)
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: "再試行対象の発言を復元できませんでした。新しいメッセージを送信してください。"
+                )
+                return
+            }
+        } else {
+            let userMsg = StoryMessage(id: userMessageID, author: .user, text: userText)
+            session.messages.append(userMsg)
+            try? await sessionRepo.saveSession(session)
+        }
         guard isGenerationActive(generationID) else { return }
 
         // 1) キャラ index / cast 取得
@@ -500,7 +586,8 @@ final class StorySessionService: ObservableObject {
         startWatchdog(
             session: session,
             generationID: generationID,
-            generationModel: generationModel
+            generationModel: generationModel,
+            userMessageID: userMessageID
         )
         streamingStatusText = generationModel == .b31
             ? statusText("Gemma4 31Bで発話生成中", "Generating with Gemma4 31B")
@@ -532,17 +619,14 @@ final class StorySessionService: ObservableObject {
                 )
             }
 
-            let runtimeWaitStartedAt = Date()
             let availability = await waitForLocalRuntime(
                 manager: localModelManager,
                 selectedModelURL: selectedModelURL,
                 generationID: generationID
             )
-            // 起動確認は生成処理ではないため、待機に要した時間をwatchdogへ足し戻す。
-            extendWatchdogDeadline(
-                generationID: generationID,
-                by: Date().timeIntervalSince(runtimeWaitStartedAt)
-            )
+            // self-checkもユーザーの送信ターンに含める。待機時間を
+            // watchdogへ足し戻すと、60秒の起動確認 + 75秒の生成で
+            // 1ターンが最大135秒まで伸びてしまう。
             guard isGenerationActive(generationID) else {
                 return (reply: nil, runtimeNotice: true, backend: "iori 生成キャンセル")
             }
@@ -683,7 +767,8 @@ final class StorySessionService: ObservableObject {
         }
         if isRuntimeNotice {
             guard isGenerationActive(generationID) else { return }
-            let notice = StoryMessage(author: .system, text: textAfterSpeakerDelimiter(rawFinal))
+            let noticeText = textAfterSpeakerDelimiter(rawFinal)
+            let notice = retryableSystemMessage(noticeText, userMessageID: userMessageID)
             session.messages.append(notice)
             session.lastSelectedModelName = generationModel.displayName
             session.lastUsedBackendName = usedBackendName
@@ -707,7 +792,7 @@ final class StorySessionService: ObservableObject {
             // 安全ブロックを物語内の沈黙や台詞に偽装しない。モデル本文は保存せず、
             // 明示的なsystem通知として返す。
             let notice = "安全上の理由でこの応答は保存しませんでした。別の表現で続けてください。"
-            session.messages.append(StoryMessage(author: .system, text: notice))
+            session.messages.append(retryableSystemMessage(notice, userMessageID: userMessageID))
             session.lastSelectedModelName = generationModel.displayName
             session.lastUsedBackendName = usedBackendName + "・安全ブロック"
             try? await sessionRepo.saveSession(session)
@@ -730,7 +815,7 @@ final class StorySessionService: ObservableObject {
         rawFinal = sanitize(rawFinal)
         guard isMeaningfulStoryText(rawFinal) else {
             let notice = "整形後の本文が空になったため保存していません。もう一度試すか、NAGIで続けられます。"
-            session.messages.append(StoryMessage(author: .system, text: notice))
+            session.messages.append(retryableSystemMessage(notice, userMessageID: userMessageID))
             session.lastSelectedModelName = generationModel.displayName
             session.lastUsedBackendName = usedBackendName + "・無効出力"
             try? await sessionRepo.saveSession(session)
@@ -886,6 +971,29 @@ final class StorySessionService: ObservableObject {
         }
     }
 
+    private func retryableSystemMessage(_ text: String, userMessageID: UUID) -> StoryMessage {
+        StoryMessage(
+            author: .system,
+            text: StoryRetryMetadata.attachingUserMessageID(userMessageID, to: text)
+        )
+    }
+
+    /// A stale/corrupt retry target must not create a new user turn. Surface a
+    /// clear transient error while leaving the persisted conversation untouched.
+    private func finishGenerationWithoutSaving(generationID: UUID, notice: String) async {
+        guard isGenerationActive(generationID) else { return }
+        await MainActor.run {
+            guard self.activeGenerationID == generationID else { return }
+            self.streamingResponse = notice
+            self.streamingSpeakerName = "システム"
+            self.streamingStatusText = ""
+            self.savedTurnRevision += 1
+            self.generationWatchdogDeadline = nil
+            self.phase = .idle
+            self.activeGenerationID = nil
+        }
+    }
+
     private func isGenerationActive(_ generationID: UUID) -> Bool {
         !Task.isCancelled && activeGenerationID == generationID
     }
@@ -1008,16 +1116,11 @@ final class StorySessionService: ObservableObject {
         }
     }
 
-    private func extendWatchdogDeadline(generationID: UUID, by duration: TimeInterval) {
-        guard activeGenerationID == generationID,
-              let currentDeadline = generationWatchdogDeadline else { return }
-        generationWatchdogDeadline = currentDeadline.addingTimeInterval(max(0, duration))
-    }
-
     private func startWatchdog(
         session: StorySession,
         generationID: UUID,
-        generationModel: StoryGenerationModel
+        generationModel: StoryGenerationModel,
+        userMessageID: UUID
     ) {
         Task { @MainActor [weak self] in
             while true {
@@ -1038,8 +1141,16 @@ final class StorySessionService: ObservableObject {
             guard let self,
                   self.activeGenerationID == generationID,
                   self.phase == .thinking else { return }
+            let timeoutToken = UUID()
+            self.timeoutSaveToken = timeoutToken
+            // Invalidate the pipeline before cancelling it. Some native/API
+            // backends do not observe cancellation immediately; keeping the
+            // generation ID valid would let a late result pass the guards and
+            // append a story turn after the timeout card was saved.
             self.generationTask?.cancel()
             self.generationTask = nil
+            self.activeGenerationID = nil
+            self.generationWatchdogDeadline = nil
             if generationModel == .e4b {
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
             }
@@ -1057,9 +1168,11 @@ final class StorySessionService: ObservableObject {
             self.streamingSpeakerName = "システム"
             self.streamingStatusText = self.statusText("タイムアウト通知を保存中", "Saving timeout notice")
 
-            // 通知保存が終わるまで phase/activeGenerationID を維持する。
-            // そうしないと次の send が古いセッションを読み、保存結果を上書きできる。
-            guard self.activeGenerationID == generationID else { return }
+            // 通知保存が終わるまで phase は thinking のままにする。
+            // activeGenerationID は先に無効化済みなので、遅れて返る本文は
+            // pipeline側のguardで破棄され、次のsendも保存完了まで受付しない。
+            guard self.timeoutSaveToken == timeoutToken,
+                  self.phase == .thinking else { return }
             var next: StorySession?
             do {
                 next = (try await self.sessionRepo.fetchSessions(storyWorldId: session.storyWorldId))
@@ -1070,20 +1183,27 @@ final class StorySessionService: ObservableObject {
                 // saveSessionして新しいターンを上書きしない。UI通知だけで終了する。
                 next = nil
             }
+            // The user may have cancelled while fetchSessions was suspended.
+            // Never append/save the timeout card after that point.
+            guard self.timeoutSaveToken == timeoutToken,
+                  self.phase == .thinking else { return }
             if var next {
-                next.messages.append(StoryMessage(author: .system, text: notice))
+                next.messages.append(self.retryableSystemMessage(notice, userMessageID: userMessageID))
                 next.lastSelectedModelName = generationModel.displayName
                 next.lastUsedBackendName = backendName
+                guard self.timeoutSaveToken == timeoutToken,
+                      self.phase == .thinking else { return }
                 do {
                     try await self.sessionRepo.saveSession(next)
                 } catch {
                     NSLog("[StorySession] timeout notice save failed: %@", error.localizedDescription)
                 }
             }
-            guard self.activeGenerationID == generationID else { return }
-            self.generationWatchdogDeadline = nil
+            guard self.timeoutSaveToken == timeoutToken,
+                  self.phase == .thinking else { return }
             self.streamingStatusText = ""
             self.savedTurnRevision += 1
+            self.timeoutSaveToken = nil
             self.phase = .idle
             self.activeGenerationID = nil
         }
@@ -1270,7 +1390,8 @@ final class StorySessionService: ObservableObject {
         if didRequestRecheck {
             manager.recheckRuntimeAvailability()
         }
-        for attempt in 0..<120 {
+        var lastReportedSecond = -1
+        for attempt in 0..<60 {
             guard isGenerationActive(generationID) else { return .recentFailure }
             let availability = manager.runtimeAvailability
             switch availability {
@@ -1286,9 +1407,12 @@ final class StorySessionService: ObservableObject {
                 break
             }
 
-            let elapsed = Int(Double(attempt + 1) * 0.5)
-            streamingStatusText = statusText("端末内モデルを確認中（\(elapsed)秒）", "Checking on-device model (\(elapsed)s)")
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            let elapsed = attempt + 1
+            if elapsed != lastReportedSecond {
+                lastReportedSecond = elapsed
+                streamingStatusText = statusText("端末内モデルを確認中（\(elapsed)秒）", "Checking on-device model (\(elapsed)s)")
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
         return manager.runtimeAvailability
     }
