@@ -140,7 +140,10 @@ enum CharacterLibrarySeed {
             let characterIndex = dictionaryByName(allCharacters)
 
             let existingWorlds = try await worldRepo.fetchWorlds()
-            let existingWorldByTitle = dictionaryByTitle(existingWorlds)
+            // 表示名はユーザーが自由に設定できるため、タイトルだけで
+            // ユーザー物語を標準シードの代表にしてはいけない。
+            // 既存の標準レコード（system protected）のみをシード修復対象にする。
+            let existingWorldByTitle = dictionaryByTitle(existingWorlds.filter { $0.isSystemProtected == true })
             for package in storyWorldSeeds(characterIndex: characterIndex) {
                 if let existingWorld = existingWorldByTitle[titleKey(package.world.title)] {
                     let existingCast = try await castRepo.fetchCast(storyWorldId: existingWorld.id)
@@ -311,7 +314,12 @@ enum CharacterLibrarySeed {
         // シード処理を「キャラクター準備・保存」と「依存データ保存」に分ける。
         try await saveCharacters(Array(charactersToSaveByID.values), using: characterRepo)
 
-        var worldsByTitle = dictionaryByTitle(try await worldRepo.fetchWorlds())
+        // ユーザー物語と標準物語はタイトルが衝突し得る。標準シードの
+        // 既存判定は system protected のレコードに限定し、ユーザーの
+        // Worldを標準データで上書き・保護化しない。
+        var worldsByTitle = dictionaryByTitle(
+            (try await worldRepo.fetchWorlds()).filter { $0.isSystemProtected == true }
+        )
         for preparedStory in preparedStories {
             let item = preparedStory.item
             let storyCharacters = preparedStory.characters

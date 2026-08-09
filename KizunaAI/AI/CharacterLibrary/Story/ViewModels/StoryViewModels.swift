@@ -70,11 +70,20 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         // 一覧が空のまま固まったように見えないようにする。
         await reload()
 
+        // 旧バージョンが残した同名の標準Worldを、一覧で隠すだけにしない。
+        // seedの前に正規UUIDへ関連レコードを移しておくことで、再シードや
+        // 履歴画面がhidden UUIDを再発見する問題を防ぐ。
+        await migrateDuplicateSystemWorlds()
+
         let error = await CharacterLibrarySeed.seedIfNeeded(characterRepo: characterRepo, worldRepo: worldRepo)
         seedError = error
+        // シードが新しく作った標準Worldにも、同じ移行ルールを適用する。
+        await migrateDuplicateSystemWorlds()
         await reload()
         isBootstrapping = false
-        didBootstrap = true
+        // 一時的なI/O／Bundle失敗を「初期化済み」として固定しない。
+        // エラー表示を残したまま、次回表示時に自動再試行できるようにする。
+        didBootstrap = error == nil
     }
 
     func reload() async {
@@ -123,6 +132,141 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                 .filter { !$0.isWhitespace && !$0.isPunctuation && $0 != "\u{200B}" }
         }
         return normalize(world.title)
+    }
+
+    /// 旧データに存在する同名のsystem Worldをcanonical Worldへ統合する。
+    /// 一覧のfilterだけでは、履歴や別画面がraw repositoryを読むと重複が戻る。
+    private func migrateDuplicateSystemWorlds() async {
+        guard let localWorldRepo = worldRepo as? LocalJSONStoryWorldRepository else {
+            // クラウド等の別Repositoryでは、削除を伴うローカル移行を行わない。
+            return
+        }
+        do {
+            let systemWorlds = (try await worldRepo.fetchWorlds()).filter { $0.isSystemProtected == true }
+            let grouped = Dictionary(grouping: systemWorlds, by: normalizedSystemWorldKey)
+            for worlds in grouped.values where worlds.count > 1 {
+                // 古いシードが同名ユーザー物語を保護化してしまった場合、
+                // ユーザー側のほうが最近更新されている可能性がある。
+                // 最初に作られたWorldをcanonicalにして、後発側の関連データを
+                // そこへ移すことで、標準WorldをユーザーWorldで置き換えない。
+                let ordered = worlds.sorted {
+                    if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+                    return $0.updatedAt < $1.updatedAt
+                }
+                guard let canonical = ordered.first else { continue }
+                for duplicate in ordered.dropFirst() {
+                    try await mergeWorldMetadata(from: duplicate.id, to: canonical.id)
+                    try await migrateWorldData(from: duplicate.id, to: canonical.id)
+                    try await localWorldRepo.purgeSystemWorld(id: duplicate.id)
+                    NSLog(
+                        "[StoryLibraryVM] migrated duplicate system world %@ (%@) -> %@",
+                        duplicate.title,
+                        duplicate.id.uuidString,
+                        canonical.id.uuidString
+                    )
+                }
+            }
+        } catch {
+            // 一覧を空にしたり、ユーザーデータを推測で削除したりせず、
+            // 次回起動で再試行できるよう診断だけを残す。
+            NSLog("[StoryLibraryVM] duplicate system world migration failed: %@", String(describing: error))
+        }
+    }
+
+    /// Merge references that live on StoryWorld itself before the duplicate
+    /// record is purged. Cast/scene/session rows alone are not enough: a
+    /// character that exists only on the duplicate must remain selectable, and
+    /// language-specific metadata must not disappear during migration.
+    private func mergeWorldMetadata(from duplicateID: UUID, to canonicalID: UUID) async throws {
+        let worlds = try await worldRepo.fetchWorlds()
+        guard var canonical = worlds.first(where: { $0.id == canonicalID }),
+              let duplicate = worlds.first(where: { $0.id == duplicateID }) else { return }
+
+        let mergedCharacterIDs = Array(NSOrderedSet(array: canonical.characterIds + duplicate.characterIds))
+            .compactMap { $0 as? UUID }
+        if mergedCharacterIDs != canonical.characterIds {
+            canonical.characterIds = mergedCharacterIDs
+        }
+        if canonical.mainCharacterId == nil {
+            canonical.mainCharacterId = duplicate.mainCharacterId
+        }
+        canonical.tags = Array(NSOrderedSet(array: canonical.tags + duplicate.tags)).compactMap { $0 as? String }
+        canonical.safetyRules = Array(NSOrderedSet(array: canonical.safetyRules + duplicate.safetyRules)).compactMap { $0 as? String }
+
+        var localizations = canonical.localizations ?? [:]
+        for (language, duplicateLocalization) in duplicate.localizations ?? [:] {
+            guard var merged = localizations[language] else {
+                localizations[language] = duplicateLocalization
+                continue
+            }
+            if merged.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                merged.title = duplicateLocalization.title
+            }
+            if merged.shortDescription?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                merged.shortDescription = duplicateLocalization.shortDescription
+            }
+            if merged.worldSetting?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                merged.worldSetting = duplicateLocalization.worldSetting
+            }
+            if merged.userRole?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                merged.userRole = duplicateLocalization.userRole
+            }
+            if merged.openingScene?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                merged.openingScene = duplicateLocalization.openingScene
+            }
+            if merged.storyGoal?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                merged.storyGoal = duplicateLocalization.storyGoal
+            }
+            if merged.mood?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                merged.mood = duplicateLocalization.mood
+            }
+            if merged.tags?.isEmpty != false {
+                merged.tags = duplicateLocalization.tags
+            }
+            localizations[language] = merged
+        }
+        canonical.localizations = localizations.isEmpty ? nil : localizations
+        try await worldRepo.saveWorld(canonical)
+    }
+
+    private func migrateWorldData(from duplicateID: UUID, to canonicalID: UUID) async throws {
+        let canonicalCast = try await castRepo.fetchCast(storyWorldId: canonicalID)
+        var canonicalCharacterIDs = Set(canonicalCast.map(\.characterId))
+        for var member in try await castRepo.fetchCast(storyWorldId: duplicateID) {
+            if canonicalCharacterIDs.contains(member.characterId) {
+                try await castRepo.deleteCast(id: member.id)
+            } else {
+                member.storyWorldId = canonicalID
+                try await castRepo.saveCast(member)
+                canonicalCharacterIDs.insert(member.characterId)
+            }
+        }
+
+        for var scene in try await sceneRepo.fetchScenes(storyWorldId: duplicateID) {
+            scene.storyWorldId = canonicalID
+            try await sceneRepo.saveScene(scene)
+        }
+
+        for var session in try await sessionRepo.fetchSessions(storyWorldId: duplicateID) {
+            session.storyWorldId = canonicalID
+            try await sessionRepo.saveSession(session)
+        }
+
+        for var entry in try await lorebookRepo.fetchAllEntries(storyWorldId: duplicateID) {
+            entry.storyWorldId = canonicalID
+            try await lorebookRepo.saveEntry(entry)
+        }
+
+        if let localStoryMemoryRepo = storyMemoryRepo as? LocalJSONStoryMemoryRepository {
+            for memory in try await localStoryMemoryRepo.fetchMemories(storyWorldId: duplicateID) {
+                try await localStoryMemoryRepo.moveMemory(memory, to: canonicalID)
+            }
+        } else {
+            // A non-local repository can define its own atomic move operation.
+            // Do not copy/delete here: doing so is not safe when IDs are used as
+            // the repository's replacement key.
+            NSLog("[StoryLibraryVM] skipped memory migration for unsupported repository")
+        }
     }
 
     func delete(id: UUID) async {
@@ -996,7 +1140,10 @@ final class StorySessionViewModel: ObservableObject {
     private var debugSafetyConcernTask: Task<Void, Never>?
     private var debugSafetyConcernObserver: NSObjectProtocol?
     private var debugRequestPollingTask: Task<Void, Never>?
-    private var lastSubmittedText: String?
+    /// The persisted user-message ID for the most recent turn. Unlike the old
+    /// text-only value this survives duplicate text and lets retry target a
+    /// specific error card after the app is relaunched.
+    private var lastSubmittedUserMessageID: UUID?
     private var sendPreparationTask: Task<Void, Never>?
     private var sendPreparationID: UUID?
 
@@ -1027,6 +1174,7 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     func bootstrap() async {
+        restoreLastSubmittedTurn()
         async let castFetch = (try? await castRepo.fetchCast(storyWorldId: world.id)) ?? []
         async let charsFetch = (try? await characterRepo.fetchCharacters()) ?? []
         let (cast, chars) = await (castFetch, charsFetch)
@@ -1134,11 +1282,19 @@ final class StorySessionViewModel: ObservableObject {
 
     @discardableResult
     func send(_ userText: String) -> Bool {
+        enqueueSend(userText, existingUserMessageID: nil)
+    }
+
+    /// Starts a normal or retry turn through the same preparation path. A retry
+    /// carries the existing user-message ID to StorySessionService, which makes
+    /// the user append idempotent even when the stored error card is retried.
+    @discardableResult
+    private func enqueueSend(_ userText: String, existingUserMessageID: UUID?) -> Bool {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               service.phase != .thinking,
               sendPreparationTask == nil else { return false }
-        lastSubmittedText = userText
+        lastSubmittedUserMessageID = existingUserMessageID
         // 直前ターンの保存完了通知と送信タップが競合すると、古い session スナップショットで
         // 次のターンを開始して新しい発言を上書きする。送信前に最新状態を一度だけ読み直す。
         let preparationID = UUID()
@@ -1158,7 +1314,17 @@ final class StorySessionViewModel: ObservableObject {
             guard !Task.isCancelled,
                   self.sendPreparationID == preparationID,
                   self.service.phase != .thinking else { return }
-            self.service.send(trimmed, session: self.session, world: self.world, scene: self.scene, generationModel: self.generationModel)
+            let submittedID = self.service.send(
+                trimmed,
+                session: self.session,
+                world: self.world,
+                scene: self.scene,
+                generationModel: self.generationModel,
+                existingUserMessageID: existingUserMessageID
+            )
+            if let submittedID {
+                self.lastSubmittedUserMessageID = submittedID
+            }
 
             // Service 内で session/scene が永続化されるので、こちらは UI 更新のため
             // 軽くポーリングで再取得する (将来 Combine pipeline 化)。
@@ -1179,9 +1345,59 @@ final class StorySessionViewModel: ObservableObject {
         return true
     }
 
-    func retryLastMessage() {
-        guard let lastSubmittedText, service.phase != .thinking else { return }
-        send(lastSubmittedText)
+    /// Retries the user turn associated with one persisted system error card.
+    /// Older cards without metadata fall back to the closest preceding user
+    /// message, so sessions written before this change remain retryable.
+    @discardableResult
+    func retryLastMessage(for systemMessageID: UUID) -> Bool {
+        guard let targetUserMessageID = retryTargetUserMessageID(for: systemMessageID),
+              let userMessage = session.messages.first(where: { message in
+                  message.id == targetUserMessageID && message.author.isUser
+              }) else {
+            return false
+        }
+        return enqueueSend(userMessage.text, existingUserMessageID: targetUserMessageID)
+    }
+
+    /// Backward-compatible entry point for existing UI callers. New UI should
+    /// pass the card ID so an older card cannot resend the latest input.
+    @discardableResult
+    func retryLastMessage() -> Bool {
+        for message in session.messages.reversed() {
+            guard case .system = message.author else { continue }
+            if retryLastMessage(for: message.id) { return true }
+        }
+        guard let lastSubmittedUserMessageID,
+              let userMessage = session.messages.first(where: { message in
+                  message.id == lastSubmittedUserMessageID && message.author.isUser
+              }) else {
+            return false
+        }
+        return enqueueSend(userMessage.text, existingUserMessageID: lastSubmittedUserMessageID)
+    }
+
+    /// Resolves a system card to its persisted user turn. The metadata path is
+    /// stable across restarts; the positional fallback handles legacy records.
+    private func retryTargetUserMessageID(for systemMessageID: UUID) -> UUID? {
+        guard let systemIndex = session.messages.firstIndex(where: { message in
+            message.id == systemMessageID
+        }), case .system = session.messages[systemIndex].author else { return nil }
+        let systemMessage = session.messages[systemIndex]
+        if let persistedID = StoryRetryMetadata.userMessageID(in: systemMessage.text) {
+            return persistedID
+        }
+        return session.messages[..<systemIndex].reversed().first(where: { message in
+            message.author.isUser
+        })?.id
+    }
+
+    /// The session is loaded from JSON before `bootstrap` runs. Restore the
+    /// latest user turn so no-argument retry still works after relaunch.
+    private func restoreLastSubmittedTurn() {
+        guard let message = session.messages.reversed().first(where: { message in
+            message.author.isUser
+        }) else { return }
+        lastSubmittedUserMessageID = message.id
     }
 
     /// 生成停止時は、サービス本体だけでなく送信前の状態再読込も止める。
