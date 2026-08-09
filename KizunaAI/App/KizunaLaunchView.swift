@@ -59,8 +59,8 @@ struct KizunaLaunchView: View {
     private var brandHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(KizunaCopy.text(
-                japanese: step == 0 ? "まず、あなたのペースを教えてください。" : "次に、物語の入口を選びましょう。",
-                english: step == 0 ? "First, set your pace." : "Now choose a story entrance."
+                japanese: step == 0 ? "まず、あなたのプロフィールを整えましょう。" : "次に、物語の入口を選びましょう。",
+                english: step == 0 ? "First, make this space yours." : "Now choose a story entrance."
             ))
             .font(.system(size: 28, weight: .heavy, design: .rounded))
             .fixedSize(horizontal: false, vertical: true)
@@ -90,48 +90,10 @@ struct KizunaLaunchView: View {
                 )
                 .textFieldStyle(.roundedBorder)
 
-                HStack(spacing: 8) {
-                    ForEach(["🙂", "😊", "😌", "🌱", "⭐️", "🌙", "🎧", "🧭"], id: \.self) { symbol in
-                        Button {
-                            draft.avatarSymbol = symbol
-                        } label: {
-                            Text(symbol)
-                                .font(.title3)
-                                .frame(width: 34, height: 34)
-                                .background(
-                                    Circle().fill(
-                                        draft.avatarSymbol == symbol
-                                            ? Color.accentColor.opacity(0.18)
-                                            : Color.primary.opacity(0.05)
-                                    )
-                                )
-                                .overlay {
-                                    Circle().stroke(
-                                        draft.avatarSymbol == symbol ? Color.accentColor : .clear,
-                                        lineWidth: 1.5
-                                    )
-                                }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-
-            setupCard(title: KizunaCopy.text(japanese: "会話のテンポ", english: "Conversation pace"),
-                      subtitle: KizunaCopy.text(japanese: "短く、標準、少し詳しく。", english: "Short, balanced, or a little more detail."),
-                      icon: "bubble.left.and.bubble.right") {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 8)], spacing: 8) {
-                    ForEach(KizunaConversationPreference.allCases) { preference in
-                        setupChoice(
-                            title: preference.displayName,
-                            detail: preference.promptHint,
-                            icon: preference == .short ? "bolt.fill" : preference == .balanced ? "waveform" : "text.alignleft",
-                            isSelected: draft.conversationPreference == preference
-                        ) {
-                            draft.conversationPreference = preference
-                        }
-                    }
-                }
+                Text(KizunaCopy.text(japanese: "プロフィールアイコン", english: "Profile icon"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                KizunaAvatarPicker(selection: $draft.avatarSymbol)
             }
         }
     }

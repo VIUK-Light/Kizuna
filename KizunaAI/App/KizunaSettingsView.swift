@@ -38,15 +38,14 @@ struct KizunaSettingsView: View {
 
                 Section {
                     HStack(spacing: 10) {
-                        Text(profileStore.profile.avatarSymbol)
-                            .font(.title2)
+                        KizunaAvatarView(symbol: profileStore.profile.avatarSymbol, size: 42)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(profileStore.profile.visibleName.isEmpty
                                  ? KizunaCopy.text(japanese: "未設定", english: "Not set")
                                  : profileStore.profile.visibleName)
                                 .font(.headline)
                             Text(profileStore.profile.hasUsefulContent
-                                 ? KizunaCopy.text(japanese: "会話の好みを保存済み", english: "Conversation preferences saved")
+                                 ? KizunaCopy.text(japanese: "プロフィール設定済み", english: "Profile configured")
                                  : KizunaCopy.text(japanese: "入力は任意です", english: "Optional")
                             )
                             .font(.caption)
