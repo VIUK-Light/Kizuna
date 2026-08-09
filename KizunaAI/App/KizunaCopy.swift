@@ -14,6 +14,6 @@ enum KizunaCopy {
     }
 
     static var appName: String {
-        text(japanese: "VIUK 絆", english: "Kizuna")
+        text(japanese: "kizuna", english: "kizuna")
     }
 }

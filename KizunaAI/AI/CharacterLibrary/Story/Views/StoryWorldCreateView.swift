@@ -109,13 +109,15 @@ struct StoryWorldCreateView: View {
 
     private var header: some View {
         HStack {
-            Button("キャンセル") { dismiss() }.buttonStyle(.plain).foregroundStyle(.secondary)
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { dismiss() }.buttonStyle(.plain).foregroundStyle(.secondary)
             Spacer()
-            Text(existing == nil ? "ストーリーを作る" : "ストーリーを編集")
+            Text(existing == nil
+                 ? KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story")
+                 : KizunaCopy.text(japanese: "ストーリーを編集", english: "Edit story"))
                 .font(.system(size: 15, weight: .semibold))
             Spacer()
             if existing == nil {
-                Label("31B Thinking", systemImage: "sparkles")
+                Label(KizunaCopy.text(japanese: "31B Thinking", english: "31B Thinking"), systemImage: "sparkles")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.secondary)
             } else {
@@ -139,12 +141,12 @@ struct StoryWorldCreateView: View {
                         }
                     }
                 } label: {
-                    Label("保存して試す", systemImage: "play.fill")
+                    Label(KizunaCopy.text(japanese: "保存して試す", english: "Save and try"), systemImage: "play.fill")
                 }
                 .buttonStyle(.bordered)
             }
             Spacer()
-            Button("保存") {
+            Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
                 Task {
                     if let saved = await vm.save() {
                         onSaved?(saved)
@@ -165,9 +167,12 @@ struct StoryWorldCreateView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("何を作りたい？")
+                        Text(KizunaCopy.text(japanese: "何を作りたい？", english: "What would you like to make?"))
                             .font(.system(size: 18, weight: .heavy))
-                        Text("短い一文から、世界観・初期シーン・キャラ・ルールまで自動で組み立てます。")
+                        Text(KizunaCopy.text(
+                            japanese: "短い一文から、世界観・初期シーン・キャラ・ルールまで自動で組み立てます。",
+                            english: "Turn one short idea into a world, opening scene, cast, and rules."
+                        ))
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
@@ -178,7 +183,10 @@ struct StoryWorldCreateView: View {
                     }
                 }
 
-                TextField("例: BL系。弓道部の無口な先輩と、放課後に少しずつ距離が近づく話", text: $vm.generationBrief, axis: .vertical)
+                TextField(KizunaCopy.text(
+                    japanese: "例: BL系。弓道部の無口な先輩と、放課後に少しずつ距離が近づく話",
+                    english: "e.g. A quiet archery club senior and a slow after-school connection"
+                ), text: $vm.generationBrief, axis: .vertical)
                     .font(.system(size: 16, weight: .semibold))
                     .textFieldStyle(.plain)
                     .focused($generationBriefFocused)
@@ -204,7 +212,9 @@ struct StoryWorldCreateView: View {
                         generationBriefFocused = false
                         Task { await vm.generateTemplateWith31BThinking() }
                     } label: {
-                        Label(vm.isGeneratingTemplate ? "生成中" : "31B Thinkingでテンプレート作成", systemImage: "sparkles")
+                        Label(vm.isGeneratingTemplate
+                              ? KizunaCopy.text(japanese: "生成中", english: "Generating")
+                              : KizunaCopy.text(japanese: "31B Thinkingでテンプレート作成", english: "Build with 31B Thinking"), systemImage: "sparkles")
                             .font(.system(size: 13, weight: .bold))
                     }
                     .buttonStyle(.borderedProminent)
@@ -227,7 +237,7 @@ struct StoryWorldCreateView: View {
                 Image(systemName: vm.saveError == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(vm.saveError == nil ? .green : .orange)
             }
-            Text(vm.saveError ?? vm.generationStatus ?? "生成中...")
+            Text(vm.saveError ?? vm.generationStatus ?? KizunaCopy.text(japanese: "生成中…", english: "Generating…"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(vm.saveError == nil ? Color.secondary : Color.orange)
                 .fixedSize(horizontal: false, vertical: true)
@@ -256,13 +266,16 @@ struct StoryWorldCreateView: View {
                 )
                 .frame(minHeight: 150)
             VStack(alignment: .leading, spacing: 8) {
-                Label("Custom Story Builder", systemImage: "wand.and.stars")
+                Label(KizunaCopy.text(japanese: "カスタムストーリービルダー", english: "Custom story builder"), systemImage: "wand.and.stars")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.white.opacity(0.72))
-                Text("一文から、すぐ動く物語を作る")
+                Text(KizunaCopy.text(japanese: "一文から、すぐ動く物語を作る", english: "Build a playable story from one idea"))
                     .font(.system(size: 28, weight: .heavy))
                     .foregroundStyle(.white)
-                Text("生成後にキャラ画像、話し方、初期シーン、進行ルールをそのまま確認して試せます。")
+                Text(KizunaCopy.text(
+                    japanese: "生成後にキャラ画像、話し方、初期シーン、進行ルールをそのまま確認して試せます。",
+                    english: "Review the cast art, voices, opening scene, and story rules before you play."
+                ))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.74))
                     .fixedSize(horizontal: false, vertical: true)
@@ -274,10 +287,10 @@ struct StoryWorldCreateView: View {
     private var quickPromptChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                quickPromptButton("BL 部活") { "BL。放課後の部活で、無口な先輩と少しずつ信頼を深める青春ストーリー" }
-                quickPromptButton("GL 寮生活") { "GL。女子寮の夜、同室の先輩と秘密を共有して距離が近づく日常ストーリー" }
-                quickPromptButton("幻想図書館") { "夜だけ開く魔法図書館で、契約者と秘密の本を探すファンタジー" }
-                quickPromptButton("夏祭り") { "BL。幼なじみと夏祭りで再会し、昔の約束を少しずつ思い出す話" }
+                quickPromptButton(KizunaCopy.text(japanese: "BL 部活", english: "BL · Club")) { "BL。放課後の部活で、無口な先輩と少しずつ信頼を深める青春ストーリー" }
+                quickPromptButton(KizunaCopy.text(japanese: "GL 寮生活", english: "GL · Dorm")) { "GL。女子寮の夜、同室の先輩と秘密を共有して距離が近づく日常ストーリー" }
+                quickPromptButton(KizunaCopy.text(japanese: "幻想図書館", english: "Fantasy library")) { "夜だけ開く魔法図書館で、契約者と秘密の本を探すファンタジー" }
+                quickPromptButton(KizunaCopy.text(japanese: "夏祭り", english: "Summer festival")) { "BL。幼なじみと夏祭りで再会し、昔の約束を少しずつ思い出す話" }
             }
         }
     }
@@ -299,13 +312,16 @@ struct StoryWorldCreateView: View {
 
     private var generatedPreviewSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("生成プレビュー")
+            sectionTitle(KizunaCopy.text(japanese: "生成プレビュー", english: "Generation preview"))
             if vm.draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 HStack(spacing: 10) {
                     Image(systemName: "doc.text.magnifyingglass")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.tertiary)
-                    Text("31B Thinkingで作ると、ここにタイトル・キャスト・初期シーンが表示されます。")
+                    Text(KizunaCopy.text(
+                        japanese: "31B Thinkingで作ると、ここにタイトル・キャスト・初期シーンが表示されます。",
+                        english: "Your title, cast, and opening scene will appear here after generation."
+                    ))
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
@@ -314,9 +330,9 @@ struct StoryWorldCreateView: View {
                 .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.035)))
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], spacing: 10) {
-                    previewTile("タイトル", vm.draft.title, icon: "text.book.closed.fill")
-                    previewTile("キャスト", "\(vm.castDrafts.count)人", icon: "person.2.fill")
-                    previewTile("初期シーン", vm.sceneDraft.title.isEmpty ? "未設定" : vm.sceneDraft.title, icon: "sparkles.rectangle.stack")
+                    previewTile(KizunaCopy.text(japanese: "タイトル", english: "Title"), vm.draft.title, icon: "text.book.closed.fill")
+                    previewTile(KizunaCopy.text(japanese: "キャスト", english: "Cast"), KizunaCopy.language == .english ? "\(vm.castDrafts.count)" : "\(vm.castDrafts.count)人", icon: "person.2.fill")
+                    previewTile(KizunaCopy.text(japanese: "初期シーン", english: "Opening scene"), vm.sceneDraft.title.isEmpty ? KizunaCopy.text(japanese: "未設定", english: "Not set") : vm.sceneDraft.title, icon: "sparkles.rectangle.stack")
                 }
             }
         }
@@ -360,13 +376,13 @@ struct StoryWorldCreateView: View {
 
     private var basicSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("基本情報")
+            sectionTitle(KizunaCopy.text(japanese: "基本情報", english: "Basics"))
             card {
-                TextField("タイトル", text: $vm.draft.title).textFieldStyle(.roundedBorder)
-                TextField("ひとこと説明", text: $vm.draft.shortDescription).textFieldStyle(.roundedBorder)
+                TextField(KizunaCopy.text(japanese: "タイトル", english: "Title"), text: $vm.draft.title).textFieldStyle(.roundedBorder)
+                TextField(KizunaCopy.text(japanese: "ひとこと説明", english: "Short description"), text: $vm.draft.shortDescription).textFieldStyle(.roundedBorder)
 
                 HStack {
-                    Text("ジャンル").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "ジャンル", english: "Genre")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Menu {
                         ForEach(CategoryGroup.allCases) { g in
                             Menu(g.displayName) {
@@ -388,14 +404,14 @@ struct StoryWorldCreateView: View {
                 }
 
                 HStack {
-                    Text("関係性").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "関係性", english: "Relationship")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Picker("", selection: $vm.draft.relationshipGenre) {
                         ForEach(RelationshipGenre.allCases) { g in Text(g.displayName).tag(g) }
                     }.labelsHidden().pickerStyle(.menu)
                 }
 
                 HStack(alignment: .top) {
-                    Text("物語形式").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "物語形式", english: "Story format")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Picker(
                         "",
                         selection: Binding(
@@ -404,22 +420,22 @@ struct StoryWorldCreateView: View {
                         )
                     ) {
                         ForEach(StoryCastMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
+                            Text(mode.localizedDisplayName).tag(mode)
                         }
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(vm.draft.resolvedCastMode.detail)
+                        Text(vm.draft.resolvedCastMode.localizedDetail)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 HStack {
-                    Text("公開状態").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "公開状態", english: "Visibility")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Picker("", selection: $vm.draft.visibility) {
-                        ForEach(CharacterVisibility.allCases) { v in Label(v.displayName, systemImage: v.iconName).tag(v) }
+                        ForEach(CharacterVisibility.allCases) { v in Label(v.localizedDisplayName, systemImage: v.iconName).tag(v) }
                     }.labelsHidden().pickerStyle(.menu)
                 }
             }
@@ -431,14 +447,17 @@ struct StoryWorldCreateView: View {
     /// キーワードが出た時だけAIへ渡す設定カード。
     private var lorebookSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Lorebook / キーワード設定")
+            sectionTitle(KizunaCopy.text(japanese: "Lorebook / キーワード設定", english: "Lorebook / keyword rules"))
             card {
-                Text("世界観・場所・秘密などを登録すると、関連する会話の時だけAIへ渡します。")
+                Text(KizunaCopy.text(
+                    japanese: "世界観・場所・秘密などを登録すると、関連する会話の時だけAIへ渡します。",
+                    english: "World details, places, and secrets are sent to the model only when relevant."
+                ))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
-                TextField("タイトル（例: 夜の図書館のルール）", text: $newLorebookTitle)
+                TextField(KizunaCopy.text(japanese: "タイトル（例: 夜の図書館のルール）", english: "Title (e.g. rules for the night library)"), text: $newLorebookTitle)
                     .textFieldStyle(.roundedBorder)
-                TextField("キーワード（例: 図書館、禁書、夜）", text: $newLorebookKeywords)
+                TextField(KizunaCopy.text(japanese: "キーワード（例: 図書館、禁書、夜）", english: "Keywords (e.g. library, forbidden book, night)"), text: $newLorebookKeywords)
                     .textFieldStyle(.roundedBorder)
                 TextEditor(text: $newLorebookContent)
                     .frame(minHeight: 74)
@@ -456,7 +475,7 @@ struct StoryWorldCreateView: View {
                         newLorebookKeywords = ""
                         newLorebookContent = ""
                     } label: {
-                        Label("設定を追加", systemImage: "plus")
+                        Label(KizunaCopy.text(japanese: "設定を追加", english: "Add rule"), systemImage: "plus")
                     }
                     .buttonStyle(.bordered)
                     .disabled(newLorebookTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || newLorebookContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -491,35 +510,35 @@ struct StoryWorldCreateView: View {
 
     private var settingSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("世界観 & 物語")
+            sectionTitle(KizunaCopy.text(japanese: "世界観 & 物語", english: "World & story"))
             card {
-                multilineField("世界観", $vm.draft.worldSetting, hint: "例: 平凡な現代の高校に魔法が存在する世界")
-                multilineField("ユーザーの役", $vm.draft.userRole, hint: "例: 新しく転校してきた生徒")
-                multilineField("オープニングシーン", $vm.draft.openingScene, hint: "物語の幕開け。最初のナレーション。")
-                multilineField("物語の目標", $vm.draft.storyGoal, hint: "例: 卒業までに気持ちを伝える")
-                TextField("ムード (例: 切ない、爽やか、緊張感)", text: $vm.draft.mood).textFieldStyle(.roundedBorder)
+                multilineField(KizunaCopy.text(japanese: "世界観", english: "World setting"), $vm.draft.worldSetting, hint: KizunaCopy.text(japanese: "例: 平凡な現代の高校に魔法が存在する世界", english: "e.g. a normal modern high school where magic exists"))
+                multilineField(KizunaCopy.text(japanese: "ユーザーの役", english: "Your role"), $vm.draft.userRole, hint: KizunaCopy.text(japanese: "例: 新しく転校してきた生徒", english: "e.g. a new transfer student"))
+                multilineField(KizunaCopy.text(japanese: "オープニングシーン", english: "Opening scene"), $vm.draft.openingScene, hint: KizunaCopy.text(japanese: "物語の幕開け。最初のナレーション。", english: "The opening narration for the story."))
+                multilineField(KizunaCopy.text(japanese: "物語の目標", english: "Story goal"), $vm.draft.storyGoal, hint: KizunaCopy.text(japanese: "例: 卒業までに気持ちを伝える", english: "e.g. share your feelings before graduation"))
+                TextField(KizunaCopy.text(japanese: "ムード (例: 切ない、爽やか、緊張感)", english: "Mood (e.g. tender, bright, tense)"), text: $vm.draft.mood).textFieldStyle(.roundedBorder)
             }
         }
     }
 
     private var openingSceneSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("初期シーン")
+            sectionTitle(KizunaCopy.text(japanese: "初期シーン", english: "Opening scene"))
             card {
-                TextField("シーン名", text: $vm.sceneDraft.title)
+                TextField(KizunaCopy.text(japanese: "シーン名", english: "Scene name"), text: $vm.sceneDraft.title)
                     .textFieldStyle(.roundedBorder)
-                TextField("場所 (例: 閉鎖された記憶駅)", text: $vm.sceneDraft.location)
+                TextField(KizunaCopy.text(japanese: "場所 (例: 閉鎖された記憶駅)", english: "Location (e.g. an abandoned memory station)"), text: $vm.sceneDraft.location)
                     .textFieldStyle(.roundedBorder)
-                TextField("時間 (例: 深夜 / 放課後 / 雨上がり)", text: $vm.sceneDraft.timeOfDay)
+                TextField(KizunaCopy.text(japanese: "時間 (例: 深夜 / 放課後 / 雨上がり)", english: "Time (e.g. midnight / after school / after rain)"), text: $vm.sceneDraft.timeOfDay)
                     .textFieldStyle(.roundedBorder)
-                TextField("空気 (例: 静かで透明な不安)", text: $vm.sceneDraft.mood)
+                TextField(KizunaCopy.text(japanese: "空気 (例: 静かで透明な不安)", english: "Mood (e.g. quiet, clear unease)"), text: $vm.sceneDraft.mood)
                     .textFieldStyle(.roundedBorder)
-                multilineField("このシーンの目的", $vm.sceneDraft.sceneGoal, hint: "例: ノアがユーザーに最初の違和感を伝える")
-                multilineField("葛藤", Binding(
+                multilineField(KizunaCopy.text(japanese: "このシーンの目的", english: "Scene goal"), $vm.sceneDraft.sceneGoal, hint: KizunaCopy.text(japanese: "例: ノアがユーザーに最初の違和感を伝える", english: "e.g. Noa shares the first unsettling clue"))
+                multilineField(KizunaCopy.text(japanese: "葛藤", english: "Conflict"), Binding(
                     get: { vm.sceneDraft.conflict ?? "" },
                     set: { vm.sceneDraft.conflict = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-                ), hint: "例: 端末は真実を示すが、ノアはそれを隠したがっている")
-                multilineField("ここまでの要約 / 初期状況", $vm.sceneDraft.summary, hint: "最初の会話前に共有しておく状況")
+                ), hint: KizunaCopy.text(japanese: "例: 端末は真実を示すが、ノアはそれを隠したがっている", english: "e.g. the device shows the truth, but Noa wants to hide it"))
+                multilineField(KizunaCopy.text(japanese: "ここまでの要約 / 初期状況", english: "Summary / starting situation"), $vm.sceneDraft.summary, hint: KizunaCopy.text(japanese: "最初の会話前に共有しておく状況", english: "Context to share before the first exchange"))
             }
         }
     }
@@ -527,25 +546,28 @@ struct StoryWorldCreateView: View {
     private var castSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                sectionTitle("登場キャラ")
+                sectionTitle(KizunaCopy.text(japanese: "登場キャラ", english: "Cast"))
                 Spacer()
                 Button {
                     showCharacterCreator = true
                 } label: {
-                    Label("作る", systemImage: "person.crop.circle.badge.plus")
+                    Label(KizunaCopy.text(japanese: "作る", english: "Create"), systemImage: "person.crop.circle.badge.plus")
                         .font(.system(size: 11, weight: .semibold))
                 }
                 .buttonStyle(.bordered)
                 Button {
                     showCharacterPicker = true
                 } label: {
-                    Label("選ぶ", systemImage: "plus").font(.system(size: 11, weight: .semibold))
+                    Label(KizunaCopy.text(japanese: "選ぶ", english: "Choose"), systemImage: "plus").font(.system(size: 11, weight: .semibold))
                 }
                 .buttonStyle(.bordered)
             }
             card {
                 if vm.castDrafts.isEmpty {
-                    Text("キャラを作るか選ぶと、物語の登場人物として参加します。最初の 1 名はメインキャラとして登録されます。")
+                    Text(KizunaCopy.text(
+                        japanese: "キャラを作るか選ぶと、物語の登場人物として参加します。最初の1名はメインキャラとして登録されます。",
+                        english: "Create or choose characters to add them to the story. The first one becomes the main character."
+                    ))
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     ForEach(vm.castDrafts) { member in
@@ -574,9 +596,9 @@ struct StoryWorldCreateView: View {
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(Color.accentColor.opacity(0.12)))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("詳細設定")
+                    Text(KizunaCopy.text(japanese: "詳細設定", english: "Advanced settings"))
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                    Text("Lorebook・キャラ同士の関係・タグ（必要なときだけ）")
+                    Text(KizunaCopy.text(japanese: "Lorebook・キャラ同士の関係・タグ（必要なときだけ）", english: "Lorebook, character relationships, and tags (optional)"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -625,7 +647,7 @@ struct StoryWorldCreateView: View {
                 Text(profile.shortDescription).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             HStack(spacing: 8) {
-                Toggle("初期シーンに出す", isOn: Binding(
+                Toggle(KizunaCopy.text(japanese: "初期シーンに出す", english: "Show in opening scene"), isOn: Binding(
                     get: { vm.sceneDraft.activeCharacterIds.contains(member.characterId) },
                     set: { vm.setActiveInOpeningScene($0, for: member.characterId) }
                 ))
@@ -643,13 +665,13 @@ struct StoryWorldCreateView: View {
                 }
                 .menuStyle(.borderlessButton)
             }
-            TextField("この物語でのユーザーとの関係", text: Binding(
+            TextField(KizunaCopy.text(japanese: "この物語でのユーザーとの関係", english: "Relationship to the user in this story"), text: Binding(
                 get: { member.relationshipToUser },
                 set: { vm.setStoryRelationshipToUser($0, for: member.characterId) }
             ))
             .textFieldStyle(.roundedBorder)
             HStack(spacing: 6) {
-                Text("重要度").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(KizunaCopy.text(japanese: "重要度", english: "Importance")).font(.system(size: 10)).foregroundStyle(.secondary)
                 Slider(value: Binding(
                     get: { member.importance },
                     set: { vm.setImportance($0, for: member.characterId) }
@@ -663,11 +685,11 @@ struct StoryWorldCreateView: View {
 
     private var relationshipSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("キャラ同士の関係")
+            sectionTitle(KizunaCopy.text(japanese: "キャラ同士の関係", english: "Character relationships"))
             card {
                 let pairs = relationshipPairs
                 if pairs.isEmpty {
-                    Text("2人以上のキャラを追加すると、キャラ同士の関係を設定できます。")
+                    Text(KizunaCopy.text(japanese: "2人以上のキャラを追加すると、キャラ同士の関係を設定できます。", english: "Add at least two characters to define their relationships."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -716,13 +738,13 @@ struct StoryWorldCreateView: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
             }
-            TextField("関係メモ (例: 古い相棒だが、互いに秘密を持っている)", text: Binding(
+            TextField(KizunaCopy.text(japanese: "関係メモ (例: 古い相棒だが、互いに秘密を持っている)", english: "Relationship note (e.g. old partners with secrets)"), text: Binding(
                 get: { rel.description },
                 set: { vm.updateRelationship(from: pair.from.characterId, to: pair.to.characterId, description: $0) }
             ))
             .textFieldStyle(.roundedBorder)
             HStack(spacing: 10) {
-                Text("信頼")
+                Text(KizunaCopy.text(japanese: "信頼", english: "Trust"))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Slider(value: Binding(
@@ -732,7 +754,7 @@ struct StoryWorldCreateView: View {
                 Text(String(format: "%.1f", rel.trust))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                Text("緊張")
+                Text(KizunaCopy.text(japanese: "緊張", english: "Tension"))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Slider(value: Binding(
@@ -799,7 +821,7 @@ struct StoryWorldCreateView: View {
 
     private var tagsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("タグ")
+            sectionTitle(KizunaCopy.text(japanese: "タグ", english: "Tags"))
             card {
                 if !vm.draft.tags.isEmpty {
                     let columns = [GridItem(.adaptive(minimum: 90), spacing: 6)]
@@ -819,9 +841,9 @@ struct StoryWorldCreateView: View {
                     }
                 }
                 HStack {
-                    TextField("タグを追加", text: $newTag).textFieldStyle(.roundedBorder)
+                    TextField(KizunaCopy.text(japanese: "タグを追加", english: "Add a tag"), text: $newTag).textFieldStyle(.roundedBorder)
                         .onSubmit { addTag() }
-                    Button("追加") { addTag() }.buttonStyle(.bordered)
+                    Button(KizunaCopy.text(japanese: "追加", english: "Add")) { addTag() }.buttonStyle(.bordered)
                         .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -861,9 +883,9 @@ private struct CharacterPickerForStory: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Button("閉じる") { dismiss() }.buttonStyle(.plain).foregroundStyle(.secondary)
+                Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }.buttonStyle(.plain).foregroundStyle(.secondary)
                 Spacer()
-                Text("キャラを追加").font(.system(size: 14, weight: .semibold))
+                Text(KizunaCopy.text(japanese: "キャラを追加", english: "Add character")).font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Color.clear.frame(width: 48)
             }
@@ -872,8 +894,8 @@ private struct CharacterPickerForStory: View {
             if filtered.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "person.crop.circle.badge.questionmark").font(.system(size: 34)).foregroundStyle(.tertiary)
-                    Text("追加できるキャラがいません").font(.system(size: 13))
-                    Text("先に「キャラライブラリー」でキャラを作ってください。").font(.caption).foregroundStyle(.secondary)
+                    Text(KizunaCopy.text(japanese: "追加できるキャラがいません", english: "No characters available")).font(.system(size: 13))
+                    Text(KizunaCopy.text(japanese: "先に「キャラライブラリー」でキャラを作ってください。", english: "Create a character in the character library first.")).font(.caption).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(40)

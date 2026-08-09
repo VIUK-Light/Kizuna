@@ -83,7 +83,7 @@ struct KizunaUserProfileView: View {
 
     private var nameCard: some View {
         profileCard(
-            title: KizunaCopy.text(japanese: "どう呼ばれたい？", english: "How should Kizuna address you?"),
+            title: KizunaCopy.text(japanese: "どう呼ばれたい？", english: "How should kizuna address you?"),
             subtitle: KizunaCopy.text(
                 japanese: "本名でなくて大丈夫。空欄のままでも使えます。",
                 english: "A nickname is fine. You can leave it blank."

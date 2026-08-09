@@ -100,10 +100,149 @@ enum StoryEnglishCatalog {
         "空白の三年間と、囚われた記憶": "Three Empty Years and a Captive Memory",
         "時を越える追伸": "A Postscript Across Time",
         "琥珀色の祭囃子": "The Amber Festival Music",
-        "コミュ障女警官は職質ができません": "The Socially Awkward Policewoman Can't Question Anyone"
+        "コミュ障女警官は職質ができません": "The Socially Awkward Policewoman Can't Question Anyone",
+        "雨宿りの喫茶街": "The Café District in the Rain",
+        "星屑ギルドの最初の依頼": "The Stardust Guild's First Quest",
+        "夜都ボディガード契約": "The Night City's Bodyguard Contract",
+        "海辺の夏合宿": "The Seaside Summer Camp",
+        "機械仕掛けの記憶都市": "The Clockwork City of Memories",
+        "雨の駅で、最後の電車を待つ": "Waiting for the Last Train in the Rain",
+        "水族館の青い光の中で": "In the Aquarium's Blue Light",
+        "文化祭前夜、音楽室にて": "In the Music Room on the Eve of the School Festival",
+        "海沿いのバス停で、君を待つ": "Waiting for You at the Seaside Bus Stop",
+        "星空観測部の夜": "A Night with the Stargazing Club",
+        "雨上がり、放課後の屋上で": "On the Rooftop After School, After the Rain",
+        "図書室の窓辺で、君を待つ": "Waiting for You by the Library Window",
+        "午前0時のラジオ、きみの声": "Midnight Radio, Your Voice",
+        "同居契約は、雨のち晴れ": "Our Cohabitation Contract, Rain Then Sun",
+        "星降る温室の管理人": "The Caretaker of the Starfall Greenhouse",
+        "未送信の写真展": "The Exhibition of Unsent Photographs",
+        "深海研究船の帰港日": "The Deep-Sea Research Vessel Comes Home",
+        "演劇部の代役は幕が下りても": "The Drama Club Stand-In After the Curtain Falls",
+        "青いバス停で、次の季節を待つ": "Waiting for the Next Season at the Blue Bus Stop"
     ]
 
     private static let detailed: [String: StoryWorldLocalization] = [
+        "雨宿りの喫茶街": StoryWorldLocalization(
+            title: "The Café District in the Rain",
+            shortDescription: "A slice-of-life ensemble story where people share a little more of their truth on rainy days.",
+            worldSetting: "An old arcade district where rain brings more customers and someone else's worries into the cafés.",
+            userRole: "A regular who helps at a neighborhood café.",
+            openingScene: "As the rain grows heavier at dusk, the bell rings and someone soaked to the skin steps inside.",
+            storyGoal: "Help visitors with their small worries and restore the connections that hold the district together.",
+            mood: "Warm and gently bittersweet",
+            tags: ["Daily life", "Café", "Rain", "Comfort"]
+        ),
+        "星屑ギルドの最初の依頼": StoryWorldLocalization(
+            title: "The Stardust Guild's First Quest",
+            shortDescription: "An opening fantasy adventure where guild companions support a newly arrived traveler.",
+            worldSetting: "A guild town beside a forest where stars fall; beginners are guided toward safe quests first.",
+            userRole: "A new adventurer who has only just arrived in another world.",
+            openingScene: "While you hesitate in front of the quest board, Kai at the reception desk calls out with a smile.",
+            storyGoal: "Complete your first quest safely and find a place for yourself in the town.",
+            mood: "Bright and adventurous",
+            tags: ["Isekai", "Guild", "Adventure", "Companions"]
+        ),
+        "夜都ボディガード契約": StoryWorldLocalization(
+            title: "The Night City's Bodyguard Contract",
+            shortDescription: "A safety-minded suspense story about protection, negotiation, and learning whom to trust.",
+            worldSetting: "A rainy neon city where scenes advance through avoidance, negotiation, and safe exits.",
+            userRole: "A person who has hired a bodyguard for one night.",
+            openingScene: "In a hotel lobby during a blackout, Ren silently checks the emergency exits.",
+            storyGoal: "Get through the night safely and work out who is truly on your side.",
+            mood: "Tense, careful, and trust-building",
+            tags: ["Night city", "Bodyguard", "Suspense", "Negotiation"]
+        ),
+        "海辺の夏合宿": StoryWorldLocalization(
+            title: "The Seaside Summer Camp",
+            shortDescription: "A summer conversation drama about a childhood friend, a rival, and the distance between old promises and today.",
+            worldSetting: "A seaside inn and an old lighthouse where free time brings past promises back into focus.",
+            userRole: "A classmate attending the summer camp.",
+            openingScene: "At the beach at sunset, Haru picks up the same shell as years ago and holds it out to you.",
+            storyGoal: "Sort out an old promise and the relationship it has become during the camp.",
+            mood: "Bright, nostalgic, and a little wistful",
+            tags: ["Summer", "Seaside", "Youth", "Reunion"]
+        ),
+        "機械仕掛けの記憶都市": StoryWorldLocalization(
+            title: "The Clockwork City of Memories",
+            shortDescription: "A quiet science-fiction ensemble mystery about an android, a detective, and missing records.",
+            worldSetting: "A future city that archives human memories; an old station terminal still holds deleted logs.",
+            userRole: "A visitor searching for the record that is missing from their own life.",
+            openingScene: "A terminal in a closed station glows blue, and Noa reads out only your name.",
+            storyGoal: "Find out why your record is incomplete and reach the city's hidden logs.",
+            mood: "Quiet and translucently uneasy",
+            tags: ["Science fiction", "Memory", "City", "Investigation"]
+        ),
+        "雨の駅で、最後の電車を待つ": StoryWorldLocalization(
+            title: "Waiting for the Last Train in the Rain",
+            shortDescription: "A rainy after-school BL story about learning the truth of a classmate while sharing the way home.",
+            worldSetting: "A local high school and its nearest station, which grows quiet late on rainy evenings.",
+            userRole: "A male student who finds it hard to show his real feelings.",
+            openingScene: "After practice, you are alone on the station platform with your classmate Soma Kamiya.",
+            storyGoal: "Close the distance with quiet Soma through conversations at the station and on the way home.",
+            mood: "Quiet, rainy, wistful, and warm",
+            tags: ["BL", "School", "Station", "Rain", "Quiet romance"]
+        ),
+        "水族館の青い光の中で": StoryWorldLocalization(
+            title: "In the Aquarium's Blue Light",
+            shortDescription: "A gentle GL youth story about growing closer to a senior beneath the blue light of an after-school aquarium.",
+            worldSetting: "A small aquarium near school where the crowd thins and the jellyfish tanks glow blue at dusk.",
+            userRole: "A new female student looking for a quiet place after tiring of school life.",
+            openingScene: "At the aquarium after school, you unexpectedly meet Tsumugi Asakura, a senior on the library committee.",
+            storyGoal: "Build a special connection through quiet conversations and small promises.",
+            mood: "Clear, quiet, dreamy, and kind",
+            tags: ["GL", "Aquarium", "Senior and junior", "After school", "Blue light"]
+        ),
+        "文化祭前夜、音楽室にて": StoryWorldLocalization(
+            title: "In the Music Room on the Eve of the School Festival",
+            shortDescription: "A BL story about a serious committee member and a free-spirited drummer learning to trust each other.",
+            worldSetting: "A high school preparing for its festival, with instruments echoing from the music room late into the evening.",
+            userRole: "A male festival committee member who wants everything ready on time.",
+            openingScene: "On the evening before the festival, you find drummer Minato Kurose practicing alone.",
+            storyGoal: "Discover each other's effort and honesty while learning to work together.",
+            mood: "Passionate, youthful, awkward, and dusk-lit",
+            tags: ["BL", "School festival", "Music room", "Band", "Youth"]
+        ),
+        "海沿いのバス停で、君を待つ": StoryWorldLocalization(
+            title: "Waiting for You at the Seaside Bus Stop",
+            shortDescription: "A GL youth story about a transfer student and a bright local girl finding something special by the sea.",
+            worldSetting: "A small seaside town with a high school, a sloping road, and an old bus stop overlooking the water.",
+            userRole: "A female student who has just transferred and is unsure how to fit in.",
+            openingScene: "After your first day, classmate Rin Shirahama cheerfully calls out while you wait for the bus.",
+            storyGoal: "Learn to like the new town and school through the days you spend with Rin.",
+            mood: "Fresh, summery, sea-breezed, and wistful",
+            tags: ["GL", "Seaside", "Transfer student", "Bus stop", "Youth"]
+        ),
+        "星空観測部の夜": StoryWorldLocalization(
+            title: "A Night with the Stargazing Club",
+            shortDescription: "A quiet BL story about a senior and a junior growing closer on a rooftop under the stars.",
+            worldSetting: "A high school rooftop with a small telescope and a stargazing club known for its quiet evenings.",
+            userRole: "A new male club member who is drawn to the calm even without knowing much about stars.",
+            openingScene: "At your first night observation, you find senior Ritsu Ichinose adjusting the telescope.",
+            storyGoal: "Look up at the sky together and slowly close the distance between you.",
+            mood: "Quiet, nocturnal, clear, and admiring",
+            tags: ["BL", "Stars", "Club", "Rooftop", "Senior and junior"]
+        ),
+        "雨上がり、放課後の屋上で": StoryWorldLocalization(
+            title: "On the Rooftop After School, After the Rain",
+            shortDescription: "A youth story about slowly getting closer to a quiet classmate on a rooftop after school.",
+            worldSetting: "An older local high school whose rooftop opens onto a town and a wide evening sky.",
+            userRole: "A male classmate who often acts cheerful but struggles to speak honestly.",
+            openingScene: "After the rain, you return for something you forgot and meet Ren by the stairs to the rooftop.",
+            storyGoal: "Learn each other's hidden worries and gradually close the distance with Ren.",
+            mood: "Quiet, wistful, and warm",
+            tags: ["School", "Youth", "Quiet romance", "After school", "Rain"]
+        ),
+        "図書室の窓辺で、君を待つ": StoryWorldLocalization(
+            title: "Waiting for You by the Library Window",
+            shortDescription: "A gentle GL youth story about growing closer to a senior through quiet hours in the library.",
+            worldSetting: "A calm high school library where the noise of the day fades behind the windows.",
+            userRole: "A new female student looking for a quiet place while adjusting to school.",
+            openingScene: "You enter the library after school and find senior Mizuki sitting by the window.",
+            storyGoal: "Let admiration become trust and a special feeling through time spent together.",
+            mood: "Quiet, clear, kind, and a little wistful",
+            tags: ["GL", "School", "Library", "Senior and junior", "Quiet youth"]
+        ),
         "放課後ミステリー研究会": StoryWorldLocalization(
             title: "After-School Mystery Club",
             shortDescription: "A coming-of-age mystery about solving small school riddles with an unusual senior.",

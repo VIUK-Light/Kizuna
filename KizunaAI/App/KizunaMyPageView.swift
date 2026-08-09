@@ -54,36 +54,19 @@ struct KizunaMyPageView: View {
     }
 
     private var pageHeader: some View {
-        HStack(alignment: .bottom, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("VIUK 絆 / PROFILE")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .tracking(1.3)
-                    .foregroundStyle(.tint)
-                Text(KizunaCopy.text(japanese: "マイページ", english: "My page"))
-                    .font(.system(size: 32, weight: .heavy, design: .rounded))
-                Text(KizunaCopy.text(
-                    japanese: "あなたの設定を、必要なものだけここに。",
-                    english: "Your essentials, in one calm place."
-                ))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 0)
-
-            Button {
-                isShowingDetailedSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 38, height: 38)
-                    .background(.thinMaterial, in: Circle())
-                    .overlay { Circle().strokeBorder(Color.primary.opacity(0.10), lineWidth: 1) }
-            }
-            .buttonStyle(.plain)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(KizunaCopy.appName)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .tracking(1.3)
+                .foregroundStyle(.tint)
+            Text(KizunaCopy.text(japanese: "マイページ", english: "My page"))
+                .font(.system(size: 32, weight: .heavy, design: .rounded))
+            Text(KizunaCopy.text(
+                japanese: "あなたの設定を、必要なものだけここに。",
+                english: "Your essentials, in one calm place."
+            ))
+            .font(.subheadline)
             .foregroundStyle(.secondary)
-            .accessibilityLabel(KizunaCopy.text(japanese: "詳細設定", english: "Detailed settings"))
         }
     }
 
@@ -206,7 +189,7 @@ struct KizunaMyPageView: View {
             title: KizunaCopy.text(japanese: "表示言語", english: "Display language"),
             subtitle: KizunaCopy.text(
                 japanese: "アプリ内の表示だけを切り替えます。",
-                english: "Changes Kizuna's interface only."
+                english: "Changes kizuna's interface only."
             ),
             icon: "globe"
         ) {

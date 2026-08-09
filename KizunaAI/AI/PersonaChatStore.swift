@@ -100,6 +100,10 @@ final class PersonaChatStore: ObservableObject {
         return threads.first { $0.id == id }
     }
 
+    func thread(id: UUID) -> PersonaThread? {
+        threads.first { $0.id == id }
+    }
+
     private init() {
         load()
         // 起動時に「空メッセージのスレッド」を 1 件残して残りを掃除する。
@@ -202,7 +206,45 @@ final class PersonaChatStore: ObservableObject {
         // ストリーミング毎の persist は重いので、ここでは保存しない。最終 finalize 側で persist する。
     }
 
+    /// 生成開始直後に作った空のアシスタント枠を、ユーザーが停止した時だけ取り除く。
+    /// 部分応答がある場合は呼び出し側がその本文を保存するため、ここでは削除しない。
+    func removePendingAssistantMessage(in threadID: UUID) {
+        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
+        guard let last = threads[threadIdx].messages.last,
+              last.role == .assistant,
+              isPendingAssistantText(last.text) else { return }
+        threads[threadIdx].messages.removeLast()
+        threads[threadIdx].updatedAt = Date()
+        persist()
+    }
+
+    /// 失敗確定時に、ストリーミング途中の本文を履歴へ残さないための削除。
+    func removeLastAssistantMessage(in threadID: UUID) {
+        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
+              threads[threadIdx].messages.last?.role == .assistant else { return }
+        threads[threadIdx].messages.removeLast()
+        threads[threadIdx].updatedAt = Date()
+        persist()
+    }
+
+    /// 失敗したターンを再送する前に、直前のユーザー発話だけを取り除く。
+    /// アシスタント側の空枠は `removePendingAssistantMessage` で先に処理する。
+    func removeLastUserMessage(in threadID: UUID, matching text: String? = nil) {
+        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
+              let last = threads[threadIdx].messages.last,
+              last.role == .user else { return }
+        if let text, last.text != text { return }
+        threads[threadIdx].messages.removeLast()
+        threads[threadIdx].updatedAt = Date()
+        persist()
+    }
+
     func finalizePersist() {
         persist()
+    }
+
+    private func isPendingAssistantText(_ text: String) -> Bool {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty || ["…", "・・・", "・・", "...", "..", "."].contains(normalized)
     }
 }

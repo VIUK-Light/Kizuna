@@ -258,6 +258,15 @@ enum StoryCastMode: String, Codable, CaseIterable, Identifiable, Hashable {
         case .ensemble: return "複数のキャラクターが場面に参加する"
         }
     }
+
+    var localizedDetail: String {
+        KizunaCopy.text(
+            japanese: detail,
+            english: self == .solo
+                ? "You and one main NPC share the focus."
+                : "Several characters can take part in each scene."
+        )
+    }
 }
 
 // MARK: - CastMember

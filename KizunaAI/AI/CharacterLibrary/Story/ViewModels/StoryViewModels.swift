@@ -489,17 +489,26 @@ final class StoryWorldCreateViewModel: ObservableObject {
     func generateTemplateWith31BThinking() async {
         let brief = generationBrief.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !brief.isEmpty else {
-            saveError = "作りたいストーリーの方向性を入力してください。"
+            saveError = KizunaCopy.text(
+                japanese: "作りたいストーリーの方向性を入力してください。",
+                english: "Describe the kind of story you want to create."
+            )
             return
         }
 
         guard StoryGemma31BAPIService.shared.hasAPIKey else {
-            saveError = "Gemma4 APIキーが未設定です。絆アプリ右上の設定からNAGI APIキーを登録してください。"
+            saveError = KizunaCopy.text(
+                japanese: "Gemma4 APIキーが未設定です。kizunaの設定からNAGI APIキーを登録してください。",
+                english: "The Gemma4 API key is not set. Add the NAGI API key in kizuna's settings."
+            )
             return
         }
 
         isGeneratingTemplate = true
-        generationStatus = "Gemma4 31B APIで雛形を作成中..."
+        generationStatus = KizunaCopy.text(
+            japanese: "Gemma4 31B APIで雛形を作成中…",
+            english: "Creating a draft with the Gemma4 31B API…"
+        )
         saveError = nil
         defer { isGeneratingTemplate = false }
 
@@ -768,7 +777,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
     }
 
     private static let storyTemplateSystemPrompt = """
-    あなたはVIUK 絆のストーリー作成エンジンです。
+    あなたはkizunaのストーリー作成エンジンです。
     ユーザーの短い説明から、カスタムGPTのように動く物語テンプレートを1つ作ります。
     出力はJSONオブジェクトのみ。Markdown、説明文、コードフェンスは禁止。
 

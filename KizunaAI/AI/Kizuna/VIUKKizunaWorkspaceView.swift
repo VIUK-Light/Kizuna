@@ -49,7 +49,7 @@ struct VIUKKizunaWorkspaceView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
-        .accessibilityLabel("マイページ")
+        .accessibilityLabel(KizunaCopy.text(japanese: "マイページ", english: "My page"))
     }
 
     private func openDebugStory() {
@@ -127,11 +127,11 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: LocalizedStringKey {
+    var title: String {
         switch self {
-        case .stories: return "ストーリー"
-        case .chat: return "あなたの物語"
-        case .myPage: return "マイページ"
+        case .stories: return KizunaCopy.text(japanese: "ストーリー", english: "Stories")
+        case .chat: return KizunaCopy.text(japanese: "あなたの物語", english: "Your story")
+        case .myPage: return KizunaCopy.text(japanese: "マイページ", english: "My page")
         }
     }
 

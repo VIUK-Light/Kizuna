@@ -77,14 +77,17 @@ struct StoryWorldDetailView: View {
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
         .task { await vm.reload() }
-        .alert("この世界を削除しますか？", isPresented: $showDeleteConfirmation) {
-            Button("削除", role: .destructive) {
+        .alert(KizunaCopy.text(japanese: "この世界を削除しますか？", english: "Delete this story world?"), isPresented: $showDeleteConfirmation) {
+            Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
                 onDelete?()
                 dismiss()
             }
-            Button("キャンセル", role: .cancel) {}
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
-            Text("キャスト、シーン、保存済みセッションも削除対象になります。")
+            Text(KizunaCopy.text(
+                japanese: "キャスト、シーン、保存済みセッションも削除対象になります。",
+                english: "Characters, scenes, and saved sessions will also be deleted."
+            ))
         }
         .sheet(item: $spotlightCharacter) { character in
             StoryDetailCharacterSpotlight(character: character)
@@ -132,23 +135,23 @@ struct StoryWorldDetailView: View {
                     Button {
                         onStartSession?(displayedWorld)
                     } label: {
-                        Label("絆チャット開始", systemImage: "play.fill")
+                        Label(KizunaCopy.text(japanese: "チャットを開始", english: "Start chat"), systemImage: "play.fill")
                     }
                     if world.isSystemProtected != true {
                         Button {
                             onEdit?(world)
                         } label: {
-                            Label("編集", systemImage: "pencil")
+                            Label(KizunaCopy.text(japanese: "編集", english: "Edit"), systemImage: "pencil")
                         }
                         Button(role: .destructive) {
                             showDeleteConfirmation = true
                         } label: {
-                            Label("削除", systemImage: "trash")
+                            Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
                         }
                     } else {
                         Button {
                         } label: {
-                            Label("標準ストーリー", systemImage: "lock.fill")
+                            Label(KizunaCopy.text(japanese: "標準ストーリー", english: "Starter story"), systemImage: "lock.fill")
                         }
                         .disabled(true)
                     }
@@ -163,18 +166,18 @@ struct StoryWorldDetailView: View {
                     Button {
                         onEdit?(world)
                     } label: {
-                        Label("編集", systemImage: "pencil")
+                        Label(KizunaCopy.text(japanese: "編集", english: "Edit"), systemImage: "pencil")
                     }
                     .buttonStyle(.bordered)
 
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
                     } label: {
-                        Label("削除", systemImage: "trash")
+                        Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
                     }
                     .buttonStyle(.bordered)
                 } else {
-                    Label("標準", systemImage: "lock.fill")
+                    Label(KizunaCopy.text(japanese: "標準", english: "Starter"), systemImage: "lock.fill")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
@@ -185,7 +188,7 @@ struct StoryWorldDetailView: View {
                 Button {
                     onStartSession?(displayedWorld)
                 } label: {
-                    Label("絆チャット開始", systemImage: "play.fill")
+                    Label(KizunaCopy.text(japanese: "チャットを開始", english: "Start chat"), systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -245,7 +248,7 @@ struct StoryWorldDetailView: View {
                     Button {
                         onStartSession?(displayedWorld)
                     } label: {
-                        Label("トークを続ける", systemImage: "play.fill")
+                        Label(KizunaCopy.text(japanese: "続きから", english: "Continue"), systemImage: "play.fill")
                             .font(.system(size: 15, weight: .bold))
                     }
                     .buttonStyle(.borderedProminent)
@@ -256,14 +259,14 @@ struct StoryWorldDetailView: View {
     }
 
     private var overviewCard: some View {
-        detailCard(title: "概要", icon: "book.closed.fill") {
+        detailCard(title: KizunaCopy.text(japanese: "概要", english: "Overview"), icon: "book.closed.fill") {
             if !world.shortDescription.isEmpty {
                 detailText(displayedWorld.shortDescription)
             }
-            detailPair("ユーザーの役割", displayedWorld.userRole)
-            detailPair("物語形式", displayedWorld.resolvedCastMode.localizedDisplayName)
-            detailPair("ムード", displayedWorld.mood)
-            detailPair("物語の目的", displayedWorld.storyGoal)
+            detailPair(KizunaCopy.text(japanese: "ユーザーの役割", english: "Your role"), displayedWorld.userRole)
+            detailPair(KizunaCopy.text(japanese: "物語形式", english: "Story format"), displayedWorld.resolvedCastMode.localizedDisplayName)
+            detailPair(KizunaCopy.text(japanese: "ムード", english: "Mood"), displayedWorld.mood)
+            detailPair(KizunaCopy.text(japanese: "物語の目的", english: "Story goal"), displayedWorld.storyGoal)
             if !displayedWorld.tags.isEmpty {
                 FlowTagRow(tags: displayedWorld.tags)
                     .padding(.top, 2)
@@ -275,10 +278,14 @@ struct StoryWorldDetailView: View {
         let session = vm.sessions.first
         let messageCount = session?.messages.count ?? 0
         let progress = min(1.0, Double(max(messageCount, 1)) / 24.0)
-        let sceneTitle = session?.currentSceneId.flatMap { id in vm.scenes.first(where: { $0.id == id })?.title } ?? vm.scenes.first?.title ?? "第1場面"
+        let sceneTitle = session?.currentSceneId.flatMap { id in vm.scenes.first(where: { $0.id == id })?.title }
+            ?? vm.scenes.first?.title
+            ?? KizunaCopy.text(japanese: "第1場面", english: "Scene 1")
         let objective = session?.currentObjective ?? vm.scenes.first?.sceneGoal ?? world.storyGoal
-        let stage = session?.relationshipStage ?? (session == nil ? "未開始" : "進行中")
-        return detailCard(title: "物語状態", icon: "chart.line.uptrend.xyaxis") {
+        let stage = session?.relationshipStage ?? (session == nil
+            ? KizunaCopy.text(japanese: "未開始", english: "Not started")
+            : KizunaCopy.text(japanese: "進行中", english: "In progress"))
+        return detailCard(title: KizunaCopy.text(japanese: "物語状態", english: "Story status"), icon: "chart.line.uptrend.xyaxis") {
             HStack(alignment: .center, spacing: 14) {
                 ZStack {
                     Circle()
@@ -293,7 +300,9 @@ struct StoryWorldDetailView: View {
                 .frame(width: 58, height: 58)
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(session == nil ? "まだ始まっていません" : "再開できます")
+                    Text(session == nil
+                         ? KizunaCopy.text(japanese: "まだ始まっていません", english: "Not started yet")
+                         : KizunaCopy.text(japanese: "再開できます", english: "Ready to continue"))
                         .font(.system(size: 16, weight: .heavy))
                     Text("\(sceneTitle) ・ \(stage)")
                         .font(.system(size: 12, weight: .bold))
@@ -305,11 +314,15 @@ struct StoryWorldDetailView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
-                    Text("\(messageCount)件のやり取り ・ \(vm.cast.count)人のキャスト ・ \(vm.scenes.count)シーン")
+                    Text(KizunaCopy.language == .english
+                         ? "\(messageCount) messages · \(vm.cast.count) characters · \(vm.scenes.count) scenes"
+                         : "\(messageCount)件のやり取り ・ \(vm.cast.count)人のキャスト ・ \(vm.scenes.count)シーン")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.tertiary)
                     // この物語に閉じたメモリー件数。全体メモリーとは混ぜない。
-                    Text("物語内メモリー \(vm.storyMemories.count)件")
+                    Text(KizunaCopy.language == .english
+                         ? "Story memory: \(vm.storyMemories.count)"
+                         : "物語内メモリー \(vm.storyMemories.count)件")
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
@@ -317,7 +330,9 @@ struct StoryWorldDetailView: View {
                 Button {
                     onStartSession?(displayedWorld)
                 } label: {
-                    Label(session == nil ? "開始" : "続きから", systemImage: "play.fill")
+                    Label(session == nil
+                          ? KizunaCopy.text(japanese: "開始", english: "Start")
+                          : KizunaCopy.text(japanese: "続きから", english: "Continue"), systemImage: "play.fill")
                         .font(.system(size: 13, weight: .bold))
                 }
                 .buttonStyle(.borderedProminent)
@@ -340,9 +355,9 @@ struct StoryWorldDetailView: View {
     }
 
     private var castCard: some View {
-        detailCard(title: "キャスト", icon: "person.3.fill") {
+        detailCard(title: KizunaCopy.text(japanese: "キャスト", english: "Cast"), icon: "person.3.fill") {
             if vm.cast.isEmpty {
-                emptyLine("まだキャストが設定されていません。")
+                emptyLine(KizunaCopy.text(japanese: "まだキャストが設定されていません。", english: "No cast has been added yet."))
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
                     ForEach(vm.cast) { member in
@@ -386,7 +401,7 @@ struct StoryWorldDetailView: View {
                                 .font(.system(size: 11, weight: .bold).monospacedDigit())
                                 .foregroundStyle(.white.opacity(0.86))
                         }
-                        Text(character?.displayName ?? "未登録キャラ")
+                        Text(character?.displayName ?? KizunaCopy.text(japanese: "未登録キャラ", english: "Unregistered character"))
                             .font(.system(size: 20, weight: .heavy))
                             .lineLimit(1)
                         Text(member.introductionTiming.localizedDisplayName)
@@ -466,9 +481,9 @@ struct StoryWorldDetailView: View {
     }
 
     private var scenesCard: some View {
-        detailCard(title: "シーン", icon: "sparkles.rectangle.stack.fill") {
+        detailCard(title: KizunaCopy.text(japanese: "シーン", english: "Scenes"), icon: "sparkles.rectangle.stack.fill") {
             if vm.scenes.isEmpty {
-                emptyLine("まだシーンがありません。")
+                emptyLine(KizunaCopy.text(japanese: "まだシーンがありません。", english: "No scenes yet."))
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(vm.scenes) { scene in
@@ -477,7 +492,9 @@ struct StoryWorldDetailView: View {
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 150)
                                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                            Text(scene.title.isEmpty ? "無題のシーン" : scene.title)
+                            Text(scene.title.isEmpty
+                                 ? KizunaCopy.text(japanese: "無題のシーン", english: "Untitled scene")
+                                 : scene.title)
                                 .font(.system(size: 13, weight: .semibold))
                             HStack(spacing: 8) {
                                 if !scene.location.isEmpty {
@@ -508,23 +525,23 @@ struct StoryWorldDetailView: View {
     }
 
     private var rulesCard: some View {
-        detailCard(title: "ルール / 安全", icon: "shield.lefthalf.filled") {
-            detailPair("公開状態", world.visibility.displayName)
+        detailCard(title: KizunaCopy.text(japanese: "ルール / 安全", english: "Rules / safety"), icon: "shield.lefthalf.filled") {
+            detailPair(KizunaCopy.text(japanese: "公開状態", english: "Visibility"), world.visibility.localizedDisplayName)
             if !world.worldSetting.isEmpty {
-                detailPair("世界観", world.worldSetting)
+                detailPair(KizunaCopy.text(japanese: "世界観", english: "World setting"), world.worldSetting)
             }
             if !world.openingScene.isEmpty {
-                detailPair("オープニング", world.openingScene)
+                detailPair(KizunaCopy.text(japanese: "オープニング", english: "Opening"), world.openingScene)
             }
             let outputRules = world.safetyRules.filter(isOutputFormatRule)
             let safetyRules = world.safetyRules.filter { !isOutputFormatRule($0) }
             if !outputRules.isEmpty {
-                ruleGroup("出力形式", outputRules)
+                ruleGroup(KizunaCopy.text(japanese: "出力形式", english: "Output format"), outputRules)
             }
             if safetyRules.isEmpty {
-                emptyLine("追加安全ルールはありません。")
+                emptyLine(KizunaCopy.text(japanese: "追加安全ルールはありません。", english: "No additional safety rules."))
             } else {
-                ruleGroup("安全", safetyRules)
+                ruleGroup(KizunaCopy.text(japanese: "安全", english: "Safety"), safetyRules)
             }
         }
     }
@@ -535,7 +552,7 @@ struct StoryWorldDetailView: View {
                 .font(.system(size: 10.5, weight: .bold))
                 .foregroundStyle(.tertiary)
             ForEach(rules, id: \.self) { rule in
-                Label(rule, systemImage: title == "出力形式" ? "text.quote" : "checkmark.seal")
+                Label(rule, systemImage: title == KizunaCopy.text(japanese: "出力形式", english: "Output format") ? "text.quote" : "checkmark.seal")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -559,9 +576,9 @@ struct StoryWorldDetailView: View {
     }
 
     private var historyCard: some View {
-        detailCard(title: "セッション", icon: "bubble.left.and.bubble.right.fill") {
+        detailCard(title: KizunaCopy.text(japanese: "セッション", english: "Sessions"), icon: "bubble.left.and.bubble.right.fill") {
             if vm.sessions.isEmpty {
-                emptyLine("まだ会話セッションはありません。")
+                emptyLine(KizunaCopy.text(japanese: "まだ会話セッションはありません。", english: "No conversation sessions yet."))
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(vm.sessions.prefix(5)) { session in
@@ -569,7 +586,9 @@ struct StoryWorldDetailView: View {
                             Text(session.updatedAt, style: .date)
                             Text(session.updatedAt, style: .time)
                             Spacer()
-                            Text("\(session.messages.count) 件")
+                            Text(KizunaCopy.language == .english
+                                 ? "\(session.messages.count) messages"
+                                 : "\(session.messages.count) 件")
                                 .font(.system(size: 10, weight: .bold).monospacedDigit())
                         }
                         .font(.system(size: 11.5))
@@ -685,7 +704,7 @@ private struct StoryDetailCharacterSpotlight: View {
             .navigationTitle(character.displayName)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }
                 }
             }
         }
