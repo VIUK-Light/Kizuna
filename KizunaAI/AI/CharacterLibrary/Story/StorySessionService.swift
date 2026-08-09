@@ -76,7 +76,7 @@ final class StorySessionService: ObservableObject {
         phase = .thinking
         streamingResponse = ""
         streamingSpeakerName = nil
-        streamingStatusText = "準備中"
+        streamingStatusText = statusText("準備中", "Preparing")
         latestSafetyConcern = nil
         lastVisibleText = ""
         let generationID = UUID()
@@ -230,14 +230,14 @@ final class StorySessionService: ObservableObject {
         }
 
         // user メッセージ append + 空 narration ストリーム先を確保
-        streamingStatusText = "会話を保存中"
+        streamingStatusText = statusText("会話を保存中", "Saving conversation")
         let userMsg = StoryMessage(author: .user, text: userText)
         session.messages.append(userMsg)
         try? await sessionRepo.saveSession(session)
         guard isGenerationActive(generationID) else { return }
 
         // 1) キャラ index / cast 取得
-        streamingStatusText = "登場キャラを確認中"
+        streamingStatusText = statusText("登場キャラを確認中", "Checking characters")
         let allCharacters = (try? await characterRepo.fetchCharacters()) ?? []
         let charIndex = allCharacters.reduce(into: [UUID: CharacterProfile]()) { result, character in
             guard result[character.id] == nil else { return }
@@ -255,7 +255,7 @@ final class StorySessionService: ObservableObject {
 
         // 2) Mock 安全用に CharacterProfile を 1 つ採用 (main または最 importance)。
         //    SafetyPipeline は単一 character を要求するシグネチャなので、世界の代表者として渡す。
-        streamingStatusText = "入力を確認中"
+        streamingStatusText = statusText("入力を確認中", "Checking input")
         let representativeCharacter: CharacterProfile = {
             if let mainID = world.mainCharacterId, let p = charIndex[mainID] { return p }
             if let firstCast = cast.sorted(by: { $0.importance > $1.importance }).first,
@@ -302,7 +302,7 @@ final class StorySessionService: ObservableObject {
         let effectiveUserText = inSafety.rewrittenText ?? userText
 
         // 4) シーンに居るキャラを 270M (Mock) で選定。
-        streamingStatusText = "場面のキャラを選定中"
+        streamingStatusText = statusText("場面のキャラを選定中", "Selecting scene characters")
         // 単体物語は毎ターン「ユーザー + 主役NPC1人」。群像劇だけ最大3人を許可する。
         let activeCharacterLimit = world.isSoloStory
             ? StoryConstants.soloActiveCharacters
@@ -357,7 +357,7 @@ final class StorySessionService: ObservableObject {
         }()
 
         // 5) 全体メモリー候補 + 選別。active を優先しつつ、世界全体の関係継続に必要な inactive の高重要度メモリーも少し入れる。
-        streamingStatusText = "記憶を読み込み中"
+        streamingStatusText = statusText("記憶を読み込み中", "Loading memories")
         var candidates: [CharacterMemory] = []
         for member in activeCast {
             let mems = (try? await memoryRepo.fetchMemories(characterId: member.characterId)) ?? []
@@ -392,7 +392,7 @@ final class StorySessionService: ObservableObject {
         }
 
         // 6) Lorebook: キーワード一致した設定だけを選択する。
-        streamingStatusText = "Lorebookを選択中"
+        streamingStatusText = statusText("Lorebookを選択中", "Selecting lorebook entries")
         var lorebookEntries = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
         guard isGenerationActive(generationID) else { return }
         // 既存のCharacterLorebookも移行期間は同じ選択器に流し込む。
@@ -438,7 +438,7 @@ final class StorySessionService: ObservableObject {
         )
 
         // 7) StoryPromptBuilder
-        streamingStatusText = "物語コンテキストを構築中"
+        streamingStatusText = statusText("物語コンテキストを構築中", "Building story context")
         let contentMessages = Array(storyContentMessages(from: session.messages).suffix(96))
         // 現在のユーザー発言は別途sendMessageへ渡す。直前3件だけをSDK本来の
         // user/model roleで初期履歴にし、巨大な文字列テンプレートへ混ぜない。
@@ -502,7 +502,9 @@ final class StorySessionService: ObservableObject {
             generationID: generationID,
             generationModel: generationModel
         )
-        streamingStatusText = generationModel == .b31 ? "Gemma4 31Bで発話生成中" : "ローカルモデルで発話生成中"
+        streamingStatusText = generationModel == .b31
+            ? statusText("Gemma4 31Bで発話生成中", "Generating with Gemma4 31B")
+            : statusText("ローカルモデルで発話生成中", "Generating on device")
         let localModelManager = LocalAssistantModelManager.shared
         let selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
 
@@ -522,7 +524,7 @@ final class StorySessionService: ObservableObject {
                     )
                 }
 
-                streamingStatusText = "NAGI APIキー未設定"
+                streamingStatusText = statusText("NAGI APIキー未設定", "NAGI API key is not set")
                 return (
                     reply: "NAGI の Gemma4 31B APIキーが未設定です。モデル詳細からAPIキーを設定してから続けてください。",
                     runtimeNotice: true,
@@ -553,7 +555,7 @@ final class StorySessionService: ObservableObject {
                 availability: availability,
                 selectedModelURL: availableModelURL
             ) {
-                streamingStatusText = "ローカル未起動"
+                streamingStatusText = statusText("ローカル未起動", "On-device model is not ready")
                 return (
                     reply: localUnavailableMessage,
                     runtimeNotice: true,
@@ -589,8 +591,8 @@ final class StorySessionService: ObservableObject {
             guard let reply else {
                 let runtimeError = LocalAssistantRuntimeBridge.shared.latestDebugSnapshot().errorMessage
                 streamingStatusText = runtimeError?.contains("記号だけ") == true
-                    ? "ローカル出力が無効"
-                    : "ローカル起動失敗"
+                    ? statusText("ローカル出力が無効", "On-device output was invalid")
+                    : statusText("ローカル起動失敗", "On-device generation failed")
                 return (
                     reply: localStoryGenerationFailureMessage(runtimeError: runtimeError),
                     runtimeNotice: true,
@@ -610,7 +612,7 @@ final class StorySessionService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
 
         // 9) 出力 safety
-        streamingStatusText = "発話を整形中"
+        streamingStatusText = statusText("発話を整形中", "Formatting response")
         var rawFinal = sanitizedFinalText(
             (reply?.isEmpty == false ? reply! : streamingResponse)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -639,7 +641,7 @@ final class StorySessionService: ObservableObject {
                     : "\(retryInstruction)\n\n\(prompt)"
                 lastVisibleText = ""
                 streamingResponse = ""
-                streamingStatusText = "重複を避けて再生成中"
+                streamingStatusText = statusText("重複を避けて再生成中", "Regenerating to avoid duplicate output")
                 generated = await generateStoryReply(systemPrompt: generationPrompt)
                 reply = generated.reply
                 isRuntimeNotice = generated.runtimeNotice
@@ -745,7 +747,7 @@ final class StorySessionService: ObservableObject {
         }
 
         // 10) 「名前: 本文」行ごとに StoryMessage 化
-        streamingStatusText = "発話を保存中"
+        streamingStatusText = statusText("発話を保存中", "Saving response")
         let newMessages = parseSpeakerLines(
             rawFinal,
             cast: aiCastForTurn,
@@ -769,7 +771,7 @@ final class StorySessionService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
 
         // 11) Scene summary 更新 (270M)
-        streamingStatusText = "場面要約を更新中"
+        streamingStatusText = statusText("場面要約を更新中", "Updating scene summary")
         let newSummary = await summarizer.updateSummary(
             currentSummary: scene.summary,
             recentMessages: Array(storyContentMessages(from: session.messages).suffix(18)),
@@ -947,7 +949,7 @@ final class StorySessionService: ObservableObject {
         await MainActor.run {
             guard self.activeGenerationID == generationID else { return }
             self.streamingSpeakerName = "NAGI"
-            self.streamingStatusText = "Gemma4 31Bで発話生成中"
+            self.streamingStatusText = self.statusText("Gemma4 31Bで発話生成中", "Generating with Gemma4 31B")
             self.streamingResponse = "ナレーション: NAGIが場面と会話履歴を読み込んでいます。"
         }
 
@@ -962,7 +964,7 @@ final class StorySessionService: ObservableObject {
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = text
-                self.streamingStatusText = "発話を整形中"
+                self.streamingStatusText = self.statusText("発話を整形中", "Formatting response")
                 self.streamingSpeakerName = self.detectCurrentSpeakerName(in: text)
             }
             return text
@@ -996,7 +998,7 @@ final class StorySessionService: ObservableObject {
         guard case let .visiblePreview(text) = update else { return }
         let stripped = sanitize(text)
         streamingSpeakerName = detectCurrentSpeakerName(in: stripped)
-        streamingStatusText = "発話生成中"
+        streamingStatusText = statusText("発話生成中", "Generating response")
         if stripped.count >= lastVisibleText.count {
             lastVisibleText = stripped
             streamingResponse = stripped
@@ -1053,7 +1055,7 @@ final class StorySessionService: ObservableObject {
             }
             self.streamingResponse = notice
             self.streamingSpeakerName = "システム"
-            self.streamingStatusText = "タイムアウト通知を保存中"
+            self.streamingStatusText = self.statusText("タイムアウト通知を保存中", "Saving timeout notice")
 
             // 通知保存が終わるまで phase/activeGenerationID を維持する。
             // そうしないと次の send が古いセッションを読み、保存結果を上書きできる。
@@ -1112,10 +1114,17 @@ final class StorySessionService: ObservableObject {
         )
         let lines = text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
         var out: [StoryMessage] = []
-        var emittedCastIDs = Set<UUID>()
+        var emittedCastLines = Set<String>()
         for line in lines where !line.isEmpty {
-            // 「ナレーション:」
-            if line.hasPrefix("ナレーション:") || line.hasPrefix("ナレーション：") || line.hasPrefix("ナレーター:") || line.hasPrefix("ナレーター：") {
+            // 日本語・英語どちらの生成ラベルも受け付ける。英語モードで
+            // "Narration:" が出ても、本文をキャスト発話へ誤分類しない。
+            let narrationPrefixes = [
+                "ナレーション:", "ナレーション：", "ナレーター:", "ナレーター：",
+                "Narration:", "Narration：", "Narrator:", "Narrator：",
+                "Scene:", "Scene："
+            ]
+            let lowercasedLine = line.localizedLowercase
+            if narrationPrefixes.contains(where: { lowercasedLine.hasPrefix($0.localizedLowercase) }) {
                 let body = textAfterSpeakerDelimiter(line)
                 if !body.isEmpty {
                     out.append(StoryMessage(author: .narrator, text: body))
@@ -1141,7 +1150,7 @@ final class StorySessionService: ObservableObject {
             }
             if let (id, name, body) = matched,
                !body.isEmpty,
-               emittedCastIDs.insert(id).inserted {
+               emittedCastLines.insert(id.uuidString + "|" + normalizedDuplicateText(body)).inserted {
                 out.append(StoryMessage(author: .cast(characterId: id, displayName: name), text: body))
                 continue
             }
@@ -1154,14 +1163,27 @@ final class StorySessionService: ObservableObject {
         return out
     }
 
+    private func normalizedDuplicateText(_ text: String) -> String {
+        text
+            .precomposedStringWithCanonicalMapping
+            .localizedLowercase
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined()
+    }
+
     private func detectCurrentSpeakerName(in text: String) -> String? {
         let lines = text.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard let last = lines.last else { return nil }
-        if last.hasPrefix("ナレーション:") || last.hasPrefix("ナレーション：") ||
-            last.hasPrefix("ナレーター:") || last.hasPrefix("ナレーター：") {
-            return "ナレーション"
+        let narrationPrefixes = [
+            "ナレーション:", "ナレーション：", "ナレーター:", "ナレーター：",
+            "Narration:", "Narration：", "Narrator:", "Narrator：",
+            "Scene:", "Scene："
+        ]
+        let lowercasedLast = last.localizedLowercase
+        if narrationPrefixes.contains(where: { lowercasedLast.hasPrefix($0.localizedLowercase) }) {
+            return KizunaCopy.text(japanese: "ナレーション", english: "Narration")
         }
         guard let idx = last.firstIndex(where: { $0 == ":" || $0 == "：" }) else { return nil }
         let speaker = String(last[..<idx]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1265,7 +1287,7 @@ final class StorySessionService: ObservableObject {
             }
 
             let elapsed = Int(Double(attempt + 1) * 0.5)
-            streamingStatusText = "端末内モデルを確認中（\(elapsed)秒）"
+            streamingStatusText = statusText("端末内モデルを確認中（\(elapsed)秒）", "Checking on-device model (\(elapsed)s)")
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         return manager.runtimeAvailability
@@ -1382,7 +1404,10 @@ final class StorySessionService: ObservableObject {
         if let firstLine = value.components(separatedBy: .newlines).first?.nonEmpty {
             value = firstLine
         }
-        for prefix in ["休憩提案:", "休憩の提案:", "ナレーション:", "提案:"] {
+        for prefix in [
+            "休憩提案:", "休憩の提案:", "ナレーション:", "提案:",
+            "Rest suggestion:", "Narration:", "Suggestion:"
+        ] {
             if value.hasPrefix(prefix) {
                 value = String(value.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             }
@@ -1677,13 +1702,15 @@ final class StorySessionService: ObservableObject {
     }
 
     private func messageLine(_ message: StoryMessage) -> String {
+        let userLabel = KizunaCopy.text(japanese: "ユーザー", english: "User")
+        let narrationLabel = KizunaCopy.text(japanese: "ナレーション", english: "Narration")
         switch message.author {
         case .user:
-            return "ユーザー: \(message.text)"
+            return "\(userLabel): \(message.text)"
         case .system:
             return ""
         case .narrator:
-            return "ナレーション: \(message.text)"
+            return "\(narrationLabel): \(message.text)"
         case let .cast(_, displayName):
             return "\(displayName): \(message.text)"
         }
@@ -1705,6 +1732,10 @@ final class StorySessionService: ObservableObject {
             push("オープニングの出来事: \(world.openingScene)")
         }
         return Array(hooks.prefix(8))
+    }
+
+    private func statusText(_ japanese: String, _ english: String) -> String {
+        KizunaCopy.text(japanese: japanese, english: english)
     }
 
     // MARK: - Scene helpers (UI からも使う)

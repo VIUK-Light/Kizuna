@@ -45,6 +45,7 @@ struct StoryWorldCreateView: View {
     @State private var newLorebookContent = ""
     @State private var showCharacterPicker = false
     @State private var showCharacterCreator = false
+    @State private var showAdvancedSettings: Bool
     @FocusState private var generationBriefFocused: Bool
 
     init(
@@ -56,6 +57,7 @@ struct StoryWorldCreateView: View {
         self.onSaved = onSaved
         self.onStartSession = onStartSession
         _vm = StateObject(wrappedValue: StoryWorldCreateViewModel(existing: existing))
+        _showAdvancedSettings = State(initialValue: existing != nil)
     }
 
     var body: some View {
@@ -73,9 +75,7 @@ struct StoryWorldCreateView: View {
                     settingSection
                     openingSceneSection
                     castSection
-                    lorebookSection
-                    relationshipSection
-                    tagsSection
+                    advancedSettingsSection
                     if let err = vm.saveError {
                         Text(err).font(.caption).foregroundStyle(.red)
                     }
@@ -555,6 +555,42 @@ struct StoryWorldCreateView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var advancedSettingsSection: some View {
+        DisclosureGroup(isExpanded: $showAdvancedSettings) {
+            VStack(alignment: .leading, spacing: 18) {
+                lorebookSection
+                relationshipSection
+                tagsSection
+            }
+            .padding(.top, 10)
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Color.accentColor.opacity(0.12)))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("詳細設定")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                    Text("Lorebook・キャラ同士の関係・タグ（必要なときだけ）")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .tint(.primary)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.035))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
 

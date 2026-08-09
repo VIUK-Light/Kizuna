@@ -92,6 +92,10 @@ struct StoryWorldDetailView: View {
         }
     }
 
+    private var displayedWorld: StoryWorld {
+        world.localizedForCurrentLanguage
+    }
+
     private var header: some View {
         HStack(spacing: 12) {
             ZStack {
@@ -113,10 +117,10 @@ struct StoryWorldDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(world.title)
+                Text(displayedWorld.title)
                     .font(.system(size: 18, weight: .bold))
                     .lineLimit(1)
-                Text(world.genre.displayName + " ・ " + world.relationshipGenre.displayName)
+                Text(displayedWorld.genre.localizedDisplayName + " ・ " + displayedWorld.relationshipGenre.localizedDisplayName)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
@@ -126,7 +130,7 @@ struct StoryWorldDetailView: View {
             if horizontalSizeClass == .compact {
                 Menu {
                     Button {
-                        onStartSession?(world)
+                        onStartSession?(displayedWorld)
                     } label: {
                         Label("絆チャット開始", systemImage: "play.fill")
                     }
@@ -179,7 +183,7 @@ struct StoryWorldDetailView: View {
                 }
 
                 Button {
-                    onStartSession?(world)
+                    onStartSession?(displayedWorld)
                 } label: {
                     Label("絆チャット開始", systemImage: "play.fill")
                 }
@@ -192,18 +196,10 @@ struct StoryWorldDetailView: View {
     }
 
     private var relationshipHero: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.40, green: 0.46, blue: 0.70),
-                            Color(red: 0.12, green: 0.13, blue: 0.18)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+        let coverCharacter = vm.characterIndex[world.mainCharacterId ?? UUID()]
+            ?? vm.characterIndex.values.first
+        return VStack(alignment: .leading, spacing: 18) {
+            StoryCoverView(world: displayedWorld, character: coverCharacter)
                 .aspectRatio(1.22, contentMode: .fit)
                 .overlay(alignment: .topLeading) {
                     Image(systemName: world.genre.group.iconName)
@@ -213,9 +209,9 @@ struct StoryWorldDetailView: View {
                 }
                 .overlay(alignment: .bottomLeading) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(vm.characterIndex[world.mainCharacterId ?? UUID()]?.displayName ?? world.genre.group.displayName)
+                        Text(coverCharacter?.displayName ?? displayedWorld.genre.group.localizedDisplayName)
                             .font(.system(size: 15, weight: .bold))
-                        Text(world.mood.isEmpty ? world.relationshipGenre.displayName : world.mood)
+                        Text(displayedWorld.mood.isEmpty ? displayedWorld.relationshipGenre.localizedDisplayName : displayedWorld.mood)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.72))
                     }
@@ -224,17 +220,17 @@ struct StoryWorldDetailView: View {
                 }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text(world.title)
+                Text(displayedWorld.title)
                     .font(.system(size: 34, weight: .heavy))
                     .lineLimit(2)
-                if !world.shortDescription.isEmpty {
-                    Text(world.shortDescription)
+                if !displayedWorld.shortDescription.isEmpty {
+                    Text(displayedWorld.shortDescription)
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if !world.tags.isEmpty {
-                    Text(world.tags.prefix(8).map { "#\($0)" }.joined(separator: " "))
+                if !displayedWorld.tags.isEmpty {
+                    Text(displayedWorld.tags.prefix(8).map { "#\($0)" }.joined(separator: " "))
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -247,7 +243,7 @@ struct StoryWorldDetailView: View {
                         .background(Capsule().fill(Color.primary.opacity(0.08)))
                     Spacer()
                     Button {
-                        onStartSession?(world)
+                        onStartSession?(displayedWorld)
                     } label: {
                         Label("トークを続ける", systemImage: "play.fill")
                             .font(.system(size: 15, weight: .bold))
@@ -262,14 +258,14 @@ struct StoryWorldDetailView: View {
     private var overviewCard: some View {
         detailCard(title: "概要", icon: "book.closed.fill") {
             if !world.shortDescription.isEmpty {
-                detailText(world.shortDescription)
+                detailText(displayedWorld.shortDescription)
             }
-            detailPair("ユーザーの役割", world.userRole)
-            detailPair("物語形式", world.resolvedCastMode.displayName)
-            detailPair("ムード", world.mood)
-            detailPair("物語の目的", world.storyGoal)
-            if !world.tags.isEmpty {
-                FlowTagRow(tags: world.tags)
+            detailPair("ユーザーの役割", displayedWorld.userRole)
+            detailPair("物語形式", displayedWorld.resolvedCastMode.localizedDisplayName)
+            detailPair("ムード", displayedWorld.mood)
+            detailPair("物語の目的", displayedWorld.storyGoal)
+            if !displayedWorld.tags.isEmpty {
+                FlowTagRow(tags: displayedWorld.tags)
                     .padding(.top, 2)
             }
         }
@@ -319,7 +315,7 @@ struct StoryWorldDetailView: View {
                 }
                 Spacer()
                 Button {
-                    onStartSession?(world)
+                    onStartSession?(displayedWorld)
                 } label: {
                     Label(session == nil ? "開始" : "続きから", systemImage: "play.fill")
                         .font(.system(size: 13, weight: .bold))
@@ -380,7 +376,7 @@ struct StoryWorldDetailView: View {
 
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
-                            Label(member.roleInStory.displayName, systemImage: member.roleInStory.iconName)
+                            Label(member.roleInStory.localizedDisplayName, systemImage: member.roleInStory.iconName)
                                 .font(.system(size: 11, weight: .bold))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -393,7 +389,7 @@ struct StoryWorldDetailView: View {
                         Text(character?.displayName ?? "未登録キャラ")
                             .font(.system(size: 20, weight: .heavy))
                             .lineLimit(1)
-                        Text(member.introductionTiming.displayName)
+                        Text(member.introductionTiming.localizedDisplayName)
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.78))
                     }

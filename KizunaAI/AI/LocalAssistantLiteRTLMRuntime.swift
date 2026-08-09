@@ -117,12 +117,14 @@ private final class LiteRTLMActiveConversation: @unchecked Sendable {
     private let lock = NSLock()
     private var conversation: Conversation?
 
+    @MainActor
     func set(_ conversation: Conversation) {
         lock.lock()
         self.conversation = conversation
         lock.unlock()
     }
 
+    @MainActor
     func clear(_ conversation: Conversation) {
         lock.lock()
         if self.conversation === conversation {
@@ -131,6 +133,7 @@ private final class LiteRTLMActiveConversation: @unchecked Sendable {
         lock.unlock()
     }
 
+    @MainActor
     func cancel() {
         lock.lock()
         let activeConversation = conversation
@@ -209,6 +212,11 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         nonisolated static let maximumHistoryMessages = 3
         nonisolated static let maximumHistoryMessageUTF8Bytes = 240
         nonisolated static let minimumPromptUTF8Bytes = 480
+        // LiteRT-LMのモデルごとに実際の入力形状が異なるため、文字数だけで
+        // 判断せず、モデル自身のtokenizerでこの値を超えないように再圧縮する。
+        // これはコンテキスト全体の上限ではなく、会話1ターンの安全な入力目標。
+        nonisolated static let safeInputTokenTarget = 960
+        nonisolated static let minimumInputTokenTarget = 128
         // Separate this cache from the earlier 512-token experiment so the
         // next launch compiles the official 2,048-token configuration fresh.
         nonisolated static let runtimeCacheVersion = "v0.14.0-cpu-baseline-1"
@@ -360,7 +368,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated func cancelActiveGeneration() {
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
 #if canImport(LiteRTLM)
-        activeConversation.cancel()
+        Task { @MainActor in
+            activeConversation.cancel()
+        }
 #endif
 #endif
     }
@@ -370,7 +380,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated func releaseResourcesForBackground() {
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
 #if canImport(LiteRTLM)
-        activeConversation.cancel()
+        Task { @MainActor in
+            activeConversation.cancel()
+        }
         Task(priority: .utility) {
             await executionGate.acquire()
             await engineStore.release()
@@ -385,13 +397,14 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated private func runLiteRTLMAttempt(
         _ request: LocalAssistantLiteRTLMRequest
     ) async -> VIUKEmbeddedRuntimeResult {
-        let sizedRequest = runtimeSizedRequest(request)
+        let initialSizedRequest = runtimeSizedRequest(request)
         let configuration = engineConfiguration(
-            for: sizedRequest.modelPath,
-            isRuntimeCheck: sizedRequest.isRuntimeCheck
+            for: initialSizedRequest.modelPath,
+            isRuntimeCheck: initialSizedRequest.isRuntimeCheck
         )
 
         do {
+            var sizedRequest = initialSizedRequest
             let modelName = URL(fileURLWithPath: sizedRequest.modelPath).lastPathComponent
             let promptBytes = sizedRequest.prompt.lengthOfBytes(using: .utf8)
             let systemBytes = sizedRequest.systemPrompt?.lengthOfBytes(using: .utf8) ?? 0
@@ -401,6 +414,11 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             let inputBytes = promptBytes + systemBytes + historyBytes
             NSLog("[KizunaLiteRTLM] starting native CPU turn (model=%@, input=%ld bytes, prompt=%ld, system=%ld, history=%ld, output<=%ld)", modelName, inputBytes, promptBytes, systemBytes, historyBytes, sizedRequest.maxTokens)
             let engine = try await engineStore.engine(for: configuration)
+            sizedRequest = try await fitRequestToTokenBudget(
+                sizedRequest,
+                engine: engine,
+                contextTokenLimit: configuration.maxNumTokens
+            )
             let sampler = try SamplerConfig(
                 topK: max(sizedRequest.topK, 1),
                 topP: max(0, min(sizedRequest.topP, 1)),
@@ -424,10 +442,16 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     maxOutputTokens: sizedRequest.maxTokens
                 )
             )
-            activeConversation.set(conversation)
-            defer { activeConversation.clear(conversation) }
+            await activeConversation.set(conversation)
             NSLog("[KizunaLiteRTLM] conversation ready; sending message")
-            let response = try await conversation.sendMessage(Message(sizedRequest.prompt))
+            let response: Message
+            do {
+                response = try await conversation.sendMessage(Message(sizedRequest.prompt))
+            } catch {
+                await activeConversation.clear(conversation)
+                throw error
+            }
+            await activeConversation.clear(conversation)
             let cleaned = response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
             let hasMeaningfulText = hasMeaningfulResponseText(cleaned)
             // 本文や個人情報はログへ出さない。LiteRT-LM側で停止理由を取得できないため、
@@ -483,6 +507,88 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             modelIdentity: modelIdentity,
             maxNumTokens: contextTokenLimit
         )
+    }
+
+    /// LiteRT-LMの内部tokenizerで、system・履歴・今回の入力を実測する。
+    /// 日本語ではUTF-8バイト数とtoken数の比率がモデルにより変わるため、
+    /// 固定byte上限だけでは「1937 >= 1280」のような実機エラーを防げない。
+    nonisolated private func fitRequestToTokenBudget(
+        _ request: LocalAssistantLiteRTLMRequest,
+        engine: Engine,
+        contextTokenLimit: Int
+    ) async throws -> LocalAssistantLiteRTLMRequest {
+        var candidate = request
+        let target = min(
+            Tuning.safeInputTokenTarget,
+            max(Tuning.minimumInputTokenTarget, contextTokenLimit - candidate.maxTokens - 32)
+        )
+
+        for attempt in 0..<8 {
+            let tokenCount = try await engine.tokenCount(for: tokenProbeText(for: candidate))
+            NSLog(
+                "[KizunaLiteRTLM] token budget probe attempt=%d input=%d target<=%d context=%d",
+                attempt + 1,
+                tokenCount,
+                target,
+                contextTokenLimit
+            )
+            if tokenCount <= target {
+                return candidate
+            }
+
+            let ratio = max(0.28, min(0.82, Double(target) / Double(max(tokenCount, 1)) * 0.9))
+            let promptLimit = max(220, Int(Double(candidate.prompt.lengthOfBytes(using: .utf8)) * ratio))
+            let systemLimit = candidate.systemPrompt.map {
+                max(360, Int(Double($0.lengthOfBytes(using: .utf8)) * ratio))
+            } ?? Tuning.maximumSystemUTF8Bytes
+            let historyLimits = candidate.initialMessages.map {
+                max(80, Int(Double($0.text.lengthOfBytes(using: .utf8)) * ratio))
+            }
+
+            candidate = LocalAssistantLiteRTLMRequest(
+                prompt: clipped(candidate.prompt, maxUTF8Bytes: promptLimit, keepingTail: true),
+                systemPrompt: candidate.systemPrompt.map {
+                    clipped($0, maxUTF8Bytes: systemLimit, keepingTail: false)
+                },
+                modelPath: candidate.modelPath,
+                maxTokens: candidate.maxTokens,
+                temperature: candidate.temperature,
+                topP: candidate.topP,
+                topK: candidate.topK,
+                seed: candidate.seed,
+                initialMessages: candidate.initialMessages.enumerated().map { index, message in
+                    LocalAssistantLiteRTLMHistoryMessage(
+                        role: message.role,
+                        text: clipped(message.text, maxUTF8Bytes: historyLimits[index], keepingTail: true)
+                    )
+                },
+                isRuntimeCheck: candidate.isRuntimeCheck,
+                preferGPU: false
+            )
+        }
+
+        // 8回圧縮してもモデルのtokenizerが目標を超える場合は、送信前に
+        // その事実をログへ残す。Conversation作成を無理に成功扱いにはしない。
+        let finalCount = try await engine.tokenCount(for: tokenProbeText(for: candidate))
+        NSLog("[KizunaLiteRTLM] token budget probe reached final input=%d target<=%d", finalCount, target)
+        return candidate
+    }
+
+    nonisolated private func tokenProbeText(for request: LocalAssistantLiteRTLMRequest) -> String {
+        var pieces: [String] = []
+        if let systemPrompt = request.systemPrompt, !systemPrompt.isEmpty {
+            pieces.append("system\n" + systemPrompt)
+        }
+        for message in request.initialMessages {
+            let role: String
+            switch message.role {
+            case .user: role = "user"
+            case .model: role = "model"
+            }
+            pieces.append(role + "\n" + message.text)
+        }
+        pieces.append("user\n" + request.prompt)
+        return pieces.joined(separator: "\n")
     }
 
     nonisolated private func runtimeSizedRequest(

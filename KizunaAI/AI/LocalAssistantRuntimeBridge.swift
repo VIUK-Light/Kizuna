@@ -5891,6 +5891,8 @@ final class BundledServerLogAggregator {
     /// 絆モードで使う追記。`PersonaSettings` が UserDefaults 永続化に合わせて上書きする。
     /// nonisolated にしておき、prompt 構築時にだけ参照する。
     nonisolated(unsafe) static var personaAddendum: String = ""
+    /// 任意入力のユーザープロフィール。未設定なら空文字で、生成プロンプトへ何も追加しない。
+    nonisolated(unsafe) static var userProfileAddendum: String = ""
     /// 絆モードで旧 system prompt 経路を通る時に追加注入する短期メモリー。
     nonisolated(unsafe) static var kizunaActiveMemories: [String] = []
 

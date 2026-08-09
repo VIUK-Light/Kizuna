@@ -51,6 +51,21 @@ enum StoryGenerationModel: String, Codable, CaseIterable, Identifiable, Hashable
         }
     }
 
+    var localizedPromptHint: String {
+        switch self {
+        case .e4b:
+            return KizunaCopy.text(
+                japanese: promptHint,
+                english: "A VIUK fine-tuned model for light, natural conversation."
+            )
+        case .b31:
+            return KizunaCopy.text(
+                japanese: promptHint,
+                english: "Gemma4 31B API. Preserves longer context, scene atmosphere, and relationship nuance."
+            )
+        }
+    }
+
     var storageFolderName: String {
         switch self {
         case .e4b: return LocalAssistantModelProfile.storageFolderName
@@ -134,6 +149,8 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
     var visibility: CharacterVisibility
     var createdAt: Date
     var updatedAt: Date
+    /// 表示用の言語別コンテンツ。nil は旧保存データまたは未翻訳のユーザー作成物語。
+    var localizations: [String: StoryWorldLocalization]?
 
     init(
         id: UUID = UUID(),
@@ -154,7 +171,8 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
         safetyRules: [String] = [],
         visibility: CharacterVisibility = .private,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        localizations: [String: StoryWorldLocalization]? = nil
     ) {
         self.id = id
         self.title = title
@@ -175,6 +193,7 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
         self.visibility = visibility
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.localizations = localizations
     }
 
     /// Zeta型の「ユーザー + 主役1人」を既定にする。
@@ -184,6 +203,35 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
 
     var isSoloStory: Bool {
         resolvedCastMode == .solo
+    }
+
+    func localized(for language: KizunaLanguage) -> StoryWorld {
+        guard language == .english else { return self }
+        guard let localization = localizations?[language.rawValue] ?? StoryEnglishCatalog.localization(for: self) else {
+            return self
+        }
+
+        var copy = self
+        if let value = localization.title?.nonEmpty { copy.title = value }
+        if let value = localization.shortDescription?.nonEmpty { copy.shortDescription = value }
+        if let value = localization.worldSetting?.nonEmpty { copy.worldSetting = value }
+        if let value = localization.userRole?.nonEmpty { copy.userRole = value }
+        if let value = localization.openingScene?.nonEmpty { copy.openingScene = value }
+        if let value = localization.storyGoal?.nonEmpty { copy.storyGoal = value }
+        if let value = localization.mood?.nonEmpty { copy.mood = value }
+        if let value = localization.tags, !value.isEmpty { copy.tags = value }
+        return copy
+    }
+
+    var localizedForCurrentLanguage: StoryWorld {
+        localized(for: KizunaCopy.language)
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -198,6 +246,10 @@ enum StoryCastMode: String, Codable, CaseIterable, Identifiable, Hashable {
         case .solo: return "単体物語"
         case .ensemble: return "群像劇"
         }
+    }
+
+    var localizedDisplayName: String {
+        KizunaCopy.text(japanese: displayName, english: self == .solo ? "Solo story" : "Ensemble story")
     }
 
     var detail: String {
@@ -231,6 +283,20 @@ enum CastRole: String, Codable, CaseIterable, Hashable {
         }
     }
 
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .main: english = "Main"
+        case .secondary: english = "Supporting"
+        case .rival: english = "Rival"
+        case .friend: english = "Friend"
+        case .mentor: english = "Mentor"
+        case .antagonist: english = "Antagonist"
+        case .background: english = "Background"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
+
     var iconName: String {
         switch self {
         case .main: return "star.fill"
@@ -259,6 +325,18 @@ enum IntroductionTiming: String, Codable, CaseIterable, Hashable {
         case .late: return "終盤"
         case .optional: return "条件付き"
         }
+    }
+
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .opening: english = "Opening"
+        case .early: english = "Early"
+        case .middle: english = "Middle"
+        case .late: english = "Late"
+        case .optional: english = "Conditional"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
     }
 }
 

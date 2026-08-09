@@ -65,6 +65,37 @@ enum RelationshipGenre: String, Codable, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .none: english = "Unspecified"
+        case .nl: english = "NL"
+        case .bl: english = "BL"
+        case .gl: english = "GL"
+        case .friendship: english = "Friendship"
+        case .bromance: english = "Bromance"
+        case .sisterhood: english = "Sisterhood"
+        case .family: english = "Family"
+        case .sibling: english = "Sibling"
+        case .mentorStudent: english = "Mentor & student"
+        case .senpaiKouhai: english = "Senior & junior"
+        case .masterServant: english = "Master & servant"
+        case .protectorProtected: english = "Protector & protected"
+        case .rival: english = "Rivals"
+        case .enemiesToLovers: english = "Enemies to lovers"
+        case .friendsToLovers: english = "Friends to lovers"
+        case .fakeLovers: english = "Fake lovers"
+        case .exLovers: english = "Ex-lovers"
+        case .arranged: english = "Arranged relationship"
+        case .secretLove: english = "Secret love"
+        case .unrequitedLove: english = "Unrequited love"
+        case .mutualCrush: english = "Mutual crush"
+        case .foundFamily: english = "Found family"
+        case .freeform: english = "Freeform"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
+
     var description: String {
         switch self {
         case .none: return "関係性は固定しない。"

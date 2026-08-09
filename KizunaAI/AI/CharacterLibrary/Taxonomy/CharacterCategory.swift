@@ -540,6 +540,15 @@ enum CharacterCategory: String, Codable, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// UI専用の英語表示。rawValue と promptHint は保存・生成用なので変更しない。
+    var localizedDisplayName: String {
+        guard KizunaCopy.language == .english else { return displayName }
+        return rawValue
+            .split(separator: "_")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
     // MARK: 既定タグ (group のタグ + ケース固有のタグ)
     var defaultTags: [String] {
         var tags: [String] = [group.displayName]

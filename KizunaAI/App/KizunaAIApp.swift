@@ -26,11 +26,18 @@ struct KizunaAIApp: App {
 private struct KizunaMigrationGateView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var isReady = false
+    @AppStorage("kizuna.launch.completed") private var launchCompleted = false
 
     var body: some View {
         Group {
             if isReady {
-                VIUKKizunaWorkspaceView()
+                if launchCompleted {
+                    VIUKKizunaWorkspaceView()
+                } else {
+                    KizunaLaunchView {
+                        launchCompleted = true
+                    }
+                }
             } else {
                 VStack(spacing: 18) {
                     Image(systemName: "infinity.circle.fill")
@@ -55,6 +62,7 @@ private struct KizunaMigrationGateView: View {
             }.value
             isReady = true
             PersonaSettings.shared.primeBridge()
+            KizunaUserProfileStore.shared.primeBridge()
             // Do not wait for Settings or a Story view to instantiate the model
             // manager.  A saved local model must be discovered and checked as
             // soon as migration finishes, without asking the user to press a

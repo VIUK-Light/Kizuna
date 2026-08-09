@@ -10,11 +10,11 @@
 		06D0D93E289A58585617D2D9 /* SceneProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CEC45D9187A7AD9E3CF9DE4 /* SceneProtocols.swift */; };
 		0AFD028991A3FFCC665B3769 /* SafetyPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE6E2DA7A0E7BF418B6A3C7 /* SafetyPipeline.swift */; };
 		1646F9BF705069B3CABED43D /* KizunaSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */; };
-		1646F9BF705069B3CABED44 /* KizunaLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2337228D2EF9CFE2E9A788EA /* KizunaLanguage.swift */; };
 		1E1CC650E2302CB00D1DF1B2 /* ReportCharacterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA3C02F943DFC138887DC5B /* ReportCharacterView.swift */; };
 		1E8D68F6FCAF235F2B84FE19 /* MemoryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = E675C1D433A2840AB2461CFD /* MemoryRepository.swift */; };
 		1F0627CABF8181F36724081E /* Apache-2.0.txt in Resources */ = {isa = PBXBuildFile; fileRef = C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */; };
-		2E7A1F4C8E8F4E0BAE8A1D9C /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 2E7A1F4C8E8F4E0BAE8A1D9B /* Localizable.xcstrings */; };
+		242EDCC10810B6E59A09B3AF /* KizunaLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40196698BCD7CAB2D603972 /* KizunaLanguage.swift */; };
+		25BE9FBCEE85A531DDB3CD99 /* KizunaCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16FD178111137C6FE984C731 /* KizunaCopy.swift */; };
 		2B2592AAD858D3D96862FAF3 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26955C791E26219A2224961B /* AppBrand.swift */; };
 		2BEDC445F7013C3F2361CD4D /* AIExecutionModes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */; };
 		36622231CDB22D277C6DF874 /* MockMemoryAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A976D1A75B17989A4E31F /* MockMemoryAdapters.swift */; };
@@ -29,6 +29,7 @@
 		4745C6D75CD7DB9CEB1366AF /* PersonaSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24DDE9C0180DDB8FD296DC8F /* PersonaSettings.swift */; };
 		4CEE9E96A17436D9BCE2DF8B /* CharacterDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593451968603E56D14CBBB53 /* CharacterDetailViewModel.swift */; };
 		50DDEF0B1C30C7E875D77109 /* CharacterLorebook.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06ABDB45B6FC442B7523E83 /* CharacterLorebook.swift */; };
+		56BA4549A1AF6BB5C5DCF65D /* StoryLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = F68963A2E968B513CAFCBF56 /* StoryLocalization.swift */; };
 		57CF512E93E56951F0E19F0F /* PersonaChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */; };
 		58C8D8624FD05D256EA24B45 /* CharacterTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF3286F28C642C691A562821 /* CharacterTemplate.swift */; };
 		5F81134FC766267D7083299B /* MockSafetyCheckers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167DE9F165C1D06BC748A477 /* MockSafetyCheckers.swift */; };
@@ -45,6 +46,7 @@
 		797B71C3CFD48A11BA1DA3C4 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; platformFilters = (ios, ); productRef = 28CBD9BDFFE99D154131DA85 /* LiteRTLM */; };
 		7A008B57837C3BB36B3D5BAC /* CharacterLibrarySeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F704141DA8C5E0FCA2CBBEF /* CharacterLibrarySeed.swift */; };
 		7E43E57EAADECA6F88093220 /* SafetyProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16690F37F0845E53F9952C23 /* SafetyProtocols.swift */; };
+		82055619396F81169DBD67A8 /* KizunaLaunchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5537883EB3A9D9BA38FB400 /* KizunaLaunchView.swift */; };
 		84E2BB3BA295D977ABF0DCF3 /* KizunaRuntimeCompatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38C38E45DF917A9188C23AAC /* KizunaRuntimeCompatibility.swift */; };
 		84F3582F967CA23F11C0173E /* PromptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 496320007DB1F65A5462A0A2 /* PromptBuilder.swift */; };
 		869DABD7EBE6CAFDFFA95FB5 /* StoryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FD99FDA49A1F31E9B0AF2D9 /* StoryModels.swift */; };
@@ -53,9 +55,11 @@
 		8C633EAE45E94C4520E03651 /* LocalAssistantModelProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */; };
 		8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */ = {isa = PBXBuildFile; fileRef = E98EDDBA3B31E35BEC97A9F6 /* SmallModelClassifying.swift */; };
 		8FDCB3669503DEDD95786DA0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */; };
+		95168A37B2B238D2C0275B1C /* StoryCoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF83E846745A39722C75FF61 /* StoryCoverView.swift */; };
 		982F92EFA64D2780DE84F242 /* StoryViewModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4021480B714F2F541000C5DD /* StoryViewModels.swift */; };
 		9887C1FE76FBC8C15A077800 /* StoryWorldCreateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */; };
 		99EEED1D246FEA523C1D6D17 /* CharacterLibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FB7C20DBE13F7AA0FD7580B /* CharacterLibraryViewModel.swift */; };
+		9A8CE4D58FDECCE2E073009F /* KizunaUserProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020CE8BED9824994F91D7145 /* KizunaUserProfileView.swift */; };
 		9E82C3EAA3CAC4A63F28DF02 /* MemoryProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 757985556F2B3FAB58006C1C /* MemoryProtocols.swift */; };
 		9E9BEABB879FC0BE684CD0FC /* LocalAssistantRuntimeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BDA5863DEC1401CCF59E6D2 /* LocalAssistantRuntimeBridge.swift */; };
 		A22144875F3A43E7235B2D25 /* StoryRepositories.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86221612DBCBA783CE5BB53 /* StoryRepositories.swift */; };
@@ -72,6 +76,7 @@
 		BEE16F7496A6844739086860 /* PlatformRuntimeStubs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05994627B55916B0A3DFAF7B /* PlatformRuntimeStubs.swift */; };
 		C08E68332DCCE111AF532344 /* CharacterProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D6B5EE85AF59633861E76A /* CharacterProfile.swift */; };
 		CD7F4B290DCF9E71F3BDDDA0 /* KizunaAIApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785139BD8175262981B598A1 /* KizunaAIApp.swift */; };
+		D4D38A3ABE7E479A12ACA51D /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DFDAC715FA5ECBCDEE5C1F24 /* Localizable.xcstrings */; };
 		D7C05C6DE100F03A79A02CCC /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 1014477B6846DA3DF969C22F /* THIRD_PARTY_NOTICES.md */; };
 		D8ACCA7952AFD15E4226412B /* CharacterLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 287757A56CBE15F666DC908D /* CharacterLibraryView.swift */; };
 		DBFC9E2365F72196EF243242 /* AISecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9689ADAB0694870AC5964DFA /* AISecretStore.swift */; };
@@ -81,6 +86,7 @@
 		EEC5EF2337298255BFF8AC27 /* llama.cpp-MIT.txt in Resources */ = {isa = PBXBuildFile; fileRef = C4C3DBA4298E534FF3BFA4E5 /* llama.cpp-MIT.txt */; };
 		EF3BB16A93B494602BC64DCF /* PersonaChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D9BB02D32A725EB2DA3DA6E /* PersonaChatView.swift */; };
 		F254B500366A544EC2F7FABB /* StoryWorldDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */; };
+		F925F26148F70DDACCE720E9 /* KizunaUserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78CFFCEC0FA3CC44BDDA2C99 /* KizunaUserProfile.swift */; };
 		F93D01B2DC86FD2DDE4B706D /* ReportRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30A31B134170D7A746DB123 /* ReportRepository.swift */; };
 		F9D425A3AF1DCB135F9DD737 /* CategoryGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CFD2FB990A38F345A5EA155 /* CategoryGroup.swift */; };
 		FB9115302AB78D90998E55E1 /* CharacterRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05D69B4839FE122B9DEE718C /* CharacterRepository.swift */; };
@@ -89,6 +95,7 @@
 
 /* Begin PBXFileReference section */
 		001A2AFEEF6464336BE37E55 /* CharacterCreateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterCreateView.swift; sourceTree = "<group>"; };
+		020CE8BED9824994F91D7145 /* KizunaUserProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaUserProfileView.swift; sourceTree = "<group>"; };
 		05994627B55916B0A3DFAF7B /* PlatformRuntimeStubs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformRuntimeStubs.swift; sourceTree = "<group>"; };
 		05D69B4839FE122B9DEE718C /* CharacterRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterRepository.swift; sourceTree = "<group>"; };
 		0CEC45D9187A7AD9E3CF9DE4 /* SceneProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneProtocols.swift; sourceTree = "<group>"; };
@@ -99,16 +106,15 @@
 		16690F37F0845E53F9952C23 /* SafetyProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyProtocols.swift; sourceTree = "<group>"; };
 		167DE9F165C1D06BC748A477 /* MockSafetyCheckers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSafetyCheckers.swift; sourceTree = "<group>"; };
 		1696AB458D899AC27BB0C79B /* AILegacyCompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AILegacyCompatibility.swift; sourceTree = "<group>"; };
+		16FD178111137C6FE984C731 /* KizunaCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaCopy.swift; sourceTree = "<group>"; };
 		19449F3273FBD99643962AF5 /* CharacterTemplateSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterTemplateSeed.swift; sourceTree = "<group>"; };
 		1FB7C20DBE13F7AA0FD7580B /* CharacterLibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLibraryViewModel.swift; sourceTree = "<group>"; };
 		208B4E1949CC5B273BB335A7 /* CharacterMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterMemory.swift; sourceTree = "<group>"; };
 		2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaSettingsView.swift; sourceTree = "<group>"; };
-		2337228D2EF9CFE2E9A788EA /* KizunaLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaLanguage.swift; sourceTree = "<group>"; };
 		24DDE9C0180DDB8FD296DC8F /* PersonaSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaSettings.swift; sourceTree = "<group>"; };
 		26955C791E26219A2224961B /* AppBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBrand.swift; sourceTree = "<group>"; };
 		287757A56CBE15F666DC908D /* CharacterLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLibraryView.swift; sourceTree = "<group>"; };
 		2A196A347E7975CA1A50C5D8 /* AIToolCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIToolCatalog.swift; sourceTree = "<group>"; };
-		2E7A1F4C8E8F4E0BAE8A1D9B /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		303798654908AC5FC3B19558 /* LocalAssistantEmbeddedRuntime.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LocalAssistantEmbeddedRuntime.h; sourceTree = "<group>"; };
 		374F9636C3B27129BBD78882 /* CharacterReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterReport.swift; sourceTree = "<group>"; };
 		3802A51489C449BBE1A57390 /* LocalAssistantLiteRTLMRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantLiteRTLMRuntime.swift; sourceTree = "<group>"; };
@@ -135,6 +141,7 @@
 		6FDC6C52E2977CFF9CDBA98E /* nlohmann-json-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "nlohmann-json-MIT.txt"; sourceTree = "<group>"; };
 		757985556F2B3FAB58006C1C /* MemoryProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryProtocols.swift; sourceTree = "<group>"; };
 		785139BD8175262981B598A1 /* KizunaAIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaAIApp.swift; sourceTree = "<group>"; };
+		78CFFCEC0FA3CC44BDDA2C99 /* KizunaUserProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaUserProfile.swift; sourceTree = "<group>"; };
 		79D6B5EE85AF59633861E76A /* CharacterProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterProfile.swift; sourceTree = "<group>"; };
 		7BD3421C167EB41A06E443C2 /* StorySessionChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySessionChatView.swift; sourceTree = "<group>"; };
 		7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -151,6 +158,7 @@
 		A67380B9E9B6A3F03A59ED67 /* StoryGemma31BAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryGemma31BAPIService.swift; sourceTree = "<group>"; };
 		A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryWorldCreateView.swift; sourceTree = "<group>"; };
 		AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantModelProfile.swift; sourceTree = "<group>"; };
+		C40196698BCD7CAB2D603972 /* KizunaLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaLanguage.swift; sourceTree = "<group>"; };
 		C4C3DBA4298E534FF3BFA4E5 /* llama.cpp-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "llama.cpp-MIT.txt"; sourceTree = "<group>"; };
 		C611D89D7CAC7F09D41C0D9A /* KizunaUICompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaUICompatibility.swift; sourceTree = "<group>"; };
 		C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Apache-2.0.txt"; sourceTree = "<group>"; };
@@ -160,6 +168,7 @@
 		D30A31B134170D7A746DB123 /* ReportRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportRepository.swift; sourceTree = "<group>"; };
 		DA529B4D3926130627D485BB /* RelationshipGenre.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelationshipGenre.swift; sourceTree = "<group>"; };
 		DBEDCA0076A343951F227050 /* LiteRT-LM */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "LiteRT-LM"; path = "ThirdParty/LiteRT-LM"; sourceTree = SOURCE_ROOT; };
+		DFDAC715FA5ECBCDEE5C1F24 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		E422AA1452C576610E41D436 /* VIUKKizunaWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VIUKKizunaWorkspaceView.swift; sourceTree = "<group>"; };
 		E675C1D433A2840AB2461CFD /* MemoryRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryRepository.swift; sourceTree = "<group>"; };
 		E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIExecutionModes.swift; sourceTree = "<group>"; };
@@ -167,9 +176,12 @@
 		ECA3C02F943DFC138887DC5B /* ReportCharacterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportCharacterView.swift; sourceTree = "<group>"; };
 		EF3286F28C642C691A562821 /* CharacterTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterTemplate.swift; sourceTree = "<group>"; };
 		F28EE3BFF85529E58029ECD5 /* CharacterCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterCategory.swift; sourceTree = "<group>"; };
+		F5537883EB3A9D9BA38FB400 /* KizunaLaunchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaLaunchView.swift; sourceTree = "<group>"; };
+		F68963A2E968B513CAFCBF56 /* StoryLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryLocalization.swift; sourceTree = "<group>"; };
 		F85DE09496F7B036AD13EE3A /* MockSceneAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSceneAdapters.swift; sourceTree = "<group>"; };
 		F91A09679C3C6E56FF05DEBE /* cpp-httplib-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "cpp-httplib-MIT.txt"; sourceTree = "<group>"; };
 		FD2D05C43FEC8B0D00124179 /* CharacterDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterDetailView.swift; sourceTree = "<group>"; };
+		FF83E846745A39722C75FF61 /* StoryCoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryCoverView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -261,10 +273,14 @@
 				26955C791E26219A2224961B /* AppBrand.swift */,
 				4A29C9D8E926D83E24A952F4 /* AppTheme.swift */,
 				785139BD8175262981B598A1 /* KizunaAIApp.swift */,
+				16FD178111137C6FE984C731 /* KizunaCopy.swift */,
 				5DDF61BECBE7F41CD4EAD9BA /* KizunaDataMigration.swift */,
-				2337228D2EF9CFE2E9A788EA /* KizunaLanguage.swift */,
+				C40196698BCD7CAB2D603972 /* KizunaLanguage.swift */,
+				F5537883EB3A9D9BA38FB400 /* KizunaLaunchView.swift */,
 				2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */,
 				C611D89D7CAC7F09D41C0D9A /* KizunaUICompatibility.swift */,
+				78CFFCEC0FA3CC44BDDA2C99 /* KizunaUserProfile.swift */,
+				020CE8BED9824994F91D7145 /* KizunaUserProfileView.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -323,8 +339,8 @@
 			isa = PBXGroup;
 			children = (
 				7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */,
-				2E7A1F4C8E8F4E0BAE8A1D9B /* Localizable.xcstrings */,
 				87FA8C1E60CADDD358A86BE8 /* Info.plist */,
+				DFDAC715FA5ECBCDEE5C1F24 /* Localizable.xcstrings */,
 				1630E4D8FBC935FD5C542996 /* AI */,
 				4A59A16DAD041145F9F40D88 /* App */,
 				55D705E8A5582DC88D346F1D /* Security */,
@@ -335,6 +351,7 @@
 		5E6EDD362DE7317D83CAE157 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				FF83E846745A39722C75FF61 /* StoryCoverView.swift */,
 				7BD3421C167EB41A06E443C2 /* StorySessionChatView.swift */,
 				A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */,
 				3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */,
@@ -362,6 +379,7 @@
 		82FAFC6915202038C60A537B /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				F68963A2E968B513CAFCBF56 /* StoryLocalization.swift */,
 				3FD99FDA49A1F31E9B0AF2D9 /* StoryModels.swift */,
 			);
 			path = Models;
@@ -528,7 +546,7 @@
 				};
 			};
 			buildConfigurationList = 1BA2B5827AB536892D35D5F5 /* Build configuration list for PBXProject "KizunaAI" */;
-			developmentRegion = ja;
+			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				Base,
@@ -556,9 +574,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				1F0627CABF8181F36724081E /* Apache-2.0.txt in Resources */,
-				2E7A1F4C8E8F4E0BAE8A1D9C /* Localizable.xcstrings in Resources */,
 				8FDCB3669503DEDD95786DA0 /* Assets.xcassets in Resources */,
 				41E3307E2DD22AF0123D2469 /* LiteRT-LM-COPYRIGHT.txt in Resources */,
+				D4D38A3ABE7E479A12ACA51D /* Localizable.xcstrings in Resources */,
 				FF358BF04BF87756CE4B881F /* SeedStoryPacks.json in Resources */,
 				D7C05C6DE100F03A79A02CCC /* THIRD_PARTY_NOTICES.md in Resources */,
 				39F796C9FFDF72D566506CB6 /* cpp-httplib-MIT.txt in Resources */,
@@ -625,11 +643,15 @@
 				B86BE41B9AAC76DFB1A04B37 /* CharacterTemplateSeed.swift in Sources */,
 				B29F5AD5678DACCCEDD9CB4B /* KeychainHelper.swift in Sources */,
 				CD7F4B290DCF9E71F3BDDDA0 /* KizunaAIApp.swift in Sources */,
-				1646F9BF705069B3CABED44 /* KizunaLanguage.swift in Sources */,
+				25BE9FBCEE85A531DDB3CD99 /* KizunaCopy.swift in Sources */,
 				B0BDEAE6C995D61479C4A064 /* KizunaDataMigration.swift in Sources */,
+				242EDCC10810B6E59A09B3AF /* KizunaLanguage.swift in Sources */,
+				82055619396F81169DBD67A8 /* KizunaLaunchView.swift in Sources */,
 				84E2BB3BA295D977ABF0DCF3 /* KizunaRuntimeCompatibility.swift in Sources */,
 				1646F9BF705069B3CABED43D /* KizunaSettingsView.swift in Sources */,
 				75BA6E7CBE0835A208713ED6 /* KizunaUICompatibility.swift in Sources */,
+				F925F26148F70DDACCE720E9 /* KizunaUserProfile.swift in Sources */,
+				9A8CE4D58FDECCE2E073009F /* KizunaUserProfileView.swift in Sources */,
 				73CA926153543CC3A95892EB /* LocalAssistantEmbeddedRuntime.mm in Sources */,
 				3AAE3D8F684575A640306140 /* LocalAssistantLiteRTLMRuntime.swift in Sources */,
 				A7DA6D9F4B8699ABB6FFD715 /* LocalAssistantModelManager.swift in Sources */,
@@ -657,7 +679,9 @@
 				43A8E84FD2A1382EA5583EFB /* SafetyTypes.swift in Sources */,
 				06D0D93E289A58585617D2D9 /* SceneProtocols.swift in Sources */,
 				8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */,
+				95168A37B2B238D2C0275B1C /* StoryCoverView.swift in Sources */,
 				8AFDA9C31775F30993E618BB /* StoryGemma31BAPIService.swift in Sources */,
+				56BA4549A1AF6BB5C5DCF65D /* StoryLocalization.swift in Sources */,
 				869DABD7EBE6CAFDFFA95FB5 /* StoryModels.swift in Sources */,
 				ACA8C2D8482815C911AF1FEB /* StoryPromptBuilder.swift in Sources */,
 				A22144875F3A43E7235B2D25 /* StoryRepositories.swift in Sources */,

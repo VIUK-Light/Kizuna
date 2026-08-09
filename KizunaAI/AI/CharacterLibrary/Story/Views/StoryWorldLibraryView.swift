@@ -5,30 +5,6 @@
 */
 
 import SwiftUI
-#if canImport(AppKit)
-import AppKit
-#endif
-#if canImport(UIKit)
-import UIKit
-#endif
-
-#if canImport(AppKit)
-private typealias StoryLibraryPlatformImage = NSImage
-#elseif canImport(UIKit)
-private typealias StoryLibraryPlatformImage = UIImage
-#endif
-
-private extension Image {
-    init(storyLibraryPlatformImage: StoryLibraryPlatformImage) {
-        #if canImport(AppKit)
-        self.init(nsImage: storyLibraryPlatformImage)
-        #elseif canImport(UIKit)
-        self.init(uiImage: storyLibraryPlatformImage)
-        #else
-        self.init(systemName: "person.crop.rectangle")
-        #endif
-    }
-}
 
 struct StoryWorldLibraryView: View {
     @StateObject private var vm = StoryWorldLibraryViewModel()
@@ -252,11 +228,12 @@ struct StoryWorldLibraryView: View {
     }
 
     private func worldCard(_ w: StoryWorld) -> some View {
+        let displayedWorld = w.localizedForCurrentLanguage
         let coverCharacter = vm.coverCharacter(for: w)
         return Button { selected = w } label: {
             VStack(alignment: .leading, spacing: 12) {
                 ZStack(alignment: .bottomLeading) {
-                    coverImage(for: coverCharacter, genre: w.genre)
+                    StoryCoverView(world: displayedWorld, character: coverCharacter)
                         .frame(maxWidth: .infinity)
                         .frame(height: 230)
                         .clipped()
@@ -270,11 +247,11 @@ struct StoryWorldLibraryView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         HStack(alignment: .bottom) {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(w.title)
+                                Text(displayedWorld.title)
                                     .font(.system(size: 18, weight: .bold))
                                     .foregroundStyle(.white)
                                     .lineLimit(2)
-                                Text(coverCharacter?.displayName ?? w.genre.group.displayName)
+                                Text(coverCharacter?.displayName ?? displayedWorld.genre.group.localizedDisplayName)
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.white.opacity(0.86))
                             }
@@ -283,7 +260,7 @@ struct StoryWorldLibraryView: View {
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.white.opacity(0.84))
                         }
-                        Text(w.mood.isEmpty ? w.genre.group.displayName : w.mood)
+                        Text(displayedWorld.mood.isEmpty ? displayedWorld.genre.group.localizedDisplayName : displayedWorld.mood)
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(1)
@@ -292,12 +269,12 @@ struct StoryWorldLibraryView: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                if !w.shortDescription.isEmpty {
-                    Text(w.shortDescription)
+                if !displayedWorld.shortDescription.isEmpty {
+                    Text(displayedWorld.shortDescription)
                         .font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary).lineLimit(2)
                 }
-                if !w.openingScene.isEmpty {
-                    Text("「\(w.openingScene)」")
+                if !displayedWorld.openingScene.isEmpty {
+                    Text("「\(displayedWorld.openingScene)」")
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(.primary.opacity(0.82))
                         .lineLimit(3)
@@ -309,23 +286,26 @@ struct StoryWorldLibraryView: View {
                         )
                 }
                 HStack(spacing: 4) {
-                    Text(w.genre.displayName)
+                    Text(displayedWorld.genre.localizedDisplayName)
                         .font(.system(size: 10, weight: .semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentColor.opacity(0.12)))
                         .foregroundStyle(Color.accentColor)
-                    Text(w.relationshipGenre.displayName)
+                    Text(displayedWorld.relationshipGenre.localizedDisplayName)
                         .font(.system(size: 10, weight: .semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.purple.opacity(0.12)))
                         .foregroundStyle(.purple)
                     Spacer()
-                    Label("\(w.characterIds.count)人", systemImage: "person.3.fill")
+                    Label(
+                        KizunaCopy.language == .english ? "\(w.characterIds.count) people" : "\(w.characterIds.count)人",
+                        systemImage: "person.3.fill"
+                    )
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
-                if !w.tags.isEmpty {
-                    Text(w.tags.prefix(4).map { "#\($0)" }.joined(separator: "  "))
+                if !displayedWorld.tags.isEmpty {
+                    Text(displayedWorld.tags.prefix(4).map { "#\($0)" }.joined(separator: "  "))
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
@@ -342,53 +322,4 @@ struct StoryWorldLibraryView: View {
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private func coverImage(for character: CharacterProfile?, genre: CharacterCategory) -> some View {
-        if let data = character?.avatarImageData,
-           let image = storyLibraryPlatformImage(from: data) {
-            Image(storyLibraryPlatformImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let key = character?.imageKey,
-                  !key.isEmpty,
-                  let image = storyLibraryPlatformImage(named: key) {
-            Image(storyLibraryPlatformImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ZStack {
-                LinearGradient(
-                    colors: [Color.accentColor.opacity(0.72), Color.primary.opacity(0.18)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                Image(systemName: genre.group.iconName)
-                    .font(.system(size: 48, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.82))
-            }
-        }
-    }
-
-    private func storyLibraryPlatformImage(from data: Data) -> StoryLibraryPlatformImage? {
-        #if canImport(AppKit)
-        return NSImage(data: data)
-        #elseif canImport(UIKit)
-        return UIImage(data: data)
-        #else
-        return nil
-        #endif
-    }
-
-    // 未登録の画像名をSwiftUIへ渡さず、ログを発生させない。
-    private func storyLibraryPlatformImage(named name: String) -> StoryLibraryPlatformImage? {
-        #if canImport(AppKit)
-        return NSImage(named: name)
-        #elseif canImport(UIKit)
-        return UIImage(named: name)
-        #else
-        return nil
-        #endif
-    }
 }

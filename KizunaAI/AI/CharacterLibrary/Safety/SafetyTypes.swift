@@ -24,6 +24,16 @@ enum SafetyRating: String, Codable, CaseIterable, Identifiable, Hashable {
         case .restricted: return "制限"
         }
     }
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .general: english = "General"
+        case .teen: english = "13+"
+        case .sensitive: english = "Sensitive"
+        case .restricted: english = "Restricted"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
     var iconName: String {
         switch self {
         case .general: return "checkmark.seal"
@@ -47,6 +57,15 @@ enum CharacterVisibility: String, Codable, CaseIterable, Identifiable, Hashable 
         case .unlisted: return "限定公開"
         case .public: return "公開"
         }
+    }
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .private: english = "Private"
+        case .unlisted: english = "Unlisted"
+        case .public: english = "Public"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
     }
     var iconName: String {
         switch self {
@@ -103,6 +122,24 @@ enum SafetyDomain: String, Codable, CaseIterable, Hashable {
         case .financial: return "金融"
         case .legal: return "法律"
         }
+    }
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .romance: english = "Romance"
+        case .family: english = "Family"
+        case .violence: english = "Violence"
+        case .crime: english = "Crime"
+        case .selfHarm: english = "Self-harm"
+        case .sexual: english = "Sexual content"
+        case .minors: english = "Minors"
+        case .personalInfo: english = "Personal information"
+        case .harassment: english = "Harassment"
+        case .medical: english = "Medical"
+        case .financial: english = "Financial"
+        case .legal: english = "Legal"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
     }
 }
 
@@ -164,6 +201,17 @@ enum SafetyConcernCategory: String, CaseIterable, Hashable {
         case .generalSafety: return "安全に関する悩み"
         }
     }
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .emotionalDistress: english = "Emotional distress"
+        case .selfHarm: english = "Self-harm concern"
+        case .violenceOrAbuse: english = "Violence or abuse"
+        case .medicalUrgency: english = "Medical urgency"
+        case .generalSafety: english = "General safety"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
 }
 
 enum SafetyConcernLevel: String, CaseIterable, Hashable {
@@ -177,6 +225,15 @@ enum SafetyConcernLevel: String, CaseIterable, Hashable {
         case .elevated: return "早めの相談をおすすめ"
         case .urgent: return "今すぐ安全を優先"
         }
+    }
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .supportive: english = "Support is recommended"
+        case .elevated: english = "Please consider support soon"
+        case .urgent: english = "Prioritize immediate safety"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
     }
 }
 

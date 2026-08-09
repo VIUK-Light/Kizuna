@@ -95,18 +95,29 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     }
 
     private func deduplicatedSystemWorlds(_ fetchedWorlds: [StoryWorld]) -> [StoryWorld] {
-        var seenSystemTitles = Set<String>()
+        var seenSystemWorlds = Set<String>()
         return fetchedWorlds.filter { world in
             guard world.isSystemProtected == true else { return true }
-            let key = world.title
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .precomposedStringWithCanonicalMapping
-            guard seenSystemTitles.insert(key).inserted else {
+            // 以前のシードはタイトルの大文字・空白・Unicode正規化だけが違う
+            // 複製を残すことがあった。標準ストーリーのタイトルは一意なので、
+            // 説明文が少し変わっていても同じタイトルを1件に畳む。
+            let key = normalizedSystemWorldKey(world)
+            guard seenSystemWorlds.insert(key).inserted else {
                 NSLog("[StoryLibraryVM] hiding duplicate system world title: %@ (%@)", world.title, world.id.uuidString)
                 return false
             }
             return true
         }
+    }
+
+    private func normalizedSystemWorldKey(_ world: StoryWorld) -> String {
+        func normalize(_ value: String) -> String {
+            value
+                .precomposedStringWithCanonicalMapping
+                .lowercased()
+                .filter { !$0.isWhitespace && !$0.isPunctuation && $0 != "\u{200B}" }
+        }
+        return normalize(world.title)
     }
 
     func delete(id: UUID) async {
@@ -137,12 +148,45 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !needle.isEmpty {
             result = result.filter { w in
-                w.title.lowercased().contains(needle)
-                    || w.shortDescription.lowercased().contains(needle)
-                    || w.tags.contains(where: { $0.lowercased().contains(needle) })
+                let displayed = w.localizedForCurrentLanguage
+                return displayed.title.lowercased().contains(needle)
+                    || displayed.shortDescription.lowercased().contains(needle)
+                    || displayed.tags.contains(where: { $0.lowercased().contains(needle) })
             }
         }
-        return result
+        let preference = KizunaUserProfileStore.shared.profile.storyPreference
+        return result.sorted {
+            let lhsScore = recommendationScore($0, for: preference)
+            let rhsScore = recommendationScore($1, for: preference)
+            if lhsScore != rhsScore { return lhsScore > rhsScore }
+            return $0.updatedAt > $1.updatedAt
+        }
+    }
+
+    private func recommendationScore(_ world: StoryWorld, for preference: KizunaStoryPreference) -> Int {
+        let searchableParts = [
+            world.title,
+            world.shortDescription,
+            world.worldSetting,
+            world.genre.rawValue,
+            world.genre.group.rawValue,
+            world.tags.joined(separator: " ")
+        ]
+        let searchable = searchableParts.joined(separator: " ").lowercased()
+        let keywords: [String]
+        switch preference {
+        case .everyday:
+            keywords = ["日常", "青春", "喫茶", "学校", "学園", "slice", "school", "daily"]
+        case .mystery:
+            keywords = ["謎", "ミステリー", "秘密", "探偵", "推理", "mystery", "detective", "secret"]
+        case .fantasy:
+            keywords = ["幻想", "魔法", "冒険", "異世界", "ファンタジー", "fantasy", "magic", "adventure"]
+        case .future:
+            keywords = ["未来", "宇宙", "AI", "ロボット", "SF", "sci", "space", "android"]
+        }
+        return keywords.reduce(into: 0) { score, keyword in
+            if searchable.contains(keyword.lowercased()) { score += 1 }
+        }
     }
 
     func coverCharacter(for world: StoryWorld) -> CharacterProfile? {
@@ -273,7 +317,9 @@ final class StoryWorldCreateViewModel: ObservableObject {
         saveError = nil
         defer { isGeneratingTemplate = false }
 
-        let systemPrompt = Self.storyTemplateSystemPrompt
+        let systemPrompt = Self.storyTemplateSystemPrompt + "\n\n" + (KizunaCopy.language == .english
+            ? "All human-readable string values in the JSON (title, descriptions, settings, scenes, character text, tags, and rules) must be written in English. Keep enum values exactly as specified."
+            : "JSON内のタイトル、説明、設定、シーン、キャラクター本文、タグ、ルールは日本語で書いてください。enum値はschemaの表記をそのまま使ってください。")
         let reply: String
         do {
             reply = try await StoryGemma31BAPIService.shared.generate(

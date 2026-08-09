@@ -41,6 +41,7 @@ public enum LiteRTLMError: Error, LocalizedError, Equatable {
     case failedToCreateSessionConfig
     case failedToCreateConversationConfig
     case failedToCreateConversation
+    case failedToTokenize
     case failedToSetLoraPath
     case failedToSetAudioLoraPath
     case failedToSetSupportedLoraRanks
@@ -62,6 +63,8 @@ public enum LiteRTLMError: Error, LocalizedError, Equatable {
         return "Failed to create conversation config."
       case .failedToCreateConversation:
         return "Failed to create conversation."
+      case .failedToTokenize:
+        return "Failed to tokenize text."
       case .failedToSetLoraPath:
         return "Failed to set LoRA path."
       case .failedToSetAudioLoraPath:

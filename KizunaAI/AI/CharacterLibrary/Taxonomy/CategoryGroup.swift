@@ -51,6 +51,30 @@ enum CategoryGroup: String, Codable, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .school: english = "School"
+        case .romance: english = "Romance"
+        case .dailyLife: english = "Daily life"
+        case .family: english = "Family"
+        case .work: english = "Work"
+        case .fantasy: english = "Fantasy"
+        case .sciFi: english = "Science fiction"
+        case .underworld: english = "Underworld"
+        case .mysteryHorror: english = "Mystery & horror"
+        case .adventureBattle: english = "Adventure & battle"
+        case .royalty: english = "Royalty"
+        case .entertainment: english = "Entertainment"
+        case .sports: english = "Sports"
+        case .animalMascot: english = "Animals & mascots"
+        case .comedy: english = "Comedy"
+        case .education: english = "Education"
+        case .freeform: english = "Freeform"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
+
     var iconName: String {
         switch self {
         case .school: return "graduationcap.fill"

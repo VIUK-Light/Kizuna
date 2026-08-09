@@ -119,7 +119,7 @@ struct CharacterDetailView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(character.displayName.isEmpty ? character.name : character.displayName)
                     .font(.system(size: 18, weight: .bold))
-                Text(character.category.displayName + " ・ " + character.relationshipGenre.displayName)
+                Text(character.category.localizedDisplayName + " ・ " + character.relationshipGenre.localizedDisplayName)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 if !character.shortDescription.isEmpty {
@@ -141,8 +141,8 @@ struct CharacterDetailView: View {
                     }
                 }
                 HStack(spacing: 8) {
-                    badge(character.safetyRating.displayName, icon: character.safetyRating.iconName, color: safetyTint(character.safetyRating))
-                    badge(character.visibility.displayName, icon: character.visibility.iconName, color: .gray)
+                    badge(character.safetyRating.localizedDisplayName, icon: character.safetyRating.iconName, color: safetyTint(character.safetyRating))
+                    badge(character.visibility.localizedDisplayName, icon: character.visibility.iconName, color: .gray)
                 }
                 if !character.scenario.isEmpty {
                     Text("シナリオ: " + character.scenario)

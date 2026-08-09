@@ -47,6 +47,20 @@ public actor Engine {
     return handle != nil
   }
 
+  /// Returns the number of tokens produced by the model's own tokenizer.
+  /// The app uses this before creating a conversation so a byte-count heuristic
+  /// cannot send a prompt that exceeds the compiled model's real input shape.
+  public func tokenCount(for text: String) throws -> Int {
+    guard let handle else {
+      throw LiteRTLMError.engine(.notInitialized)
+    }
+    guard let result = litert_lm_engine_tokenize(handle, text) else {
+      throw LiteRTLMError.engine(.failedToTokenize)
+    }
+    defer { litert_lm_tokenize_result_delete(result) }
+    return Int(litert_lm_tokenize_result_get_num_tokens(result))
+  }
+
   /// Initializes the native LiteRT-LM engine.
   ///
   /// **Note:** This operation can take a significant amount of time (e.g., 10 seconds) depending on
