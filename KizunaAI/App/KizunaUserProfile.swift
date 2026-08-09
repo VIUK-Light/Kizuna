@@ -103,7 +103,8 @@ struct KizunaUserProfile: Codable, Equatable {
     var displayName: String = ""
     var nickname: String = ""
     var about: String = ""
-    var avatarSymbol: String = "🙂"
+    // SF Symbol名を保存する。旧バージョンの絵文字値は KizunaAvatarView が後方互換で表示する。
+    var avatarSymbol: String = KizunaAvatarCatalog.defaultID
     var conversationPreference: KizunaConversationPreference = .balanced
     var storyPreference: KizunaStoryPreference = .everyday
 
@@ -124,7 +125,7 @@ struct KizunaUserProfile: Codable, Equatable {
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? ""
         nickname = try container.decodeIfPresent(String.self, forKey: .nickname) ?? ""
         about = try container.decodeIfPresent(String.self, forKey: .about) ?? ""
-        avatarSymbol = try container.decodeIfPresent(String.self, forKey: .avatarSymbol) ?? "🙂"
+        avatarSymbol = try container.decodeIfPresent(String.self, forKey: .avatarSymbol) ?? KizunaAvatarCatalog.defaultID
         conversationPreference = try container.decodeIfPresent(KizunaConversationPreference.self, forKey: .conversationPreference) ?? .balanced
         storyPreference = try container.decodeIfPresent(KizunaStoryPreference.self, forKey: .storyPreference) ?? .everyday
     }
@@ -139,6 +140,8 @@ struct KizunaUserProfile: Codable, Equatable {
     var hasUsefulContent: Bool {
         !visibleName.isEmpty
             || !about.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || (KizunaAvatarCatalog.option(for: avatarSymbol) != nil
+                && avatarSymbol != KizunaAvatarCatalog.defaultID)
             || conversationPreference != .balanced
             || storyPreference != .everyday
     }

@@ -30,7 +30,6 @@ struct KizunaUserProfileView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     profileHeader
                     nameCard
-                    conversationCard
                     storyCard
                     aboutCard
                     privacyCard
@@ -61,19 +60,7 @@ struct KizunaUserProfileView: View {
 
     private var profileHeader: some View {
         HStack(spacing: 14) {
-            Text(draft.avatarSymbol)
-                .font(.system(size: 40))
-                .frame(width: 72, height: 72)
-                .background(
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.accentColor.opacity(0.24), Color.purple.opacity(0.16)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                )
+            KizunaAvatarView(symbol: draft.avatarSymbol, size: 72)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(draft.visibleName.isEmpty
@@ -109,49 +96,10 @@ struct KizunaUserProfileView: View {
             )
             .textFieldStyle(.roundedBorder)
 
-            HStack(spacing: 8) {
-                ForEach(["🙂", "😊", "😌", "🌱", "⭐️", "🌙", "🎧", "🧭"], id: \.self) { symbol in
-                    Button {
-                        draft.avatarSymbol = symbol
-                    } label: {
-                        Text(symbol)
-                            .font(.title3)
-                            .frame(width: 34, height: 34)
-                            .background(
-                                Circle()
-                                    .fill(draft.avatarSymbol == symbol
-                                          ? Color.accentColor.opacity(0.18)
-                                          : Color.primary.opacity(0.05))
-                            )
-                            .overlay {
-                                Circle()
-                                    .stroke(
-                                        draft.avatarSymbol == symbol ? Color.accentColor : .clear,
-                                        lineWidth: 1.5
-                                    )
-                            }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    private var conversationCard: some View {
-        profileCard(
-            title: KizunaCopy.text(japanese: "会話のテンポ", english: "Conversation pace"),
-            subtitle: KizunaCopy.text(
-                japanese: "あとからいつでも変えられます。",
-                english: "You can change this anytime."
-            ),
-            icon: "bubble.left.and.bubble.right"
-        ) {
-            preferenceChoiceGrid(
-                choices: KizunaConversationPreference.allCases,
-                selection: $draft.conversationPreference
-            ) { preference in
-                (preference.displayName, preference.promptHint)
-            }
+            Text(KizunaCopy.text(japanese: "プロフィールアイコン", english: "Profile icon"))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            KizunaAvatarPicker(selection: $draft.avatarSymbol)
         }
     }
 
