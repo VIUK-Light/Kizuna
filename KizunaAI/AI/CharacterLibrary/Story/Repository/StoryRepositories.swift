@@ -114,24 +114,6 @@ protocol StorySceneRepository: AnyObject {
     func deleteAllScenes(storyWorldId: UUID) async throws
 }
 
-extension StorySceneRepository {
-    /// Source-compatible fallback for repositories backed by another store.
-    /// LocalJSONStorySceneRepository overrides this with an atomic mutation;
-    /// custom repositories can provide their own transactional implementation.
-    func repairMissingImageKey(storyWorldId: UUID, sceneId: UUID, imageKey: String) async throws -> Bool {
-        let trimmedKey = imageKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty,
-              let scene = try await fetchScenes(storyWorldId: storyWorldId).first(where: { $0.id == sceneId }),
-              scene.imageKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
-            return false
-        }
-        var repaired = scene
-        repaired.imageKey = trimmedKey
-        try await saveScene(repaired)
-        return true
-    }
-}
-
 protocol StorySessionRepository: AnyObject {
     func fetchSessions(storyWorldId: UUID) async throws -> [StorySession]
     func saveSession(_ session: StorySession) async throws

@@ -206,13 +206,20 @@ enum CharacterLibrarySeed {
                         // imageKey が空のまま残っていることがある。既存の
                         // 明示的なキーは保持し、未設定のシーンだけタイトルに
                         // 対応する背景を後付けする。
-                        for (index, existingScene) in existingScenes.enumerated()
-                            where existingScene.imageKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
-                            let seedScene = package.scenes.indices.contains(index)
-                                ? package.scenes[index]
-                                : package.scenes.first
+                        // Only repair the scenes that belong to the bundled
+                        // package. User-created scenes may also have no image
+                        // key and must never inherit the first seed's artwork.
+                        for seedScene in package.scenes {
+                            guard let existingScene = existingScenes.first(where: {
+                                titleKey($0.title) == titleKey(seedScene.title)
+                                    && $0.imageKey?
+                                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                                        .isEmpty != false
+                            }) else {
+                                continue
+                            }
                             let imageKey: String
-                            if let seedImageKey = seedScene?.imageKey?
+                            if let seedImageKey = seedScene.imageKey?
                                 .trimmingCharacters(in: .whitespacesAndNewlines),
                                !seedImageKey.isEmpty {
                                 imageKey = seedImageKey
