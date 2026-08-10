@@ -456,7 +456,10 @@ final class StoryWorldCreateViewModel: ObservableObject {
             // ここでは1件でも失敗したら下書きを変更せず、保存をロックして再試行を促す。
             let fetchedCharacters = try await characterRepo.fetchCharacters()
             let fetchedCast = try await castRepo.fetchCast(storyWorldId: draft.id)
-            let fetchedLorebook = try await lorebookRepo.fetchEntries(storyWorldId: draft.id)
+            // Keep disabled entries in the edit snapshot as well. `replaceEntries`
+            // is a full replacement, so loading only enabled rows would delete
+            // every disabled lorebook entry the next time the user saves.
+            let fetchedLorebook = try await lorebookRepo.fetchAllEntries(storyWorldId: draft.id)
             let fetchedScenes = try await sceneRepo.fetchScenes(storyWorldId: draft.id)
 
             var nextScene = sceneDraft
@@ -1885,8 +1888,30 @@ final class StorySessionViewModel: ObservableObject {
         restSuggestionSuppressedUntil = Date().addingTimeInterval(120 * 60)
         restSuggestionAttempted = true
 
-        guard let character = lastSpeakingCharacter() ?? activeCharacters.first,
-              let characterID = characterID(for: character) else { return }
+        // Prefer the identity captured when the suggestion was generated. A
+        // later refresh can change the last message, and resolving by display
+        // name alone is ambiguous. Fall back to the current last speaker only
+        // when the suggestion's UUID is no longer present in the index.
+        let resolvedCharacter: CharacterProfile? = {
+            if let suggestedID = suggestion.characterID,
+               let suggestedCharacter = characterIndex[suggestedID] {
+                return suggestedCharacter
+            }
+            return lastSpeakingCharacter() ?? activeCharacters.first
+        }()
+        guard let character = resolvedCharacter,
+              let characterID = characterID(for: character) else {
+            // Do not silently turn the tap into a no-op. Keep the card visible,
+            // clear the suppression window, and let the user retry after the
+            // cast/index has been reloaded.
+            restSuggestionSuppressedUntil = nil
+            restSuggestionAttempted = false
+            restAcknowledgementError = KizunaCopy.text(
+                japanese: "続行するキャラクターを特定できません。キャストを再読み込みしてからもう一度お試しください。",
+                english: "The character for this suggestion could not be resolved. Reload the cast and try again."
+            )
+            return
+        }
         let name = character.visibleName
         let acknowledgementID = UUID()
         restAcknowledgementID = acknowledgementID

@@ -828,13 +828,32 @@ struct StoryCharacterStatePatch: Codable, Equatable, Hashable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        characterId = try container.decodeIfPresent(UUID.self, forKey: .characterId)
-            ?? (try container.decodeIfPresent(UUID.self, forKey: .characterID))
+        // A malformed ID should not discard the rest of a progress update.
+        // Models sometimes emit a placeholder or a copied display name here;
+        // treat only that field as unavailable and keep the other state fields.
+        characterId = Self.decodeLenientUUID(container, forKey: .characterId)
+            ?? Self.decodeLenientUUID(container, forKey: .characterID)
         characterName = try container.decodeIfPresent(String.self, forKey: .characterName) ?? ""
         mood = try container.decodeIfPresent(String.self, forKey: .mood)
         goal = try container.decodeIfPresent(String.self, forKey: .goal)
         relationship = try container.decodeIfPresent(String.self, forKey: .relationship)
         innerThought = try container.decodeIfPresent(String.self, forKey: .innerThought)
+    }
+
+    private static func decodeLenientUUID(
+        _ container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> UUID? {
+        // Decode as a string first so UUID(uuidString:) can fail locally. The
+        // keyed container may still contain other valid fields in this patch.
+        let raw: String?
+        do {
+            raw = try container.decodeIfPresent(String.self, forKey: key)
+        } catch {
+            return nil
+        }
+        guard let raw else { return nil }
+        return UUID(uuidString: raw.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     func encode(to encoder: Encoder) throws {

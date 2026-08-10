@@ -263,6 +263,9 @@ final class StorySessionService: ObservableObject {
                 )
             )
             NSLog("[StorySession] rest acknowledgement save failed: %@", error.localizedDescription)
+            // Keep the throwing contract honest so the ViewModel can retain
+            // the suggestion card and expose a retryable error to the user.
+            throw error
         }
     }
 
@@ -1244,6 +1247,11 @@ final class StorySessionService: ObservableObject {
         // 追加のLLM呼び出しを待たせず、本文とシーンから確定できる状態を
         // 毎ターン保存する。これで旧データのnil StoryStateが次ターンへ
         // そのまま流れ、iori/NAGIで連続性が分岐する問題を防ぐ。
+        // If the model happened to return a structured progress object in the
+        // same response, reuse it here. This is intentionally opportunistic:
+        // ordinary dialogue does not decode and stays on the deterministic
+        // path, while structured state is applied without a second LLM call.
+        let structuredProgressUpdate = parseProgressUpdate(rawFinal)
         var deterministicState = session.storyState ?? StoryState()
         if !scene.location.isEmpty { deterministicState.location = scene.location }
         if !scene.timeOfDay.isEmpty { deterministicState.timeOfDay = scene.timeOfDay }
@@ -1258,14 +1266,23 @@ final class StorySessionService: ObservableObject {
         session.storyState = deterministicState
 
         let progressUpdate = StoryProgressUpdate(
-            progressLabel: session.progressLabel.nonEmpty ?? "第1章 きっかけ",
-            currentObjective: session.currentObjective.nonEmpty
+            progressLabel: structuredProgressUpdate?.progressLabel.nonEmpty
+                ?? session.progressLabel.nonEmpty
+                ?? "第1章 きっかけ",
+            currentObjective: structuredProgressUpdate?.currentObjective.nonEmpty
+                ?? session.currentObjective.nonEmpty
                 ?? scene.sceneGoal.nonEmpty
                 ?? world.storyGoal.nonEmpty,
-            lastTurnProgress: synthesizeTurnProgress(from: newMessages),
-            lastSceneSummary: newSummary.nonEmpty ?? session.lastSceneSummary.nonEmpty,
-            unresolvedHooks: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks),
-            storyState: nil
+            lastTurnProgress: structuredProgressUpdate?.lastTurnProgress.nonEmpty
+                ?? synthesizeTurnProgress(from: newMessages),
+            lastSceneSummary: structuredProgressUpdate?.lastSceneSummary.nonEmpty
+                ?? newSummary.nonEmpty
+                ?? session.lastSceneSummary.nonEmpty,
+            unresolvedHooks: normalizedHooks(
+                structuredProgressUpdate?.unresolvedHooks,
+                fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
+            ),
+            storyState: structuredProgressUpdate?.storyState
         )
         session.progressLabel = progressUpdate.progressLabel.nonEmpty
             ?? session.progressLabel.nonEmpty
