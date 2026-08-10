@@ -1737,12 +1737,25 @@ final class StorySessionViewModel: ObservableObject {
         case let .restAcknowledgement(characterID, characterName):
             Task { [weak self] in
                 guard let self else { return }
-                await self.service.addRestAcknowledgement(
-                    characterID: characterID,
-                    characterName: characterName,
-                    session: self.session
-                )
-                await self.refreshAfterTurn()
+                do {
+                    try await self.service.addRestAcknowledgement(
+                        characterID: characterID,
+                        characterName: characterName,
+                        session: self.session
+                    )
+                    await self.refreshAfterTurn()
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // The service publishes persistence failures itself, but
+                    // keep unexpected retry failures visible instead of
+                    // turning the retry tap into a silent no-op.
+                    self.restAcknowledgementError = KizunaCopy.text(
+                        japanese: "続行メッセージを保存できませんでした。もう一度お試しください。",
+                        english: "The continue message could not be saved. Try again."
+                    )
+                    NSLog("[StorySessionVM] runtime acknowledgement retry failed: %@", error.localizedDescription)
+                }
             }
             return true
         case .userTurn:
