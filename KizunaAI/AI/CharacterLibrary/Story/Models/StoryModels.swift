@@ -207,7 +207,17 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
 
     func localized(for language: KizunaLanguage) -> StoryWorld {
         guard language == .english else { return self }
-        guard let localization = localizations?[language.rawValue] ?? StoryEnglishCatalog.localization(for: self) else {
+        // ユーザー作成Storyは、標準Storyと同じタイトルでも英語カタログへ
+        // フォールバックしない。明示的に保存されたlocalizationだけを使い、
+        // 標準カタログはsystem-protectedデータに限定する。
+        let localization: StoryWorldLocalization?
+        if let stored = localizations?[language.rawValue] {
+            localization = stored
+        } else {
+            guard isSystemProtected == true else { return self }
+            localization = StoryEnglishCatalog.localization(for: self)
+        }
+        guard let localization else {
             return self
         }
 
@@ -219,12 +229,41 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
         if let value = localization.openingScene?.nonEmpty { copy.openingScene = value }
         if let value = localization.storyGoal?.nonEmpty { copy.storyGoal = value }
         if let value = localization.mood?.nonEmpty { copy.mood = value }
-        if let value = localization.tags, !value.isEmpty { copy.tags = value }
+        if let value = localization.tags, !value.isEmpty {
+            copy.tags = Self.normalizedUniqueValues(value)
+        }
         return copy
     }
 
     var localizedForCurrentLanguage: StoryWorld {
         localized(for: KizunaCopy.language)
+    }
+
+    /// Normalize user- and model-authored metadata at the persistence boundary.
+    ///
+    /// Tags and safety rules are rendered with their value as a SwiftUI key in
+    /// Story Detail.  Keeping a trimmed, non-empty, first-seen list here means
+    /// generated JSON, hand-edited drafts, and legacy files all follow the same
+    /// invariant before they reach the repository or a view.
+    var normalizedForPersistence: StoryWorld {
+        var copy = self
+        copy.tags = Self.normalizedUniqueValues(tags)
+        copy.safetyRules = Self.normalizedUniqueValues(safetyRules)
+        return copy
+    }
+
+    private static func normalizedUniqueValues(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.compactMap { rawValue in
+            let value = rawValue
+                .split(whereSeparator: { $0.isWhitespace })
+                .map(String.init)
+                .joined(separator: " ")
+            guard !value.isEmpty else { return nil }
+            let key = value.localizedLowercase
+            guard seen.insert(key).inserted else { return nil }
+            return value
+        }
     }
 }
 
@@ -814,12 +853,22 @@ struct StoryMessage: Codable, Identifiable, Equatable, Hashable {
     var author: StoryMessageAuthor
     var text: String
     var createdAt: Date
+    /// この発話を生成したターンのID。旧データではnilのまま読み込む。
+    /// 同一生成内の重複修復にだけ使い、別ターンの正当な反復は保持する。
+    var generationID: UUID?
 
-    init(id: UUID = UUID(), author: StoryMessageAuthor, text: String, createdAt: Date = Date()) {
+    init(
+        id: UUID = UUID(),
+        author: StoryMessageAuthor,
+        text: String,
+        createdAt: Date = Date(),
+        generationID: UUID? = nil
+    ) {
         self.id = id
         self.author = author
         self.text = text
         self.createdAt = createdAt
+        self.generationID = generationID
     }
 }
 

@@ -191,7 +191,10 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         if inSafety.action == .block {
             // ブロックされたらキャラから穏当な拒否メッセージを返して終了
-            let polite = inSafety.rewrittenText ?? "ごめん、その話題には乗れないな。別の話、しよ?"
+            let polite = inSafety.rewrittenText ?? KizunaCopy.text(
+                japanese: "ごめん、その話題には乗れないな。別の話、しよ?",
+                english: "I can't continue with that topic. Could we talk about something else?"
+            )
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: polite)
@@ -293,7 +296,10 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         switch outSafety.action {
         case .block:
-            finalText = outSafety.rewrittenText ?? "うまく言えないけど、それは話したくないな。別の話にしよう?"
+            finalText = outSafety.rewrittenText ?? KizunaCopy.text(
+                japanese: "うまく言えないけど、それは話したくないな。別の話にしよう?",
+                english: "I can't put that into words, and I'd rather not discuss it. Let's talk about something else."
+            )
         case .soften, .requireEdit:
             if let rewritten = outSafety.rewrittenText, !rewritten.isEmpty {
                 finalText = rewritten

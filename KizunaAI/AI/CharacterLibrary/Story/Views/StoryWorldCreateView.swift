@@ -300,10 +300,30 @@ struct StoryWorldCreateView: View {
     private var quickPromptChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                quickPromptButton(KizunaCopy.text(japanese: "BL 部活", english: "BL · Club")) { "BL。放課後の部活で、無口な先輩と少しずつ信頼を深める青春ストーリー" }
-                quickPromptButton(KizunaCopy.text(japanese: "GL 寮生活", english: "GL · Dorm")) { "GL。女子寮の夜、同室の先輩と秘密を共有して距離が近づく日常ストーリー" }
-                quickPromptButton(KizunaCopy.text(japanese: "幻想図書館", english: "Fantasy library")) { "夜だけ開く魔法図書館で、契約者と秘密の本を探すファンタジー" }
-                quickPromptButton(KizunaCopy.text(japanese: "夏祭り", english: "Summer festival")) { "BL。幼なじみと夏祭りで再会し、昔の約束を少しずつ思い出す話" }
+                quickPromptButton(KizunaCopy.text(japanese: "BL 部活", english: "BL · Club")) {
+                    KizunaCopy.text(
+                        japanese: "BL。放課後の部活で、無口な先輩と少しずつ信頼を深める青春ストーリー",
+                        english: "BL. A coming-of-age story where a quiet senior and the new club member slowly build trust after school."
+                    )
+                }
+                quickPromptButton(KizunaCopy.text(japanese: "GL 寮生活", english: "GL · Dorm")) {
+                    KizunaCopy.text(
+                        japanese: "GL。女子寮の夜、同室の先輩と秘密を共有して距離が近づく日常ストーリー",
+                        english: "GL. A slice-of-life story where roommates in a girls' dorm share a secret late at night and grow closer."
+                    )
+                }
+                quickPromptButton(KizunaCopy.text(japanese: "幻想図書館", english: "Fantasy library")) {
+                    KizunaCopy.text(
+                        japanese: "夜だけ開く魔法図書館で、契約者と秘密の本を探すファンタジー",
+                        english: "A fantasy story about searching for a secret book with a contractor in a magic library that opens only at night."
+                    )
+                }
+                quickPromptButton(KizunaCopy.text(japanese: "夏祭り", english: "Summer festival")) {
+                    KizunaCopy.text(
+                        japanese: "BL。幼なじみと夏祭りで再会し、昔の約束を少しずつ思い出す話",
+                        english: "BL. Childhood friends reunite at a summer festival and slowly remember the promise they made long ago."
+                    )
+                }
             }
         }
     }
@@ -429,7 +449,7 @@ struct StoryWorldCreateView: View {
                         "",
                         selection: Binding(
                             get: { vm.draft.resolvedCastMode },
-                            set: { vm.draft.castMode = $0 }
+                            set: { vm.setCastMode($0) }
                         )
                     ) {
                         ForEach(StoryCastMode.allCases) { mode in
@@ -864,8 +884,18 @@ struct StoryWorldCreateView: View {
     }
 
     private func addTag() {
-        let t = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, !vm.draft.tags.contains(t) else { return }
+        let t = newTag
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+            .joined(separator: " ")
+        let key = t.localizedLowercase
+        guard !t.isEmpty,
+              !vm.draft.tags.contains(where: {
+                  $0.split(whereSeparator: { $0.isWhitespace })
+                      .map(String.init)
+                      .joined(separator: " ")
+                      .localizedLowercase == key
+              }) else { return }
         vm.draft.tags.append(t)
         newTag = ""
     }

@@ -429,7 +429,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
             self.draft = existing
             self.sceneDraft = StoryScene(
                 storyWorldId: existing.id,
-                title: existing.title + " - 第 1 場面",
+                title: Self.defaultSceneTitle(for: existing.title),
                 mood: existing.mood,
                 sceneGoal: existing.storyGoal,
                 summary: existing.openingScene
@@ -456,10 +456,15 @@ final class StoryWorldCreateViewModel: ObservableObject {
             if let firstScene = scenes.first {
                 self.sceneDraft = firstScene
             } else if sceneDraft.title.isEmpty {
-                sceneDraft.title = draft.title.isEmpty ? "第 1 場面" : draft.title + " - 第 1 場面"
+                sceneDraft.title = Self.defaultSceneTitle(for: draft.title)
                 sceneDraft.mood = draft.mood
                 sceneDraft.sceneGoal = draft.storyGoal
                 sceneDraft.summary = draft.openingScene
+            }
+            if !castDrafts.isEmpty {
+                // 旧データを編集で開いた場合も、形式と初期シーン選択を
+                // 同じ正規化規則へ通し、画面と保存値のずれを残さない。
+                setCastMode(draft.resolvedCastMode)
             }
             isReadyToSave = true
         } catch {
@@ -488,6 +493,9 @@ final class StoryWorldCreateViewModel: ObservableObject {
         castDrafts.append(cast)
         if !draft.characterIds.contains(profile.id) { draft.characterIds.append(profile.id) }
         if draft.mainCharacterId == nil { draft.mainCharacterId = profile.id }
+        if sceneDraft.activeCharacterIds.isEmpty {
+            sceneDraft.activeCharacterIds = [profile.id]
+        }
     }
 
     // Lorebookカードを1件追加する。キーワードは空白・読点区切りで受け取る。
@@ -558,13 +566,20 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 maxOutputTokens: 8192
             )
         } catch {
-            saveError = error.localizedDescription
+            NSLog("[StoryWorldCreateVM] template generation failed: %@", error.localizedDescription)
+            saveError = KizunaCopy.text(
+                japanese: "雛形の生成に失敗しました。API設定と入力内容を確認して、もう一度試してください。",
+                english: "The template could not be generated. Check the API settings and your idea, then try again."
+            )
             generationStatus = nil
             return
         }
 
         guard let data = Self.extractJSONObjectData(from: reply) else {
-            saveError = "雛形の生成に失敗しました。JSONとして読める出力がありません。"
+            saveError = KizunaCopy.text(
+                japanese: "雛形の生成に失敗しました。JSONとして読める出力がありません。",
+                english: "The template could not be generated because the response did not contain readable JSON."
+            )
             generationStatus = nil
             return
         }
@@ -572,9 +587,16 @@ final class StoryWorldCreateViewModel: ObservableObject {
         do {
             let template = try JSONDecoder().decode(GeneratedStoryTemplate.self, from: data)
             try await applyGeneratedTemplate(template)
-            generationStatus = "雛形をフォームへ反映しました。"
+            generationStatus = KizunaCopy.text(
+                japanese: "雛形をフォームへ反映しました。",
+                english: "The template was applied to the form."
+            )
         } catch {
-            saveError = "雛形の読み込みに失敗しました: \(error.localizedDescription)"
+            NSLog("[StoryWorldCreateVM] template decode/apply failed: %@", error.localizedDescription)
+            saveError = KizunaCopy.text(
+                japanese: "雛形の読み込みに失敗しました。生成内容を確認して、もう一度試してください。",
+                english: "The template could not be loaded. Check the generated content and try again."
+            )
             generationStatus = nil
         }
     }
@@ -675,7 +697,32 @@ final class StoryWorldCreateViewModel: ObservableObject {
                   sceneDraft.activeCharacterIds.count < StoryConstants.maxActiveCharacters else { return }
             sceneDraft.activeCharacterIds.append(characterID)
         } else {
+            // 開始シーンには少なくとも1人を残す。最後のトグルを外したまま
+            // 保存時に先頭キャラへ黙って補完する挙動を防ぎ、画面状態と保存値を一致させる。
+            guard sceneDraft.activeCharacterIds.count > 1 else { return }
             sceneDraft.activeCharacterIds.removeAll { $0 == characterID }
+        }
+    }
+
+    /// Story形式の変更と初期シーンの参加者を同じ操作で正規化する。
+    /// 形式Pickerがdraft.castModeだけを書き換えると、ensembleで選んだ複数人が
+    /// soloへ切り替えた後も画面に残り、保存時のprefixで黙って失われていた。
+    func setCastMode(_ mode: StoryCastMode) {
+        draft.castMode = mode
+        let castIDs = castDrafts.map(\.characterId)
+        let validActiveIDs = sceneDraft.activeCharacterIds.filter { castIDs.contains($0) }
+
+        switch mode {
+        case .solo:
+            let preferredID = draft.mainCharacterId.flatMap { castIDs.contains($0) ? $0 : nil }
+                ?? validActiveIDs.first
+                ?? castIDs.first
+            sceneDraft.activeCharacterIds = preferredID.map { [$0] } ?? []
+        case .ensemble:
+            sceneDraft.activeCharacterIds = Array(validActiveIDs.prefix(StoryConstants.maxActiveCharacters))
+            if sceneDraft.activeCharacterIds.isEmpty, let firstID = castIDs.first {
+                sceneDraft.activeCharacterIds = [firstID]
+            }
         }
     }
 
@@ -722,7 +769,24 @@ final class StoryWorldCreateViewModel: ObservableObject {
             return nil
         }
         guard !draft.title.trimmingCharacters(in: .whitespaces).isEmpty else {
-            saveError = "タイトルを入力してください。"
+            saveError = KizunaCopy.text(
+                japanese: "タイトルを入力してください。",
+                english: "Enter a title before saving."
+            )
+            return nil
+        }
+        guard !castDrafts.isEmpty else {
+            saveError = KizunaCopy.text(
+                japanese: "少なくとも1人のキャラクターを追加してください。",
+                english: "Add at least one character before saving this story."
+            )
+            return nil
+        }
+        guard !sceneDraft.activeCharacterIds.isEmpty else {
+            saveError = KizunaCopy.text(
+                japanese: "初期シーンに出すキャラクターを1人以上選択してください。",
+                english: "Select at least one character for the opening scene."
+            )
             return nil
         }
         var didSaveWorld = false
@@ -733,7 +797,11 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 try await characterRepo.saveCharacter(profile)
             }
             // World 保存
-            var world = draft
+            var world = draft.normalizedForPersistence
+            // Keep the editor in sync with the persisted invariant so a
+            // duplicate does not reappear when the same draft is shown again.
+            draft.tags = world.tags
+            draft.safetyRules = world.safetyRules
             world.updatedAt = Date()
             try await worldRepo.saveWorld(world)
             didSaveWorld = true
@@ -761,7 +829,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
             var opening = sceneDraft
             opening.storyWorldId = world.id
             if opening.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                opening.title = world.title + " - 第 1 場面"
+                opening.title = Self.defaultSceneTitle(for: world.title)
             }
             if opening.mood.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 opening.mood = world.mood
@@ -789,14 +857,29 @@ final class StoryWorldCreateViewModel: ObservableObject {
             pendingGeneratedCharacters.removeAll()
             return world
         } catch {
+            NSLog("[StoryWorldCreateVM] save failed: %@", error.localizedDescription)
             // Worldを書けていない場合は、この画面だけが作ったキャラを戻す。
             // Worldまで確定済みなら、関連Castを保持したまま次回保存で再開できる。
+            // ここでpendingをdiscardすると、保存済みWorldのcharacterIdsだけが
+            // 残る参照切れになる。部分保存後は生成Profileを保全し、次回保存で
+            // Cast/Lorebook/Sceneを再試行できる状態にする。
             if !didSaveWorld {
                 await discardPendingGeneratedCharacters()
+            } else {
+                pendingGeneratedCharacters.removeAll()
             }
-            saveError = "保存に失敗しました: " + String(describing: error)
+            saveError = KizunaCopy.text(
+                japanese: "保存に失敗しました。入力内容と保存先を確認して、もう一度試してください。",
+                english: "The story could not be saved. Check the content and storage, then try again."
+            )
             return nil
         }
+    }
+
+    private static func defaultSceneTitle(for storyTitle: String) -> String {
+        let suffix = KizunaCopy.text(japanese: "第 1 場面", english: "Scene 1")
+        let trimmedTitle = storyTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedTitle.isEmpty ? suffix : "\(trimmedTitle) - \(suffix)"
     }
 
     private func applyGeneratedTemplate(_ template: GeneratedStoryTemplate) async throws {
@@ -813,6 +896,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         draft.storyGoal = story.storyGoal
         draft.mood = story.mood
         draft.safetyRules = template.generationRules
+        draft = draft.normalizedForPersistence
 
         let scene = template.initialScene
         sceneDraft.title = scene.title

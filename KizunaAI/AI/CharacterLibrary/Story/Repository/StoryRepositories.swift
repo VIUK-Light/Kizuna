@@ -138,10 +138,12 @@ protocol StoryMemoryRepository: AnyObject {
 final class LocalJSONStoryWorldRepository: StoryWorldRepository {
     private let store = LocalJSONStore<StoryWorld>(fileName: "story_worlds.json")
     func fetchWorlds() async throws -> [StoryWorld] {
-        try await store.loadRecoveringCorruptRecords().sorted { $0.updatedAt > $1.updatedAt }
+        try await store.loadRecoveringCorruptRecords()
+            .map(\.normalizedForPersistence)
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
     func saveWorld(_ world: StoryWorld) async throws {
-        var w = world
+        var w = world.normalizedForPersistence
         if let existing = (try? await store.loadRecoveringCorruptRecords().first(where: { $0.id == world.id })),
            existing.isSystemProtected == true {
             w.isSystemProtected = true
@@ -278,16 +280,15 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
     }
 }
 
-/// 旧バージョンで同じ生成結果が一つのセッションへ二重保存された場合の
-/// 永続データ修復。UI側で隠すのではなく、読み込み時に同一話者・同一本文の
-/// 重複レコードを一度だけ正規化して保存する。ユーザー発言とsystem通知は
-/// 同じ文面でも意味が異なるため対象外にする。
+/// 同じ生成結果が一つのセッションへ二重保存された場合の永続データ修復。
+/// UI側で隠すのではなく、読み込み時に同一話者・同一本文・同一生成IDの
+/// 隣接レコードだけを正規化する。旧データやユーザー発言/system通知には
+/// 生成IDがないため、意図的な反復を壊さず本文をそのまま保持する。
 private enum StorySessionMessageRepair {
     static func repaired(_ session: StorySession) -> StorySession {
         var repaired = session
-        // 重複は「同じ話者の同じ本文が隣接している」場合だけ修復する。
-        // セッション全体で一度しか許さないと、意図的な反復（同じ台詞を
-        // 時間を空けて言う演出や、同じナレーションの再提示）まで消える。
+        // 同一生成IDを持つ「同じ話者の同じ本文」が隣接している場合だけ修復する。
+        // 生成IDのない旧レコードは重複を推測せず、意図的な反復を保持する。
         var previousGeneratedKey: String?
         repaired.messages = session.messages.filter { message in
             let key: String
@@ -315,7 +316,11 @@ private enum StorySessionMessageRepair {
                 previousGeneratedKey = nil
                 return true
             }
-            let generatedKey = key + "|" + normalized
+            guard let generationID = message.generationID else {
+                previousGeneratedKey = nil
+                return true
+            }
+            let generatedKey = generationID.uuidString + "|" + key + "|" + normalized
             defer { previousGeneratedKey = generatedKey }
             return previousGeneratedKey != generatedKey
         }

@@ -246,24 +246,42 @@ final class StorySessionService: ObservableObject {
         scene: StoryScene,
         generationModel: StoryGenerationModel
     ) async -> String? {
-        let name = character?.visibleName ?? "相手"
-        let speakingStyle = character?.speakingStyle ?? "自然で落ち着いた口調"
-        let personality = character?.personality ?? "穏やか"
-        let systemPrompt = """
-        あなたはアプリが休憩提案を表示するときの、キャラクターらしい一文だけを作る補助役です。
-        この呼び出しはアプリ側が連続利用60分を検知した時だけ行われます。休憩を提案するかどうかを自分で判断してはいけません。
-        出力は短い日本語の1文だけ。罪悪感、依存、催促、強制、睡眠・終了の指示、「必ず戻ってきて」「待っている」などの表現は禁止です。
-        強制終了や利用制限を示さず、ユーザーが自由に選べる穏やかな提案にしてください。
-        """
-        let userPrompt = """
-        キャラクター名: \(name)
-        性格: \(personality)
-        口調: \(speakingStyle)
-        現在の物語: \(world.title)
-        シーンの空気: \(scene.mood)
+        let isEnglish = KizunaCopy.language == .english
+        let name = character?.visibleName ?? (isEnglish ? "the companion" : "相手")
+        let speakingStyle = character?.speakingStyle ?? (isEnglish ? "natural and calm" : "自然で落ち着いた口調")
+        let personality = character?.personality ?? (isEnglish ? "gentle" : "穏やか")
+        let systemPrompt = isEnglish
+            ? """
+            You create one brief, in-character sentence for the app's optional break suggestion.
+            The app has already decided to show this suggestion after continuous use; never decide whether the user should take a break.
+            Output one short English sentence only. Do not use guilt, dependency, pressure, coercion, sleep or termination commands, or phrases such as \"come back\" or \"I will wait\".
+            Do not imply forced shutdown or usage limits. Keep the suggestion gentle and leave the choice to the user.
+            """
+            : """
+            あなたはアプリが休憩提案を表示するときの、キャラクターらしい一文だけを作る補助役です。
+            この呼び出しはアプリ側が連続利用60分を検知した時だけ行われます。休憩を提案するかどうかを自分で判断してはいけません。
+            出力は短い日本語の1文だけ。罪悪感、依存、催促、強制、睡眠・終了の指示、「必ず戻ってきて」「待っている」などの表現は禁止です。
+            強制終了や利用制限を示さず、ユーザーが自由に選べる穏やかな提案にしてください。
+            """
+        let userPrompt = isEnglish
+            ? """
+            Character: \(name)
+            Personality: \(personality)
+            Speaking style: \(speakingStyle)
+            Current story: \(world.title)
+            Scene atmosphere: \(scene.mood)
 
-        上の設定に合わせて、目や体を少し休める提案を1文だけ書いてください。
-        """
+            Based on these details, write one short sentence suggesting that the user gently rest their eyes or body.
+            """
+            : """
+            キャラクター名: \(name)
+            性格: \(personality)
+            口調: \(speakingStyle)
+            現在の物語: \(world.title)
+            シーンの空気: \(scene.mood)
+
+            上の設定に合わせて、目や体を少し休める提案を1文だけ書いてください。
+            """
 
         let raw: String?
         switch generationModel {
@@ -329,6 +347,10 @@ final class StorySessionService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         var session = session
         var scene = scene
+        // Keep `world` raw for every repository write.  Prompt construction is
+        // the presentation/generation boundary, so it may use the translated
+        // copy without allowing that copy to leak into StorySession storage.
+        let promptWorld = world.localizedForCurrentLanguage
 
         // 初回ターンでも、現在シーンを構造化状態としてAIへ渡せるようにする。
         if session.storyState == nil {
@@ -440,6 +462,20 @@ final class StorySessionService: ObservableObject {
             cast = reconciledCast
         }
 
+        guard !cast.isEmpty else {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "登場キャラクターが設定されていないため、物語を開始できません。詳細画面からキャラクターを追加してください。",
+                    "The story cannot start because it has no cast. Add at least one character from the story details."
+                ),
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "empty cast"
+            )
+            return
+        }
+
         // 2) Mock 安全用に CharacterProfile を 1 つ採用 (main または最 importance)。
         //    SafetyPipeline は単一 character を要求するシグネチャなので、世界の代表者として渡す。
         streamingStatusText = statusText("入力を確認中", "Checking input")
@@ -473,8 +509,15 @@ final class StorySessionService: ObservableObject {
         let inSafety = await safetyPipeline.evaluateInput(userText, character: representativeCharacter)
         guard isGenerationActive(generationID) else { return }
         if inSafety.action == .block {
-            let polite = inSafety.rewrittenText ?? "(ナレーション) その話題はここではそっと脇に置いて、別の場面に進もう。"
-            let narration = StoryMessage(author: .narrator, text: polite)
+            let polite = inSafety.rewrittenText ?? localizedNotice(
+                "(ナレーション) その話題はここではそっと脇に置いて、別の場面に進もう。",
+                "(Narration) Let's set that topic aside for now and move to another scene."
+            )
+            let narration = StoryMessage(
+                author: .narrator,
+                text: polite,
+                generationID: generationID
+            )
             session.messages.append(narration)
             do {
                 try await sessionRepo.saveSession(session)
@@ -706,7 +749,7 @@ final class StorySessionService: ObservableObject {
         let prompt: String
         if generationModel == .b31 {
             prompt = promptBuilder.build(
-                world: world,
+                world: promptWorld,
                 scene: scene,
                 activeCast: aiCastForTurn,
                 inactiveCast: inactiveAICast,
@@ -724,7 +767,7 @@ final class StorySessionService: ObservableObject {
             )
         } else {
             prompt = promptBuilder.buildLocalRuntimePrompt(
-                world: world,
+                world: promptWorld,
                 scene: scene,
                 activeCast: aiCastForTurn,
                 characterIndex: charIndex,
@@ -875,7 +918,8 @@ final class StorySessionService: ObservableObject {
                 cast: aiCastForTurn,
                 characterIndex: charIndex,
                 forbiddenCharacterID: userCharacterID,
-                forbiddenCharacterName: userCharacterName
+                forbiddenCharacterName: userCharacterName,
+                generationID: generationID
             )
             if isDuplicateStoryOutput(firstMessages, in: session) {
                 NSLog(
@@ -906,7 +950,8 @@ final class StorySessionService: ObservableObject {
                         cast: aiCastForTurn,
                         characterIndex: charIndex,
                         forbiddenCharacterID: userCharacterID,
-                        forbiddenCharacterName: userCharacterName
+                        forbiddenCharacterName: userCharacterName,
+                        generationID: generationID
                     )
                     if isDuplicateStoryOutput(retriedMessages, in: session) {
                         NSLog(
@@ -929,7 +974,10 @@ final class StorySessionService: ObservableObject {
             isRuntimeNotice = true
             usedBackendName += "・無効出力"
             rawFinal = generationModel == .b31
-                ? "Gemma4 31B API が有効な本文を返しませんでした。もう一度試してください。"
+                ? localizedNotice(
+                    "Gemma4 31B API が有効な本文を返しませんでした。もう一度試してください。",
+                    "Gemma4 31B API returned no usable story text. Try again."
+                )
                 : localStoryGenerationFailureMessage(runtimeError: "記号だけの本文")
         }
         if isRuntimeNotice {
@@ -1019,8 +1067,26 @@ final class StorySessionService: ObservableObject {
             cast: aiCastForTurn,
             characterIndex: charIndex,
             forbiddenCharacterID: userCharacterID,
-            forbiddenCharacterName: userCharacterName
+            forbiddenCharacterName: userCharacterName,
+            generationID: generationID
         )
+        guard !newMessages.isEmpty else {
+            // ユーザー操作キャラの代弁やプレースホルダーだけを含む出力は、
+            // parseSpeakerLinesが意図的に破棄する。元のrawFinalをナレーションへ
+            // 戻すと、破棄した本文が会話へ復活してしまうため成功保存しない。
+            let notice = localizedNotice(
+                "応答から保存できる発話を解釈できませんでした。もう一度試してください。",
+                "The response did not contain a message that could be saved. Try again."
+            )
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: notice,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: usedBackendName + "・no parsed messages"
+            )
+            return
+        }
         for m in newMessages {
             session.messages.append(m)
         }
@@ -1346,7 +1412,10 @@ final class StorySessionService: ObservableObject {
             }
             return message
         } catch {
-            let message = "Gemma4 31B API の応答に失敗しました。もう一度試してください。"
+            let message = localizedNotice(
+                "Gemma4 31B API の応答に失敗しました。もう一度試してください。",
+                "Gemma4 31B API failed to respond. Try again."
+            )
             NSLog("[StoryGemma31B] generation failed: %@", error.localizedDescription)
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
@@ -1460,12 +1529,13 @@ final class StorySessionService: ObservableObject {
         cast: [CastMember],
         characterIndex: [UUID: CharacterProfile],
         forbiddenCharacterID: UUID? = nil,
-        forbiddenCharacterName: String? = nil
+        forbiddenCharacterName: String? = nil,
+        generationID: UUID? = nil
     ) -> [StoryMessage] {
-        let castNames: [(UUID, String)] = cast.compactMap { member in
+        let castNames: [(id: UUID, name: String, normalizedName: String)] = cast.compactMap { member in
             guard member.characterId != forbiddenCharacterID else { return nil }
             if let p = characterIndex[member.characterId] {
-                return (member.characterId, p.visibleName)
+                return (member.characterId, p.visibleName, normalizedSpeakerName(p.visibleName))
             }
             return nil
         }
@@ -1473,10 +1543,14 @@ final class StorySessionService: ObservableObject {
             [forbiddenCharacterName]
                 .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
+                .map(normalizedSpeakerName)
         )
         let lines = text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
         var out: [StoryMessage] = []
         var emittedCastLines = Set<String>()
+        func makeMessage(author: StoryMessageAuthor, text: String) -> StoryMessage {
+            StoryMessage(author: author, text: text, generationID: generationID)
+        }
         for line in lines where !line.isEmpty {
             // 生成中のプレースホルダーを物語本文へ昇格させない。
             // これを通さないと「・・・」だけのキャラ発話が保存され、
@@ -1493,7 +1567,7 @@ final class StorySessionService: ObservableObject {
             if narrationPrefixes.contains(where: { lowercasedLine.hasPrefix($0.localizedLowercase) }) {
                 let body = textAfterSpeakerDelimiter(line)
                 if isMeaningfulStoryText(body) {
-                    out.append(StoryMessage(author: .narrator, text: body))
+                    out.append(makeMessage(author: .narrator, text: body))
                 }
                 continue
             }
@@ -1501,39 +1575,53 @@ final class StorySessionService: ObservableObject {
             // そのままナレーションへ落とすとユーザーの台詞として見えてしまうため破棄する。
             if let delimiter = line.firstIndex(where: { $0 == ":" || $0 == "：" }) {
                 let possibleSpeaker = String(line[..<delimiter]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if forbiddenNames.contains(possibleSpeaker) {
+                if forbiddenNames.contains(normalizedSpeakerName(possibleSpeaker)) {
                     continue
                 }
             }
             // 「名前: 本文」 — 同名キャラがいる場合は辞書の先頭を選ばない。
             // 名前だけではUUIDを一意に決められないため、その行はナレーションへ
             // 落として誤ったキャラの吹き出し・状態更新を防ぐ。
-            let matchedCandidates = castNames.filter { _, name in
-                line.hasPrefix(name + ":") || line.hasPrefix(name + "：")
+            let speakerLabel: String? = line.firstIndex(where: { $0 == ":" || $0 == "：" }).map {
+                String(line[..<$0]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let normalizedSpeaker = speakerLabel.map(normalizedSpeakerName)
+            let matchedCandidates = castNames.filter { _, _, normalizedName in
+                guard let normalizedSpeaker, !normalizedSpeaker.isEmpty else { return false }
+                return normalizedName == normalizedSpeaker
             }
             if matchedCandidates.count > 1 {
                 let body = textAfterSpeakerDelimiter(line)
                 if isMeaningfulStoryText(body) {
-                    out.append(StoryMessage(author: .narrator, text: body))
+                    out.append(makeMessage(author: .narrator, text: body))
                 }
                 continue
             }
-            if let (id, name) = matchedCandidates.first {
+            if let (id, name, _) = matchedCandidates.first {
                 let body = textAfterSpeakerDelimiter(line)
                 guard isMeaningfulStoryText(body) else { continue }
                 guard emittedCastLines.insert(id.uuidString + "|" + normalizedDuplicateText(body)).inserted else {
                     continue
                 }
-                out.append(StoryMessage(author: .cast(characterId: id, displayName: name), text: body))
+                out.append(makeMessage(author: .cast(characterId: id, displayName: name), text: body))
                 continue
             }
             // フォールバック: 名前と紐付かない行はナレーション扱い
-            out.append(StoryMessage(author: .narrator, text: line))
-        }
-        if out.isEmpty, !text.isEmpty {
-            out.append(StoryMessage(author: .narrator, text: text))
+            out.append(makeMessage(author: .narrator, text: line))
         }
         return out
+    }
+
+    /// 話者ラベルの比較をUnicode正規化＋case-insensitiveへ統一する。
+    /// 生成モデルがKai/KAI/kaiのように表記を揺らしても同じキャストへ解決し、
+    /// ユーザー操作キャラの代弁禁止判定も同じ規則で適用する。
+    private func normalizedSpeakerName(_ value: String) -> String {
+        value
+            .precomposedStringWithCanonicalMapping
+            .folding(options: [.caseInsensitive], locale: .current)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func normalizedDuplicateText(_ text: String) -> String {
@@ -1590,10 +1678,15 @@ final class StorySessionService: ObservableObject {
         guard let reply else { return true }
         let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.contains("Gemma4 31B API の応答に失敗しました")
+            || text.contains("Gemma4 31B API failed to respond")
             || text.contains("Gemma4 APIキーが未設定")
+            || text.contains("The Gemma4 API key is not set")
             || text.contains("Gemma4 31B API に失敗しました")
             || text.contains("Gemma4 31B API が空レスポンス")
+            || text.contains("Gemma4 31B API returned an empty response")
             || text.contains("Gemma4 31B API の出力本文が空")
+            || text.contains("Gemma4 31B API returned no response text")
+            || text.contains("Gemma4 31B API returned no usable story text")
     }
 
     private func gemmaRuntimeNotice(for error: StoryGemma31BAPIError) -> String {
@@ -1798,9 +1891,12 @@ final class StorySessionService: ObservableObject {
         value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"『』「」*"))
         let forbiddenPhrases = [
             "必ず戻って", "戻ってきて", "待ってる", "待っています", "寂しい",
-            "終わらせ", "終了して", "やめてはいけない", "離れないで"
+            "終わらせ", "終了して", "やめてはいけない", "離れないで",
+            "come back", "i will wait", "I'll wait", "don't leave",
+            "do not leave", "you must return", "don't stop", "do not stop"
         ]
-        guard !forbiddenPhrases.contains(where: { value.contains($0) }) else { return nil }
+        let comparisonValue = value.localizedLowercase
+        guard !forbiddenPhrases.contains(where: { comparisonValue.contains($0.localizedLowercase) }) else { return nil }
         guard !value.isEmpty else { return nil }
         return String(value.prefix(120))
     }

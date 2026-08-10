@@ -52,12 +52,16 @@ struct StorySessionChatView: View {
     @State private var isShowingRestHelp = false
 
     init(world: StoryWorld, initialSessionID: UUID? = nil) {
-        // 一覧・詳細以外の入口から直接開かれても、現在の表示言語を
-        // セッション生成へ引き継ぐ。保存データ自体は日本語のまま保持する。
-        let localizedWorld = world.localizedForCurrentLanguage
-        self.world = localizedWorld
+        // Keep the raw persisted world at the session boundary.  Localized
+        // copies are presentation-only and must never seed StorySession's
+        // durable goal, summary, or first narration.
+        self.world = world
         self.initialSessionID = initialSessionID
-        _detailVM = StateObject(wrappedValue: StoryWorldDetailViewModel(world: localizedWorld))
+        _detailVM = StateObject(wrappedValue: StoryWorldDetailViewModel(world: world))
+    }
+
+    private var displayedWorld: StoryWorld {
+        world.localizedForCurrentLanguage
     }
 
     var body: some View {
@@ -91,6 +95,13 @@ struct StorySessionChatView: View {
                 loadError = storyCopy(
                     "ストーリーの保存データを読み込めませんでした。データを空として扱わず、再試行してください。",
                     "The story data could not be loaded. It was not treated as empty; try again."
+                )
+                return
+            }
+            guard !detailVM.cast.isEmpty else {
+                loadError = storyCopy(
+                    "このストーリーにはキャストが設定されていません。詳細画面からキャラクターを追加してください。",
+                    "This story has no cast. Add at least one character from the story details before starting it."
                 )
                 return
             }
@@ -129,13 +140,13 @@ struct StorySessionChatView: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(world.title)
+                Text(displayedWorld.title)
                     .font(.system(size: horizontalSizeClass == .compact ? 17 : 20, weight: .heavy))
                     .foregroundStyle(storyText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
-                if !world.shortDescription.isEmpty && horizontalSizeClass != .compact {
-                    Text(world.shortDescription)
+                if !displayedWorld.shortDescription.isEmpty && horizontalSizeClass != .compact {
+                    Text(displayedWorld.shortDescription)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(storyMuted)
                         .lineLimit(1)
@@ -851,7 +862,7 @@ private struct StorySessionChatBody: View {
     }
 
     private var sceneVisual: some View {
-        StorySceneImageView(scene: vm.scene, world: vm.world)
+        StorySceneImageView(scene: vm.scene, world: vm.world.localizedForCurrentLanguage)
             .frame(maxWidth: .infinity)
             .frame(height: horizontalSizeClass == .compact ? 78 : 104)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

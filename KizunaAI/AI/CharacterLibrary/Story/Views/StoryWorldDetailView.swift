@@ -149,6 +149,43 @@ struct StoryWorldDetailView: View {
         return copy
     }
 
+    /// Progress fields are durable session data and must not be rewritten when
+    /// the display language changes.  For bundled stories, however, a session
+    /// may still contain the original Japanese opening/goal from before the
+    /// presentation catalog was added.  Translate only exact canonical values
+    /// at the view boundary; leave user-authored progress text untouched.
+    private func displayedSessionText(_ value: String?, scene: StoryScene?) -> String? {
+        guard let value else { return nil }
+        guard KizunaCopy.language == .english,
+              world.isSystemProtected == true,
+              StoryEnglishCatalog.localization(for: world) != nil else {
+            return value
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == world.storyGoal.trimmingCharacters(in: .whitespacesAndNewlines),
+           !displayedWorld.storyGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return displayedWorld.storyGoal
+        }
+        if trimmed == world.openingScene.trimmingCharacters(in: .whitespacesAndNewlines),
+           !displayedWorld.openingScene.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return displayedWorld.openingScene
+        }
+        if let scene {
+            let presentation = displayedScene(scene)
+            if trimmed == scene.sceneGoal.trimmingCharacters(in: .whitespacesAndNewlines),
+               presentation.sceneGoal != scene.sceneGoal,
+               !presentation.sceneGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return presentation.sceneGoal
+            }
+            if trimmed == scene.summary.trimmingCharacters(in: .whitespacesAndNewlines),
+               presentation.summary != scene.summary,
+               !presentation.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return presentation.summary
+            }
+        }
+        return value
+    }
+
     private var header: some View {
         HStack(spacing: 12) {
             ZStack {
@@ -183,7 +220,7 @@ struct StoryWorldDetailView: View {
             if horizontalSizeClass == .compact {
                 Menu {
                     Button {
-                        onStartSession?(displayedWorld)
+                        onStartSession?(world)
                     } label: {
                         Label(KizunaCopy.text(japanese: "チャットを開始", english: "Start chat"), systemImage: "play.fill")
                     }
@@ -236,7 +273,7 @@ struct StoryWorldDetailView: View {
                 }
 
                 Button {
-                    onStartSession?(displayedWorld)
+                    onStartSession?(world)
                 } label: {
                     Label(KizunaCopy.text(japanese: "チャットを開始", english: "Start chat"), systemImage: "play.fill")
                 }
@@ -309,7 +346,7 @@ struct StoryWorldDetailView: View {
                         .background(Capsule().fill(Color.primary.opacity(0.08)))
                     Spacer()
                     Button {
-                        onStartSession?(displayedWorld)
+                        onStartSession?(world)
                     } label: {
                         Label(KizunaCopy.text(japanese: "続きから", english: "Continue"), systemImage: "play.fill")
                             .font(.system(size: 15, weight: .bold))
@@ -346,7 +383,9 @@ struct StoryWorldDetailView: View {
         let presentationScene = currentScene.map { displayedScene($0) }
         let sceneTitle = presentationScene?.title
             ?? KizunaCopy.text(japanese: "第1場面", english: "Scene 1")
-        let objective = session?.currentObjective ?? presentationScene?.sceneGoal ?? displayedWorld.storyGoal
+        let objective = displayedSessionText(session?.currentObjective, scene: currentScene)
+            ?? presentationScene?.sceneGoal
+            ?? displayedWorld.storyGoal
         let stage = session?.relationshipStage ?? (session == nil
             ? KizunaCopy.text(japanese: "未開始", english: "Not started")
             : KizunaCopy.text(japanese: "進行中", english: "In progress"))
@@ -393,7 +432,7 @@ struct StoryWorldDetailView: View {
                 }
                 Spacer()
                 Button {
-                    onStartSession?(displayedWorld)
+                    onStartSession?(world)
                 } label: {
                     Label(session == nil
                           ? KizunaCopy.text(japanese: "開始", english: "Start")
@@ -403,7 +442,7 @@ struct StoryWorldDetailView: View {
                 .buttonStyle(.borderedProminent)
             }
 
-            if let summary = session?.lastSceneSummary, !summary.isEmpty {
+            if let summary = displayedSessionText(session?.lastSceneSummary, scene: currentScene), !summary.isEmpty {
                 Text(summary)
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -666,7 +705,7 @@ struct StoryWorldDetailView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(vm.sessions.prefix(5)) { session in
                         Button {
-                            onResumeSession?(displayedWorld, session.id)
+                            onResumeSession?(world, session.id)
                         } label: {
                             HStack {
                                 Image(systemName: "play.circle.fill")
