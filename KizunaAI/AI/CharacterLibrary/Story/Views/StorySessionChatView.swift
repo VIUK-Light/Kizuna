@@ -71,7 +71,19 @@ struct StorySessionChatView: View {
             if let sessionVM {
                 StorySessionChatBody(vm: sessionVM, isShowingRestHelp: $isShowingRestHelp)
             } else if let loadError {
-                ContentUnavailableView(storyCopy("ストーリーを開始できません", "Unable to start the story"), systemImage: "exclamationmark.triangle", description: Text(loadError))
+                VStack(spacing: 12) {
+                    ContentUnavailableView(
+                        storyCopy("ストーリーを開始できません", "Unable to start the story"),
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(loadError)
+                    )
+                    Button {
+                        Task { @MainActor in await startSession() }
+                    } label: {
+                        Label(storyCopy("もう一度読み込む", "Load again"), systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ProgressView(storyCopy("世界を読み込んでいます…", "Loading the story…"))
@@ -88,42 +100,46 @@ struct StorySessionChatView: View {
             // UIフレーム: 詳細な説明・設定画面はここを差し替えて実装する。
             RestBreakHelpSheetFrame()
         }
-        .task(id: world.id) {
-            guard sessionVM == nil else { return }
-            await detailVM.reload()
-            if detailVM.sessionLoadFailed || detailVM.sceneLoadFailed || detailVM.characterLoadFailed {
-                loadError = storyCopy(
-                    "ストーリーの保存データを読み込めませんでした。データを空として扱わず、再試行してください。",
-                    "The story data could not be loaded. It was not treated as empty; try again."
-                )
-                return
-            }
-            guard !detailVM.cast.isEmpty else {
-                loadError = storyCopy(
-                    "このストーリーにはキャストが設定されていません。詳細画面からキャラクターを追加してください。",
-                    "This story has no cast. Add at least one character from the story details before starting it."
-                )
-                return
-            }
-            guard let (session, scene) = await detailVM.createOrResumeSession(preferredSessionID: initialSessionID) else {
-                loadError = storyCopy(
-                    detailVM.sessionSaveFailed
-                        ? "セッションを保存できませんでした。保存先を確認してから再試行してください。"
-                        : "開始シーンがありません。世界観の詳細からシーンを確認してください。",
-                    detailVM.sessionSaveFailed
-                        ? "The story session could not be saved. Check storage and try again."
-                        : "This story has no opening scene. Add one from the story details."
-                )
-                return
-            }
-            let vm = StorySessionViewModel(world: world, session: session, scene: scene)
-            await vm.bootstrap()
-            if let bootstrapError = vm.bootstrapError {
-                loadError = bootstrapError
-                return
-            }
-            sessionVM = vm
+        .task(id: world.id) { await startSession() }
+    }
+
+    @MainActor
+    private func startSession() async {
+        guard sessionVM == nil else { return }
+        loadError = nil
+        await detailVM.reload()
+        if detailVM.castLoadFailed || detailVM.sessionLoadFailed || detailVM.sceneLoadFailed || detailVM.characterLoadFailed {
+            loadError = storyCopy(
+                "ストーリーの保存データを読み込めませんでした。データを空として扱わず、再試行してください。",
+                "The story data could not be loaded. It was not treated as empty; try again."
+            )
+            return
         }
+        guard !detailVM.cast.isEmpty else {
+            loadError = storyCopy(
+                "このストーリーにはキャストが設定されていません。詳細画面からキャラクターを追加してください。",
+                "This story has no cast. Add at least one character from the story details before starting it."
+            )
+            return
+        }
+        guard let (session, scene) = await detailVM.createOrResumeSession(preferredSessionID: initialSessionID) else {
+            loadError = storyCopy(
+                detailVM.sessionSaveFailed
+                    ? "セッションを保存できませんでした。保存先を確認してから再試行してください。"
+                    : "開始シーンがありません。世界観の詳細からシーンを確認してください。",
+                detailVM.sessionSaveFailed
+                    ? "The story session could not be saved. Check storage and try again."
+                    : "This story has no opening scene. Add one from the story details."
+            )
+            return
+        }
+        let vm = StorySessionViewModel(world: world, session: session, scene: scene)
+        await vm.bootstrap()
+        if let bootstrapError = vm.bootstrapError {
+            loadError = bootstrapError
+            return
+        }
+        sessionVM = vm
     }
 
     private var header: some View {

@@ -42,6 +42,7 @@ struct CharacterDetailView: View {
     @State private var showReport = false
     @State private var showDeleteConfirm = false
     @State private var deleteError: String?
+    @State private var isDeleting = false
 
     init(
         character: CharacterProfile,
@@ -68,6 +69,14 @@ struct CharacterDetailView: View {
                     if !character.rules.isEmpty || !character.resolvedSafetyRules.isEmpty {
                         rulesSection
                     }
+                    if let deletionStatus = deletionStatus {
+                        HStack(spacing: 8) {
+                            if isDeleting { ProgressView().controlSize(.small) }
+                            Text(deletionStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
@@ -84,18 +93,7 @@ struct CharacterDetailView: View {
         .alert(KizunaCopy.text(japanese: "このキャラを削除しますか?", english: "Delete this character?"), isPresented: $showDeleteConfirm) {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
             Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
-                Task {
-                    do {
-                        try await vm.delete()
-                        onDelete?()
-                        dismiss()
-                    } catch {
-                        deleteError = KizunaCopy.text(
-                            japanese: "キャラを削除できませんでした。関連データは変更していません。\n\(error.localizedDescription)",
-                            english: "The character could not be deleted. Related data was not changed.\n\(error.localizedDescription)"
-                        )
-                    }
-                }
+                performDelete()
             }
         } message: {
             Text(KizunaCopy.text(
@@ -107,9 +105,49 @@ struct CharacterDetailView: View {
             get: { deleteError != nil },
             set: { if !$0 { deleteError = nil } }
         )) {
+            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+                deleteError = nil
+                performDelete()
+            }
             Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) { deleteError = nil }
         } message: {
             Text(deleteError ?? "")
+        }
+    }
+
+    private var deletionStatus: String? {
+        switch vm.deletionPhase {
+        case .idle, .completed:
+            return nil
+        case .removingReferences:
+            return KizunaCopy.text(japanese: "関連する物語データを整理しています…", english: "Removing story references…")
+        case .deletingMemories:
+            return KizunaCopy.text(japanese: "キャラのメモリーを削除しています…", english: "Deleting character memories…")
+        case .deletingProfile:
+            return KizunaCopy.text(japanese: "キャラ本体を削除しています…", english: "Deleting the character profile…")
+        case .partiallyCompleted:
+            return KizunaCopy.text(
+                japanese: "削除処理が途中で止まりました。関連データが一部変更されている可能性があります。再試行してください。",
+                english: "Deletion stopped partway through. Some related data may have changed. Retry to finish."
+            )
+        }
+    }
+
+    private func performDelete() {
+        guard !isDeleting else { return }
+        isDeleting = true
+        Task { @MainActor in
+            defer { isDeleting = false }
+            do {
+                try await vm.delete()
+                onDelete?()
+                dismiss()
+            } catch {
+                deleteError = KizunaCopy.text(
+                    japanese: "キャラの削除が途中で失敗しました。関連データが一部変更されている可能性があります。再試行してください。\n\(error.localizedDescription)",
+                    english: "Character deletion stopped partway through. Some related data may have changed. Retry to finish.\n\(error.localizedDescription)"
+                )
+            }
         }
     }
 
@@ -316,6 +354,7 @@ struct CharacterDetailView: View {
                     showDeleteConfirm = true
                 } label: { Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash") }
                     .buttonStyle(.bordered)
+                    .disabled(isDeleting)
             } else {
                 Label(KizunaCopy.text(japanese: "標準", english: "Built-in"), systemImage: "lock.fill")
                     .font(.system(size: 12, weight: .semibold))
@@ -353,6 +392,7 @@ struct CharacterDetailView: View {
                     } label: {
                         Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
                     }
+                    .disabled(isDeleting)
                 }
                 Button {
                     showReport = true

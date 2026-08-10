@@ -529,19 +529,25 @@ struct PersonaChatView: View {
         do {
             let worlds = try await storyWorldRepo.fetchWorlds()
             var items: [StoryHistoryItem] = []
-            var failedWorlds = 0
+            var failedWorldIDs = Set<UUID>()
             for world in worlds {
                 do {
                     let sessions = try await storySessionRepo.fetchSessions(storyWorldId: world.id)
                     items.append(contentsOf: sessions.map { StoryHistoryItem(world: world, session: $0) })
                 } catch {
                     // 1つの壊れたWorldで、正常に読めた他Worldの履歴まで消さない。
-                    failedWorlds += 1
+                    failedWorldIDs.insert(world.id)
                     NSLog("[PersonaChatView] story history session load failed for %@: %@", world.id.uuidString, error.localizedDescription)
                 }
             }
+            let loadedSessionIDs = Set(items.map(\.session.id))
+            // 失敗したWorldについては、画面に表示済みだった履歴を残す。
+            // 同じセッションを重複表示しないようIDで抑止する。
+            items.append(contentsOf: storyHistoryItems.filter {
+                failedWorldIDs.contains($0.world.id) && !loadedSessionIDs.contains($0.session.id)
+            })
             storyHistoryItems = items.sorted { $0.session.updatedAt > $1.session.updatedAt }
-            storyHistoryLoadError = failedWorlds == 0
+            storyHistoryLoadError = failedWorldIDs.isEmpty
                 ? nil
                 : KizunaCopy.text(
                     japanese: "一部のストーリー履歴を読み込めませんでした。表示中の履歴は削除されていません。",

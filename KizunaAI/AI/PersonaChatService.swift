@@ -179,6 +179,13 @@ final class PersonaChatService: ObservableObject {
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
+                // updateLastAssistantMessageは末尾のassistant枠を更新する。
+                // 先ほどの削除後に空枠を再追加して、旧応答を上書きせず
+                // フォールバック本文をこのターンへ保存できるようにする。
+                PersonaChatStore.shared.appendMessage(
+                    PersonaMessage(role: .assistant, text: ""),
+                    toThread: threadID
+                )
             }
             await runLegacyPersonaGeneration(threadID: threadID, userText: userText, generationID: generationID)
             return

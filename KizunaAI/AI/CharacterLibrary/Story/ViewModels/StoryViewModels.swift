@@ -467,6 +467,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 // 同じ正規化規則へ通し、画面と保存値のずれを残さない。
                 setCastMode(draft.resolvedCastMode)
             }
+            saveError = nil
             isReadyToSave = true
         } catch {
             loadError = String(describing: error)
@@ -979,15 +980,10 @@ final class StoryWorldCreateViewModel: ObservableObject {
             setActiveInOpeningScene(generated.activeInInitialScene, for: profile.id)
         }
 
-        var charactersByName: [String: [UUID]] = [:]
+        var charactersByName: [String: Set<UUID>] = [:]
         for character in availableCharacters {
-            // visibleName と name が同じ場合でも同じIDを二重登録しない。
-            // 重複したままだと、単一キャラの関係まで「曖昧」と判定される。
-            for key in Set([character.visibleName, character.name]) where !key.isEmpty {
-                if charactersByName[key, default: []].contains(character.id) == false {
-                    charactersByName[key, default: []].append(character.id)
-                }
-            }
+            charactersByName[character.visibleName, default: []].insert(character.id)
+            charactersByName[character.name, default: []].insert(character.id)
         }
         for relationship in template.relationships {
             guard let fromIDs = charactersByName[relationship.from], fromIDs.count == 1,
@@ -996,8 +992,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 // displayNameを一意にするか、作成後にユーザーが関係を設定する。
                 continue
             }
-            let fromID = fromIDs[0]
-            let toID = toIDs[0]
+            guard let fromID = fromIDs.first, let toID = toIDs.first else { continue }
             updateRelationship(
                 from: fromID,
                 to: toID,

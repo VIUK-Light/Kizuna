@@ -92,9 +92,9 @@ final class CharacterLibraryViewModel: ObservableObject {
         do {
             self.templates = try await templateRepo.fetchTemplates()
             didLoadTemplates = true
-            if !templates.isEmpty {
-                templateLoadError = nil
-            }
+            // 空配列も「読み込み成功した空状態」であり、前回の
+            // エラーを残すとTemplatePickerが失敗表示のままになる。
+            templateLoadError = nil
         } catch {
             // キャラクター一覧は利用できるため、テンプレートだけにエラーを
             // 表示する。空配列を「テンプレートなし」と誤認させない。

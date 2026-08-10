@@ -442,6 +442,9 @@ final class StorySessionService: ObservableObject {
             return
         }
         let reconciledCast = reconciledCast(cast, for: world, scene: scene)
+        // castの読込後にcancel()されても、古い生成が関連データを
+        // 書き換えないよう、永続化の直前に所有権を再確認する。
+        guard isGenerationActive(generationID) else { return }
         if Set(cast.map(\.characterId)) != Set(reconciledCast.map(\.characterId)) || cast.count != reconciledCast.count {
             do {
                 try await castRepo.replaceCast(reconciledCast, storyWorldId: world.id)
@@ -584,8 +587,12 @@ final class StorySessionService: ObservableObject {
             characterIndex: charIndex,
             maxActive: activeCharacterLimit
         )
+        guard isGenerationActive(generationID) else { return }
         var sceneWithSelectedCharacters = scene
         sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
+        // 選択結果の適用前にも確認する。cancel()後の遅延結果を
+        // 次回のシーン選択へ持ち越さない。
+        guard isGenerationActive(generationID) else { return }
         do {
             try await sceneRepo.saveScene(sceneWithSelectedCharacters)
         } catch {
@@ -1516,10 +1523,9 @@ final class StorySessionService: ObservableObject {
                 backendName: backendName
             )
             guard self.timeoutSaveToken == timeoutToken else { return }
-            guard self.phase == .thinking else {
-                self.timeoutSaveToken = nil
-                return
-            }
+            // timeoutTokenが一致している場合は、このwatchdogが所有する
+            // 生成の後始末を必ず完了させる。phaseが先にidleへ変わった
+            // ケースでreturnすると、以後の送信が永久に詰まる。
             self.streamingStatusText = ""
             self.savedTurnRevision += 1
             self.timeoutSaveToken = nil

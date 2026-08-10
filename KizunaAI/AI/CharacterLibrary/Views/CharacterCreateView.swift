@@ -268,6 +268,8 @@ struct CharacterCreateView: View {
 
                         if hasAvatar {
                             Button(role: .destructive) {
+                                avatarLoadGeneration &+= 1
+                                selectedAvatarItem = nil
                                 vm.draft.avatarImageData = nil
                             } label: {
                                 Label(KizunaCopy.text(japanese: "画像を削除", english: "Remove image"), systemImage: "trash")
