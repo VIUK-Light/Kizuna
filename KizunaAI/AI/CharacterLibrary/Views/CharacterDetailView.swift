@@ -143,10 +143,17 @@ struct CharacterDetailView: View {
                 onDelete?()
                 dismiss()
             } catch {
-                deleteError = KizunaCopy.text(
-                    japanese: "キャラの削除が途中で失敗しました。関連データが一部変更されている可能性があります。再試行してください。\n\(error.localizedDescription)",
-                    english: "Character deletion stopped partway through. Some related data may have changed. Retry to finish.\n\(error.localizedDescription)"
+                let message = KizunaCopy.text(
+                    japanese: "キャラの削除が途中で失敗しました。関連データが一部変更されている可能性があります。再試行してください。",
+                    english: "Character deletion stopped partway through. Some related data may have changed. Retry to finish."
                 )
+                // NSErrorの詳細は保存層やOSの言語に依存するため、英語UIへ
+                // 日本語の内部診断を混ぜない。日本語UIでは再試行に役立つ
+                // ローカル診断を残し、ログにも同じ原因を記録する。
+                deleteError = KizunaCopy.language == .japanese
+                    ? "\(message)\n\(error.localizedDescription)"
+                    : message
+                NSLog("[CharacterDetailView] delete failed: %@", error.localizedDescription)
             }
         }
     }

@@ -90,7 +90,7 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
         userMessageID: UUID,
         userText: String,
         backendName: String,
-        backend: StoryGenerationBackend = .unknown,
+        backend: StoryGenerationBackend,
         retryAction: StoryRuntimeNoticeRetryAction = .userTurn
     ) {
         self.id = id
@@ -224,6 +224,7 @@ final class StorySessionService: ObservableObject {
                 ),
                 session: session,
                 backendName: "narration save failed",
+                backend: .persistence,
                 retryAction: .narration(text: trimmed)
             )
             NSLog("[StorySession] narration save failed: %@", error.localizedDescription)
@@ -255,6 +256,7 @@ final class StorySessionService: ObservableObject {
                 ),
                 session: session,
                 backendName: "rest acknowledgement save failed",
+                backend: .persistence,
                 retryAction: .restAcknowledgement(
                     characterID: characterID,
                     characterName: characterName
@@ -271,6 +273,7 @@ final class StorySessionService: ObservableObject {
         text: String,
         session: StorySession,
         backendName: String,
+        backend: StoryGenerationBackend,
         retryAction: StoryRuntimeNoticeRetryAction
     ) {
         let lastUserMessage = session.messages.last(where: { $0.author.isUser })
@@ -279,7 +282,7 @@ final class StorySessionService: ObservableObject {
             userMessageID: lastUserMessage?.id ?? session.id,
             userText: lastUserMessage?.text ?? "",
             backendName: backendName,
-            backend: .unknown,
+            backend: backend,
             retryAction: retryAction
         )
     }
@@ -436,7 +439,8 @@ final class StorySessionService: ObservableObject {
                     notice: localizedNotice(
                         "再試行対象の発言を復元できませんでした。新しいメッセージを送信してください。",
                         "The message to retry could not be restored. Send a new message."
-                    )
+                    ),
+                    backend: generationModel == .e4b ? .local : .gemmaAPI
                 )
                 return
             }
@@ -452,6 +456,7 @@ final class StorySessionService: ObservableObject {
                         "会話を保存できなかったため、応答を開始できませんでした。もう一度送信してください。",
                         "The conversation could not be saved, so the reply was not started. Send it again."
                     ),
+                    backend: .persistence,
                     userMessageID: userMessageID,
                     userText: userText,
                     backendName: "session save"
@@ -474,6 +479,7 @@ final class StorySessionService: ObservableObject {
                     "キャラクター情報を読み込めなかったため、応答を開始できませんでした。もう一度試してください。",
                     "The character data could not be loaded, so the reply was not started. Try again."
                 ),
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: "character load failed"
@@ -495,6 +501,7 @@ final class StorySessionService: ObservableObject {
                     "登場キャラクターを読み込めなかったため、応答を開始できませんでした。もう一度試してください。",
                     "The story cast could not be loaded, so the reply was not started. Try again."
                 ),
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: "cast load failed"
@@ -509,6 +516,10 @@ final class StorySessionService: ObservableObject {
         if Set(cast.map(\.characterId)) != Set(reconciledCast.map(\.characterId)) || cast.count != reconciledCast.count {
             do {
                 try await castRepo.replaceCast(reconciledCast, storyWorldId: world.id)
+                // cancel()はrepository await中にも呼ばれ得る。完了後に
+                // 生成世代を再確認し、古いローカルスナップショットを
+                // このTaskの後続処理へ渡さない。
+                guard isGenerationActive(generationID) else { return }
                 cast = reconciledCast
             } catch {
                 await finishGenerationWithoutSaving(
@@ -517,6 +528,7 @@ final class StorySessionService: ObservableObject {
                         "登場キャラクターの関連データを保存できなかったため、応答を開始していません。もう一度試してください。",
                         "The story cast could not be saved, so the reply was not started. Try again."
                     ),
+                    backend: .persistence,
                     userMessageID: userMessageID,
                     userText: userText,
                     backendName: "cast save failed"
@@ -535,6 +547,7 @@ final class StorySessionService: ObservableObject {
                     "登場キャラクターが設定されていないため、物語を開始できません。詳細画面からキャラクターを追加してください。",
                     "The story cannot start because it has no cast. Add at least one character from the story details."
                 ),
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: "empty cast"
@@ -597,6 +610,7 @@ final class StorySessionService: ObservableObject {
                         "安全に関する案内を保存できなかったため、会話を更新できませんでした。もう一度試してください。",
                         "The safety response could not be saved, so the conversation was not updated. Try again."
                     ),
+                    backend: .persistence,
                     userMessageID: userMessageID,
                     userText: userText,
                     backendName: "safety notice save failed"
@@ -656,6 +670,9 @@ final class StorySessionService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         do {
             try await sceneRepo.saveScene(sceneWithSelectedCharacters)
+            // 保存処理が中断を即時観測しない実装でも、完了後の古いTaskが
+            // 現在のシーンとして扱われないよう所有権を再確認する。
+            guard isGenerationActive(generationID) else { return }
         } catch {
             await finishGenerationWithoutSaving(
                 generationID: generationID,
@@ -663,6 +680,7 @@ final class StorySessionService: ObservableObject {
                     "今回の登場キャラクターを保存できなかったため、応答を開始しませんでした。もう一度試してください。",
                     "The selected story characters could not be saved, so the reply was not started. Try again."
                 ),
+                backend: .persistence,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: "scene save failed"
@@ -1154,6 +1172,7 @@ final class StorySessionService: ObservableObject {
             await finishGenerationWithoutSaving(
                 generationID: generationID,
                 notice: notice,
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: usedBackendName + "・no parsed messages"
@@ -1182,6 +1201,7 @@ final class StorySessionService: ObservableObject {
                     "応答を保存できなかったため、会話には追加していません。もう一度試してください。",
                     "The reply could not be saved, so it was not added to the conversation. Try again."
                 ),
+                backend: .persistence,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: usedBackendName + "・save failed"
@@ -1210,7 +1230,8 @@ final class StorySessionService: ObservableObject {
                     ),
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: "scene summary save failed"
+                    backendName: "scene summary save failed",
+                    backend: .persistence
                 )
                 NSLog("[StorySession] scene summary save failed: %@", error.localizedDescription)
             }
@@ -1279,7 +1300,8 @@ final class StorySessionService: ObservableObject {
                 ),
                 userMessageID: userMessageID,
                 userText: userText,
-                backendName: "progress save failed"
+                backendName: "progress save failed",
+                backend: .persistence
             )
             NSLog("[StorySession] progress save failed: %@", error.localizedDescription)
         }
@@ -1370,6 +1392,7 @@ final class StorySessionService: ObservableObject {
     private func finishGenerationWithoutSaving(
         generationID: UUID,
         notice: String,
+        backend: StoryGenerationBackend,
         userMessageID: UUID? = nil,
         userText: String? = nil,
         backendName: String = ""
@@ -1382,7 +1405,8 @@ final class StorySessionService: ObservableObject {
                     text: notice,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: backendName
+                    backendName: backendName,
+                    backend: backend
                 )
             }
             self.streamingResponse = notice

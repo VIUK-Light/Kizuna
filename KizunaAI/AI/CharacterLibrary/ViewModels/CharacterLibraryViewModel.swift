@@ -41,6 +41,9 @@ final class CharacterLibraryViewModel: ObservableObject {
     @Published private(set) var didLoadTemplates: Bool = false
     /// 一覧からの削除失敗を成功扱いにせず、確認画面の後でUIへ通知する。
     @Published private(set) var deleteErrorMessage: String?
+    /// 同じ行の確認アラートを連続して確定しても、関連データの掃除と
+    /// repository削除を二重に走らせない。VMはMainActor上で直列化される。
+    private var deletingIDs = Set<UUID>()
 
     private let characterRepo: CharacterRepository
     private let templateRepo: TemplateRepository
@@ -122,6 +125,8 @@ final class CharacterLibraryViewModel: ObservableObject {
     }
 
     func delete(id: UUID) async {
+        guard deletingIDs.insert(id).inserted else { return }
+        defer { deletingIDs.remove(id) }
         deleteErrorMessage = nil
         do {
             // 一覧のスナップショットではなく最新保存値で保護状態を確認する。
