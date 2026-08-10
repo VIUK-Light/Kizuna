@@ -450,23 +450,38 @@ final class StoryWorldCreateViewModel: ObservableObject {
         isReadyToSave = false
         loadError = nil
         do {
-            self.availableCharacters = try await characterRepo.fetchCharacters()
-            self.castDrafts = try await castRepo.fetchCast(storyWorldId: draft.id)
-            self.lorebookDrafts = try await lorebookRepo.fetchEntries(storyWorldId: draft.id)
-            let scenes = try await sceneRepo.fetchScenes(storyWorldId: draft.id)
-            if let firstScene = scenes.first {
-                self.sceneDraft = firstScene
-            } else if sceneDraft.title.isEmpty {
-                sceneDraft.title = Self.defaultSceneTitle(for: draft.title)
-                sceneDraft.mood = draft.mood
-                sceneDraft.sceneGoal = draft.storyGoal
-                sceneDraft.summary = draft.openingScene
+            // 関連データはすべてローカル変数へ読み込んでから下書きへ反映する。
+            // 途中のfetchが失敗した場合に「先に取得できた配列だけ反映」すると、
+            // UIが部分状態になり、旧データを空配列で置換保存する危険が残る。
+            // ここでは1件でも失敗したら下書きを変更せず、保存をロックして再試行を促す。
+            let fetchedCharacters = try await characterRepo.fetchCharacters()
+            let fetchedCast = try await castRepo.fetchCast(storyWorldId: draft.id)
+            // Keep disabled entries in the edit snapshot as well. `replaceEntries`
+            // is a full replacement, so loading only enabled rows would delete
+            // every disabled lorebook entry the next time the user saves.
+            let fetchedLorebook = try await lorebookRepo.fetchAllEntries(storyWorldId: draft.id)
+            let fetchedScenes = try await sceneRepo.fetchScenes(storyWorldId: draft.id)
+
+            var nextScene = sceneDraft
+            if let firstScene = fetchedScenes.first {
+                nextScene = firstScene
+            } else if nextScene.title.isEmpty {
+                nextScene.title = Self.defaultSceneTitle(for: draft.title)
+                nextScene.mood = draft.mood
+                nextScene.sceneGoal = draft.storyGoal
+                nextScene.summary = draft.openingScene
             }
-            if !castDrafts.isEmpty {
+
+            self.availableCharacters = fetchedCharacters
+            self.castDrafts = fetchedCast
+            self.lorebookDrafts = fetchedLorebook
+            self.sceneDraft = nextScene
+            if !fetchedCast.isEmpty {
                 // 旧データを編集で開いた場合も、形式と初期シーン選択を
                 // 同じ正規化規則へ通し、画面と保存値のずれを残さない。
                 setCastMode(draft.resolvedCastMode)
             }
+            saveError = nil
             isReadyToSave = true
         } catch {
             loadError = String(describing: error)
@@ -617,7 +632,12 @@ final class StoryWorldCreateViewModel: ObservableObject {
         // 旧バージョンで同じViewModelがすでに保存していた場合も掃除する。
         // 新しい経路では未保存なので、存在しないIDの削除は安全なno-op。
         for id in pendingIDs {
-            try? await characterRepo.deleteCharacter(id: id)
+            guard let result = try? await characterRepo.deleteCharacter(id: id) else { continue }
+            if result == .deleted || result == .needsCleanup {
+                // この経路では物語・メモリーをまだ作っていないため、
+                // リポジトリ所有の掃除を完了してpending markerを残さない。
+                try? await characterRepo.completeCharacterDeletionCleanup(id: id)
+            }
         }
     }
 
@@ -759,6 +779,13 @@ final class StoryWorldCreateViewModel: ObservableObject {
 
     func save() async -> StoryWorld? {
         guard !isSaving else { return nil }
+        guard !isGeneratingTemplate else {
+            saveError = KizunaCopy.text(
+                japanese: "雛形の生成中は保存できません。生成が終わってから試してください。",
+                english: "The story cannot be saved while a template is being generated. Try again when generation finishes."
+            )
+            return nil
+        }
         isSaving = true
         defer { isSaving = false }
         saveError = nil
@@ -790,15 +817,33 @@ final class StoryWorldCreateViewModel: ObservableObject {
             )
             return nil
         }
+
+        // Repository writes are awaited one by one.  Save one immutable editor
+        // snapshot rather than reading live @Published arrays between writes;
+        // this keeps World/Cast/Lorebook/Scene from mixing revisions when a
+        // caller changes a binding programmatically during a delayed save.
+        let draftSnapshot = draft
+        let sceneSnapshot = sceneDraft
+        let castSnapshot = castDrafts
+        let lorebookSnapshot = lorebookDrafts
+        let pendingCharactersSnapshot = pendingGeneratedCharacters
         var didSaveWorld = false
         do {
-            // 生成キャラは世界保存の直前に確定する。雛形を反映しただけでは
-            // CharacterRepositoryへ書かず、キャンセル/再生成で孤児を残さない。
-            for profile in pendingGeneratedCharacters.values {
+            // 破壊的な置換の前に、すべての既存関連データを読み取っておく。
+            // ここで読み取りに失敗した場合はWorld/Cast/Lorebook/Sceneのいずれも
+            // 書き換えず、次回の再試行で正しいスナップショットを取り直せる。
+            _ = try await lorebookRepo.fetchAllEntries(storyWorldId: draft.id)
+            let existingScenes = try await sceneRepo.fetchScenes(storyWorldId: draft.id)
+
+            // 関連データの読取が全て成功した後にだけ生成キャラを確定する。
+            // 雛形を反映しただけではCharacterRepositoryへ書かず、読取失敗・
+            // キャンセル・再生成のいずれでもキャラだけが孤児にならないようにする。
+            for profile in pendingCharactersSnapshot.values {
                 try await characterRepo.saveCharacter(profile)
             }
+
             // World 保存
-            var world = draft.normalizedForPersistence
+            var world = draftSnapshot.normalizedForPersistence
             // Keep the editor in sync with the persisted invariant so a
             // duplicate does not reappear when the same draft is shown again.
             draft.tags = world.tags
@@ -806,28 +851,15 @@ final class StoryWorldCreateViewModel: ObservableObject {
             world.updatedAt = Date()
             try await worldRepo.saveWorld(world)
             didSaveWorld = true
-            // Cast 保存
-            try await castRepo.deleteAllCast(storyWorldId: world.id)
-            for member in castDrafts {
-                var m = member
-                m.storyWorldId = world.id
-                try await castRepo.saveCast(m)
-            }
+            // Cast 保存。Repository側の一括置換を使い、deleteAllCastの後に
+            // 1件ずつ保存して途中で失敗する部分更新を避ける。
+            try await castRepo.replaceCast(castSnapshot, storyWorldId: world.id)
             // LorebookもWorld単位で置き換え、削除されたカードを残さない。
             // 無効化済みエントリも編集保存時に置き換える。enabled のみ取得すると
             // UIから見えない古いカードが story_lorebook.json に残り続ける。
-            let existingLorebook = try await lorebookRepo.fetchAllEntries(storyWorldId: world.id)
-            for entry in existingLorebook {
-                try await lorebookRepo.deleteEntry(id: entry.id)
-            }
-            for entry in lorebookDrafts {
-                var value = entry
-                value.storyWorldId = world.id
-                try await lorebookRepo.saveEntry(value)
-            }
+            try await lorebookRepo.replaceEntries(lorebookSnapshot, storyWorldId: world.id)
             // Opening Scene を 1 件 seed / update
-            let existingScenes = try await sceneRepo.fetchScenes(storyWorldId: world.id)
-            var opening = sceneDraft
+            var opening = sceneSnapshot
             opening.storyWorldId = world.id
             if opening.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 opening.title = Self.defaultSceneTitle(for: world.title)
@@ -843,7 +875,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
             }
             if opening.activeCharacterIds.isEmpty {
                 let limit = world.isSoloStory ? StoryConstants.soloActiveCharacters : StoryConstants.maxActiveCharacters
-                opening.activeCharacterIds = Array(castDrafts.prefix(limit).map(\.characterId))
+                opening.activeCharacterIds = Array(castSnapshot.prefix(limit).map(\.characterId))
             }
             let activeLimit = world.isSoloStory ? StoryConstants.soloActiveCharacters : StoryConstants.maxActiveCharacters
             opening.activeCharacterIds = Array(opening.activeCharacterIds.prefix(activeLimit))
@@ -979,10 +1011,10 @@ final class StoryWorldCreateViewModel: ObservableObject {
             setActiveInOpeningScene(generated.activeInInitialScene, for: profile.id)
         }
 
-        var charactersByName: [String: [UUID]] = [:]
+        var charactersByName: [String: Set<UUID>] = [:]
         for character in availableCharacters {
-            charactersByName[character.visibleName, default: []].append(character.id)
-            charactersByName[character.name, default: []].append(character.id)
+            charactersByName[character.visibleName, default: []].insert(character.id)
+            charactersByName[character.name, default: []].insert(character.id)
         }
         for relationship in template.relationships {
             guard let fromIDs = charactersByName[relationship.from], fromIDs.count == 1,
@@ -991,8 +1023,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 // displayNameを一意にするか、作成後にユーザーが関係を設定する。
                 continue
             }
-            let fromID = fromIDs[0]
-            let toID = toIDs[0]
+            guard let fromID = fromIDs.first, let toID = toIDs.first else { continue }
             updateRelationship(
                 from: fromID,
                 to: toID,
@@ -1366,27 +1397,30 @@ final class StoryWorldDetailViewModel: ObservableObject {
         return (session, firstScene)
     }
 
-    func delete() async {
+    /// Delete this world and every owned record.
+    ///
+    /// This method intentionally propagates the first repository error.  The
+    /// detail view uses the throwing result to keep the sheet open and show a
+    /// retryable error; swallowing the error here would make a partial delete
+    /// look successful and leave the user with orphaned records.
+    func delete() async throws {
         // 標準ストーリーはUI以外からこのメソッドが呼ばれても削除しない。
         guard world.isSystemProtected != true else { return }
-        do {
-            // セッションとLorebookは別ファイルのため、世界だけ消すと孤児データが残る。
-            let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
-            for session in sessions {
-                try await sessionRepo.deleteSession(id: session.id)
-            }
-            let lorebookEntries = try await lorebookRepo.fetchAllEntries(storyWorldId: world.id)
-            for entry in lorebookEntries {
-                try await lorebookRepo.deleteEntry(id: entry.id)
-            }
-            try await castRepo.deleteAllCast(storyWorldId: world.id)
-            try await sceneRepo.deleteAllScenes(storyWorldId: world.id)
-            // 物語を削除する時は、その世界だけの思い出も一緒に削除する。
-            try await storyMemoryRepo.deleteAllMemories(storyWorldId: world.id)
-            try await worldRepo.deleteWorld(id: world.id)
-        } catch {
-            NSLog("[StoryDetailVM] delete failed: %@", String(describing: error))
+
+        // セッションとLorebookは別ファイルのため、世界だけ消すと孤児データが残る。
+        let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
+        for session in sessions {
+            try await sessionRepo.deleteSession(id: session.id)
         }
+        let lorebookEntries = try await lorebookRepo.fetchAllEntries(storyWorldId: world.id)
+        for entry in lorebookEntries {
+            try await lorebookRepo.deleteEntry(id: entry.id)
+        }
+        try await castRepo.deleteAllCast(storyWorldId: world.id)
+        try await sceneRepo.deleteAllScenes(storyWorldId: world.id)
+        // 物語を削除する時は、その世界だけの思い出も一緒に削除する。
+        try await storyMemoryRepo.deleteAllMemories(storyWorldId: world.id)
+        try await worldRepo.deleteWorld(id: world.id)
     }
 
     private func defaultCastMembers(for world: StoryWorld, existingScenes: [StoryScene]) -> [CastMember] {
@@ -1440,6 +1474,9 @@ final class StorySessionViewModel: ObservableObject {
     @Published private(set) var bootstrapError: String?
     /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
     @Published var restSuggestion: StoryRestSuggestion?
+    /// 了承メッセージの保存中は通常送信を止め、保存結果を待つ。
+    @Published private(set) var isSavingRestAcknowledgement = false
+    @Published private(set) var restAcknowledgementError: String?
     @Published var generationModel: StoryGenerationModel {
         didSet {
             defaults.set(generationModel.rawValue, forKey: generationModelKey)
@@ -1469,6 +1506,8 @@ final class StorySessionViewModel: ObservableObject {
     private var debugRequestPollingTask: Task<Void, Never>?
     private var sendPreparationTask: Task<Void, Never>?
     private var sendPreparationID: UUID?
+    private var restAcknowledgementTask: Task<Void, Never>?
+    private var restAcknowledgementID: UUID?
 
     init(world: StoryWorld, session: StorySession, scene: StoryScene) {
         self.world = world
@@ -1488,6 +1527,7 @@ final class StorySessionViewModel: ObservableObject {
         debugSafetyConcernTask?.cancel()
         debugRequestPollingTask?.cancel()
         sendPreparationTask?.cancel()
+        restAcknowledgementTask?.cancel()
         if let debugRestSuggestionObserver {
             NotificationCenter.default.removeObserver(debugRestSuggestionObserver)
         }
@@ -1625,6 +1665,7 @@ final class StorySessionViewModel: ObservableObject {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               service.phase != .thinking,
+              !isSavingRestAcknowledgement,
               sendPreparationTask == nil else { return false }
         // 直前ターンの保存完了通知と送信タップが競合すると、古い session スナップショットで
         // 次のターンを開始して新しい発言を上書きする。送信前に最新状態を一度だけ読み直す。
@@ -1693,6 +1734,41 @@ final class StorySessionViewModel: ObservableObject {
     @discardableResult
     func retryRuntimeNotice(_ notice: StoryRuntimeNotice) -> Bool {
         service.dismissRuntimeNotice()
+        switch notice.retryAction {
+        case let .narration(text):
+            Task { [weak self] in
+                guard let self else { return }
+                await self.service.addNarration(text, session: self.session)
+                await self.refreshAfterTurn()
+            }
+            return true
+        case let .restAcknowledgement(characterID, characterName):
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.service.addRestAcknowledgement(
+                        characterID: characterID,
+                        characterName: characterName,
+                        session: self.session
+                    )
+                    await self.refreshAfterTurn()
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // The service publishes persistence failures itself, but
+                    // keep unexpected retry failures visible instead of
+                    // turning the retry tap into a silent no-op.
+                    self.restAcknowledgementError = KizunaCopy.text(
+                        japanese: "続行メッセージを保存できませんでした。もう一度お試しください。",
+                        english: "The continue message could not be saved. Try again."
+                    )
+                    NSLog("[StorySessionVM] runtime acknowledgement retry failed: %@", error.localizedDescription)
+                }
+            }
+            return true
+        case .userTurn:
+            break
+        }
         let hasPersistedUserTurn = session.messages.contains { message in
             message.id == notice.userMessageID && message.author.isUser
         }
@@ -1723,13 +1799,18 @@ final class StorySessionViewModel: ObservableObject {
         sendPreparationID = nil
         sendPreparationTask?.cancel()
         sendPreparationTask = nil
+        restAcknowledgementID = nil
+        restAcknowledgementTask?.cancel()
+        restAcknowledgementTask = nil
+        isSavingRestAcknowledgement = false
         service.cancel()
     }
 
     func addNarration(_ text: String) {
-        service.addNarration(text, session: session)
         Task { [weak self] in
-            await self?.refreshAfterTurn()
+            guard let self else { return }
+            await self.service.addNarration(text, session: self.session)
+            await self.refreshAfterTurn()
         }
     }
 
@@ -1792,6 +1873,7 @@ final class StorySessionViewModel: ObservableObject {
 
     /// 「少し休む」は強制終了せず、次の連続利用の時計だけを再スタートする。
     func chooseRestSuggestionBreak() {
+        restAcknowledgementError = nil
         restSuggestion = nil
         continuousUseStartedAt = Date()
         restSuggestionSuppressedUntil = nil
@@ -1800,22 +1882,81 @@ final class StorySessionViewModel: ObservableObject {
 
     /// 「このまま続ける」は短い了承を 1 回だけ記録し、その後 120 分は抑制する。
     func chooseRestSuggestionContinue() {
-        guard restSuggestion != nil else { return }
-        restSuggestion = nil
+        guard let suggestion = restSuggestion,
+              !isSavingRestAcknowledgement else { return }
+        restAcknowledgementError = nil
         restSuggestionSuppressedUntil = Date().addingTimeInterval(120 * 60)
         restSuggestionAttempted = true
 
-        guard let character = lastSpeakingCharacter() ?? activeCharacters.first,
-              let characterID = characterID(for: character) else { return }
-        let name = character.visibleName
-        Task { [weak self] in
-            guard let self else { return }
-            await self.service.addRestAcknowledgement(
-                characterID: characterID,
-                characterName: name,
-                session: self.session
+        // Prefer the identity captured when the suggestion was generated. A
+        // later refresh can change the last message, and resolving by display
+        // name alone is ambiguous. Fall back to the current last speaker only
+        // when the suggestion's UUID is no longer present in the index.
+        let resolvedCharacter: CharacterProfile? = {
+            if let suggestedID = suggestion.characterID,
+               let suggestedCharacter = characterIndex[suggestedID] {
+                return suggestedCharacter
+            }
+            return lastSpeakingCharacter() ?? activeCharacters.first
+        }()
+        guard let character = resolvedCharacter,
+              let characterID = characterID(for: character) else {
+            // Do not silently turn the tap into a no-op. Keep the card visible,
+            // clear the suppression window, and let the user retry after the
+            // cast/index has been reloaded.
+            restSuggestionSuppressedUntil = nil
+            restSuggestionAttempted = false
+            restAcknowledgementError = KizunaCopy.text(
+                japanese: "続行するキャラクターを特定できません。キャストを再読み込みしてからもう一度お試しください。",
+                english: "The character for this suggestion could not be resolved. Reload the cast and try again."
             )
-            await self.refreshAfterTurn()
+            return
+        }
+        let name = character.visibleName
+        let acknowledgementID = UUID()
+        restAcknowledgementID = acknowledgementID
+        isSavingRestAcknowledgement = true
+        restAcknowledgementTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.restAcknowledgementID == acknowledgementID {
+                    self.isSavingRestAcknowledgement = false
+                    self.restAcknowledgementTask = nil
+                }
+            }
+            do {
+                // A turn may have completed immediately before the card was
+                // tapped. Read the current record before appending so this
+                // action never saves an older session snapshot.
+                let latestSessions = try await self.sessionRepo.fetchSessions(storyWorldId: self.world.id)
+                guard let latestSession = latestSessions.first(where: { $0.id == self.session.id }) else {
+                    throw StoryRestAcknowledgementError.sessionUnavailable
+                }
+                try await self.service.addRestAcknowledgement(
+                    characterID: characterID,
+                    characterName: name,
+                    session: latestSession
+                )
+                guard !Task.isCancelled,
+                      self.restAcknowledgementID == acknowledgementID else { return }
+                await self.refreshAfterTurn()
+                self.restSuggestion = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled,
+                      self.restAcknowledgementID == acknowledgementID else { return }
+                // Keep the card and its text so the user can retry without
+                // losing the decision or pretending it was saved.
+                self.restSuggestion = suggestion
+                self.restSuggestionSuppressedUntil = nil
+                self.restSuggestionAttempted = false
+                self.restAcknowledgementError = KizunaCopy.text(
+                    japanese: "続行メッセージを保存できませんでした。もう一度お試しください。",
+                    english: "The continue message could not be saved. Try again."
+                )
+                NSLog("[StorySessionVM] rest acknowledgement save failed: %@", error.localizedDescription)
+            }
         }
     }
 
@@ -1835,4 +1976,8 @@ final class StorySessionViewModel: ObservableObject {
     var activeCharacters: [CharacterProfile] {
         scene.activeCharacterIds.compactMap { characterIndex[$0] }
     }
+}
+
+private enum StoryRestAcknowledgementError: Error {
+    case sessionUnavailable
 }

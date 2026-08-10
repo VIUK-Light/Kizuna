@@ -18,13 +18,20 @@ enum CharacterCreateState: Equatable {
 
 @MainActor
 final class CharacterCreateViewModel: ObservableObject {
-    @Published var draft: CharacterProfile
+    @Published var draft: CharacterProfile {
+        didSet { draftRevision &+= 1 }
+    }
     @Published var state: CharacterCreateState = .editing
     @Published var availableTemplates: [CharacterTemplate] = []
 
     private let characterRepo: CharacterRepository
     private let templateRepo: TemplateRepository
     private let safetyPipeline: SafetyPipeline
+    /// Safety evaluation and persistence are asynchronous.  Keep an operation
+    /// token plus the draft revision so a stale completion can never save an
+    /// earlier snapshot after a newer edit or save attempt.
+    private var saveOperationID: UUID?
+    private var draftRevision: UInt = 0
 
     init(
         existing: CharacterProfile? = nil,
@@ -86,6 +93,12 @@ final class CharacterCreateViewModel: ObservableObject {
 
     /// 保存しようとした時に呼ぶ。Safety を通したのち state を遷移させる。
     func attemptSave(force: Bool = false) async {
+        // A second tap (or a keyboard shortcut) must not start a second
+        // validation against the same form while the first one is awaiting.
+        guard state != .validating else { return }
+        let operationID = UUID()
+        saveOperationID = operationID
+        let revision = draftRevision
         state = .validating
 
         // ベースの safetyRating を起点に内部解決
@@ -96,19 +109,27 @@ final class CharacterCreateViewModel: ObservableObject {
 
         let decision = await safetyPipeline.evaluateCharacter(working)
 
+        // Editing is disabled in the view while validation runs, but retain
+        // this guard for programmatic bindings and delayed test doubles.
+        guard saveOperationID == operationID else { return }
+        guard draftRevision == revision else {
+            state = .editing
+            return
+        }
+
         switch decision.action {
         case .allow:
-            await persist(working)
+            await persist(working, operationID: operationID, draftRevision: revision)
         case .warn:
             if force {
-                await persist(working)
+                await persist(working, operationID: operationID, draftRevision: revision)
             } else {
                 state = .warned(decision)
             }
         case .soften:
             // soften 提案がある場合: 今回はそのまま warn 同等に表示し、ユーザー判断に委ねる
             if force {
-                await persist(working)
+                await persist(working, operationID: operationID, draftRevision: revision)
             } else {
                 state = .warned(decision)
             }
@@ -117,12 +138,22 @@ final class CharacterCreateViewModel: ObservableObject {
         }
     }
 
-    private func persist(_ c: CharacterProfile) async {
+    private func persist(
+        _ c: CharacterProfile,
+        operationID: UUID,
+        draftRevision: UInt
+    ) async {
         let normalized = c.normalizedForPersistence
         do {
             try await characterRepo.saveCharacter(normalized)
+            guard saveOperationID == operationID, self.draftRevision == draftRevision else {
+                return
+            }
             state = .saved(normalized)
         } catch {
+            guard saveOperationID == operationID, self.draftRevision == draftRevision else {
+                return
+            }
             NSLog("[CharacterCreateVM] save failed: %@", String(describing: error))
             state = .blocked(
                 SafetyDecision(
@@ -135,6 +166,17 @@ final class CharacterCreateViewModel: ObservableObject {
     }
 
     func resetState() {
+        saveOperationID = nil
         state = .editing
+    }
+
+    /// 画面が閉じられた時に、検証完了後の遅延保存を無効化する。
+    /// リポジトリへの保存が既に開始された場合は中断できないため、
+    /// `attemptSave` 側でもoperationIDを再確認して完了状態を公開しない。
+    func cancelPendingSave() {
+        saveOperationID = nil
+        if case .validating = state {
+            state = .editing
+        }
     }
 }

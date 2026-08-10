@@ -82,10 +82,12 @@ struct CharacterCreateView: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 16)
             }
+            .disabled(isFormLocked)
             Divider()
             footer
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
+        .interactiveDismissDisabled(isFormLocked)
         .task {
             // 親画面から渡されたテンプレートは同期的に先に適用する。
             // テンプレート一覧のI/Oを待ってから適用すると、その待機中に
@@ -116,6 +118,13 @@ struct CharacterCreateView: View {
                 dismiss()
             }
         }
+        .onDisappear {
+            // A parent may dismiss the sheet programmatically. Invalidate any
+            // in-flight safety task so it cannot persist after this editor is
+            // gone. Interactive dismissal and the header button are blocked
+            // while validation is active, but this is the final race guard.
+            vm.cancelPendingSave()
+        }
         .onChange(of: selectedAvatarItem) { _, item in
             avatarLoadGeneration &+= 1
             let generation = avatarLoadGeneration
@@ -130,6 +139,7 @@ struct CharacterCreateView: View {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { dismiss() }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .disabled(isFormLocked)
             Spacer()
             Text(existing == nil
                  ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")
@@ -159,6 +169,7 @@ struct CharacterCreateView: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
             .disabled(canSave == false)
+            .disabled(isFormLocked)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -167,6 +178,11 @@ struct CharacterCreateView: View {
 
     private var canSave: Bool {
         !vm.draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isFormLocked: Bool {
+        if case .validating = vm.state { return true }
+        return false
     }
 
     // MARK: - Sections
@@ -268,7 +284,7 @@ struct CharacterCreateView: View {
 
                         if hasAvatar {
                             Button(role: .destructive) {
-                                vm.draft.avatarImageData = nil
+                                removeAvatar()
                             } label: {
                                 Label(KizunaCopy.text(japanese: "画像を削除", english: "Remove image"), systemImage: "trash")
                             }
@@ -405,6 +421,16 @@ struct CharacterCreateView: View {
         guard !t.isEmpty, !vm.draft.tags.contains(t) else { return }
         vm.draft.tags.append(t)
         newTagText = ""
+    }
+
+    /// Invalidate an in-flight PhotosPicker load before removing the preview.
+    /// `loadTransferable` may still resume after the user taps remove; the
+    /// generation check in `loadAvatar` must therefore advance for this path
+    /// too, otherwise the removed image can reappear when the old load wins.
+    private func removeAvatar() {
+        avatarLoadGeneration &+= 1
+        selectedAvatarItem = nil
+        vm.draft.avatarImageData = nil
     }
 
     @MainActor

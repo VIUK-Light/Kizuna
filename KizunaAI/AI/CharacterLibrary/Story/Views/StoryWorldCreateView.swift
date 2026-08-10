@@ -64,6 +64,9 @@ struct StoryWorldCreateView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            if let loadError = vm.loadError {
+                loadErrorBanner(loadError)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if existing == nil {
@@ -173,6 +176,34 @@ struct StoryWorldCreateView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(.thinMaterial)
+    }
+
+    private func loadErrorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(KizunaCopy.text(
+                    japanese: "保存データを読み込めませんでした",
+                    english: "Saved story data could not be loaded"
+                ))
+                .font(.system(size: 12, weight: .semibold))
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button {
+                Task { await vm.load() }
+            } label: {
+                Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.12))
     }
 
     private var aiTemplateSection: some View {

@@ -4,9 +4,12 @@ import SwiftUI
 /// 保存形式は既存のKizunaUserProfileと互換にしている。
 @MainActor
 struct KizunaUserProfileView: View {
+    private static let maxAboutLength = 500
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store: KizunaUserProfileStore
     @State private var draft: KizunaUserProfile
+    @State private var showAboutLimitAlert = false
 
     init(store: KizunaUserProfileStore) {
         self.store = store
@@ -21,6 +24,16 @@ struct KizunaUserProfileView: View {
                 // 旧バージョンのdisplayNameも更新し、古い画面に戻っても表示がずれないようにする。
                 draft.displayName = String($0.prefix(60))
             }
+        )
+    }
+
+    /// Keep the draft and the persisted value in sync while typing. The store
+    /// also enforces this limit at its boundary, but truncating only on Save
+    /// makes the editor appear to accept text that will silently disappear.
+    private var aboutBinding: Binding<String> {
+        Binding(
+            get: { draft.about },
+            set: { draft.about = String($0.prefix(Self.maxAboutLength)) }
         )
     }
 
@@ -49,11 +62,31 @@ struct KizunaUserProfileView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
-                        store.update(draft)
-                        dismiss()
+                        // Old profiles may contain a note written before the
+                        // 500-character limit was introduced. Do not let the
+                        // store silently discard the tail when the user only
+                        // opens the editor and taps Save. Ask them to shorten
+                        // the note first, keeping the original draft intact.
+                        if draft.about.count > Self.maxAboutLength {
+                            showAboutLimitAlert = true
+                        } else {
+                            store.update(draft)
+                            dismiss()
+                        }
                     }
                     .fontWeight(.semibold)
                 }
+            }
+            .alert(
+                KizunaCopy.text(japanese: "メモが長すぎます", english: "Note is too long"),
+                isPresented: $showAboutLimitAlert
+            ) {
+                Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) {}
+            } message: {
+                Text(KizunaCopy.text(
+                    japanese: "会話で伝えておきたいことは500文字以内にしてください。入力内容はそのまま残しているので、短くしてから保存できます。",
+                    english: "Keep your note within 500 characters. The existing text was kept as-is; shorten it before saving."
+                ))
             }
         }
     }
@@ -130,7 +163,7 @@ struct KizunaUserProfileView: View {
             ),
             icon: "note.text"
         ) {
-            TextEditor(text: $draft.about)
+            TextEditor(text: aboutBinding)
                 .frame(minHeight: 92)
                 .padding(8)
                 .background(
@@ -141,6 +174,23 @@ struct KizunaUserProfileView: View {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(Color.primary.opacity(0.10), lineWidth: 1)
                 }
+            HStack {
+                Spacer()
+                Text(KizunaCopy.text(
+                    japanese: "\(draft.about.count)/\(Self.maxAboutLength)文字",
+                    english: "\(draft.about.count)/\(Self.maxAboutLength) characters"
+                ))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(draft.about.count >= Self.maxAboutLength ? .orange : .secondary)
+            }
+            if draft.about.count > Self.maxAboutLength {
+                Text(KizunaCopy.text(
+                    japanese: "このメモは上限を超えています。保存するには短くしてください。",
+                    english: "This note is over the limit. Shorten it before saving."
+                ))
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
             Text(KizunaCopy.text(
                 japanese: "住所・連絡先・パスワードなどの秘密は入力しないでください。",
                 english: "Do not enter addresses, contact details, passwords, or secrets."

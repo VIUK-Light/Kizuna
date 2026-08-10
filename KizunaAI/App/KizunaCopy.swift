@@ -17,3 +17,9 @@ enum KizunaCopy {
         text(japanese: "kizuna", english: "kizuna")
     }
 }
+
+/// Shared UserDefaults/AppStorage keys. Keeping launch state in one place
+/// prevents Settings, My Page, and the root gate from drifting apart.
+enum KizunaStorageKeys {
+    static let launchCompleted = "kizuna.launch.completed"
+}

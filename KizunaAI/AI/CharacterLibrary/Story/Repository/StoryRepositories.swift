@@ -106,6 +106,10 @@ protocol CastRepository: AnyObject {
 protocol StorySceneRepository: AnyObject {
     func fetchScenes(storyWorldId: UUID) async throws -> [StoryScene]
     func saveScene(_ scene: StoryScene) async throws
+    /// Fills a missing background key without replacing a concurrently edited
+    /// scene. The local JSON implementation performs this condition check in
+    /// the same read-modify-write transaction as the save.
+    func repairMissingImageKey(storyWorldId: UUID, sceneId: UUID, imageKey: String) async throws -> Bool
     func deleteScene(id: UUID) async throws
     func deleteAllScenes(storyWorldId: UUID) async throws
 }
@@ -122,6 +126,10 @@ protocol StorySessionRepository: AnyObject {
 protocol StoryLorebookRepository: AnyObject {
     func fetchEntries(storyWorldId: UUID) async throws -> [StoryLorebookEntry]
     func fetchAllEntries(storyWorldId: UUID) async throws -> [StoryLorebookEntry]
+    /// Replace every entry belonging to a world in one read-modify-write operation.
+    /// Callers must prepare/validate the complete replacement before invoking this
+    /// method so a failed fetch cannot be mistaken for an intentional empty list.
+    func replaceEntries(_ entries: [StoryLorebookEntry], storyWorldId: UUID) async throws
     func saveEntry(_ entry: StoryLorebookEntry) async throws
     func deleteEntry(id: UUID) async throws
 }
@@ -145,20 +153,29 @@ final class LocalJSONStoryWorldRepository: StoryWorldRepository {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
     func saveWorld(_ world: StoryWorld) async throws {
-        var w = world.normalizedForPersistence
-        if let existing = (try? await store.loadRecoveringCorruptRecords().first(where: { $0.id == world.id })),
-           existing.isSystemProtected == true {
-            w.isSystemProtected = true
+        // 保護フラグの読み込みと更新を同一ロックに置く。別々の
+        // load→appendOrReplace では、同一IDをシード／修復が更新した直後に
+        // 古い編集スナップショットで保護状態を上書きできてしまう。
+        try await store.mutate { items in
+            var updated = world.normalizedForPersistence
+            if items.contains(where: { $0.id == world.id && $0.isSystemProtected == true }) {
+                updated.isSystemProtected = true
+            }
+            updated.updatedAt = Date()
+            items.removeAll { $0.id == updated.id }
+            items.append(updated)
         }
-        w.updatedAt = Date()
-        try await store.appendOrReplace(w, idEquals: { $0.id == $1.id })
     }
     func deleteWorld(id: UUID) async throws {
-        if let existing = (try? await store.loadRecoveringCorruptRecords().first(where: { $0.id == id })),
-           existing.isSystemProtected == true {
-            return
+        // 保護判定と削除を同一トランザクションにして、判定後の並行変更で
+        // system protected Worldが消えないようにする。読み込みエラーは
+        // mutateから呼び出し元へ伝播し、未保護扱いで続行しない。
+        try await store.mutate { items in
+            guard !items.contains(where: { $0.id == id && $0.isSystemProtected == true }) else {
+                return
+            }
+            items.removeAll { $0.id == id }
         }
-        try await store.delete(matching: { $0.id == id })
     }
 
     /// 起動時の重複標準データ移行専用。通常のユーザー操作からは
@@ -215,6 +232,23 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         // active キャラ数の上限を遵守
         s.activeCharacterIds = Array(s.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters))
         try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
+    }
+
+    func repairMissingImageKey(storyWorldId: UUID, sceneId: UUID, imageKey: String) async throws -> Bool {
+        let trimmedKey = imageKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else { return false }
+        var repaired = false
+        try await store.mutate { scenes in
+            guard let index = scenes.firstIndex(where: {
+                $0.id == sceneId && $0.storyWorldId == storyWorldId
+            }), scenes[index].imageKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
+                return
+            }
+            // Keep every user-edited field and update only the missing key.
+            scenes[index].imageKey = trimmedKey
+            repaired = true
+        }
+        return repaired
     }
 
     /// 重複Worldの移行専用。関連付けだけをcanonical Worldへ変更し、
@@ -377,6 +411,19 @@ final class LocalJSONStoryLorebookRepository: StoryLorebookRepository {
         try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.priority > $1.priority }
+    }
+
+    func replaceEntries(_ entries: [StoryLorebookEntry], storyWorldId: UUID) async throws {
+        let replacement = entries.map { entry in
+            var entry = entry
+            entry.storyWorldId = storyWorldId
+            entry.updatedAt = Date()
+            return entry
+        }
+        try await store.mutate { all in
+            all.removeAll { $0.storyWorldId == storyWorldId }
+            all.append(contentsOf: replacement)
+        }
     }
 
     func saveEntry(_ entry: StoryLorebookEntry) async throws {

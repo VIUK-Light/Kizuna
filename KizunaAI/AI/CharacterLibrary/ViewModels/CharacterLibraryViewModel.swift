@@ -39,6 +39,11 @@ final class CharacterLibraryViewModel: ObservableObject {
     /// テンプレートを読み込めない状態。空のテンプレート一覧とは区別する。
     @Published private(set) var templateLoadError: String?
     @Published private(set) var didLoadTemplates: Bool = false
+    /// 一覧からの削除失敗を成功扱いにせず、確認画面の後でUIへ通知する。
+    @Published private(set) var deleteErrorMessage: String?
+    /// 同じ行の確認アラートを連続して確定しても、関連データの掃除と
+    /// repository削除を二重に走らせない。VMはMainActor上で直列化される。
+    private var deletingIDs = Set<UUID>()
 
     private let characterRepo: CharacterRepository
     private let templateRepo: TemplateRepository
@@ -92,9 +97,9 @@ final class CharacterLibraryViewModel: ObservableObject {
         do {
             self.templates = try await templateRepo.fetchTemplates()
             didLoadTemplates = true
-            if !templates.isEmpty {
-                templateLoadError = nil
-            }
+            // 空配列も「読み込み成功した空状態」であり、前回の
+            // エラーを残すとTemplatePickerが失敗表示のままになる。
+            templateLoadError = nil
         } catch {
             // キャラクター一覧は利用できるため、テンプレートだけにエラーを
             // 表示する。空配列を「テンプレートなし」と誤認させない。
@@ -120,21 +125,60 @@ final class CharacterLibraryViewModel: ObservableObject {
     }
 
     func delete(id: UUID) async {
+        guard deletingIDs.insert(id).inserted else { return }
+        defer { deletingIDs.remove(id) }
+        deleteErrorMessage = nil
         do {
-            // 一覧のスナップショットではなく最新保存値で保護状態を確認する。
-            // 標準化処理と削除タップが競合しても、メモリーだけを消さない。
-            let latest = try await characterRepo.fetchCharacters().first(where: { $0.id == id })
-            guard latest?.isSystemProtected != true else { return }
-            // 物語本文は残すが、今後のシーン/キャストで削除済みIDを使わない。
+            // 保護判定と本体削除はリポジトリの同一ロック内で行う。
+            // 先に一覧を読んでから削除すると、標準キャラ化や別の削除と
+            // 競合した際に、保護されたキャラの関連データだけを消し得る。
+            let deletionResult = try await characterRepo.deleteCharacter(id: id)
+            switch deletionResult {
+            case .protected:
+                deleteErrorMessage = KizunaCopy.text(
+                    japanese: "標準キャラクターは削除できません。",
+                    english: "Standard characters cannot be deleted."
+                )
+                return
+            case .notFound:
+                deleteErrorMessage = KizunaCopy.text(
+                    japanese: "キャラクターが見つかりません。一覧を更新してから再試行してください。",
+                    english: "The character could not be found. Refresh the library and try again."
+                )
+                return
+            case .deleted, .needsCleanup:
+                // `.needsCleanup` means a previous attempt already removed
+                // the profile. Continue the idempotent orphan cleanup rather
+                // than turning the retry into a misleading not-found error.
+                break
+            }
+
+            // 本体削除が確定した後だけ、物語参照とメモリーを掃除する。
+            // これらの掃除が失敗しても本体削除の結果を成功扱いに戻さない。
             try await StoryCharacterReferenceCleaner.remove(characterID: id)
-            // 一覧のコンテキストメニューから削除した場合も、詳細画面と同じく
-            // キャラに紐づく全体メモリーを孤児化させない。
             try await memoryRepo.deleteAllMemories(characterId: id)
-            // 関連データの掃除に成功してから本体を削除する。
-            try await characterRepo.deleteCharacter(id: id)
+            // キャラ本体が消えた後は、Personaスレッドを保存済みの
+            // personaSnapshotへ切り替える。会話本文を削除せず、次回送信が
+            // 削除済みUUIDを参照して失敗し続ける状態だけを解消する。
+            PersonaChatStore.shared.detachCharacterReferences(for: id)
+            try await characterRepo.completeCharacterDeletionCleanup(id: id)
             await reload()
         } catch {
             NSLog("[CharacterLibraryVM] delete failed: %@", String(describing: error))
+            // 本体削除後の関連データ掃除が失敗しても、一覧には削除済み
+            // キャラを残さない。pending marker は保持されるため、再試行で
+            // story/memory/persona の掃除を続行できる。
+            await reload()
+            let message = KizunaCopy.text(
+                japanese: "キャラクターの削除を完了できませんでした。関連データの状態を確認して再試行してください。",
+                english: "Character deletion did not complete. Check the related data and try again."
+            )
+            // NSErrorの詳細は日本語のまま返ることがあり、英語UIへそのまま
+            // 混ぜると診断文が読みにくくなる。詳細はログに残し、画面には
+            // 言語を揃えた安全なメッセージだけを表示する。
+            deleteErrorMessage = KizunaCopy.language == .japanese
+                ? "\(message)\n\(error.localizedDescription)"
+                : message
         }
     }
 

@@ -35,17 +35,17 @@ struct KizunaMyPageView: View {
                 .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 680)
         }
         .alert(
-            KizunaCopy.text(japanese: "初回設定をやり直しますか？", english: "Show the welcome setup again?"),
+            KizunaCopy.text(japanese: "初期設定を今すぐ開きますか？", english: "Open the welcome setup now?"),
             isPresented: $isShowingResetLaunchAlert
         ) {
-            Button(KizunaCopy.text(japanese: "表示する", english: "Show")) {
-                UserDefaults.standard.set(false, forKey: "kizuna.launch.completed")
+            Button(KizunaCopy.text(japanese: "開く", english: "Open")) {
+                UserDefaults.standard.set(false, forKey: KizunaStorageKeys.launchCompleted)
             }
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
             Text(KizunaCopy.text(
-                japanese: "保存済みのプロフィールやモデル設定は変更されません。",
-                english: "Your profile and model settings will not be changed."
+                japanese: "保存済みのプロフィールやモデル設定は変更されません。現在の画面から初期設定へ移動します。",
+                english: "Your profile and model settings will not be changed. The current screen will move to welcome setup."
             ))
         }
         .onAppear {

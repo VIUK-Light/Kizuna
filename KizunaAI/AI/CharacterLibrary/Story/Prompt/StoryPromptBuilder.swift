@@ -13,6 +13,18 @@
 import Foundation
 
 struct StoryPromptBuilder {
+    /// Speaker/name matching must use the same Unicode and case rules in both
+    /// prompt construction and generated-line parsing.  Keeping this helper at
+    /// type scope prevents the two paths from drifting apart.
+    static func normalizedCharacterName(_ value: String) -> String {
+        value
+            .precomposedStringWithCanonicalMapping
+            .folding(options: [.caseInsensitive], locale: .current)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     private static func memoryCategoryLabel(_ category: MemoryCategory, isEnglish: Bool) -> String {
         guard isEnglish else { return category.displayName }
         switch category {
@@ -95,49 +107,9 @@ struct StoryPromptBuilder {
         func memoryCategoryLabel(_ category: MemoryCategory) -> String {
             Self.memoryCategoryLabel(category, isEnglish: isEnglish)
         }
-        // Built-in genre rules predate the language switch and are stored as
-        // Japanese literals. Translate those stable safety controls while
-        // leaving user-authored rules untouched when no catalog entry exists.
-        let safetyRuleTranslations: [String: String] = [
-            "ユーザーが拒否や不快感を示したら態度を和らげ、話題を変える。": "If the user refuses or shows discomfort, soften the tone and change the subject.",
-            "個人を特定する情報を聞き出さない。": "Do not solicit personally identifying information.",
-            "現実の危険行為や違法行為の手順を説明しない。": "Do not explain procedures for real-world dangerous or illegal acts.",
-            "恋愛描写は穏やかな範囲に抑える。": "Keep romance within a gentle, non-explicit range.",
-            "強制・脅迫・監禁・支配を肯定的に描かない。": "Do not portray coercion, threats, confinement, or domination positively.",
-            "嫉妬や執着は軽い感情表現に留める。": "Keep jealousy and fixation as mild emotional expressions.",
-            "家族関係は安心できる関係として描く。": "Portray family relationships as safe and supportive.",
-            "兄妹姉弟・親代わりは恋愛化しない。": "Do not turn sibling or parental roles into romance.",
-            "依存や支配を肯定しない。": "Do not endorse dependency or domination.",
-            "犯罪や危険行為の具体的手順を出さない。": "Do not provide concrete steps for crime or dangerous acts.",
-            "暴力や犯罪を現実で実行するよう促さない。": "Do not encourage carrying out violence or crime in real life.",
-            "物語上の雰囲気に留める。": "Keep this at the level of fictional atmosphere.",
-            "過度な残虐描写を避ける。": "Avoid excessively graphic cruelty.",
-            "恐怖演出は雰囲気中心にする。": "Keep horror focused on atmosphere.",
-            "現実の危険行為につながる指示を出さない。": "Do not give instructions that could lead to real-world danger.",
-            "暴力描写は雰囲気の範囲に留める。": "Keep violence at the level of fictional atmosphere.",
-            "現実の戦闘技術を具体化しない。": "Do not provide concrete real-world combat techniques.",
-            "医療・法律・金融などの高リスク領域では断定しすぎない。": "Avoid overconfident claims in high-risk areas such as medicine, law, and finance.",
-            "必要に応じて専門家への相談を促す。": "Encourage consulting a qualified professional when appropriate.",
-            "未成年キャラクターの場合、性的描写を避ける。": "Avoid sexual content involving minor characters.",
-            "ユーザーが不快感や拒否を示したら態度を和らげる。": "If the user shows discomfort or refusal, soften the tone.",
-            "家族・兄弟姉妹的関係は恋愛化しない。": "Do not turn family or sibling-like relationships into romance.",
-            "支配や従属を美化しすぎない。": "Do not excessively romanticize domination or submission.",
-            "現実的な人権侵害を肯定する描写は避ける。": "Avoid portraying real-world human-rights abuses positively.",
-            "競争は健全な範囲に留め、暴力や侮辱を煽らない。": "Keep competition healthy and do not incite violence or insults.",
-            "立場の差を利用した強要や搾取を肯定しない。": "Do not endorse coercion or exploitation based on a power difference.",
-            "暴力的な対立は雰囲気に留め、煽動的な描写を避ける。": "Keep violent conflict atmospheric and avoid inciting descriptions.",
-            "犯罪手順を具体化しない。": "Do not provide concrete crime procedures.",
-            "医療的な確定診断や具体的処方は行わず、必要時に専門家相談を促す。": "Do not provide definitive medical diagnoses or specific prescriptions; encourage professional help when needed.",
-            "法律上の確定見解は出さず、必要時に専門家相談を促す。": "Do not give definitive legal opinions; encourage professional advice when needed.",
-            "過度な残虐描写を避ける。恐怖演出は雰囲気中心に。": "Avoid excessive gore; keep fear focused on atmosphere.",
-            "悪役であってもユーザーへの実害を煽る描写は避ける。": "Even for villains, avoid content that encourages real harm to the user.",
-            "戦闘描写は雰囲気の範囲に留め、現実の暴力指南をしない。": "Keep battle scenes atmospheric and do not provide real-world violence guidance.",
-            "人生選択を強要しない。決定権はユーザーにあると示す。": "Do not force life choices; make clear that the user remains the decision maker.",
-            "押し付けず、ユーザーのペースに合わせる。": "Do not be pushy; follow the user's pace."
-        ]
         func localizedRule(_ rule: String) -> String {
             guard isEnglish else { return rule }
-            return safetyRuleTranslations[rule] ?? rule
+            return StoryEnglishCatalog.localizedSafetyRule(rule)
         }
 
         // ── 冒頭 ──
@@ -224,7 +196,10 @@ struct StoryPromptBuilder {
                 let values = [character.mood, character.goal, character.relationship, character.innerThought]
                     .filter { !$0.isEmpty }
                     .joined(separator: " / ")
-                if !values.isEmpty { stateLines.append("\(character.characterName): \(values)") }
+                if !values.isEmpty {
+                    let identity = character.characterId.map { " [characterId=\($0.uuidString)]" } ?? ""
+                    stateLines.append("\(character.characterName)\(identity): \(values)")
+                }
             }
             for item in storyState.inventory.prefix(8) {
                 let owner = item.owner.isEmpty ? "" : " [\(item.owner)]"
@@ -249,7 +224,7 @@ struct StoryPromptBuilder {
                 guard let profile = characterIndex[member.characterId] else { continue }
                 let name = profile.visibleName
                 var lines: [String] = []
-                lines.append("◆ \(name) (\(roleLabel(member.roleInStory)))")
+                lines.append("◆ \(name) [characterId=\(member.characterId.uuidString)] (\(roleLabel(member.roleInStory)))")
                 if !profile.shortDescription.isEmpty { lines.append("  \(copy("紹介", "Introduction")): \(profile.shortDescription)") }
                 if !profile.personality.isEmpty { lines.append("  \(copy("性格", "Personality")): \(profile.personality)") }
                 if !profile.speakingStyle.isEmpty { lines.append("  \(copy("口調", "Speaking style")): \(profile.speakingStyle)") }
@@ -264,6 +239,22 @@ struct StoryPromptBuilder {
                 blocks.append(lines.joined(separator: "\n"))
             }
             sections.append("## \(copy("今このシーンに居るキャラ", "Characters active in this scene")) (active)\n" + blocks.joined(separator: "\n\n"))
+
+            let activeIdentityLines = activeCast.prefix(StoryConstants.maxActiveCharacters).compactMap { member -> String? in
+                guard let profile = characterIndex[member.characterId] else { return nil }
+                return "- \(member.characterId.uuidString) = \(profile.visibleName)"
+            }
+            if !activeIdentityLines.isEmpty {
+                sections.append(
+                    "## \(copy("発話者ID", "Speaker identities"))\n"
+                    + activeIdentityLines.joined(separator: "\n")
+                    + "\n"
+                    + copy(
+                        "角括弧内のcharacterIdは内部IDです。名前が同じキャラを区別する時だけ、発話行を「<UUID> 名前: 本文」の形式にしてください。UUIDは一覧から正確にコピーし、名前だけで推測しないでください。",
+                        "The characterId in brackets is an internal ID. When active names are duplicated, format each line as `<UUID> Name: text`. Copy the UUID exactly from this roster; never guess an identity from the name alone."
+                    )
+                )
+            }
         }
 
         // ── inactive キャラ (短い背景情報のみ) ──
@@ -405,6 +396,15 @@ struct StoryPromptBuilder {
             }
         }
         push(copy("複数キャラを出す時は、発話ごとに必ず「キャラ名: 本文」で分ける。名前のない発話や、誰が喋ったかわからない文を出さない。", "When multiple characters speak, separate every line as Character name: text. Never output an unnamed line or unclear speaker."))
+        let activeEntries = activeCast.prefix(StoryConstants.maxActiveCharacters).compactMap { member -> (id: UUID, name: String)? in
+            guard let profile = characterIndex[member.characterId] else { return nil }
+            return (member.characterId, profile.visibleName)
+        }
+        let activeNameCounts = Dictionary(grouping: activeEntries, by: { Self.normalizedCharacterName($0.name) })
+        let hasDuplicateActiveNames = activeNameCounts.values.contains { $0.count > 1 }
+        if hasDuplicateActiveNames {
+            push(copy("同名のactive NPCがいます。該当する発話は必ず「<UUID> 名前: 本文」で始め、characterIdのUUIDを正確に使う。名前だけの発話は禁止。", "Some active NPCs share a name. Every affected line must start with `<UUID> Name: text`, using the exact characterId UUID. Name-only lines are forbidden for duplicated names."))
+        }
         if let userCharacterName {
             push(copy("「\(userCharacterName):」で始まる行、ユーザーの台詞の創作、ユーザーの内心の断定を出さない。", "Do not output a line beginning with \(userCharacterName):, invent the user's dialogue, or state the user's inner feelings."))
         }
@@ -420,15 +420,14 @@ struct StoryPromptBuilder {
 
         // ── 今回のユーザー入力 + プライム ──
         sections.append("## \(copy("今回のユーザー発言", "Current user message"))\n" + userInput)
-        let activeNames = activeCast.prefix(StoryConstants.maxActiveCharacters).compactMap { member -> String? in
-            guard let profile = characterIndex[member.characterId] else { return nil }
-            return profile.visibleName
+        let speakerEntries = activeEntries.map { entry in
+            hasDuplicateActiveNames ? "<\(entry.id.uuidString)> \(entry.name)" : entry.name
         }
-        let speakerHint = activeNames.isEmpty ? copy("キャラ名", "Character name") : activeNames.joined(separator: " / ")
+        let speakerHint = speakerEntries.isEmpty ? copy("キャラ名", "Character name") : speakerEntries.joined(separator: " / ")
         sections.append(
             """
             ## \(copy("出力開始", "Output start"))
-            \(copy("まず「\(speakerHint): 発話」を返す。場所・時間・目的が実際に変化した時だけ、必要なら前置きに「ナレーション: 本文」を1行添える。ユーザー操作キャラの名前は使わない。", "Start with \(speakerHint): dialogue. Add one Narration: text line only when the location, time, or goal actually changes. Never use the user's character name."))
+            \(copy("まず「\(speakerHint): 発話」を返す。同名キャラは必ずUUID付き形式を使う。場所・時間・目的が実際に変化した時だけ、必要なら前置きに「ナレーション: 本文」を1行添える。ユーザー操作キャラの名前は使わない。", "Start with \(speakerHint): dialogue. Always use the UUID form for duplicated names. Add one Narration: text line only when the location, time, or goal actually changes. Never use the user's character name."))
             """
         )
 
@@ -450,22 +449,39 @@ struct StoryPromptBuilder {
         selectedLorebookEntries: [StoryLorebookEntry],
         userCharacterName: String?
     ) -> String {
-        let npc = activeCast.compactMap { member -> (String, CharacterProfile)? in
+        let activeCharacters = activeCast.prefix(StoryConstants.maxActiveCharacters).compactMap { member -> (id: UUID, name: String, profile: CharacterProfile)? in
             guard let profile = characterIndex[member.characterId] else { return nil }
             let name = profile.visibleName
-            return (name, profile)
-        }.first
-        let npcName = npc?.0 ?? "相手"
-        let profile = npc?.1
-
+            return (member.characterId, name, profile)
+        }
+        let npc = activeCharacters.first
+        let npcName = npc?.name ?? "相手"
+        let profile = npc?.profile
+        let normalizedActiveNames = Dictionary(grouping: activeCharacters, by: { character in
+            Self.normalizedCharacterName(character.name)
+        })
+        let hasDuplicateActiveNames = normalizedActiveNames.values.contains { $0.count > 1 }
         let isEnglish = KizunaCopy.language == .english
+        let npcSpeakerLabel: String = {
+            guard let npc, hasDuplicateActiveNames else { return npcName }
+            return "<\(npc.id.uuidString)> \(npc.name)"
+        }()
+        let duplicateSpeakerRoster = hasDuplicateActiveNames
+            ? activeCharacters.map { "<\($0.id.uuidString)> \($0.name)" }.joined(separator: " / ")
+            : ""
+        let duplicateInstruction = hasDuplicateActiveNames
+            ? (isEnglish
+               ? "For duplicated names, copy one of these IDs exactly: \(duplicateSpeakerRoster)."
+               : "同名キャラは次のUUIDを正確に使う: \(duplicateSpeakerRoster)。")
+            : ""
+
         var lines = [
             isEnglish
                 ? "You are the scene partner in a Kizuna story chat. Reply in English only; no reasoning, explanations, translations, lists, or symbol-only output."
                 : "あなたは絆の物語チャットの相手役です。本文は日本語だけを返す。思考、説明、翻訳、箇条書き、記号だけの返答は禁止。",
             isEnglish
-                ? "Start with \(npcName): a natural reply. Add one Narration: text line only when the location, time, or goal changes or the user explicitly asks for it. Do not repeat the previous scene, greeting, or reply. Never invent the user's dialogue, actions, or feelings."
-                : "基本は「\(npcName): 自然な返事」を1行だけ返す。場所・時間・目的が実際に変化した時、またはユーザーが明示した時だけ、その前に短い「ナレーション: 本文」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答は禁止。ユーザーの台詞・行動・感情は代弁しない。"
+                ? "Start with \(npcSpeakerLabel): a natural reply. \(duplicateInstruction) Add one Narration: text line only when the location, time, or goal changes or the user explicitly asks for it. Do not repeat the previous scene, greeting, or reply. Never invent the user's dialogue, actions, or feelings."
+                : "基本は「\(npcSpeakerLabel): 自然な返事」を1行だけ返す。\(duplicateInstruction) 場所・時間・目的が実際に変化した時、またはユーザーが明示した時だけ、その前に短い「ナレーション: 本文」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答は禁止。ユーザーの台詞・行動・感情は代弁しない。"
         ]
         if let userCharacterName, !userCharacterName.isEmpty {
             lines.append(isEnglish
@@ -648,17 +664,34 @@ struct StoryPromptBuilder {
             "active character",
             "conversation only",
             "dialogue only",
+            "dialogue alone",
             "inner thoughts",
             "internal thoughts",
             "thinking process",
             "output format",
             "response format",
             "reply only",
+            "off-scene",
+            "output reasoning",
+            "meta commentary",
             "no bullet",
             "do not include reasoning",
             "do not include choices"
         ]
-        return keywords.contains { rule.localizedCaseInsensitiveContains($0) }
+        guard !keywords.contains(where: { rule.localizedCaseInsensitiveContains($0) }) else {
+            return true
+        }
+
+        // A safety rule can legitimately mention its first line (for example,
+        // not revealing personal data).  Treat it as a format rule only when
+        // the same sentence explicitly describes a speaker/output layout.
+        let normalized = rule.localizedLowercase
+        guard normalized.contains("first line") else { return false }
+        let outputTerms = [
+            "narration", "narrator", "dialogue", "speaker", "npc",
+            "start with", "begin with", "starts with", "begins with"
+        ]
+        return outputTerms.contains { normalized.contains($0) }
     }
 
     private func utf8Prefix(_ value: String, byteLimit: Int) -> String {

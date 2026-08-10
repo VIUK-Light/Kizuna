@@ -71,7 +71,19 @@ struct StorySessionChatView: View {
             if let sessionVM {
                 StorySessionChatBody(vm: sessionVM, isShowingRestHelp: $isShowingRestHelp)
             } else if let loadError {
-                ContentUnavailableView(storyCopy("ストーリーを開始できません", "Unable to start the story"), systemImage: "exclamationmark.triangle", description: Text(loadError))
+                VStack(spacing: 12) {
+                    ContentUnavailableView(
+                        storyCopy("ストーリーを開始できません", "Unable to start the story"),
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(loadError)
+                    )
+                    Button {
+                        Task { @MainActor in await startSession() }
+                    } label: {
+                        Label(storyCopy("もう一度読み込む", "Load again"), systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ProgressView(storyCopy("世界を読み込んでいます…", "Loading the story…"))
@@ -88,42 +100,46 @@ struct StorySessionChatView: View {
             // UIフレーム: 詳細な説明・設定画面はここを差し替えて実装する。
             RestBreakHelpSheetFrame()
         }
-        .task(id: world.id) {
-            guard sessionVM == nil else { return }
-            await detailVM.reload()
-            if detailVM.sessionLoadFailed || detailVM.sceneLoadFailed || detailVM.characterLoadFailed {
-                loadError = storyCopy(
-                    "ストーリーの保存データを読み込めませんでした。データを空として扱わず、再試行してください。",
-                    "The story data could not be loaded. It was not treated as empty; try again."
-                )
-                return
-            }
-            guard !detailVM.cast.isEmpty else {
-                loadError = storyCopy(
-                    "このストーリーにはキャストが設定されていません。詳細画面からキャラクターを追加してください。",
-                    "This story has no cast. Add at least one character from the story details before starting it."
-                )
-                return
-            }
-            guard let (session, scene) = await detailVM.createOrResumeSession(preferredSessionID: initialSessionID) else {
-                loadError = storyCopy(
-                    detailVM.sessionSaveFailed
-                        ? "セッションを保存できませんでした。保存先を確認してから再試行してください。"
-                        : "開始シーンがありません。世界観の詳細からシーンを確認してください。",
-                    detailVM.sessionSaveFailed
-                        ? "The story session could not be saved. Check storage and try again."
-                        : "This story has no opening scene. Add one from the story details."
-                )
-                return
-            }
-            let vm = StorySessionViewModel(world: world, session: session, scene: scene)
-            await vm.bootstrap()
-            if let bootstrapError = vm.bootstrapError {
-                loadError = bootstrapError
-                return
-            }
-            sessionVM = vm
+        .task(id: world.id) { await startSession() }
+    }
+
+    @MainActor
+    private func startSession() async {
+        guard sessionVM == nil else { return }
+        loadError = nil
+        await detailVM.reload()
+        if detailVM.castLoadFailed || detailVM.sessionLoadFailed || detailVM.sceneLoadFailed || detailVM.characterLoadFailed {
+            loadError = storyCopy(
+                "ストーリーの保存データを読み込めませんでした。データを空として扱わず、再試行してください。",
+                "The story data could not be loaded. It was not treated as empty; try again."
+            )
+            return
         }
+        guard !detailVM.cast.isEmpty else {
+            loadError = storyCopy(
+                "このストーリーにはキャストが設定されていません。詳細画面からキャラクターを追加してください。",
+                "This story has no cast. Add at least one character from the story details before starting it."
+            )
+            return
+        }
+        guard let (session, scene) = await detailVM.createOrResumeSession(preferredSessionID: initialSessionID) else {
+            loadError = storyCopy(
+                detailVM.sessionSaveFailed
+                    ? "セッションを保存できませんでした。保存先を確認してから再試行してください。"
+                    : "開始シーンがありません。世界観の詳細からシーンを確認してください。",
+                detailVM.sessionSaveFailed
+                    ? "The story session could not be saved. Check storage and try again."
+                    : "This story has no opening scene. Add one from the story details."
+            )
+            return
+        }
+        let vm = StorySessionViewModel(world: world, session: session, scene: scene)
+        await vm.bootstrap()
+        if let bootstrapError = vm.bootstrapError {
+            loadError = bootstrapError
+            return
+        }
+        sessionVM = vm
     }
 
     private var header: some View {
@@ -373,7 +389,8 @@ private struct StoryGenerationModelPill: View {
             case .savedOnly:
                 return storyCopy("モデル保存済み・自動確認待ち", "Model saved · check pending")
             case .recentFailure:
-                return localModelManager.runtimeDiagnosticSummary ?? storyCopy("ローカル自動確認失敗", "Automatic local check failed")
+                return localModelManager.localizedRuntimeDiagnosticSummary
+                    ?? storyCopy("ローカル自動確認失敗", "Automatic local check failed")
             case .modelMissing:
                 return storyCopy("ローカル未導入", "Local model not installed")
             }
@@ -471,6 +488,16 @@ private struct StorySessionChatBody: View {
                         } else {
                             unreadStoryMessageCount += 1
                         }
+                    }
+                    .task(id: vm.session.id) {
+                        // 既存セッションを開いた直後は messages.count が変化しないため、
+                        // onChangeだけでは保存済みの最新発話へ移動できない。LazyVStackの
+                        // レイアウトを1回待ってから、再開時だけ最新へ初期配置する。
+                        await Task.yield()
+                        guard let last = vm.session.messages.last?.id else { return }
+                        proxy.scrollTo(last, anchor: .bottom)
+                        isStoryChatNearLatest = true
+                        unreadStoryMessageCount = 0
                     }
                     .onChange(of: service.streamingResponse) { _, _ in
                         guard isStoryChatNearLatest, service.phase == .thinking else { return }
@@ -590,15 +617,33 @@ private struct StorySessionChatBody: View {
                 }
 
                 HStack(spacing: 10) {
+                    if vm.isSavingRestAcknowledgement {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(storyCopy("保存中…", "Saving…"))
+                            .font(.caption)
+                            .foregroundStyle(storyMuted)
+                    }
+                    if let error = vm.restAcknowledgementError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                HStack(spacing: 10) {
                     Button(storyCopy("少し休む", "Take a short break")) {
                         vm.chooseRestSuggestionBreak()
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(vm.isSavingRestAcknowledgement)
 
                     Button(storyCopy("このまま続ける", "Continue")) {
                         vm.chooseRestSuggestionContinue()
                     }
                     .buttonStyle(.bordered)
+                    .disabled(vm.isSavingRestAcknowledgement)
                 }
             }
             .padding(14)
@@ -640,7 +685,7 @@ private struct StorySessionChatBody: View {
                         .font(.system(size: 11.5, weight: .bold))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        if notice.backendName.localizedCaseInsensitiveContains("iori") {
+                        if notice.backend == .local {
                             Button {
                                 vm.generationModel = .b31
                                 _ = vm.retryRuntimeNotice(notice)
@@ -791,12 +836,13 @@ private struct StorySessionChatBody: View {
                     "The iori model is saved, but its on-device check has not finished. Wait for the check or choose an available model from the model menu."
                 )
             case .recentFailure:
-                // runtimeDiagnosticSummary may come from a Japanese native
-                // runtime log. Do not leak that raw diagnostic into an
-                // English alert; the details sheet can still show it.
-                unavailableModelMessage = KizunaCopy.language == .english
-                    ? "iori could not start on this device. Check the model details or choose an available model."
-                    : localModelManager.runtimeDiagnosticSummary ?? "iori を端末内で起動できませんでした。モデル詳細で状態を確認するか、利用可能なモデルを選択してください。"
+                // Native runtime diagnostics are localized by the model manager;
+                // do not leak a Japanese error into an English story alert.
+                unavailableModelMessage = localModelManager.localizedRuntimeDiagnosticSummary
+                    ?? storyCopy(
+                        "iori を端末内で起動できませんでした。モデル詳細で状態を確認するか、利用可能なモデルを選択してください。",
+                        "iori could not start on this device. Check the model details or choose an available model."
+                    )
             case .modelMissing:
                 unavailableModelMessage = storyCopy(
                     "iori のモデルが端末にありません。設定でモデルを保存するか、モデルメニューから利用可能なモデルを選択してください。",
@@ -1028,8 +1074,10 @@ private struct StorySessionChatBody: View {
 
     private func shouldOfferNAGISwitch(for message: StoryMessage) -> Bool {
         guard case .system = message.author else { return false }
-        let text = message.text
-        return text.contains("iori") || text.contains("ローカル")
+        // エラー本文は表示言語で変わるため、文字列検索でバックエンドを
+        // 推測しない。新形式は明示値、旧ストアのnilはローカル失敗を
+        // 含む可能性があるため互換的に表示する。
+        return message.retryBackend == nil || message.retryBackend == .local
     }
 
     @ViewBuilder

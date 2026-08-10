@@ -63,6 +63,15 @@ enum StoryRetryMetadata {
     }
 }
 
+/// 一時的なランタイム/保存失敗を会話履歴へ永続化せず表示する通知の再試行方法。
+/// 保存に失敗した補助操作も、直前のユーザーターンを誤って再送しないよう、
+/// 操作ごとの再試行を明示的に保持する。
+enum StoryRuntimeNoticeRetryAction: Equatable {
+    case userTurn
+    case narration(text: String)
+    case restAcknowledgement(characterID: UUID, characterName: String)
+}
+
 /// モデル状態/安全ブロック/保存失敗を会話履歴へ永続化せず表示する一時通知。
 /// 過去ログには本文だけを残し、再試行対象はUUIDと入力本文で保持する。
 struct StoryRuntimeNotice: Identifiable, Equatable {
@@ -71,19 +80,26 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
     let userMessageID: UUID
     let userText: String
     let backendName: String
+    /// UIの再試行先を言語非依存で表す。backendNameは表示/ログ用に残す。
+    let backend: StoryGenerationBackend
+    let retryAction: StoryRuntimeNoticeRetryAction
 
     init(
         id: UUID = UUID(),
         text: String,
         userMessageID: UUID,
         userText: String,
-        backendName: String
+        backendName: String,
+        backend: StoryGenerationBackend,
+        retryAction: StoryRuntimeNoticeRetryAction = .userTurn
     ) {
         self.id = id
         self.text = text
         self.userMessageID = userMessageID
         self.userText = userText
         self.backendName = backendName
+        self.backend = backend
+        self.retryAction = retryAction
     }
 }
 
@@ -192,16 +208,26 @@ final class StorySessionService: ObservableObject {
         return userMessageID
     }
 
-    func addNarration(_ text: String, session: StorySession) {
+    func addNarration(_ text: String, session: StorySession) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         var next = session
         next.messages.append(StoryMessage(author: .narrator, text: trimmed))
-        Task {
-            try? await sessionRepo.saveSession(next)
-            await MainActor.run {
-                self.savedTurnRevision += 1
-            }
+        do {
+            try await sessionRepo.saveSession(next)
+            savedTurnRevision += 1
+        } catch {
+            publishSupplementalSaveFailure(
+                text: localizedNotice(
+                    "ナレーションを保存できませんでした。保存先を確認してからもう一度試してください。",
+                    "The narration could not be saved. Check storage and try again."
+                ),
+                session: session,
+                backendName: "narration save failed",
+                backend: .persistence,
+                retryAction: .narration(text: trimmed)
+            )
+            NSLog("[StorySession] narration save failed: %@", error.localizedDescription)
         }
     }
 
@@ -211,7 +237,7 @@ final class StorySessionService: ObservableObject {
         characterID: UUID,
         characterName: String,
         session: StorySession
-    ) async {
+    ) async throws {
         var next = session
         next.messages.append(
             StoryMessage(
@@ -219,8 +245,49 @@ final class StorySessionService: ObservableObject {
                 text: localizedNotice("了解。続けよう。", "Okay. Let's continue.")
             )
         )
-        try? await sessionRepo.saveSession(next)
-        savedTurnRevision += 1
+        do {
+            try await sessionRepo.saveSession(next)
+            savedTurnRevision += 1
+        } catch {
+            publishSupplementalSaveFailure(
+                text: localizedNotice(
+                    "了承を保存できませんでした。保存先を確認してからもう一度試してください。",
+                    "The acknowledgement could not be saved. Check storage and try again."
+                ),
+                session: session,
+                backendName: "rest acknowledgement save failed",
+                backend: .persistence,
+                retryAction: .restAcknowledgement(
+                    characterID: characterID,
+                    characterName: characterName
+                )
+            )
+            NSLog("[StorySession] rest acknowledgement save failed: %@", error.localizedDescription)
+            // Keep the throwing contract honest so the ViewModel can retain
+            // the suggestion card and expose a retryable error to the user.
+            throw error
+        }
+    }
+
+    /// 補助操作の保存失敗も本文へsystem発話として混ぜず、同じ再試行カードへ載せる。
+    /// `session.id` は直前のユーザー入力がないセッションでも通知を構築できる
+    /// 安定した代替IDであり、補助操作のretryActionが再送対象を決める。
+    private func publishSupplementalSaveFailure(
+        text: String,
+        session: StorySession,
+        backendName: String,
+        backend: StoryGenerationBackend,
+        retryAction: StoryRuntimeNoticeRetryAction
+    ) {
+        let lastUserMessage = session.messages.last(where: { $0.author.isUser })
+        latestRuntimeNotice = StoryRuntimeNotice(
+            text: text,
+            userMessageID: lastUserMessage?.id ?? session.id,
+            userText: lastUserMessage?.text ?? "",
+            backendName: backendName,
+            backend: backend,
+            retryAction: retryAction
+        )
     }
 
     /// DEBUG用。会話を変更せず、相談サポートUIだけを表示する。
@@ -375,7 +442,8 @@ final class StorySessionService: ObservableObject {
                     notice: localizedNotice(
                         "再試行対象の発言を復元できませんでした。新しいメッセージを送信してください。",
                         "The message to retry could not be restored. Send a new message."
-                    )
+                    ),
+                    backend: generationModel == .e4b ? .local : .gemmaAPI
                 )
                 return
             }
@@ -391,6 +459,7 @@ final class StorySessionService: ObservableObject {
                         "会話を保存できなかったため、応答を開始できませんでした。もう一度送信してください。",
                         "The conversation could not be saved, so the reply was not started. Send it again."
                     ),
+                    backend: .persistence,
                     userMessageID: userMessageID,
                     userText: userText,
                     backendName: "session save"
@@ -413,6 +482,7 @@ final class StorySessionService: ObservableObject {
                     "キャラクター情報を読み込めなかったため、応答を開始できませんでした。もう一度試してください。",
                     "The character data could not be loaded, so the reply was not started. Try again."
                 ),
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: "character load failed"
@@ -434,6 +504,7 @@ final class StorySessionService: ObservableObject {
                     "登場キャラクターを読み込めなかったため、応答を開始できませんでした。もう一度試してください。",
                     "The story cast could not be loaded, so the reply was not started. Try again."
                 ),
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: "cast load failed"
@@ -442,9 +513,16 @@ final class StorySessionService: ObservableObject {
             return
         }
         let reconciledCast = reconciledCast(cast, for: world, scene: scene)
+        // castの読込後にcancel()されても、古い生成が関連データを
+        // 書き換えないよう、永続化の直前に所有権を再確認する。
+        guard isGenerationActive(generationID) else { return }
         if Set(cast.map(\.characterId)) != Set(reconciledCast.map(\.characterId)) || cast.count != reconciledCast.count {
             do {
                 try await castRepo.replaceCast(reconciledCast, storyWorldId: world.id)
+                // cancel()はrepository await中にも呼ばれ得る。完了後に
+                // 生成世代を再確認し、古いローカルスナップショットを
+                // このTaskの後続処理へ渡さない。
+                guard isGenerationActive(generationID) else { return }
                 cast = reconciledCast
             } catch {
                 await finishGenerationWithoutSaving(
@@ -453,6 +531,7 @@ final class StorySessionService: ObservableObject {
                         "登場キャラクターの関連データを保存できなかったため、応答を開始していません。もう一度試してください。",
                         "The story cast could not be saved, so the reply was not started. Try again."
                     ),
+                    backend: .persistence,
                     userMessageID: userMessageID,
                     userText: userText,
                     backendName: "cast save failed"
@@ -471,6 +550,7 @@ final class StorySessionService: ObservableObject {
                     "登場キャラクターが設定されていないため、物語を開始できません。詳細画面からキャラクターを追加してください。",
                     "The story cannot start because it has no cast. Add at least one character from the story details."
                 ),
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: "empty cast"
@@ -533,6 +613,7 @@ final class StorySessionService: ObservableObject {
                         "安全に関する案内を保存できなかったため、会話を更新できませんでした。もう一度試してください。",
                         "The safety response could not be saved, so the conversation was not updated. Try again."
                     ),
+                    backend: .persistence,
                     userMessageID: userMessageID,
                     userText: userText,
                     backendName: "safety notice save failed"
@@ -584,10 +665,17 @@ final class StorySessionService: ObservableObject {
             characterIndex: charIndex,
             maxActive: activeCharacterLimit
         )
+        guard isGenerationActive(generationID) else { return }
         var sceneWithSelectedCharacters = scene
         sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
+        // 選択結果の適用前にも確認する。cancel()後の遅延結果を
+        // 次回のシーン選択へ持ち越さない。
+        guard isGenerationActive(generationID) else { return }
         do {
             try await sceneRepo.saveScene(sceneWithSelectedCharacters)
+            // 保存処理が中断を即時観測しない実装でも、完了後の古いTaskが
+            // 現在のシーンとして扱われないよう所有権を再確認する。
+            guard isGenerationActive(generationID) else { return }
         } catch {
             await finishGenerationWithoutSaving(
                 generationID: generationID,
@@ -595,6 +683,7 @@ final class StorySessionService: ObservableObject {
                     "今回の登場キャラクターを保存できなかったため、応答を開始しませんでした。もう一度試してください。",
                     "The selected story characters could not be saved, so the reply was not started. Try again."
                 ),
+                backend: .persistence,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: "scene save failed"
@@ -991,7 +1080,8 @@ final class StorySessionService: ObservableObject {
                     text: noticeText,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: usedBackendName
+                    backendName: usedBackendName,
+                    backend: generationModel == .e4b ? .local : .gemmaAPI
                 )
                 self.latestSafetyConcern = safetyConcern
                 self.streamingResponse = rawFinal
@@ -1020,7 +1110,8 @@ final class StorySessionService: ObservableObject {
                     text: notice,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: usedBackendName + "・安全ブロック"
+                    backendName: usedBackendName + "・安全ブロック",
+                    backend: generationModel == .e4b ? .local : .gemmaAPI
                 )
                 self.latestSafetyConcern = safetyConcern
                 self.streamingResponse = notice
@@ -1049,7 +1140,8 @@ final class StorySessionService: ObservableObject {
                     text: notice,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: usedBackendName + "・無効出力"
+                    backendName: usedBackendName + "・無効出力",
+                    backend: generationModel == .e4b ? .local : .gemmaAPI
                 )
                 self.streamingResponse = notice
                 self.streamingSpeakerName = "システム"
@@ -1083,6 +1175,7 @@ final class StorySessionService: ObservableObject {
             await finishGenerationWithoutSaving(
                 generationID: generationID,
                 notice: notice,
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: usedBackendName + "・no parsed messages"
@@ -1111,6 +1204,7 @@ final class StorySessionService: ObservableObject {
                     "応答を保存できなかったため、会話には追加していません。もう一度試してください。",
                     "The reply could not be saved, so it was not added to the conversation. Try again."
                 ),
+                backend: .persistence,
                 userMessageID: userMessageID,
                 userText: userText,
                 backendName: usedBackendName + "・save failed"
@@ -1139,7 +1233,8 @@ final class StorySessionService: ObservableObject {
                     ),
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: "scene summary save failed"
+                    backendName: "scene summary save failed",
+                    backend: .persistence
                 )
                 NSLog("[StorySession] scene summary save failed: %@", error.localizedDescription)
             }
@@ -1152,6 +1247,11 @@ final class StorySessionService: ObservableObject {
         // 追加のLLM呼び出しを待たせず、本文とシーンから確定できる状態を
         // 毎ターン保存する。これで旧データのnil StoryStateが次ターンへ
         // そのまま流れ、iori/NAGIで連続性が分岐する問題を防ぐ。
+        // If the model happened to return a structured progress object in the
+        // same response, reuse it here. This is intentionally opportunistic:
+        // ordinary dialogue does not decode and stays on the deterministic
+        // path, while structured state is applied without a second LLM call.
+        let structuredProgressUpdate = parseProgressUpdate(rawFinal)
         var deterministicState = session.storyState ?? StoryState()
         if !scene.location.isEmpty { deterministicState.location = scene.location }
         if !scene.timeOfDay.isEmpty { deterministicState.timeOfDay = scene.timeOfDay }
@@ -1166,14 +1266,23 @@ final class StorySessionService: ObservableObject {
         session.storyState = deterministicState
 
         let progressUpdate = StoryProgressUpdate(
-            progressLabel: session.progressLabel.nonEmpty ?? "第1章 きっかけ",
-            currentObjective: session.currentObjective.nonEmpty
+            progressLabel: structuredProgressUpdate?.progressLabel.nonEmpty
+                ?? session.progressLabel.nonEmpty
+                ?? "第1章 きっかけ",
+            currentObjective: structuredProgressUpdate?.currentObjective.nonEmpty
+                ?? session.currentObjective.nonEmpty
                 ?? scene.sceneGoal.nonEmpty
                 ?? world.storyGoal.nonEmpty,
-            lastTurnProgress: synthesizeTurnProgress(from: newMessages),
-            lastSceneSummary: newSummary.nonEmpty ?? session.lastSceneSummary.nonEmpty,
-            unresolvedHooks: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks),
-            storyState: nil
+            lastTurnProgress: structuredProgressUpdate?.lastTurnProgress.nonEmpty
+                ?? synthesizeTurnProgress(from: newMessages),
+            lastSceneSummary: structuredProgressUpdate?.lastSceneSummary.nonEmpty
+                ?? newSummary.nonEmpty
+                ?? session.lastSceneSummary.nonEmpty,
+            unresolvedHooks: normalizedHooks(
+                structuredProgressUpdate?.unresolvedHooks,
+                fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
+            ),
+            storyState: structuredProgressUpdate?.storyState
         )
         session.progressLabel = progressUpdate.progressLabel.nonEmpty
             ?? session.progressLabel.nonEmpty
@@ -1208,7 +1317,8 @@ final class StorySessionService: ObservableObject {
                 ),
                 userMessageID: userMessageID,
                 userText: userText,
-                backendName: "progress save failed"
+                backendName: "progress save failed",
+                backend: .persistence
             )
             NSLog("[StorySession] progress save failed: %@", error.localizedDescription)
         }
@@ -1282,10 +1392,15 @@ final class StorySessionService: ObservableObject {
         }
     }
 
-    private func retryableSystemMessage(_ text: String, userMessageID: UUID) -> StoryMessage {
+    private func retryableSystemMessage(
+        _ text: String,
+        userMessageID: UUID,
+        backend: StoryGenerationBackend = .local
+    ) -> StoryMessage {
         StoryMessage(
             author: .system,
-            text: StoryRetryMetadata.attachingUserMessageID(userMessageID, to: text)
+            text: StoryRetryMetadata.attachingUserMessageID(userMessageID, to: text),
+            retryBackend: backend
         )
     }
 
@@ -1294,6 +1409,7 @@ final class StorySessionService: ObservableObject {
     private func finishGenerationWithoutSaving(
         generationID: UUID,
         notice: String,
+        backend: StoryGenerationBackend,
         userMessageID: UUID? = nil,
         userText: String? = nil,
         backendName: String = ""
@@ -1306,7 +1422,8 @@ final class StorySessionService: ObservableObject {
                     text: notice,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: backendName
+                    backendName: backendName,
+                    backend: backend
                 )
             }
             self.streamingResponse = notice
@@ -1489,6 +1606,7 @@ final class StorySessionService: ObservableObject {
             }
             let notice: String
             let backendName: String
+            let backend: StoryGenerationBackend
             switch generationModel {
             case .e4b:
                 notice = self.localizedNotice(
@@ -1496,12 +1614,14 @@ final class StorySessionService: ObservableObject {
                     "iori reached its wait limit and stopped. The model response was not saved. Try again or continue with NAGI."
                 )
                 backendName = "iori ローカル・タイムアウト"
+                backend = .local
             case .b31:
                 notice = self.localizedNotice(
                     "Gemma4 31B APIの生成が時間内に完了しませんでした。本文は保存していません。もう一度試してください。",
                     "Gemma4 31B API did not finish in time. The response was not saved. Try again."
                 )
                 backendName = "Gemma4 31B API・タイムアウト"
+                backend = .gemmaAPI
             }
             self.streamingResponse = notice
             self.streamingSpeakerName = "システム"
@@ -1513,13 +1633,13 @@ final class StorySessionService: ObservableObject {
                 text: notice,
                 userMessageID: userMessageID,
                 userText: userText,
-                backendName: backendName
+                backendName: backendName,
+                backend: backend
             )
             guard self.timeoutSaveToken == timeoutToken else { return }
-            guard self.phase == .thinking else {
-                self.timeoutSaveToken = nil
-                return
-            }
+            // timeoutTokenが一致している場合は、このwatchdogが所有する
+            // 生成の後始末を必ず完了させる。phaseが先にidleへ変わった
+            // ケースでreturnすると、以後の送信が永久に詰まる。
             self.streamingStatusText = ""
             self.savedTurnRevision += 1
             self.timeoutSaveToken = nil
@@ -1580,20 +1700,45 @@ final class StorySessionService: ObservableObject {
                 }
                 continue
             }
-            // ユーザー操作キャラの発話は表示しない。AIが代弁した場合も、
-            // そのままナレーションへ落とすとユーザーの台詞として見えてしまうため破棄する。
-            if let delimiter = line.firstIndex(where: { $0 == ":" || $0 == "：" }) {
-                let possibleSpeaker = String(line[..<delimiter]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if forbiddenNames.contains(normalizedSpeakerName(possibleSpeaker)) {
-                    continue
-                }
-            }
-            // 「名前: 本文」 — 同名キャラがいる場合は辞書の先頭を選ばない。
-            // 名前だけではUUIDを一意に決められないため、その行はナレーションへ
-            // 落として誤ったキャラの吹き出し・状態更新を防ぐ。
             let speakerLabel: String? = line.firstIndex(where: { $0 == ":" || $0 == "：" }).map {
                 String(line[..<$0]).trimmingCharacters(in: .whitespacesAndNewlines)
             }
+            let explicitSpeakerID = speakerLabel.flatMap(explicitCharacterID)
+            // ユーザー操作キャラの発話は表示しない。UUID付きの話者表記も
+            // 名前だけの表記と同じく、ユーザーキャラを代弁した行は破棄する。
+            if let explicitSpeakerID, explicitSpeakerID == forbiddenCharacterID {
+                continue
+            }
+            if explicitSpeakerID == nil,
+               let speakerLabel,
+               forbiddenNames.contains(normalizedSpeakerName(speakerLabel)) {
+                continue
+            }
+
+            // 新形式は「<character UUID> 名前: 本文」または
+            // 「characterId=<character UUID> 名前: 本文」。名前が重複しても
+            // UUIDを主キーにして解決し、名前の比較や辞書順にはフォールバックしない。
+            if let explicitSpeakerID {
+                guard let candidate = castNames.first(where: { $0.id == explicitSpeakerID }) else {
+                    // 未知のUUIDは別キャラへ誤割り当てず、本文だけをナレーションとして
+                    // 残す。生成結果を黙って消さず、かつ誤った吹き出しを作らない。
+                    let body = textAfterSpeakerDelimiter(line)
+                    if isMeaningfulStoryText(body) {
+                        out.append(makeMessage(author: .narrator, text: body))
+                    }
+                    continue
+                }
+                let body = textAfterSpeakerDelimiter(line)
+                guard isMeaningfulStoryText(body) else { continue }
+                guard emittedCastLines.insert(candidate.id.uuidString + "|" + normalizedDuplicateText(body)).inserted else {
+                    continue
+                }
+                out.append(makeMessage(author: .cast(characterId: candidate.id, displayName: candidate.name), text: body))
+                continue
+            }
+
+            // 旧形式の「名前: 本文」は後方互換で受け付ける。ただし同名キャラが
+            // いる場合は辞書の先頭へ暗黙に結び付けず、本文をナレーションにする。
             let normalizedSpeaker = speakerLabel.map(normalizedSpeakerName)
             let matchedCandidates = castNames.filter { _, _, normalizedName in
                 guard let normalizedSpeaker, !normalizedSpeaker.isEmpty else { return false }
@@ -1621,16 +1766,32 @@ final class StorySessionService: ObservableObject {
         return out
     }
 
+    /// 生成モデルが同名キャラを区別するために付けるUUIDを、話者ラベルから読む。
+    /// UUID単体（`<UUID> 名前`）と、明示キー（`characterId=<UUID> 名前`）の
+    /// どちらも許容する。見つからない場合は名前だけの旧形式として扱う。
+    private func explicitCharacterID(from label: String) -> UUID? {
+        let trimCharacters = CharacterSet(charactersIn: "[]()<>\"'`,;")
+        for rawToken in label.split(whereSeparator: { $0.isWhitespace }) {
+            let token = String(rawToken).trimmingCharacters(in: trimCharacters)
+            if let id = UUID(uuidString: token) {
+                return id
+            }
+            for prefix in ["characterId=", "characterID=", "id=", "ID="] {
+                guard token.hasPrefix(prefix) else { continue }
+                let value = String(token.dropFirst(prefix.count)).trimmingCharacters(in: trimCharacters)
+                if let id = UUID(uuidString: value) {
+                    return id
+                }
+            }
+        }
+        return nil
+    }
+
     /// 話者ラベルの比較をUnicode正規化＋case-insensitiveへ統一する。
     /// 生成モデルがKai/KAI/kaiのように表記を揺らしても同じキャストへ解決し、
     /// ユーザー操作キャラの代弁禁止判定も同じ規則で適用する。
     private func normalizedSpeakerName(_ value: String) -> String {
-        value
-            .precomposedStringWithCanonicalMapping
-            .folding(options: [.caseInsensitive], locale: .current)
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+        StoryPromptBuilder.normalizedCharacterName(value)
     }
 
     private func normalizedDuplicateText(_ text: String) -> String {
@@ -1657,7 +1818,25 @@ final class StorySessionService: ObservableObject {
         }
         guard let idx = last.firstIndex(where: { $0 == ":" || $0 == "：" }) else { return nil }
         let speaker = String(last[..<idx]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return speaker.isEmpty ? nil : speaker
+        guard !speaker.isEmpty else { return nil }
+        guard explicitCharacterID(from: speaker) != nil else { return speaker }
+        let trimCharacters = CharacterSet(charactersIn: "[]()<>\"'`,;")
+        let displayName = speaker
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+            .filter { token in
+                let cleaned = token.trimmingCharacters(in: trimCharacters)
+                if UUID(uuidString: cleaned) != nil { return false }
+                for prefix in ["characterId=", "characterID=", "id=", "ID="] {
+                    if cleaned.hasPrefix(prefix), UUID(uuidString: String(cleaned.dropFirst(prefix.count)).trimmingCharacters(in: trimCharacters)) != nil {
+                        return false
+                    }
+                }
+                return true
+            }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return displayName.isEmpty ? speaker : displayName
     }
 
     private func textAfterSpeakerDelimiter(_ line: String) -> String {
@@ -2041,115 +2220,6 @@ final class StorySessionService: ObservableObject {
             if result[member.characterId] == nil { result[member.characterId] = member }
         }
         return defaults.map { existingByCharacterID[$0.characterId] ?? $0 }
-    }
-
-    private func generateProgressUpdate(
-        world: StoryWorld,
-        scene: StoryScene,
-        session: StorySession,
-        userText: String,
-        assistantMessages: [StoryMessage],
-        fallbackSceneSummary: String,
-        generationModel: StoryGenerationModel
-    ) async -> StoryProgressUpdate {
-        let fallback = StoryProgressUpdate(
-            progressLabel: session.progressLabel.nonEmpty ?? "第1章 きっかけ",
-            currentObjective: session.currentObjective.nonEmpty ?? scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty,
-            lastTurnProgress: synthesizeTurnProgress(from: assistantMessages),
-            lastSceneSummary: fallbackSceneSummary.nonEmpty ?? session.lastSceneSummary.nonEmpty,
-            unresolvedHooks: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks),
-            storyState: nil
-        )
-
-        let systemPrompt = """
-        あなたは物語セッションの進行状態だけを更新する編集者です。
-        出力はJSONオブジェクトのみ。Markdown、説明、コードブロックは禁止。
-        各値は日本語で短くしてください。
-        progressLabel は「第1章 きっかけ」「第1章 すれ違い」「第2章 放課後の約束」のような章と局面名。
-        currentObjective は次に向かうこと。
-        lastTurnProgress は今回のターンで物語上なにが変わったか。
-        lastSceneSummary は再開時に役立つ短い要約。
-        unresolvedHooks は未回収の気になる要素を最大4件。
-        storyState は今回変化した状態だけを入れる。変化がない項目は null にする。
-        characterUpdates は会話に登場したキャラだけ。characterName は画面上の名前を使う。
-        inventoryChanges は add / update / remove のいずれかを使う。
-        storyState の current state を勝手に初期化せず、本文から確実に変化したものだけ更新する。
-        """
-        let userPrompt = """
-        世界: \(world.title)
-        物語の目標: \(world.storyGoal)
-        シーン: \(scene.title)
-        場所: \(scene.location)
-        空気: \(scene.mood)
-        シーン目的: \(scene.sceneGoal)
-        葛藤: \(scene.conflict ?? "")
-
-        直前の進行:
-        progressLabel: \(session.progressLabel ?? "")
-        currentObjective: \(session.currentObjective ?? "")
-        lastTurnProgress: \(session.lastTurnProgress ?? "")
-        lastSceneSummary: \(session.lastSceneSummary ?? "")
-        unresolvedHooks: \((session.unresolvedHooks ?? []).joined(separator: " / "))
-
-        現在のStoryState:
-        場所: \(session.storyState?.location ?? "")
-        時間: \(session.storyState?.timeOfDay ?? "")
-        ムード: \(session.storyState?.mood ?? "")
-        天候: \(session.storyState?.weather ?? "")
-        関係段階: \(session.storyState?.relationshipStage ?? "")
-        所持品: \((session.storyState?.inventory ?? []).map { $0.name }.joined(separator: " / "))
-
-        今回のユーザー発言:
-        \(userText)
-
-        今回の返答:
-        \(assistantMessages.map { messageLine($0) }.joined(separator: "\n"))
-
-        JSON形式:
-        {"progressLabel":"第1章 ...","currentObjective":"...","lastTurnProgress":"...","lastSceneSummary":"...","unresolvedHooks":["..."],"storyState":{"location":"...","timeOfDay":"...","mood":"...","weather":"...","relationshipStage":"...","characterUpdates":[{"characterName":"...","mood":"...","goal":"...","relationship":"...","innerThought":"..."}],"inventoryChanges":[{"action":"add","name":"...","detail":"...","owner":"..."}],"activeGoals":["..."]}}
-        """
-
-        let raw: String?
-        if generationModel == .b31, StoryGemma31BAPIService.shared.hasAPIKey {
-            raw = try? await StoryGemma31BAPIService.shared.generate(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                temperature: 0.25,
-                maxOutputTokens: 512
-            )
-        } else {
-            var settings = voiceOptimizedAdvancedSettings()
-            settings.useAutomaticTemperature = false
-            settings.temperature = 0.2
-            raw = await LocalAssistantRuntimeBridge.shared.generateReply(
-                prompt: userPrompt,
-                contextPrompt: nil,
-                coachMode: .studio,
-                reasoningMode: .persona,
-                researchMode: .off,
-                childAge: 12,
-                pageInfo: nil,
-                safetySnapshot: nil,
-                advancedSettings: settings,
-                overrideSystemPrompt: systemPrompt,
-                overrideModelURL: generationModel.installedModelURL ?? LocalAssistantModelManager.shared.installedModelURL,
-                onUpdate: nil
-            )
-        }
-
-        guard let raw,
-              let parsed = parseProgressUpdate(raw) else {
-            return fallback
-        }
-
-        return StoryProgressUpdate(
-            progressLabel: parsed.progressLabel.nonEmpty ?? fallback.progressLabel,
-            currentObjective: parsed.currentObjective.nonEmpty ?? fallback.currentObjective,
-            lastTurnProgress: parsed.lastTurnProgress.nonEmpty ?? fallback.lastTurnProgress,
-            lastSceneSummary: parsed.lastSceneSummary.nonEmpty ?? fallback.lastSceneSummary,
-            unresolvedHooks: normalizedHooks(parsed.unresolvedHooks, fallback: fallback.unresolvedHooks ?? []),
-            storyState: parsed.storyState ?? fallback.storyState
-        )
     }
 
     private func parseProgressUpdate(_ text: String) -> StoryProgressUpdate? {

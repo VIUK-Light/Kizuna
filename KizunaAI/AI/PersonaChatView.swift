@@ -26,6 +26,9 @@ struct PersonaChatView: View {
     @State private var compactShowsChat = false
     @State private var storyHistoryItems: [StoryHistoryItem] = []
     @State private var storyHistoryLoadError: String?
+    /// SwiftUIが履歴ロードの世代を管理する。シートの再表示や画面破棄時に
+    /// 未完了のロードを置き去りにせず、古い結果を次の一覧へ適用しない。
+    @State private var storyHistoryReloadID = UUID()
     @State private var isPersonaChatNearBottom = true
     @State private var unreadPersonaMessageCount = 0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -107,12 +110,12 @@ struct PersonaChatView: View {
         }
         .sheet(item: $activeStoryWorld, onDismiss: {
             activeStorySessionID = nil
-            Task { await loadStoryHistory() }
+            storyHistoryReloadID = UUID()
         }) { world in
             StorySessionChatView(world: world, initialSessionID: activeStorySessionID)
                 .viukAdaptiveSheetSizing(minWidth: 760, minHeight: 720)
         }
-        .task {
+        .task(id: storyHistoryReloadID) {
             await loadStoryHistory()
         }
         .onChange(of: store.activeThreadID) { _, _ in
@@ -529,19 +532,36 @@ struct PersonaChatView: View {
         do {
             let worlds = try await storyWorldRepo.fetchWorlds()
             var items: [StoryHistoryItem] = []
-            var failedWorlds = 0
+            // World側の重複や、複数の読み込み経路が同じセッションを返しても
+            // 画面には1セッションだけ残す。失敗したWorldの既存表示を後から
+            // 戻す経路も、この集合を共有して同じ規則で判定する。
+            var seenSessionIDs = Set<UUID>()
+            var failedWorldIDs = Set<UUID>()
+            var successfulWorldIDs = Set<UUID>()
             for world in worlds {
                 do {
                     let sessions = try await storySessionRepo.fetchSessions(storyWorldId: world.id)
-                    items.append(contentsOf: sessions.map { StoryHistoryItem(world: world, session: $0) })
+                    successfulWorldIDs.insert(world.id)
+                    failedWorldIDs.remove(world.id)
+                    for session in sessions where seenSessionIDs.insert(session.id).inserted {
+                        items.append(StoryHistoryItem(world: world, session: session))
+                    }
                 } catch {
                     // 1つの壊れたWorldで、正常に読めた他Worldの履歴まで消さない。
-                    failedWorlds += 1
+                    failedWorldIDs.insert(world.id)
                     NSLog("[PersonaChatView] story history session load failed for %@: %@", world.id.uuidString, error.localizedDescription)
                 }
             }
+            // 失敗したWorldについては、画面に表示済みだった履歴を残す。
+            // 同じセッションを重複表示しないようIDで抑止する。
+            for item in storyHistoryItems
+                where failedWorldIDs.contains(item.world.id)
+                && !successfulWorldIDs.contains(item.world.id)
+                && seenSessionIDs.insert(item.session.id).inserted {
+                items.append(item)
+            }
             storyHistoryItems = items.sorted { $0.session.updatedAt > $1.session.updatedAt }
-            storyHistoryLoadError = failedWorlds == 0
+            storyHistoryLoadError = failedWorldIDs.isEmpty
                 ? nil
                 : KizunaCopy.text(
                     japanese: "一部のストーリー履歴を読み込めませんでした。表示中の履歴は削除されていません。",
@@ -568,7 +588,7 @@ struct PersonaChatView: View {
                 .lineLimit(2)
             Spacer(minLength: 6)
             Button {
-                Task { await loadStoryHistory() }
+                storyHistoryReloadID = UUID()
             } label: {
                 Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
                     .font(.system(size: 11, weight: .semibold))
@@ -591,7 +611,11 @@ struct PersonaChatView: View {
                 Divider()
                 messageList(for: active)
                 Divider()
+                // Composerの入力状態はスレッド単位。Viewを再利用すると
+                // Stateに残った下書きが別スレッドの送信欄へ移るため、
+                // thread.idをidentityにして切替時に必ず再生成する。
                 PersonaComposer(thread: active)
+                    .id(active.id)
             }
             .background(personaChatBackground)
         } else {

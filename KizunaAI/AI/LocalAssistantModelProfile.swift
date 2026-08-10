@@ -7,12 +7,22 @@
 import Foundation
 
 enum LocalAssistantModelProfile {
+    enum DownloadKind: String, Hashable {
+        case viukStoryGGUF
+        case gemma4E2BLiteRTLM
+        case gemma3nE4BGGUF
+    }
+
     struct DownloadOption: Identifiable, Hashable {
+        let kind: DownloadKind
         let title: String
         let url: String
         let detail: String
+        let englishDetail: String
 
-        var id: String { url }
+        // Keep picker identity stable if a hosting URL or query parameter
+        // changes. The model kind, not its transport URL, is the identity.
+        var id: String { kind.rawValue }
     }
 
     struct RuntimePreset {
@@ -43,14 +53,18 @@ enum LocalAssistantModelProfile {
     private static let defaultModelURL = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true"
     private static let platformDownloadOptions = [
         DownloadOption(
+            kind: .viukStoryGGUF,
             title: "VIUK Story v2.5 GGUF",
             url: "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF/resolve/main/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf?download=true",
-            detail: "Hugging FaceのVIUK標準モデル"
+            detail: "Hugging FaceのVIUK標準モデル",
+            englishDetail: "VIUK standard model from Hugging Face"
         ),
         DownloadOption(
+            kind: .gemma4E2BLiteRTLM,
             title: "Gemma 4 E2B LiteRT-LM",
             url: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true",
-            detail: "スマホ向けLiteRT-LM形式。保存後、端末内で自動確認してから利用できます"
+            detail: "スマホ向けLiteRT-LM形式。保存後、端末内で自動確認してから利用できます",
+            englishDetail: "LiteRT-LM format for phones. The app checks it on-device before use."
         )
     ]
     private static let defaultModelFileName = "gemma-4-E2B-it.litertlm"
@@ -64,14 +78,18 @@ enum LocalAssistantModelProfile {
     private static let defaultModelURL = "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF/resolve/main/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf?download=true"
     private static let platformDownloadOptions = [
         DownloadOption(
+            kind: .viukStoryGGUF,
             title: "VIUK Story v2.5 GGUF",
             url: defaultModelURL,
-            detail: "Hugging FaceのVIUK標準モデル"
+            detail: "Hugging FaceのVIUK標準モデル",
+            englishDetail: "VIUK standard model from Hugging Face"
         ),
         DownloadOption(
+            kind: .gemma3nE4BGGUF,
             title: "Gemma 3n E4B GGUF",
             url: "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-UD-Q4_K_XL.gguf?download=true",
-            detail: "互換用のGemma 3n 4bit GGUF"
+            detail: "互換用のGemma 3n 4bit GGUF",
+            englishDetail: "Compatible Gemma 3n 4-bit GGUF model"
         )
     ]
     private static let defaultModelFileName = "viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf"
