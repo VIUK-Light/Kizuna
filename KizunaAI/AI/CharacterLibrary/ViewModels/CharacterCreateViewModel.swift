@@ -158,7 +158,10 @@ final class CharacterCreateViewModel: ObservableObject {
             state = .blocked(
                 SafetyDecision(
                     action: .requireEdit,
-                    reasons: ["保存に失敗しました。少し時間を置いて再度お試しください。"],
+                    reasons: [KizunaCopy.text(
+                        japanese: "保存に失敗しました。少し時間を置いて再度お試しください。",
+                        english: "The character could not be saved. Please wait a moment and try again."
+                    )],
                     severity: .warning
                 )
             )

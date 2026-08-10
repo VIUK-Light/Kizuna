@@ -257,7 +257,7 @@ struct CharacterCreateView: View {
                 labeledField(KizunaCopy.text(japanese: "カテゴリー", english: "Category")) {
                     categoryMenu
                 }
-                labeledField("関係性") {
+                labeledField(KizunaCopy.text(japanese: "関係性", english: "Relationship")) {
                     Picker("", selection: $vm.draft.relationshipGenre) {
                         ForEach(RelationshipGenre.allCases) { g in
                             Text(g.localizedDisplayName).tag(g)
