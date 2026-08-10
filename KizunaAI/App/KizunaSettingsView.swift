@@ -400,9 +400,6 @@ struct KizunaSettingsView: View {
                 english: "Compatible Gemma 3n 4-bit GGUF model"
             )
         }
-        // Keep the fallback explicit so an option added later cannot leak a
-        // Japanese-only detail into English UI.
-        return KizunaCopy.text(japanese: option.detail, english: option.englishDetail)
     }
 
     private var selectedStandardModelRequiresToken: Bool {
