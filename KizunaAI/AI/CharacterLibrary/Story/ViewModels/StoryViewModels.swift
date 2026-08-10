@@ -450,19 +450,30 @@ final class StoryWorldCreateViewModel: ObservableObject {
         isReadyToSave = false
         loadError = nil
         do {
-            self.availableCharacters = try await characterRepo.fetchCharacters()
-            self.castDrafts = try await castRepo.fetchCast(storyWorldId: draft.id)
-            self.lorebookDrafts = try await lorebookRepo.fetchEntries(storyWorldId: draft.id)
-            let scenes = try await sceneRepo.fetchScenes(storyWorldId: draft.id)
-            if let firstScene = scenes.first {
-                self.sceneDraft = firstScene
-            } else if sceneDraft.title.isEmpty {
-                sceneDraft.title = Self.defaultSceneTitle(for: draft.title)
-                sceneDraft.mood = draft.mood
-                sceneDraft.sceneGoal = draft.storyGoal
-                sceneDraft.summary = draft.openingScene
+            // 関連データはすべてローカル変数へ読み込んでから下書きへ反映する。
+            // 途中のfetchが失敗した場合に「先に取得できた配列だけ反映」すると、
+            // UIが部分状態になり、旧データを空配列で置換保存する危険が残る。
+            // ここでは1件でも失敗したら下書きを変更せず、保存をロックして再試行を促す。
+            let fetchedCharacters = try await characterRepo.fetchCharacters()
+            let fetchedCast = try await castRepo.fetchCast(storyWorldId: draft.id)
+            let fetchedLorebook = try await lorebookRepo.fetchEntries(storyWorldId: draft.id)
+            let fetchedScenes = try await sceneRepo.fetchScenes(storyWorldId: draft.id)
+
+            var nextScene = sceneDraft
+            if let firstScene = fetchedScenes.first {
+                nextScene = firstScene
+            } else if nextScene.title.isEmpty {
+                nextScene.title = Self.defaultSceneTitle(for: draft.title)
+                nextScene.mood = draft.mood
+                nextScene.sceneGoal = draft.storyGoal
+                nextScene.summary = draft.openingScene
             }
-            if !castDrafts.isEmpty {
+
+            self.availableCharacters = fetchedCharacters
+            self.castDrafts = fetchedCast
+            self.lorebookDrafts = fetchedLorebook
+            self.sceneDraft = nextScene
+            if !fetchedCast.isEmpty {
                 // 旧データを編集で開いた場合も、形式と初期シーン選択を
                 // 同じ正規化規則へ通し、画面と保存値のずれを残さない。
                 setCastMode(draft.resolvedCastMode)
@@ -798,6 +809,13 @@ final class StoryWorldCreateViewModel: ObservableObject {
             for profile in pendingGeneratedCharacters.values {
                 try await characterRepo.saveCharacter(profile)
             }
+
+            // 破壊的な置換の前に、すべての既存関連データを読み取っておく。
+            // ここで読み取りに失敗した場合はWorld/Cast/Lorebook/Sceneのいずれも
+            // 書き換えず、次回の再試行で正しいスナップショットを取り直せる。
+            _ = try await lorebookRepo.fetchAllEntries(storyWorldId: draft.id)
+            let existingScenes = try await sceneRepo.fetchScenes(storyWorldId: draft.id)
+
             // World 保存
             var world = draft.normalizedForPersistence
             // Keep the editor in sync with the persisted invariant so a
@@ -807,27 +825,14 @@ final class StoryWorldCreateViewModel: ObservableObject {
             world.updatedAt = Date()
             try await worldRepo.saveWorld(world)
             didSaveWorld = true
-            // Cast 保存
-            try await castRepo.deleteAllCast(storyWorldId: world.id)
-            for member in castDrafts {
-                var m = member
-                m.storyWorldId = world.id
-                try await castRepo.saveCast(m)
-            }
+            // Cast 保存。Repository側の一括置換を使い、deleteAllCastの後に
+            // 1件ずつ保存して途中で失敗する部分更新を避ける。
+            try await castRepo.replaceCast(castDrafts, storyWorldId: world.id)
             // LorebookもWorld単位で置き換え、削除されたカードを残さない。
             // 無効化済みエントリも編集保存時に置き換える。enabled のみ取得すると
             // UIから見えない古いカードが story_lorebook.json に残り続ける。
-            let existingLorebook = try await lorebookRepo.fetchAllEntries(storyWorldId: world.id)
-            for entry in existingLorebook {
-                try await lorebookRepo.deleteEntry(id: entry.id)
-            }
-            for entry in lorebookDrafts {
-                var value = entry
-                value.storyWorldId = world.id
-                try await lorebookRepo.saveEntry(value)
-            }
+            try await lorebookRepo.replaceEntries(lorebookDrafts, storyWorldId: world.id)
             // Opening Scene を 1 件 seed / update
-            let existingScenes = try await sceneRepo.fetchScenes(storyWorldId: world.id)
             var opening = sceneDraft
             opening.storyWorldId = world.id
             if opening.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

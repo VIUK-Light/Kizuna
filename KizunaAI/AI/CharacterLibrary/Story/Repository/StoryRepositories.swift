@@ -122,6 +122,10 @@ protocol StorySessionRepository: AnyObject {
 protocol StoryLorebookRepository: AnyObject {
     func fetchEntries(storyWorldId: UUID) async throws -> [StoryLorebookEntry]
     func fetchAllEntries(storyWorldId: UUID) async throws -> [StoryLorebookEntry]
+    /// Replace every entry belonging to a world in one read-modify-write operation.
+    /// Callers must prepare/validate the complete replacement before invoking this
+    /// method so a failed fetch cannot be mistaken for an intentional empty list.
+    func replaceEntries(_ entries: [StoryLorebookEntry], storyWorldId: UUID) async throws
     func saveEntry(_ entry: StoryLorebookEntry) async throws
     func deleteEntry(id: UUID) async throws
 }
@@ -377,6 +381,19 @@ final class LocalJSONStoryLorebookRepository: StoryLorebookRepository {
         try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.priority > $1.priority }
+    }
+
+    func replaceEntries(_ entries: [StoryLorebookEntry], storyWorldId: UUID) async throws {
+        let replacement = entries.map { entry in
+            var entry = entry
+            entry.storyWorldId = storyWorldId
+            entry.updatedAt = Date()
+            return entry
+        }
+        try await store.mutate { all in
+            all.removeAll { $0.storyWorldId == storyWorldId }
+            all.append(contentsOf: replacement)
+        }
     }
 
     func saveEntry(_ entry: StoryLorebookEntry) async throws {
