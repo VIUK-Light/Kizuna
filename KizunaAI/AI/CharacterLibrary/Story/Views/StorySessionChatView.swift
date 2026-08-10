@@ -617,15 +617,33 @@ private struct StorySessionChatBody: View {
                 }
 
                 HStack(spacing: 10) {
+                    if vm.isSavingRestAcknowledgement {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(storyCopy("保存中…", "Saving…"))
+                            .font(.caption)
+                            .foregroundStyle(storyMuted)
+                    }
+                    if let error = vm.restAcknowledgementError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                HStack(spacing: 10) {
                     Button(storyCopy("少し休む", "Take a short break")) {
                         vm.chooseRestSuggestionBreak()
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(vm.isSavingRestAcknowledgement)
 
                     Button(storyCopy("このまま続ける", "Continue")) {
                         vm.chooseRestSuggestionContinue()
                     }
                     .buttonStyle(.bordered)
+                    .disabled(vm.isSavingRestAcknowledgement)
                 }
             }
             .padding(14)

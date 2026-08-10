@@ -82,6 +82,7 @@ struct CharacterCreateView: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 16)
             }
+            .disabled(isFormLocked)
             Divider()
             footer
         }
@@ -159,6 +160,7 @@ struct CharacterCreateView: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
             .disabled(canSave == false)
+            .disabled(isFormLocked)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -167,6 +169,11 @@ struct CharacterCreateView: View {
 
     private var canSave: Bool {
         !vm.draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isFormLocked: Bool {
+        if case .validating = vm.state { return true }
+        return false
     }
 
     // MARK: - Sections

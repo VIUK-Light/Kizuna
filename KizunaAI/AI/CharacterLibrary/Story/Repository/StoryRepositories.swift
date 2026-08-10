@@ -145,20 +145,29 @@ final class LocalJSONStoryWorldRepository: StoryWorldRepository {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
     func saveWorld(_ world: StoryWorld) async throws {
-        var w = world.normalizedForPersistence
-        if let existing = (try? await store.loadRecoveringCorruptRecords().first(where: { $0.id == world.id })),
-           existing.isSystemProtected == true {
-            w.isSystemProtected = true
+        // 保護フラグの読み込みと更新を同一ロックに置く。別々の
+        // load→appendOrReplace では、同一IDをシード／修復が更新した直後に
+        // 古い編集スナップショットで保護状態を上書きできてしまう。
+        try await store.mutate { items in
+            var updated = world.normalizedForPersistence
+            if items.contains(where: { $0.id == world.id && $0.isSystemProtected == true }) {
+                updated.isSystemProtected = true
+            }
+            updated.updatedAt = Date()
+            items.removeAll { $0.id == updated.id }
+            items.append(updated)
         }
-        w.updatedAt = Date()
-        try await store.appendOrReplace(w, idEquals: { $0.id == $1.id })
     }
     func deleteWorld(id: UUID) async throws {
-        if let existing = (try? await store.loadRecoveringCorruptRecords().first(where: { $0.id == id })),
-           existing.isSystemProtected == true {
-            return
+        // 保護判定と削除を同一トランザクションにして、判定後の並行変更で
+        // system protected Worldが消えないようにする。読み込みエラーは
+        // mutateから呼び出し元へ伝播し、未保護扱いで続行しない。
+        try await store.mutate { items in
+            guard !items.contains(where: { $0.id == id && $0.isSystemProtected == true }) else {
+                return
+            }
+            items.removeAll { $0.id == id }
         }
-        try await store.delete(matching: { $0.id == id })
     }
 
     /// 起動時の重複標準データ移行専用。通常のユーザー操作からは

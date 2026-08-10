@@ -110,12 +110,20 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
     }
 
     func deleteCharacter(id: UUID) async throws {
-        if let existing = (try? await charStore.loadRecoveringCorruptRecords().first(where: { $0.id == id })),
-           existing.isSystemProtected == true {
-            return
+        // 保護判定と削除を同じ read-modify-write ロック内で行う。
+        // 先に別ロックで読んでから delete すると、シード／修復が同じIDを
+        // system protected にした直後でも古い判定で削除できてしまう。
+        var shouldDeleteLorebook = true
+        try await charStore.mutate { items in
+            if items.contains(where: { $0.id == id && $0.isSystemProtected == true }) {
+                shouldDeleteLorebook = false
+                return
+            }
+            items.removeAll { $0.id == id }
         }
-        try await charStore.delete(matching: { $0.id == id })
-        try await loreStore.delete(matching: { $0.characterId == id })
+        if shouldDeleteLorebook {
+            try await loreStore.delete(matching: { $0.characterId == id })
+        }
     }
 
     func fetchLorebook(characterId: UUID) async throws -> CharacterLorebook? {
