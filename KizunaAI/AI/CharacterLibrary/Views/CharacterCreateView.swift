@@ -520,7 +520,9 @@ struct CharacterCreateView: View {
                             Image(systemName: "checkmark.shield.fill")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.green)
-                            Text(r).font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(SafetyReasonLocalization.localized(r))
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
                         }
                     }
                     Divider()
