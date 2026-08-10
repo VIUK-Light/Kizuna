@@ -131,7 +131,7 @@ final class StoryGemma31BAPIService {
                 temperature: temperature,
                 topP: 0.92,
                 maxOutputTokens: maxOutputTokens,
-                // Gemma 4 APIではThinkingを常に有効化する。medium は空本文時だけの復旧用。
+                // Gemma 4 APIではThinkingを常に有効化する。minimal は空本文時だけの復旧用。
                 thinkingConfig: ThinkingConfig(thinkingLevel: thinkingLevel)
             )
         ))

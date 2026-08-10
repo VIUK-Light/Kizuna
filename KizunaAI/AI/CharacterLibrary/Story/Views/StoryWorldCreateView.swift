@@ -167,7 +167,7 @@ struct StoryWorldCreateView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate)
+            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
             .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 16)

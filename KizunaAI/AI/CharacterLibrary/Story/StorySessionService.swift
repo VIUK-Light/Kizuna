@@ -372,7 +372,10 @@ final class StorySessionService: ObservableObject {
                 NSLog("[StorySession] retry target user message not found: %@", existingUserMessageID.uuidString)
                 await finishGenerationWithoutSaving(
                     generationID: generationID,
-                    notice: "再試行対象の発言を復元できませんでした。新しいメッセージを送信してください。"
+                    notice: localizedNotice(
+                        "再試行対象の発言を復元できませんでした。新しいメッセージを送信してください。",
+                        "The message to retry could not be restored. Send a new message."
+                    )
                 )
                 return
             }
