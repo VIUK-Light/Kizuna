@@ -137,7 +137,7 @@ class GemmaReviewTests(unittest.TestCase):
         try:
             with patch.object(review, "GitHubClient") as github_type, \
                  patch.object(review, "GeminiClient") as gemma_type, \
-                 patch.object(review, "upsert_review_comment"):
+                 patch.object(review, "upsert_review_comment") as publish:
                 github = github_type.return_value
                 github.get_pull_request.return_value = {"title": "Test", "body": ""}
                 github.get_changed_files.return_value = [{
@@ -145,8 +145,10 @@ class GemmaReviewTests(unittest.TestCase):
                     "status": "modified",
                     "patch": "@@ -1 +1 @@\n+let value = 1",
                 }]
-                gemma_type.return_value.review.side_effect = review.ReviewError("invalid response")
+                gemma_type.return_value.review.side_effect = review.ApiStatusError("Gemma", 400)
                 self.assertEqual(review.main(["--event-path", path, "--repo", "VIUK-Light/Kizuna"]), 1)
+                publish.assert_called_once()
+                self.assertNotIn("一時的に利用できなかった", publish.call_args.args[3])
         finally:
             os.unlink(path)
             for key, value in previous.items():

@@ -678,10 +678,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     skipped.extend(f.filename + "（APIレビュー失敗）" for f in chunk.files)
             final = merge_results(results, skipped)
             if review_failed and only_transient_api_failures:
+                notice = "Gemma APIが一時的に利用できなかったため、一部ファイルは未レビューです。"
+                summary = str(final.get("summary", "")).strip()
                 final["summary"] = (
-                    str(final.get("summary", "")).strip()
-                    + " Gemma APIが一時的に利用できなかったため、一部ファイルは未レビューです。"
-                ).strip()[:1_000]
+                    f"{summary[:1_000 - len(notice) - 1]} {notice}"
+                ).strip()
             upsert_review_comment(github, args.repo, number, render_comment(final, len(files)))
             if review_failed:
                 if only_transient_api_failures:
