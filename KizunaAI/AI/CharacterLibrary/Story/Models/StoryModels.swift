@@ -692,32 +692,65 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
         if let relationshipStage, !relationshipStage.isEmpty { next.relationshipStage = relationshipStage }
         if let activeGoals { next.activeGoals = Array(activeGoals.filter { !$0.isEmpty }.prefix(6)) }
 
-        // キャラクター名で返った更新を、現在のキャストのUUIDへ結びつける。
+        // 新形式は characterId を主キーにする。旧形式の名前だけのJSONは
+        // 後方互換で受け付けるが、同名キャラが複数いる場合は曖昧なまま
+        // 適用しない。辞書の走査順をIDの代わりに使ってはいけない。
         for update in characterUpdates ?? [] {
             let normalizedName = update.characterName.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalizedName.isEmpty else { continue }
-            let matchingIDs = characterIndex.compactMap { id, profile -> UUID? in
-                guard validCharacterIDs?.contains(id) ?? true else { return nil }
-                let displayName = profile.visibleName
-                return displayName == normalizedName || profile.name == normalizedName ? id : nil
+            let requestedID = update.characterId
+            let matchedID: UUID
+            let resolvedName: String
+            if let requestedID {
+                // IDが存在しない／今回のキャストに含まれない更新は、別の
+                // キャラへ名前フォールバックしない。生成結果の古いIDや
+                // 別WorldのIDを現在状態へ混入させないためである。
+                guard characterIndex[requestedID] != nil,
+                      validCharacterIDs?.contains(requestedID) ?? true else { continue }
+                matchedID = requestedID
+                resolvedName = characterIndex[requestedID]?.visibleName.nonEmpty ?? normalizedName
+            } else {
+                // 旧データ／旧モデルの名前だけの更新は、一意に解決できる
+                // 場合だけUUIDへ昇格する。同名なら今回の更新を保留する。
+                guard !normalizedName.isEmpty else { continue }
+                let matchingIDs = characterIndex.compactMap { id, profile -> UUID? in
+                    guard validCharacterIDs?.contains(id) ?? true else { return nil }
+                    let displayName = profile.visibleName
+                    return displayName == normalizedName || profile.name == normalizedName ? id : nil
+                }
+                guard matchingIDs.count == 1, let onlyID = matchingIDs.first else { continue }
+                matchedID = onlyID
+                resolvedName = characterIndex[onlyID]?.visibleName ?? normalizedName
             }
-            // 同名キャラを辞書の先頭へ暗黙に結びつけると、別キャラの状態を
-            // 最初のUUIDへ誤適用する。名前だけでは解決できない場合は今回の
-            // 状態更新を捨て、既存状態を壊さない。
-            guard matchingIDs.count <= 1 else { continue }
-            let matchedID = matchingIDs.first
-            let matchingStateIndices = next.characterStates.indices.filter { index in
+            let matchingByID = next.characterStates.indices.filter { index in
                 let current = next.characterStates[index]
-                // matchedID がない場合に nil == nil で別キャラへ誤適用しない。
-                if let matchedID { return current.characterId == matchedID }
-                return current.characterName == normalizedName
+                return current.characterId == matchedID
             }
-            let index = matchingStateIndices.count == 1 ? matchingStateIndices.first : nil
+            // 旧保存データでは characterId が nil の状態が残っていることがある。
+            // 新しいID付き更新と表示名が一致し、かつ候補が一件だけならその状態を
+            // UUID付きへ移行する。同名・重複状態は曖昧なまま更新しない。
+            if matchingByID.count > 1 {
+                continue
+            }
+            let index: Int?
+            if let onlyIDIndex = matchingByID.first {
+                index = onlyIDIndex
+            } else {
+                let legacyNameIndices = next.characterStates.indices.filter { index in
+                    let current = next.characterStates[index]
+                    guard current.characterId == nil else { return false }
+                    return current.characterName == resolvedName
+                        || characterIndex[matchedID]?.name == current.characterName
+                }
+                if legacyNameIndices.count > 1 {
+                    continue
+                }
+                index = legacyNameIndices.count == 1 ? legacyNameIndices.first : nil
+            }
             if let index {
                 // 今回JSONに含まれなかった項目は、前回値をそのまま保持する。
                 var value = next.characterStates[index]
-                value.characterId = matchedID ?? value.characterId
-                value.characterName = normalizedName
+                value.characterId = matchedID
+                value.characterName = resolvedName
                 value.mood = update.mood ?? value.mood
                 value.goal = update.goal ?? value.goal
                 value.relationship = update.relationship ?? value.relationship
@@ -727,7 +760,7 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
                 next.characterStates.append(
                     StoryCharacterState(
                         characterId: matchedID,
-                        characterName: normalizedName,
+                        characterName: resolvedName,
                         mood: update.mood ?? "",
                         goal: update.goal ?? "",
                         relationship: update.relationship ?? "",
@@ -758,11 +791,61 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
 }
 
 struct StoryCharacterStatePatch: Codable, Equatable, Hashable {
+    /// 新形式の主キー。旧モデルは名前だけを返すため optional のまま
+    /// 後方互換にし、`StoryStatePatch.applying` で一意名だけを昇格する。
+    var characterId: UUID?
     var characterName: String
     var mood: String?
     var goal: String?
     var relationship: String?
     var innerThought: String?
+
+    init(
+        characterId: UUID? = nil,
+        characterName: String = "",
+        mood: String? = nil,
+        goal: String? = nil,
+        relationship: String? = nil,
+        innerThought: String? = nil
+    ) {
+        self.characterId = characterId
+        self.characterName = characterName
+        self.mood = mood
+        self.goal = goal
+        self.relationship = relationship
+        self.innerThought = innerThought
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case characterId
+        case characterID
+        case characterName
+        case mood
+        case goal
+        case relationship
+        case innerThought
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        characterId = try container.decodeIfPresent(UUID.self, forKey: .characterId)
+            ?? (try container.decodeIfPresent(UUID.self, forKey: .characterID))
+        characterName = try container.decodeIfPresent(String.self, forKey: .characterName) ?? ""
+        mood = try container.decodeIfPresent(String.self, forKey: .mood)
+        goal = try container.decodeIfPresent(String.self, forKey: .goal)
+        relationship = try container.decodeIfPresent(String.self, forKey: .relationship)
+        innerThought = try container.decodeIfPresent(String.self, forKey: .innerThought)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(characterId, forKey: .characterId)
+        try container.encode(characterName, forKey: .characterName)
+        try container.encodeIfPresent(mood, forKey: .mood)
+        try container.encodeIfPresent(goal, forKey: .goal)
+        try container.encodeIfPresent(relationship, forKey: .relationship)
+        try container.encodeIfPresent(innerThought, forKey: .innerThought)
+    }
 }
 
 enum StoryInventoryChangeAction: String, Codable, Hashable {

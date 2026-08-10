@@ -1683,20 +1683,45 @@ final class StorySessionService: ObservableObject {
                 }
                 continue
             }
-            // ユーザー操作キャラの発話は表示しない。AIが代弁した場合も、
-            // そのままナレーションへ落とすとユーザーの台詞として見えてしまうため破棄する。
-            if let delimiter = line.firstIndex(where: { $0 == ":" || $0 == "：" }) {
-                let possibleSpeaker = String(line[..<delimiter]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if forbiddenNames.contains(normalizedSpeakerName(possibleSpeaker)) {
-                    continue
-                }
-            }
-            // 「名前: 本文」 — 同名キャラがいる場合は辞書の先頭を選ばない。
-            // 名前だけではUUIDを一意に決められないため、その行はナレーションへ
-            // 落として誤ったキャラの吹き出し・状態更新を防ぐ。
             let speakerLabel: String? = line.firstIndex(where: { $0 == ":" || $0 == "：" }).map {
                 String(line[..<$0]).trimmingCharacters(in: .whitespacesAndNewlines)
             }
+            let explicitSpeakerID = speakerLabel.flatMap(explicitCharacterID)
+            // ユーザー操作キャラの発話は表示しない。UUID付きの話者表記も
+            // 名前だけの表記と同じく、ユーザーキャラを代弁した行は破棄する。
+            if let explicitSpeakerID, explicitSpeakerID == forbiddenCharacterID {
+                continue
+            }
+            if explicitSpeakerID == nil,
+               let speakerLabel,
+               forbiddenNames.contains(normalizedSpeakerName(speakerLabel)) {
+                continue
+            }
+
+            // 新形式は「<character UUID> 名前: 本文」または
+            // 「characterId=<character UUID> 名前: 本文」。名前が重複しても
+            // UUIDを主キーにして解決し、名前の比較や辞書順にはフォールバックしない。
+            if let explicitSpeakerID {
+                guard let candidate = castNames.first(where: { $0.id == explicitSpeakerID }) else {
+                    // 未知のUUIDは別キャラへ誤割り当てず、本文だけをナレーションとして
+                    // 残す。生成結果を黙って消さず、かつ誤った吹き出しを作らない。
+                    let body = textAfterSpeakerDelimiter(line)
+                    if isMeaningfulStoryText(body) {
+                        out.append(makeMessage(author: .narrator, text: body))
+                    }
+                    continue
+                }
+                let body = textAfterSpeakerDelimiter(line)
+                guard isMeaningfulStoryText(body) else { continue }
+                guard emittedCastLines.insert(candidate.id.uuidString + "|" + normalizedDuplicateText(body)).inserted else {
+                    continue
+                }
+                out.append(makeMessage(author: .cast(characterId: candidate.id, displayName: candidate.name), text: body))
+                continue
+            }
+
+            // 旧形式の「名前: 本文」は後方互換で受け付ける。ただし同名キャラが
+            // いる場合は辞書の先頭へ暗黙に結び付けず、本文をナレーションにする。
             let normalizedSpeaker = speakerLabel.map(normalizedSpeakerName)
             let matchedCandidates = castNames.filter { _, _, normalizedName in
                 guard let normalizedSpeaker, !normalizedSpeaker.isEmpty else { return false }
@@ -1722,6 +1747,27 @@ final class StorySessionService: ObservableObject {
             out.append(makeMessage(author: .narrator, text: line))
         }
         return out
+    }
+
+    /// 生成モデルが同名キャラを区別するために付けるUUIDを、話者ラベルから読む。
+    /// UUID単体（`<UUID> 名前`）と、明示キー（`characterId=<UUID> 名前`）の
+    /// どちらも許容する。見つからない場合は名前だけの旧形式として扱う。
+    private func explicitCharacterID(from label: String) -> UUID? {
+        let trimCharacters = CharacterSet(charactersIn: "[]()<>\"'`,;")
+        for rawToken in label.split(whereSeparator: { $0.isWhitespace }) {
+            let token = String(rawToken).trimmingCharacters(in: trimCharacters)
+            if let id = UUID(uuidString: token) {
+                return id
+            }
+            for prefix in ["characterId=", "characterID=", "id=", "ID="] {
+                guard token.hasPrefix(prefix) else { continue }
+                let value = String(token.dropFirst(prefix.count)).trimmingCharacters(in: trimCharacters)
+                if let id = UUID(uuidString: value) {
+                    return id
+                }
+            }
+        }
+        return nil
     }
 
     /// 話者ラベルの比較をUnicode正規化＋case-insensitiveへ統一する。
@@ -1760,7 +1806,25 @@ final class StorySessionService: ObservableObject {
         }
         guard let idx = last.firstIndex(where: { $0 == ":" || $0 == "：" }) else { return nil }
         let speaker = String(last[..<idx]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return speaker.isEmpty ? nil : speaker
+        guard !speaker.isEmpty else { return nil }
+        guard explicitCharacterID(from: speaker) != nil else { return speaker }
+        let trimCharacters = CharacterSet(charactersIn: "[]()<>\"'`,;")
+        let displayName = speaker
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+            .filter { token in
+                let cleaned = token.trimmingCharacters(in: trimCharacters)
+                if UUID(uuidString: cleaned) != nil { return false }
+                for prefix in ["characterId=", "characterID=", "id=", "ID="] {
+                    if cleaned.hasPrefix(prefix), UUID(uuidString: String(cleaned.dropFirst(prefix.count)).trimmingCharacters(in: trimCharacters)) != nil {
+                        return false
+                    }
+                }
+                return true
+            }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return displayName.isEmpty ? speaker : displayName
     }
 
     private func textAfterSpeakerDelimiter(_ line: String) -> String {
@@ -2174,7 +2238,7 @@ final class StorySessionService: ObservableObject {
         lastSceneSummary は再開時に役立つ短い要約。
         unresolvedHooks は未回収の気になる要素を最大4件。
         storyState は今回変化した状態だけを入れる。変化がない項目は null にする。
-        characterUpdates は会話に登場したキャラだけ。characterName は画面上の名前を使う。
+        characterUpdates は会話に登場したキャラだけ。characterId はキャストのUUIDを主キーとして必ず入れ、characterName は画面上の表示名として添える。同名キャラを名前だけで推測したり、別のUUIDへフォールバックしたりしない。確実なUUIDがない更新は省略する。
         inventoryChanges は add / update / remove のいずれかを使う。
         storyState の current state を勝手に初期化せず、本文から確実に変化したものだけ更新する。
         """
@@ -2202,6 +2266,12 @@ final class StorySessionService: ObservableObject {
         関係段階: \(session.storyState?.relationshipStage ?? "")
         所持品: \((session.storyState?.inventory ?? []).map { $0.name }.joined(separator: " / "))
 
+        現在状態に登録されたキャラクターID:
+        \((session.storyState?.characterStates ?? []).compactMap { state in
+            guard let id = state.characterId else { return nil }
+            return "\(id.uuidString)=\(state.characterName)"
+        }.joined(separator: " / "))
+
         今回のユーザー発言:
         \(userText)
 
@@ -2209,7 +2279,7 @@ final class StorySessionService: ObservableObject {
         \(assistantMessages.map { messageLine($0) }.joined(separator: "\n"))
 
         JSON形式:
-        {"progressLabel":"第1章 ...","currentObjective":"...","lastTurnProgress":"...","lastSceneSummary":"...","unresolvedHooks":["..."],"storyState":{"location":"...","timeOfDay":"...","mood":"...","weather":"...","relationshipStage":"...","characterUpdates":[{"characterName":"...","mood":"...","goal":"...","relationship":"...","innerThought":"..."}],"inventoryChanges":[{"action":"add","name":"...","detail":"...","owner":"..."}],"activeGoals":["..."]}}
+        {"progressLabel":"第1章 ...","currentObjective":"...","lastTurnProgress":"...","lastSceneSummary":"...","unresolvedHooks":["..."],"storyState":{"location":"...","timeOfDay":"...","mood":"...","weather":"...","relationshipStage":"...","characterUpdates":[{"characterId":"キャストのUUID","characterName":"表示名","mood":"...","goal":"...","relationship":"...","innerThought":"..."}],"inventoryChanges":[{"action":"add","name":"...","detail":"...","owner":"..."}],"activeGoals":["..."]}}
         """
 
         let raw: String?
