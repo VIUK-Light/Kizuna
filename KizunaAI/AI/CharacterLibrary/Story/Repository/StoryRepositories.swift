@@ -106,8 +106,30 @@ protocol CastRepository: AnyObject {
 protocol StorySceneRepository: AnyObject {
     func fetchScenes(storyWorldId: UUID) async throws -> [StoryScene]
     func saveScene(_ scene: StoryScene) async throws
+    /// Fills a missing background key without replacing a concurrently edited
+    /// scene. The local JSON implementation performs this condition check in
+    /// the same read-modify-write transaction as the save.
+    func repairMissingImageKey(storyWorldId: UUID, sceneId: UUID, imageKey: String) async throws -> Bool
     func deleteScene(id: UUID) async throws
     func deleteAllScenes(storyWorldId: UUID) async throws
+}
+
+extension StorySceneRepository {
+    /// Source-compatible fallback for repositories backed by another store.
+    /// LocalJSONStorySceneRepository overrides this with an atomic mutation;
+    /// custom repositories can provide their own transactional implementation.
+    func repairMissingImageKey(storyWorldId: UUID, sceneId: UUID, imageKey: String) async throws -> Bool {
+        let trimmedKey = imageKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty,
+              let scene = try await fetchScenes(storyWorldId: storyWorldId).first(where: { $0.id == sceneId }),
+              scene.imageKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
+            return false
+        }
+        var repaired = scene
+        repaired.imageKey = trimmedKey
+        try await saveScene(repaired)
+        return true
+    }
 }
 
 protocol StorySessionRepository: AnyObject {
@@ -228,6 +250,23 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         // active キャラ数の上限を遵守
         s.activeCharacterIds = Array(s.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters))
         try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
+    }
+
+    func repairMissingImageKey(storyWorldId: UUID, sceneId: UUID, imageKey: String) async throws -> Bool {
+        let trimmedKey = imageKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else { return false }
+        var repaired = false
+        try await store.mutate { scenes in
+            guard let index = scenes.firstIndex(where: {
+                $0.id == sceneId && $0.storyWorldId == storyWorldId
+            }), scenes[index].imageKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
+                return
+            }
+            // Keep every user-edited field and update only the missing key.
+            scenes[index].imageKey = trimmedKey
+            repaired = true
+        }
+        return repaired
     }
 
     /// 重複Worldの移行専用。関連付けだけをcanonical Worldへ変更し、

@@ -211,15 +211,22 @@ enum CharacterLibrarySeed {
                             let seedScene = package.scenes.indices.contains(index)
                                 ? package.scenes[index]
                                 : package.scenes.first
-                            var repairedScene = existingScene
-                            if let imageKey = seedScene?.imageKey?
+                            let imageKey: String
+                            if let seedImageKey = seedScene?.imageKey?
                                 .trimmingCharacters(in: .whitespacesAndNewlines),
-                               !imageKey.isEmpty {
-                                repairedScene.imageKey = imageKey
+                               !seedImageKey.isEmpty {
+                                imageKey = seedImageKey
                             } else {
-                                repairedScene.imageKey = sceneImageKey(for: package.world.title)
+                                imageKey = sceneImageKey(for: package.world.title)
                             }
-                            try await sceneRepo.saveScene(repairedScene)
+                            // Re-check the latest record inside the repository's
+                            // read-modify-write transaction. A concurrent story
+                            // edit must not be overwritten by this seed repair.
+                            _ = try await sceneRepo.repairMissingImageKey(
+                                storyWorldId: existingWorld.id,
+                                sceneId: existingScene.id,
+                                imageKey: imageKey
+                            )
                         }
                     }
                     if existingWorld.castMode != package.world.castMode {
