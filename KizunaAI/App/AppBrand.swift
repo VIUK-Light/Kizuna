@@ -7,7 +7,7 @@
 import Foundation
 
 enum AppBrand {
-    static let displayName = "VIUK 絆"
+    static let displayName = "kizuna"
     static let keychainService = "VIUKKizunaAI"
     static let legacyKeychainServices: [String] = []
 }

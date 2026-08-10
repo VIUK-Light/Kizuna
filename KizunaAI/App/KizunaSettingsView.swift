@@ -25,13 +25,16 @@ struct KizunaSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("表示言語") {
-                    Picker("言語", selection: $languageRawValue) {
+                Section(KizunaCopy.text(japanese: "表示言語", english: "Display language")) {
+                    Picker(KizunaCopy.text(japanese: "言語", english: "Language"), selection: $languageRawValue) {
                         ForEach(KizunaLanguage.allCases) { language in
                             Text(language.displayName).tag(language.rawValue)
                         }
                     }
-                    Text("Kizuna内の表示だけが切り替わります。端末全体の言語は変更しません。")
+                    Text(KizunaCopy.text(
+                        japanese: "kizuna内の表示だけが切り替わります。端末全体の言語は変更しません。",
+                        english: "Only kizuna changes language. Your device language stays the same."
+                    ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -76,23 +79,26 @@ struct KizunaSettingsView: View {
                     Text(KizunaCopy.text(japanese: "プロフィール", english: "Profile"))
                 }
 
-                Section("NAGI（Gemma4 31B API）") {
-                    SecureField("Google AI APIキー", text: $nagiAPIKey)
+                Section(KizunaCopy.text(japanese: "NAGI（Gemma4 31B API）", english: "NAGI (Gemma4 31B API)")) {
+                    SecureField(KizunaCopy.text(japanese: "Google AI APIキー", english: "Google AI API key"), text: $nagiAPIKey)
                         .textContentType(.password)
 
-                    Text("APIキーはKeychainに保存されます。")
+                    Text(KizunaCopy.text(
+                        japanese: "APIキーはKeychainに保存されます。",
+                        english: "The API key is stored in Keychain."
+                    ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                Section("ローカルAIモデル") {
-                    LabeledContent("状態", value: modelManager.runtimeStatusSummary)
+                Section(KizunaCopy.text(japanese: "ローカルAIモデル", english: "Local AI model")) {
+                    LabeledContent(KizunaCopy.text(japanese: "状態", english: "Status"), value: modelManager.runtimeStatusSummary)
 
                     if let name = modelManager.installedFileName {
-                        LabeledContent("モデル", value: name)
+                        LabeledContent(KizunaCopy.text(japanese: "モデル", english: "Model"), value: name)
                     }
 
-                    Picker("モデルの入手先", selection: $modelSourceSelection) {
+                    Picker(KizunaCopy.text(japanese: "モデルの入手先", english: "Model source"), selection: $modelSourceSelection) {
                         ForEach(LocalModelSourceSelection.allCases) { source in
                             Label(source.title, systemImage: source.icon)
                                 .tag(source)
@@ -100,7 +106,7 @@ struct KizunaSettingsView: View {
                     }
 
                     if modelSourceSelection == .standard {
-                        Picker("標準リンク", selection: $selectedStandardModelURL) {
+                        Picker(KizunaCopy.text(japanese: "標準リンク", english: "Standard link"), selection: $selectedStandardModelURL) {
                             ForEach(standardModelOptions) { option in
                                 VStack(alignment: .leading) {
                                     Text(option.title)
@@ -118,27 +124,36 @@ struct KizunaSettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Text("アプリに設定された標準リンクからダウンロードします。")
+                        Text(KizunaCopy.text(
+                            japanese: "アプリに設定された標準リンクからダウンロードします。",
+                            english: "Download from a standard link configured by the app."
+                        ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
                         // 認証が必要な標準モデルだけ、トークン入力を表示する。
                         if selectedStandardModelRequiresToken {
-                            SecureField("Hugging Faceアクセストークン（必要な場合）", text: $modelAccessToken)
+                            SecureField(KizunaCopy.text(japanese: "Hugging Faceアクセストークン（必要な場合）", english: "Hugging Face access token (if required)"), text: $modelAccessToken)
                                 .textContentType(.password)
-                            Text("Gemma 3n E2BはHugging Faceで利用許諾を確認したアクセストークンが必要です。")
+                            Text(KizunaCopy.text(
+                                japanese: "Gemma 3n E2BはHugging Faceで利用許諾を確認したアクセストークンが必要です。",
+                                english: "Gemma 3n E2B requires an access token after accepting its Hugging Face license."
+                            ))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        TextField("Hugging FaceのファイルURL", text: $modelSourceURL)
+                        TextField(KizunaCopy.text(japanese: "Hugging FaceのファイルURL", english: "Hugging Face file URL"), text: $modelSourceURL)
                             .textContentType(.URL)
                             .autocorrectionDisabled()
 
-                        SecureField("アクセストークン（必要な場合）", text: $modelAccessToken)
+                        SecureField(KizunaCopy.text(japanese: "アクセストークン（必要な場合）", english: "Access token (if required)"), text: $modelAccessToken)
                             .textContentType(.password)
 
-                        Text("リポジトリページではなく、GGUFまたはLiteRT-LMファイルの直接ダウンロードURLを指定してください。")
+                        Text(KizunaCopy.text(
+                            japanese: "リポジトリページではなく、GGUFまたはLiteRT-LMファイルの直接ダウンロードURLを指定してください。",
+                            english: "Enter a direct download URL for a GGUF or LiteRT-LM file, not a repository page."
+                        ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -163,18 +178,20 @@ struct KizunaSettingsView: View {
                     // ユーザーにself-checkを押させる導線は置かない。
                     VStack(alignment: .leading, spacing: 8) {
                         if modelManager.isDownloading {
-                            Button("一時停止") {
+                            Button(KizunaCopy.text(japanese: "一時停止", english: "Pause")) {
                                 modelManager.cancelDownload()
                             }
                             .buttonStyle(.bordered)
                         } else if modelManager.canResumeDownload {
-                            Button("ダウンロードを再開") {
+                            Button(KizunaCopy.text(japanese: "ダウンロードを再開", english: "Resume download")) {
                                 saveSecretsAndModelSource()
                                 modelManager.resumeDownloadIfPossible()
                             }
                             .buttonStyle(.bordered)
                         } else {
-                            Button(modelManager.installedModelURL == nil ? "モデルをダウンロード" : "再ダウンロード") {
+                            Button(modelManager.installedModelURL == nil
+                                   ? KizunaCopy.text(japanese: "モデルをダウンロード", english: "Download model")
+                                   : KizunaCopy.text(japanese: "再ダウンロード", english: "Download again")) {
                                 saveSecretsAndModelSource()
                                 modelManager.startDownload()
                             }
@@ -184,8 +201,8 @@ struct KizunaSettingsView: View {
 
                         Label(
                             modelManager.runtimeAvailability == .checking
-                                ? "端末内で実行確認中"
-                                : "端末内の実行確認は自動で行われます",
+                                ? KizunaCopy.text(japanese: "端末内で実行確認中", english: "Checking on-device runtime")
+                                : KizunaCopy.text(japanese: "端末内の実行確認は自動で行われます", english: "On-device runtime checks run automatically"),
                             systemImage: modelManager.runtimeAvailability == .checking
                                 ? "arrow.triangle.2.circlepath"
                                 : "checkmark.seal"
@@ -195,31 +212,37 @@ struct KizunaSettingsView: View {
                     }
 
                     if modelManager.installedModelURL != nil {
-                        Button("ローカルモデルを削除", role: .destructive) {
+                        Button(KizunaCopy.text(japanese: "ローカルモデルを削除", english: "Delete local model"), role: .destructive) {
                             showDeleteAlert = true
                         }
                     }
                     }
 
-                Section("デバッグ") {
+                Section(KizunaCopy.text(japanese: "デバッグ", english: "Debug")) {
                     Toggle(
-                        "デバッグオプションを有効化",
+                        KizunaCopy.text(japanese: "デバッグオプションを有効化", english: "Enable debug options"),
                         isOn: $debugRestSuggestionEnabled
                     )
-                    Button("休憩提案を30秒後に表示") {
+                    Button(KizunaCopy.text(japanese: "休憩提案を30秒後に表示", english: "Show rest suggestion after 30 seconds")) {
                         KizunaDebugOptions.requestRestSuggestionUI()
                         dismiss()
                     }
                     .disabled(!debugRestSuggestionEnabled)
-                    Text("押すと設定を閉じ、最初のストーリーを開いて30秒後に画面内カードを表示します。")
+                    Text(KizunaCopy.text(
+                        japanese: "設定を閉じ、最初のストーリーを開いて30秒後にカードを表示します。",
+                        english: "Closes settings, opens the first story, and shows the card after 30 seconds."
+                    ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("危険相談サポートを30秒後に表示") {
+                    Button(KizunaCopy.text(japanese: "危険相談サポートを30秒後に表示", english: "Show safety support after 30 seconds")) {
                         KizunaDebugOptions.requestSafetyConcernUI()
                         dismiss()
                     }
                     .disabled(!debugRestSuggestionEnabled)
-                    Text("押すと設定を閉じ、最初のストーリーを開いて30秒後に相談サポートカードを表示します。")
+                    Text(KizunaCopy.text(
+                        japanese: "設定を閉じ、最初のストーリーを開いて30秒後に相談サポートカードを表示します。",
+                        english: "Closes settings, opens the first story, and shows the support card after 30 seconds."
+                    ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -247,7 +270,7 @@ struct KizunaSettingsView: View {
                     Text(KizunaCopy.text(japanese: "起動と診断", english: "Launch & diagnostics"))
                 }
 
-                Section("データ保存先") {
+                Section(KizunaCopy.text(japanese: "データ保存先", english: "Data locations")) {
                     Text(KizunaDataMigration.characterLibraryURL.path)
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
@@ -264,25 +287,25 @@ struct KizunaSettingsView: View {
                 }
             }
             .formStyle(.grouped)
-            .navigationTitle("設定")
+            .navigationTitle(KizunaCopy.text(japanese: "設定", english: "Settings"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
+                    Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
                         saveSecretsAndModelSource()
                     }
                 }
             }
         }
-        .alert("ローカルモデルを削除しますか？", isPresented: $showDeleteAlert) {
-            Button("削除", role: .destructive) {
+        .alert(KizunaCopy.text(japanese: "ローカルモデルを削除しますか？", english: "Delete the local model?"), isPresented: $showDeleteAlert) {
+            Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
                 modelManager.removeInstalledModel()
             }
-            Button("キャンセル", role: .cancel) {}
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
-            Text("この操作は取り消せません。")
+            Text(KizunaCopy.text(japanese: "この操作は取り消せません。", english: "This action cannot be undone."))
         }
         .alert(
             KizunaCopy.text(japanese: "初回起動画面を表示しますか？", english: "Show the welcome screen again?"),
@@ -326,7 +349,7 @@ struct KizunaSettingsView: View {
         }
 
         modelManager.updateAccessToken(modelAccessToken)
-        saveMessage = "設定を保存しました"
+        saveMessage = KizunaCopy.text(japanese: "設定を保存しました", english: "Settings saved")
     }
 
     private var standardModelOptions: [LocalAssistantModelProfile.DownloadOption] {
@@ -346,8 +369,8 @@ private enum LocalModelSourceSelection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .standard: return "標準モデル"
-        case .huggingFace: return "Hugging Faceから選択"
+        case .standard: return KizunaCopy.text(japanese: "標準モデル", english: "Standard model")
+        case .huggingFace: return KizunaCopy.text(japanese: "Hugging Faceから選択", english: "Choose from Hugging Face")
         }
     }
 

@@ -30,7 +30,7 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
         case .fast: return "高速"
         case .thinking: return "Thinking"
         case .deepThinking: return "高精度"
-        case .persona: return "Kizuna"
+        case .persona: return "kizuna"
         }
     }
 
@@ -39,7 +39,7 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
         case .fast: return "Fast"
         case .thinking: return "Think"
         case .deepThinking: return "精度"
-        case .persona: return "Kizuna"
+        case .persona: return "kizuna"
         }
     }
 

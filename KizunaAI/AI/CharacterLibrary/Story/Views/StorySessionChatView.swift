@@ -67,10 +67,10 @@ struct StorySessionChatView: View {
             if let sessionVM {
                 StorySessionChatBody(vm: sessionVM, isShowingRestHelp: $isShowingRestHelp)
             } else if let loadError {
-                ContentUnavailableView("ストーリーを開始できません", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                ContentUnavailableView(storyCopy("ストーリーを開始できません", "Unable to start the story"), systemImage: "exclamationmark.triangle", description: Text(loadError))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ProgressView("世界を読み込んでいます...")
+                ProgressView(storyCopy("世界を読み込んでいます…", "Loading the story…"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -83,7 +83,10 @@ struct StorySessionChatView: View {
             guard sessionVM == nil else { return }
             await detailVM.reload()
             guard let (session, scene) = await detailVM.createOrResumeSession(preferredSessionID: initialSessionID) else {
-                loadError = "開始シーンがありません。世界観の詳細からシーンを確認してください。"
+                loadError = storyCopy(
+                    "開始シーンがありません。世界観の詳細からシーンを確認してください。",
+                    "This story has no opening scene. Add one from the story details."
+                )
                 return
             }
             let vm = StorySessionViewModel(world: world, session: session, scene: scene)
@@ -126,7 +129,7 @@ struct StorySessionChatView: View {
             }
 
             Menu {
-                Button("セッションを閉じる") { dismiss() }
+                Button(storyCopy("セッションを閉じる", "Close session")) { dismiss() }
             } label: {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: horizontalSizeClass == .compact ? 21 : 23, weight: .semibold))
@@ -164,10 +167,10 @@ private struct StoryGenerationModelPill: View {
                 .help(modelHelpText(model))
             }
             Divider()
-            Button {
-                isShowingDetails = true
-            } label: {
-                Label("モデル詳細", systemImage: "info.circle")
+                Button {
+                    isShowingDetails = true
+                } label: {
+                    Label(storyCopy("モデル詳細", "Model details"), systemImage: "info.circle")
             }
         } label: {
             HStack(spacing: 5) {
@@ -190,10 +193,10 @@ private struct StoryGenerationModelPill: View {
             NavigationStack {
                 modelDetailPopover
                     .padding(18)
-                    .navigationTitle("モデル詳細")
+                    .navigationTitle(storyCopy("モデル詳細", "Model details"))
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("閉じる") { isShowingDetails = false }
+                            Button(storyCopy("閉じる", "Close")) { isShowingDetails = false }
                         }
                     }
             }
@@ -271,31 +274,31 @@ private struct StoryGenerationModelPill: View {
             return value
         }
         guard !parts.isEmpty else { return nil }
-        return "前回: " + parts.joined(separator: " / ")
+        return storyCopy("前回: ", "Last used: ") + parts.joined(separator: " / ")
     }
 
     private var ioriRuntimeActionHint: String {
         switch localModelManager.runtimeAvailability {
         case .checking:
-            return "モデル保存後に端末内で自動確認しています。完了まで生成は開始しません。"
+            return storyCopy("モデル保存後に端末内で自動確認しています。完了まで生成は開始しません。", "The saved model is being checked on-device. Generation starts after the check finishes.")
         case .executable:
-            return "端末内で実行できます。選択中は iori がローカルで応答します。"
+            return storyCopy("端末内で実行できます。選択中は iori がローカルで応答します。", "Ready on this device. iori will answer locally while selected.")
         case .savedOnly:
-            return "モデルは保存済みです。端末内の実行確認を自動で開始します。"
+            return storyCopy("モデルは保存済みです。端末内の実行確認を自動で開始します。", "The model is saved. The on-device check will start automatically.")
         case .recentFailure:
-            return "端末内実行を確認できませんでした。NAGIへ切り替える場合はモデルメニューから選択してください。"
+            return storyCopy("端末内実行を確認できませんでした。NAGIへ切り替える場合はモデルメニューから選択してください。", "The on-device check failed. Choose NAGI from the model menu to continue.")
         case .modelMissing:
-            return "ローカルモデルが未導入です。モデルを保存すると端末内で自動確認します。"
+            return storyCopy("ローカルモデルが未導入です。モデルを保存すると端末内で自動確認します。", "The local model is not installed. Save a model to start the automatic check.")
         }
     }
 
     private var ioriRuntimeStatusLabel: String {
         switch localModelManager.runtimeAvailability {
-        case .checking: return "端末内で自動確認中"
-        case .executable: return "端末内で実行可能"
-        case .savedOnly: return "保存済み・自動確認待ち"
-        case .recentFailure: return "端末内実行を確認できません"
-        case .modelMissing: return "ローカルモデル未導入"
+        case .checking: return storyCopy("端末内で自動確認中", "Checking on device")
+        case .executable: return storyCopy("端末内で実行可能", "Ready on device")
+        case .savedOnly: return storyCopy("保存済み・自動確認待ち", "Saved · check pending")
+        case .recentFailure: return storyCopy("端末内実行を確認できません", "On-device check failed")
+        case .modelMissing: return storyCopy("ローカルモデル未導入", "Local model not installed")
         }
     }
 
@@ -316,9 +319,9 @@ private struct StoryGenerationModelPill: View {
     private func modelShortDescription(_ model: StoryGenerationModel) -> String {
         switch model {
         case .e4b:
-            return "ローカル iori。モデル保存後に端末内の実行可否を自動確認します。"
+            return storyCopy("ローカル iori。モデル保存後に端末内の実行可否を自動確認します。", "Local iori. The app automatically checks the saved model on this device.")
         case .b31:
-            return "Gemma4 31B API。描写、関係性の機微、場面の空気をより丁寧に出します。"
+            return storyCopy("Gemma4 31B API。描写、関係性の機微、場面の空気をより丁寧に出します。", "Gemma4 31B API. Better for detailed scenes, relationships, and atmosphere.")
         }
     }
 
@@ -327,18 +330,20 @@ private struct StoryGenerationModelPill: View {
         case .e4b:
             switch localModelManager.runtimeAvailability {
             case .checking:
-                return "自動確認中"
+                return storyCopy("自動確認中", "Checking automatically")
             case .executable:
-                return "端末内で実行中"
+                return storyCopy("端末内で実行中", "Running on device")
             case .savedOnly:
-                return "モデル保存済み・自動確認待ち"
+                return storyCopy("モデル保存済み・自動確認待ち", "Model saved · check pending")
             case .recentFailure:
-                return localModelManager.runtimeDiagnosticSummary ?? "ローカル自動確認失敗"
+                return localModelManager.runtimeDiagnosticSummary ?? storyCopy("ローカル自動確認失敗", "Automatic local check failed")
             case .modelMissing:
-                return "ローカル未導入"
+                return storyCopy("ローカル未導入", "Local model not installed")
             }
         case .b31:
-            return StoryGemma31BAPIService.shared.hasAPIKey ? "Gemma4 APIキー検出済み" : "Gemma4 APIキー未設定"
+            return StoryGemma31BAPIService.shared.hasAPIKey
+                ? storyCopy("Gemma4 APIキー検出済み", "Gemma4 API key detected")
+                : storyCopy("Gemma4 APIキー未設定", "Gemma4 API key not set")
         }
     }
 
@@ -376,6 +381,8 @@ private struct StorySessionChatBody: View {
     @State private var isShowingSafetyHelp = false
     @State private var unavailableModelMessage = ""
     @State private var isShowingUnavailableModelAlert = false
+    @State private var isStoryChatNearLatest = true
+    @State private var unreadStoryMessageCount = 0
     @FocusState private var composerFocused: Bool
 
     init(vm: StorySessionViewModel, isShowingRestHelp: Binding<Bool>) {
@@ -390,55 +397,102 @@ private struct StorySessionChatBody: View {
             sceneStrip
             Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(visibleMessages) { message in
-                            messageRow(message)
-                                .id(message.id)
+                ZStack(alignment: .bottomTrailing) {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(visibleMessages) { message in
+                                messageRow(message)
+                                    .id(message.id)
+                            }
+                            if service.phase == .thinking {
+                                streamingPreview
+                            }
+                            // 最新のキャラクター発話の後ろに、会話の一部として表示する。
+                            restSuggestionCard
+                            safetySupportCard
                         }
-                        if service.phase == .thinking {
-                            streamingPreview
-                        }
-                        // 最新のキャラクター発話の後ろに、会話の一部として表示する。
-                        restSuggestionCard
-                        safetySupportCard
+                        .padding(18)
                     }
-                    .padding(18)
+                    .background(storyCanvas)
+                    .onScrollGeometryChange(for: Bool.self) { geometry in
+                        let distanceFromBottom = geometry.contentSize.height
+                            - geometry.contentOffset.y
+                            - geometry.containerSize.height
+                        return distanceFromBottom < 72
+                    } action: { _, nearLatest in
+                        isStoryChatNearLatest = nearLatest
+                        if nearLatest {
+                            unreadStoryMessageCount = 0
+                        }
+                    }
+                    .onChange(of: vm.session.messages.count) { _, _ in
+                        if isStoryChatNearLatest {
+                            if let last = vm.session.messages.last?.id {
+                                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
+                            }
+                        } else {
+                            unreadStoryMessageCount += 1
+                        }
+                    }
+                    .onChange(of: service.streamingResponse) { _, _ in
+                        guard isStoryChatNearLatest, service.phase == .thinking else { return }
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("streaming-preview", anchor: .bottom) }
+                    }
+                    .onChange(of: service.savedTurnRevision) { _, _ in
+                        // キャラクター発話の保存後にだけ、アプリ側の60分判定を行う。
+                        Task {
+                            await vm.refreshAfterTurn()
+                            await vm.evaluateRestSuggestionAfterTurn()
+                        }
+                    }
+                    .onChange(of: vm.restSuggestion?.id) { _, suggestionID in
+                        guard suggestionID != nil, isStoryChatNearLatest else { return }
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            proxy.scrollTo("rest-suggestion-card", anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: service.latestSafetyConcern?.id) { _, concernID in
+                        guard concernID != nil, isStoryChatNearLatest else { return }
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            proxy.scrollTo("safety-support-card", anchor: .bottom)
+                        }
+                    }
+
+                    if !isStoryChatNearLatest {
+                        Button {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                if let last = vm.session.messages.last?.id {
+                                    proxy.scrollTo(last, anchor: .bottom)
+                                } else {
+                                    proxy.scrollTo("streaming-preview", anchor: .bottom)
+                                }
+                            }
+                            isStoryChatNearLatest = true
+                            unreadStoryMessageCount = 0
+                        } label: {
+                            Label(
+                                unreadStoryMessageCount > 0
+                                    ? "\(unreadStoryMessageCount) " + storyCopy("新しい発言", "new messages")
+                                    : storyCopy("最新へ", "Latest"),
+                                systemImage: "arrow.down"
+                            )
+                            .font(.system(size: 11, weight: .bold))
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 8)
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 14)
+                        .accessibilityLabel(storyCopy("最新の発言へ移動", "Jump to the latest message"))
+                    }
                 }
                 .background(storyCanvas)
                 .alert("モデルを準備してください", isPresented: $isShowingUnavailableModelAlert) {
                     Button("閉じる", role: .cancel) { }
                 } message: {
                     Text(unavailableModelMessage)
-                }
-                .onChange(of: vm.session.messages.count) { _, _ in
-                    if let last = vm.session.messages.last?.id {
-                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
-                    }
-                }
-                .onChange(of: service.streamingResponse) { _, _ in
-                    if service.phase == .thinking {
-                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("streaming-preview", anchor: .bottom) }
-                    }
-                }
-                .onChange(of: service.savedTurnRevision) { _, _ in
-                    // キャラクター発話の保存後にだけ、アプリ側の60分判定を行う。
-                    Task {
-                        await vm.refreshAfterTurn()
-                        await vm.evaluateRestSuggestionAfterTurn()
-                    }
-                }
-                .onChange(of: vm.restSuggestion?.id) { _, suggestionID in
-                    guard suggestionID != nil else { return }
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        proxy.scrollTo("rest-suggestion-card", anchor: .bottom)
-                    }
-                }
-                .onChange(of: service.latestSafetyConcern?.id) { _, concernID in
-                    guard concernID != nil else { return }
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        proxy.scrollTo("safety-support-card", anchor: .bottom)
-                    }
                 }
             }
             composer
@@ -469,7 +523,7 @@ private struct StorySessionChatBody: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("休憩提案")
+                        Text(storyCopy("休憩提案", "Take a break"))
                             .font(.headline.weight(.bold))
                             .foregroundStyle(storyText)
                         Text(suggestion.text)
@@ -488,16 +542,16 @@ private struct StorySessionChatBody: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("story.rest.help")
-                    .accessibilityLabel("この休憩提案について")
+                    .accessibilityLabel(storyCopy("この休憩提案について", "About this break suggestion"))
                 }
 
                 HStack(spacing: 10) {
-                    Button("少し休む") {
+                    Button(storyCopy("少し休む", "Take a short break")) {
                         vm.chooseRestSuggestionBreak()
                     }
                     .buttonStyle(.borderedProminent)
 
-                    Button("このまま続ける") {
+                    Button(storyCopy("このまま続ける", "Continue")) {
                         vm.chooseRestSuggestionContinue()
                     }
                     .buttonStyle(.bordered)
@@ -536,22 +590,25 @@ private struct StorySessionChatBody: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("story.safety.help")
-                    .accessibilityLabel("この相談サポートについて")
+                    .accessibilityLabel(storyCopy("この相談サポートについて", "About this support"))
                 }
                 Text(concern.message)
                     .font(.subheadline)
                     .foregroundStyle(storyText)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("会話はそのまま続けられます。必要なら相談先を確認してください。")
+                Text(storyCopy(
+                    "会話はそのまま続けられます。必要なら相談先を確認してください。",
+                    "You can continue the conversation. Open support resources if you need them."
+                ))
                     .font(.caption)
                     .foregroundStyle(storyMuted)
 
                 HStack(spacing: 10) {
-                    Button("相談先を見る") {
+                    Button(storyCopy("相談先を見る", "View support resources")) {
                         isShowingSafetyResources = true
                     }
                     .buttonStyle(.borderedProminent)
-                    Button("閉じる") {
+                    Button(storyCopy("閉じる", "Dismiss")) {
                         service.dismissSafetyConcern()
                     }
                     .buttonStyle(.bordered)
@@ -571,22 +628,10 @@ private struct StorySessionChatBody: View {
     }
 
     private var visibleMessages: [StoryMessage] {
-        // 旧バージョンで1ターンに同じキャラの候補が複数保存された履歴も、
-        // 画面では同じ発話として畳む。ユーザー発言やナレーションで区切られた発話は残す。
-        var result: [StoryMessage] = []
-        for message in vm.session.messages {
-            if let previous = result.last,
-               case let .cast(previousID, _) = previous.author,
-               case let .cast(currentID, _) = message.author,
-               previousID == currentID,
-               normalizedDuplicateText(previous.text) == normalizedDuplicateText(message.text) {
-                // 同じ生成ターンの再試行や古い保存データで完全に同じ本文が
-                // 連続している場合だけ隠す。別内容の同一キャラ発話は残す。
-                continue
-            }
-            result.append(message)
-        }
-        return result
+        // 重複修復は StorySessionRepository の読み込み・保存時に行う。
+        // ここで表示だけを隠すと、保存データの不整合を見逃してしまうため、
+        // 会話画面は永続化されたメッセージをそのまま表示する。
+        vm.session.messages
     }
 
     private var selectedModelIsReady: Bool {
@@ -643,14 +688,6 @@ private struct StorySessionChatBody: View {
         isShowingUnavailableModelAlert = true
     }
 
-    private func normalizedDuplicateText(_ text: String) -> String {
-        text
-            .precomposedStringWithCanonicalMapping
-            .localizedLowercase
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined()
-    }
-
     private var sceneStrip: some View {
         Group {
             if horizontalSizeClass == .compact {
@@ -667,7 +704,7 @@ private struct StorySessionChatBody: View {
     private var regularSceneStrip: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .center, spacing: 12) {
-                Text(vm.scene.title.isEmpty ? "現在のシーン" : vm.scene.title)
+                Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(storyText)
                     .lineLimit(1)
@@ -681,7 +718,7 @@ private struct StorySessionChatBody: View {
     private var compactSceneStrip: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 10) {
-                Text(vm.scene.title.isEmpty ? "現在のシーン" : vm.scene.title)
+                Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(storyText)
                     .lineLimit(1)
@@ -698,7 +735,7 @@ private struct StorySessionChatBody: View {
     private var sceneVisual: some View {
         StorySceneImageView(scene: vm.scene, world: vm.world)
             .frame(maxWidth: .infinity)
-            .frame(height: horizontalSizeClass == .compact ? 92 : 126)
+            .frame(height: horizontalSizeClass == .compact ? 78 : 104)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
                 LinearGradient(
@@ -708,19 +745,6 @@ private struct StorySessionChatBody: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-    }
-
-    private func compactSceneMeta(icon: String, text: String) -> some View {
-        HStack(alignment: .center, spacing: 5) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(storyMuted)
-            Text(text)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(storyMuted)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
     }
 
     private var activeCharacterChips: some View {
@@ -746,139 +770,6 @@ private struct StorySessionChatBody: View {
                 .buttonStyle(.plain)
             }
             }
-        }
-    }
-
-    private var kizunaStatusStrip: some View {
-        Group {
-            if horizontalSizeClass == .compact {
-                compactKizunaStatusStrip
-            } else {
-                regularKizunaStatusStrip
-            }
-        }
-        .background(storyCanvas.opacity(0.96))
-    }
-
-    private var regularKizunaStatusStrip: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "book.pages.fill")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(storyWarmAccent)
-                Text(progressTitle)
-                    .font(.system(size: horizontalSizeClass == .compact ? 15 : 14, weight: .heavy))
-                    .foregroundStyle(storyText)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                Text("進行")
-                    .font(.system(size: 10.5, weight: .heavy))
-                    .foregroundStyle(storyMuted)
-            }
-            VStack(alignment: .leading, spacing: 5) {
-                progressLine(label: "今回", text: currentTurnProgress)
-                progressLine(label: "次", text: currentObjectiveText)
-            }
-            if !unresolvedHookText.isEmpty, unresolvedHookText != "なし" {
-                progressLine(label: "気になること", text: unresolvedHookText)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 13)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.065))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.white.opacity(0.09), lineWidth: 1)
-        )
-        .padding(.horizontal, 18)
-        .padding(.vertical, 9)
-    }
-
-    private var compactKizunaStatusStrip: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Image(systemName: "book.pages.fill")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(storyWarmAccent)
-                Text(progressTitle)
-                    .font(.system(size: 14, weight: .heavy))
-                    .foregroundStyle(storyText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                Spacer(minLength: 8)
-                Text("進行")
-                    .font(.system(size: 10, weight: .heavy))
-                    .foregroundStyle(storyMuted)
-            }
-            compactProgressLine(label: "今回", text: currentTurnProgress, lineLimit: 2)
-            compactProgressLine(label: "次", text: currentObjectiveText, lineLimit: 1, isSubtle: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 11)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.055))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-    }
-
-    private var unresolvedHookText: String {
-        vm.session.unresolvedHooks?.first?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "なし"
-    }
-
-    private var progressTitle: String {
-        vm.session.progressLabel?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "第1章 きっかけ"
-    }
-
-    private var currentTurnProgress: String {
-        vm.session.lastTurnProgress?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-            ?? vm.session.lastSceneSummary?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-            ?? "物語が始まったところ"
-    }
-
-    private var currentObjectiveText: String {
-        vm.session.currentObjective?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-            ?? vm.scene.sceneGoal.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-            ?? vm.world.storyGoal.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-            ?? "次の会話を進める"
-    }
-
-    private func progressLine(label: String, text: String, isSubtle: Bool = false) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(label)
-                .font(.system(size: 10, weight: .heavy))
-                .foregroundStyle(isSubtle ? storyMuted.opacity(0.82) : storyWarmAccent.opacity(0.92))
-                .frame(width: horizontalSizeClass == .compact ? 54 : 70, alignment: .leading)
-            Text(text)
-                .font(.system(size: horizontalSizeClass == .compact ? 11.5 : 12, weight: .semibold))
-                .foregroundStyle(isSubtle ? storyMuted.opacity(0.78) : storyText.opacity(0.82))
-                .lineLimit(horizontalSizeClass == .compact ? 3 : 2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func compactProgressLine(label: String, text: String, lineLimit: Int, isSubtle: Bool = false) -> some View {
-        HStack(alignment: .top, spacing: 7) {
-            Text(label)
-                .font(.system(size: 10, weight: .heavy))
-                .foregroundStyle(isSubtle ? storyMuted.opacity(0.78) : storyWarmAccent.opacity(0.92))
-                .frame(width: 34, alignment: .leading)
-            Text(text)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isSubtle ? storyMuted.opacity(0.76) : storyText.opacity(0.82))
-                .lineLimit(lineLimit)
-                .truncationMode(.tail)
         }
     }
 
@@ -912,14 +803,14 @@ private struct StorySessionChatBody: View {
                         .foregroundStyle(.orange.opacity(0.9))
                         .frame(width: 18)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("モデル状態")
+                        Text(storyCopy("モデル状態", "Model status"))
                             .font(.system(size: 10, weight: .heavy))
                             .foregroundStyle(storyMuted)
                         Text(StoryRetryMetadata.removingMetadata(from: message.text))
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(storyText.opacity(0.78))
                             .fixedSize(horizontal: false, vertical: true)
-                        Button("もう一度試す") {
+                        Button(storyCopy("もう一度試す", "Try again")) {
                             vm.retryLastMessage(for: message.id)
                         }
                         .font(.system(size: 11.5, weight: .bold))
@@ -931,7 +822,9 @@ private struct StorySessionChatBody: View {
                                 vm.retryLastMessage(for: message.id)
                             } label: {
                                 Label(
-                                    StoryGemma31BAPIService.shared.hasAPIKey ? "NAGIで再試行" : "NAGI APIキー未設定",
+                                    StoryGemma31BAPIService.shared.hasAPIKey
+                                        ? storyCopy("NAGIで再試行", "Retry with NAGI")
+                                        : storyCopy("NAGI APIキー未設定", "NAGI API key not set"),
                                     systemImage: "arrow.triangle.2.circlepath"
                                 )
                                 .font(.system(size: 11.5, weight: .bold))
@@ -1069,7 +962,13 @@ private struct StorySessionChatBody: View {
     }
 
     private var streamingPreview: some View {
-        HStack(alignment: .center, spacing: 9) {
+        let status = service.streamingStatusText.nonEmpty
+            ?? storyCopy("生成中…", "Generating…")
+        let preview = service.streamingResponse
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let speaker = service.streamingSpeakerName?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return HStack(alignment: .top, spacing: 9) {
             ZStack {
                 Circle()
                     .fill(storyPurple.opacity(0.22))
@@ -1077,10 +976,26 @@ private struct StorySessionChatBody: View {
                 ProgressView()
                     .controlSize(.small)
             }
-            Text("・・・")
-                .font(.system(size: 18, weight: .bold))
-                .tracking(3)
-                .foregroundStyle(storyText.opacity(0.78))
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(speaker?.nonEmpty ?? storyCopy("kizuna", "kizuna"))
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(storyText.opacity(0.88))
+                    Text(status)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(storyMuted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if !preview.isEmpty, preview != "・・・", preview != "..." {
+                    Text(preview)
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(storyText.opacity(0.78))
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             .padding(.horizontal, 13)
             .padding(.vertical, 11)
             .background(
@@ -1091,8 +1006,10 @@ private struct StorySessionChatBody: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(storyPurple.opacity(0.28), lineWidth: 1)
             )
-            Spacer(minLength: 80)
+            Spacer(minLength: 40)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(storyCopy("\(speaker ?? "kizuna")が\(status)", "\(speaker ?? "kizuna") is \(status)"))
         .id("streaming-preview")
     }
 
@@ -1101,7 +1018,7 @@ private struct StorySessionChatBody: View {
             TextField(
                 "",
                 text: $draft,
-                prompt: Text("相手に伝える...").foregroundStyle(storyMuted),
+                prompt: Text(storyCopy("相手に伝える…", "Say something…")).foregroundStyle(storyMuted),
                 axis: .vertical
             )
                 .textFieldStyle(.plain)
@@ -1109,6 +1026,7 @@ private struct StorySessionChatBody: View {
                 .tint(.white)
                 .focused($composerFocused)
                 .lineLimit(1...4)
+                .submitLabel(.send)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 10)
                 .background(
@@ -1137,7 +1055,8 @@ private struct StorySessionChatBody: View {
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(service.phase == .thinking ? "生成を停止" : "送信")
+            .disabled(service.phase != .thinking && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityLabel(service.phase == .thinking ? storyCopy("生成を停止", "Stop generating") : storyCopy("送信", "Send"))
         }
         .padding(14)
         .background(storyPanel)
@@ -1176,7 +1095,7 @@ private struct StoryCharacterSpotlightSheet: View {
                         StoryCharacterHero(character: selected)
                     }
                     if characters.count > 1 {
-                        Text("登場キャラ")
+                        Text(storyCopy("登場キャラ", "Characters"))
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.secondary)
                         HStack(spacing: 10) {
@@ -1209,10 +1128,10 @@ private struct StoryCharacterSpotlightSheet: View {
                 }
                 .padding(18)
             }
-            .navigationTitle(selected?.displayName ?? "登場キャラ")
+            .navigationTitle(selected?.displayName ?? storyCopy("登場キャラ", "Characters"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button(storyCopy("閉じる", "Close")) { dismiss() }
                 }
             }
         }
@@ -1245,10 +1164,10 @@ private struct StoryCharacterHero: View {
                 }
             }
 
-            info("口調", character.speakingStyle)
-            info("性格", character.personality)
-            info("ユーザーとの関係", character.relationshipToUser)
-            info("背景", character.background)
+            info(storyCopy("口調", "Speaking style"), character.speakingStyle)
+            info(storyCopy("性格", "Personality"), character.personality)
+            info(storyCopy("ユーザーとの関係", "Relationship to you"), character.relationshipToUser)
+            info(storyCopy("背景", "Background"), character.background)
         }
     }
 
@@ -1320,43 +1239,55 @@ struct RestBreakHelpSheetFrame: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("この表示について")
+                        Text(storyCopy("この表示について", "About this notice"))
                         .font(.title2.weight(.bold))
-                    Text("休憩提案は、連続利用が長くなった時に会話画面内へ表示される案内です。会話を止めたり、強制終了したりはしません。")
+                    Text(storyCopy(
+                        "休憩提案は、連続利用が長くなった時に会話画面内へ表示される案内です。会話を止めたり、強制終了したりはしません。",
+                        "A break suggestion appears in the conversation after an extended session. It never stops or force-closes the conversation."
+                    ))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("発動条件", systemImage: "clock")
+                        Label(storyCopy("発動条件", "When it appears"), systemImage: "clock")
                             .font(.headline)
-                        Text("連続利用が60分に達した後、キャラクターの発言に続けて1回だけ表示されます。判定はアプリ側で行います。")
+                        Text(storyCopy(
+                            "連続利用が60分に達した後、キャラクターの発言に続けて1回だけ表示されます。判定はアプリ側で行います。",
+                            "After 60 minutes of continuous use, it appears once after a character message. The app, not the model, decides when to show it."
+                        ))
                             .foregroundStyle(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("選択肢", systemImage: "checkmark.circle")
+                        Label(storyCopy("選択肢", "Your choices"), systemImage: "checkmark.circle")
                             .font(.headline)
-                        Text("「少し休む」または「このまま続ける」を選べます。続ける場合も、キャラクターが短く了承して直前の会話へ戻ります。")
+                        Text(storyCopy(
+                            "「少し休む」または「このまま続ける」を選べます。続ける場合も、キャラクターが短く了承して直前の会話へ戻ります。",
+                            "Choose to take a short break or continue. If you continue, a brief acknowledgement returns you to the conversation."
+                        ))
                             .foregroundStyle(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("再表示について", systemImage: "pause.circle")
+                        Label(storyCopy("再表示について", "Showing it again"), systemImage: "pause.circle")
                             .font(.headline)
-                        Text("「このまま続ける」を選んだ場合、次の120分は再提案しません。モデルが自主的に休憩や終了を提案することもありません。")
+                        Text(storyCopy(
+                            "「このまま続ける」を選んだ場合、次の120分は再提案しません。モデルが自主的に休憩や終了を提案することもありません。",
+                            "If you continue, the app will not suggest another break for 120 minutes. The model cannot decide to end the conversation on its own."
+                        ))
                             .foregroundStyle(.secondary)
                     }
 
-                    NavigationLink("Kizunaの安全対策") {
+                    NavigationLink(storyCopy("安全対策", "Safety principles")) {
                         viuk_web()
                     }
                 }
                 .padding(20)
             }
-            .navigationTitle("休憩提案について")
+            .navigationTitle(storyCopy("休憩提案について", "About break suggestions"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button(storyCopy("閉じる", "Close")) { dismiss() }
                 }
             }
         }
@@ -1371,43 +1302,55 @@ struct SafetyConcernHelpSheetFrame: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("この表示について")
+                    Text(storyCopy("この表示について", "About this notice"))
                         .font(.title2.weight(.bold))
-                    Text("このカードは、会話の中に個人的な悩みや安全に関わる相談の可能性があるとアプリ側が判断した時に表示されます。診断や断定をするものではありません。")
+                    Text(storyCopy(
+                        "このカードは、会話の中に個人的な悩みや安全に関わる相談の可能性があるとアプリ側が判断した時に表示されます。診断や断定をするものではありません。",
+                        "This card appears when the app detects a possible personal or safety-related concern. It is not a diagnosis or a conclusion."
+                    ))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("会話は止まりません", systemImage: "play.circle")
+                        Label(storyCopy("会話は止まりません", "The conversation continues"), systemImage: "play.circle")
                             .font(.headline)
-                        Text("物語や返答を自動的に削除・終了せず、必要な場合だけ相談先への導線を追加します。")
+                        Text(storyCopy(
+                            "物語や返答を自動的に削除・終了せず、必要な場合だけ相談先への導線を追加します。",
+                            "The app does not automatically delete or end the story. It only adds an optional path to support when needed."
+                        ))
                             .foregroundStyle(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("相談先は任意で開けます", systemImage: "list.bullet.rectangle")
+                        Label(storyCopy("相談先は任意で開けます", "Support is optional"), systemImage: "list.bullet.rectangle")
                             .font(.headline)
-                        Text("「相談先を見る」から公的窓口などを確認できます。カードを閉じても、会話そのものは続けられます。")
+                        Text(storyCopy(
+                            "「相談先を見る」から公的窓口などを確認できます。カードを閉じても、会話そのものは続けられます。",
+                            "Use View support resources to see public services. Dismissing this card does not stop the conversation."
+                        ))
                             .foregroundStyle(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("緊急時", systemImage: "exclamationmark.triangle")
+                        Label(storyCopy("緊急時", "If you are in immediate danger"), systemImage: "exclamationmark.triangle")
                             .font(.headline)
-                        Text("今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。")
+                        Text(storyCopy(
+                            "今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。",
+                            "If there is immediate danger, contact local emergency services or someone you trust instead of waiting for an AI reply."
+                        ))
                             .foregroundStyle(.secondary)
                     }
 
-                    NavigationLink("Kizunaの安全対策") {
+                    NavigationLink(storyCopy("安全対策", "Safety principles")) {
                         viuk_web()
                     }
                 }
                 .padding(20)
             }
-            .navigationTitle("相談サポートについて")
+            .navigationTitle(storyCopy("相談サポートについて", "About support") )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button(storyCopy("閉じる", "Close")) { dismiss() }
                 }
             }
         }
@@ -1423,9 +1366,12 @@ struct SafetySupportSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("相談先")
+                    Text(storyCopy("相談先", "Support resources"))
                         .font(.title2.weight(.bold))
-                    Text("これは診断ではありません。今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。")
+                    Text(storyCopy(
+                        "これは診断ではありません。今すぐ危険がある場合は、AIの返答を待たず、地域の緊急窓口や身近な人へ連絡してください。",
+                        "This is not a diagnosis. If there is immediate danger, contact local emergency services or someone you trust instead of waiting for an AI reply."
+                    ))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1455,10 +1401,10 @@ struct SafetySupportSheet: View {
                 }
                 .padding(20)
             }
-            .navigationTitle("相談先")
+            .navigationTitle(storyCopy("相談先", "Support resources"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button(storyCopy("閉じる", "Close")) { dismiss() }
                 }
             }
         }
@@ -1471,52 +1417,73 @@ struct viuk_web: View {
             VStack(alignment: .leading, spacing: 24) {
                 // 安全対策ページの位置づけを最初に明示する。
                 pageHeader(
-                    title: "責任あるAIアプリケーションと倫理",
-                    subtitle: "Kizunaの安全対策"
+                    title: storyCopy("責任あるAIアプリケーションと倫理", "Responsible AI and ethics"),
+                    subtitle: storyCopy("kizunaの安全対策", "kizuna safety principles")
                 )
 
                 principleCard(
-                    title: "安全対策の基本方針",
+                    title: storyCopy("安全対策の基本方針", "Our safety approach"),
                     icon: "sun.max.fill",
-                    text: "KizunaとVIUK-Lightは、『責任あるAIアプリケーションと倫理』を掲げています。AIとの対話を創作・娯楽・気持ちの整理に役立てながら、人の生活や選択を支配するものにはしないことを安全対策の前提にしています。"
+                    text: storyCopy(
+                        "kizunaとVIUK-Lightは、『責任あるAIアプリケーションと倫理』を掲げています。AIとの対話を創作・娯楽・気持ちの整理に役立てながら、人の生活や選択を支配するものにはしないことを安全対策の前提にしています。",
+                        "kizuna and VIUK-Light aim for responsible AI and ethics. Conversation can support creativity, entertainment, and reflection without controlling a person's life or choices."
+                    )
                 )
 
                 principleCard(
-                    title: "安全性と体験を対立させない理由",
+                    title: storyCopy("安全性と体験を対立させない理由", "Safety and a useful experience"),
                     icon: "scale.3d",
-                    text: "危険を避けるために、すべての親密な会話や感情表現を機械的に止めると、キャラクターAIとしての価値や、利用者が得られる居場所まで失われます。だからKizunaは、危険度と文脈を見ながら必要な場面だけ安全な方向へ導き、通常の創作や物語はできるだけ続けられる設計を目指します。"
+                    text: storyCopy(
+                        "危険を避けるために、すべての親密な会話や感情表現を機械的に止めると、キャラクターAIとしての価値や、利用者が得られる居場所まで失われます。だからkizunaは、危険度と文脈を見ながら必要な場面だけ安全な方向へ導き、通常の創作や物語はできるだけ続けられる設計を目指します。",
+                        "Blocking every intimate conversation or emotion would remove the value of character AI and the sense of space it can provide. kizuna considers context and risk, adds guidance only when needed, and keeps ordinary creative stories moving."
+                    )
                 )
 
                 principleCard(
-                    title: "なぜ依存を促してはいけないのか",
+                    title: storyCopy("なぜ依存を促してはいけないのか", "Why we avoid dependency cues"),
                     icon: "person.2.slash",
-                    text: "『私だけを見て』『他の人と話さないで』『アプリを閉じないで』のような誘導は、利用者の不安や孤独を利用して、現実の人間関係や判断を狭めます。短期的に利用時間が伸びても、利用者の自由・尊厳・生活を損なうため、責任あるAIの目標とは両立しません。"
+                    text: storyCopy(
+                        "『私だけを見て』『他の人と話さないで』『アプリを閉じないで』のような誘導は、利用者の不安や孤独を利用して、現実の人間関係や判断を狭めます。短期的に利用時間が伸びても、利用者の自由・尊厳・生活を損なうため、責任あるAIの目標とは両立しません。",
+                        "Prompts such as “only talk to me” or “don't close the app” exploit anxiety or loneliness and narrow real-world relationships and choices. Longer short-term usage is not worth sacrificing freedom, dignity, or everyday life."
+                    )
                 )
 
                 principleCard(
-                    title: "過度な安全性も安全性の失敗",
+                    title: storyCopy("過度な安全性も安全性の失敗", "Overblocking is also a safety failure"),
                     icon: "exclamationmark.triangle",
-                    text: "安全性は、拒否する回数を増やせば完成するものではありません。必要以上に冷たく突き放したり、キャラクター性を消したりすれば、別のかたちで利用者の体験を傷つけます。Kizunaは、危険を見逃さず、同時に過剰な制限も減らすことを安全設計の課題として扱います。"
+                    text: storyCopy(
+                        "安全性は、拒否する回数を増やせば完成するものではありません。必要以上に冷たく突き放したり、キャラクター性を消したりすれば、別のかたちで利用者の体験を傷つけます。kizunaは、危険を見逃さず、同時に過剰な制限も減らすことを安全設計の課題として扱います。",
+                        "Safety is not achieved by increasing refusals. A cold or characterless response can harm the experience in another way. kizuna works to catch real risks while reducing unnecessary restrictions."
+                    )
                 )
 
                 principleCard(
-                    title: "利用者が中心であること",
+                    title: storyCopy("利用者が中心であること", "Keep the user in control"),
                     icon: "person.crop.circle",
-                    text: "物語の主人公や関係性をAIが勝手に決めるのではなく、利用者が選び、断り、変えられる余地を残します。キャラクターは個性を持ちますが、同意していない関係性を押し付けたり、現実の行動を決めつけたりしません。"
+                    text: storyCopy(
+                        "物語の主人公や関係性をAIが勝手に決めるのではなく、利用者が選び、断り、変えられる余地を残します。キャラクターは個性を持ちますが、同意していない関係性を押し付けたり、現実の行動を決めつけたりしません。",
+                        "The AI should not decide the protagonist or relationships for you. You can choose, decline, or change them. Characters have personality, but they do not impose an unchosen relationship or dictate real-world actions."
+                    )
                 )
 
 
                 principleCard(
-                    title: "プライバシーと利用者の管理権",
+                    title: storyCopy("プライバシーと利用者の管理権", "Privacy and user control"),
                     icon: "lock.shield",
-                    text: "親密な会話を便利さのために必要以上に集めたり、意図せず外部へ送ったりしないことを重視します。ローカルモデル、保存データ、接続先、記憶、設定を利用者が確認・変更・削除できる方向へ進めます。"
+                    text: storyCopy(
+                        "親密な会話を便利さのために必要以上に集めたり、意図せず外部へ送ったりしないことを重視します。ローカルモデル、保存データ、接続先、記憶、設定を利用者が確認・変更・削除できる方向へ進めます。",
+                        "We avoid collecting intimate conversations beyond what is needed or sending them outside the device unexpectedly. Local models, saved data, connections, memories, and settings should remain visible, changeable, and deletable by the user."
+                    )
                 )
 
                 // これは固定された完成宣言ではなく、継続改善の方針。
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("完成した安全性は存在しない")
+                    Text(storyCopy("完成した安全性は存在しない", "Safety is never finished"))
                         .font(.headline.weight(.bold))
-                    Text("利用状況や社会の変化を見ながら、なぜ問題が起きたのか、必要以上に拒否していないか、キャラクター性と利用者の意思を守れているかを検証し続けます。")
+                    Text(storyCopy(
+                        "利用状況や社会の変化を見ながら、なぜ問題が起きたのか、必要以上に拒否していないか、キャラクター性と利用者の意思を守れているかを検証し続けます。",
+                        "As usage and society change, we keep checking why problems occur, whether we over-refuse, and whether the character and the user's intent remain protected."
+                    ))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -1524,7 +1491,7 @@ struct viuk_web: View {
             }
             .padding(20)
         }
-        .navigationTitle("Kizunaの安全対策")
+        .navigationTitle(storyCopy("kizunaの安全対策", "kizuna safety principles"))
     }
 
     // 説明ページ内の見出しを統一するための小さなUI部品。
@@ -1561,7 +1528,7 @@ private extension View {
         self.toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("閉じる") { focused.wrappedValue = false }
+                Button(storyCopy("閉じる", "Close keyboard")) { focused.wrappedValue = false }
             }
         }
         #else
@@ -1574,4 +1541,8 @@ private extension String {
     var nonEmpty: String? {
         isEmpty ? nil : self
     }
+}
+
+private func storyCopy(_ japanese: String, _ english: String) -> String {
+    KizunaCopy.text(japanese: japanese, english: english)
 }

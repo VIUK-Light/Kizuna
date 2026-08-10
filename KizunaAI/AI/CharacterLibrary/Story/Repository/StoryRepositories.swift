@@ -197,12 +197,31 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
 final class LocalJSONStorySessionRepository: StorySessionRepository {
     private let store = LocalJSONStore<StorySession>(fileName: "story_sessions.json")
     func fetchSessions(storyWorldId: UUID) async throws -> [StorySession] {
-        try await store.loadRecoveringCorruptRecords()
+        let sessions = try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.updatedAt > $1.updatedAt }
+        var repairedSessions: [StorySession] = []
+        for session in sessions {
+            let repaired = StorySessionMessageRepair.repaired(session)
+            if repaired.messages != session.messages {
+                do {
+                    try await store.appendOrReplace(repaired, idEquals: { $0.id == $1.id })
+                    NSLog(
+                        "[StorySession] repaired duplicate generated messages session=%@ removed=%ld",
+                        session.id.uuidString,
+                        session.messages.count - repaired.messages.count
+                    )
+                } catch {
+                    // 読み込み自体は継続し、保存失敗はログで追跡できるようにする。
+                    NSLog("[StorySession] duplicate repair save failed session=%@: %@", session.id.uuidString, error.localizedDescription)
+                }
+            }
+            repairedSessions.append(repaired)
+        }
+        return repairedSessions
     }
     func saveSession(_ session: StorySession) async throws {
-        var s = session
+        var s = StorySessionMessageRepair.repaired(session)
         s.updatedAt = Date()
         try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
     }
@@ -219,6 +238,60 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
 
     func deleteSession(id: UUID) async throws {
         try await store.delete(matching: { $0.id == id })
+    }
+}
+
+/// 旧バージョンで同じ生成結果が一つのセッションへ二重保存された場合の
+/// 永続データ修復。UI側で隠すのではなく、読み込み時に同一話者・同一本文の
+/// 重複レコードを一度だけ正規化して保存する。ユーザー発言とsystem通知は
+/// 同じ文面でも意味が異なるため対象外にする。
+private enum StorySessionMessageRepair {
+    static func repaired(_ session: StorySession) -> StorySession {
+        var repaired = session
+        var seen = Set<String>()
+        repaired.messages = session.messages.filter { message in
+            let key: String
+            switch message.author {
+            case .narrator:
+                key = "narrator"
+            case let .cast(characterID, _):
+                key = "cast:\(characterID.uuidString)"
+            case .user, .system:
+                return true
+            }
+
+            let normalized = normalize(message.text)
+            if isPlaceholder(message.text) {
+                NSLog(
+                    "[StorySession] removed placeholder generated message session=%@ message=%@",
+                    session.id.uuidString,
+                    message.id.uuidString
+                )
+                return false
+            }
+            guard normalized.count >= 4 else { return true }
+            return seen.insert(key + "|" + normalized).inserted
+        }
+        return repaired
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value
+            .precomposedStringWithCanonicalMapping
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .unicodeScalars
+            .filter { scalar in
+                !CharacterSet.whitespacesAndNewlines.contains(scalar)
+                    && !CharacterSet.punctuationCharacters.contains(scalar)
+            }
+            .map(String.init)
+            .joined()
+    }
+
+    private static func isPlaceholder(_ value: String) -> Bool {
+        ["…", "・・・", "・・", "...", "..", "."].contains(
+            value.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 }
 

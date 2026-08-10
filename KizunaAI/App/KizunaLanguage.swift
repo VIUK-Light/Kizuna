@@ -13,8 +13,8 @@ enum KizunaLanguage: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .japanese: return "日本語"
-        case .english: return "英語"
+        case .japanese: return KizunaCopy.text(japanese: "日本語", english: "Japanese")
+        case .english: return KizunaCopy.text(japanese: "英語", english: "English")
         }
     }
 }

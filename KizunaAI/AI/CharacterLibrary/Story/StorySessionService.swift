@@ -184,7 +184,7 @@ final class StorySessionService: ObservableObject {
         next.messages.append(
             StoryMessage(
                 author: .cast(characterId: characterID, displayName: characterName),
-                text: "了解。続けよう。"
+                text: localizedNotice("了解。続けよう。", "Okay. Let's continue.")
             )
         )
         try? await sessionRepo.saveSession(next)
@@ -613,7 +613,10 @@ final class StorySessionService: ObservableObject {
 
                 streamingStatusText = statusText("NAGI APIキー未設定", "NAGI API key is not set")
                 return (
-                    reply: "NAGI の Gemma4 31B APIキーが未設定です。モデル詳細からAPIキーを設定してから続けてください。",
+                    reply: localizedNotice(
+                        "NAGI の Gemma4 31B APIキーが未設定です。モデル詳細からAPIキーを設定してから続けてください。",
+                        "NAGI's Gemma4 31B API key is not set. Add it in Model details before continuing."
+                    ),
                     runtimeNotice: true,
                     backend: "Gemma4 31B API未設定"
                 )
@@ -752,7 +755,10 @@ final class StorySessionService: ObservableObject {
                         )
                         isRuntimeNotice = true
                         usedBackendName += "・重複失敗"
-                        rawFinal = "直前と同じ本文が続いたため、重複した発話は保存していません。もう一度送信してください。"
+                        rawFinal = localizedNotice(
+                            "直前と同じ本文が続いたため、重複した発話は保存していません。もう一度送信してください。",
+                            "The response repeated the previous text, so it was not saved. Send your message again."
+                        )
                     }
                 }
             }
@@ -791,7 +797,10 @@ final class StorySessionService: ObservableObject {
         case .block:
             // 安全ブロックを物語内の沈黙や台詞に偽装しない。モデル本文は保存せず、
             // 明示的なsystem通知として返す。
-            let notice = "安全上の理由でこの応答は保存しませんでした。別の表現で続けてください。"
+            let notice = localizedNotice(
+                "安全上の理由でこの応答は保存しませんでした。別の表現で続けてください。",
+                "This response was not saved for safety reasons. Try a different way to continue."
+            )
             session.messages.append(retryableSystemMessage(notice, userMessageID: userMessageID))
             session.lastSelectedModelName = generationModel.displayName
             session.lastUsedBackendName = usedBackendName + "・安全ブロック"
@@ -814,7 +823,10 @@ final class StorySessionService: ObservableObject {
         }
         rawFinal = sanitize(rawFinal)
         guard isMeaningfulStoryText(rawFinal) else {
-            let notice = "整形後の本文が空になったため保存していません。もう一度試すか、NAGIで続けられます。"
+            let notice = localizedNotice(
+                "整形後の本文が空になったため保存していません。もう一度試すか、NAGIで続けられます。",
+                "The formatted response was empty, so it was not saved. Try again or continue with NAGI."
+            )
             session.messages.append(retryableSystemMessage(notice, userMessageID: userMessageID))
             session.lastSelectedModelName = generationModel.displayName
             session.lastUsedBackendName = usedBackendName + "・無効出力"
@@ -1058,7 +1070,10 @@ final class StorySessionService: ObservableObject {
             guard self.activeGenerationID == generationID else { return }
             self.streamingSpeakerName = "NAGI"
             self.streamingStatusText = self.statusText("Gemma4 31Bで発話生成中", "Generating with Gemma4 31B")
-            self.streamingResponse = "ナレーション: NAGIが場面と会話履歴を読み込んでいます。"
+            self.streamingResponse = self.localizedNotice(
+                "ナレーション: NAGIが場面と会話履歴を読み込んでいます。",
+                "Narration: NAGI is reading the scene and conversation history."
+            )
         }
 
         do {
@@ -1158,10 +1173,16 @@ final class StorySessionService: ObservableObject {
             let backendName: String
             switch generationModel {
             case .e4b:
-                notice = "iori ローカル生成の待機上限を超えたため停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。"
+                notice = self.localizedNotice(
+                    "iori ローカル生成の待機上限を超えたため停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。",
+                    "iori reached its wait limit and stopped. The model response was not saved. Try again or continue with NAGI."
+                )
                 backendName = "iori ローカル・タイムアウト"
             case .b31:
-                notice = "Gemma4 31B APIの生成が時間内に完了しませんでした。本文は保存していません。もう一度試してください。"
+                notice = self.localizedNotice(
+                    "Gemma4 31B APIの生成が時間内に完了しませんでした。本文は保存していません。もう一度試してください。",
+                    "Gemma4 31B API did not finish in time. The response was not saved. Try again."
+                )
                 backendName = "Gemma4 31B API・タイムアウト"
             }
             self.streamingResponse = notice
@@ -1236,6 +1257,10 @@ final class StorySessionService: ObservableObject {
         var out: [StoryMessage] = []
         var emittedCastLines = Set<String>()
         for line in lines where !line.isEmpty {
+            // 生成中のプレースホルダーを物語本文へ昇格させない。
+            // これを通さないと「・・・」だけのキャラ発話が保存され、
+            // 再試行のたびに同じ空バブルが増えてしまう。
+            guard isMeaningfulStoryText(line) else { continue }
             // 日本語・英語どちらの生成ラベルも受け付ける。英語モードで
             // "Narration:" が出ても、本文をキャスト発話へ誤分類しない。
             let narrationPrefixes = [
@@ -1246,7 +1271,7 @@ final class StorySessionService: ObservableObject {
             let lowercasedLine = line.localizedLowercase
             if narrationPrefixes.contains(where: { lowercasedLine.hasPrefix($0.localizedLowercase) }) {
                 let body = textAfterSpeakerDelimiter(line)
-                if !body.isEmpty {
+                if isMeaningfulStoryText(body) {
                     out.append(StoryMessage(author: .narrator, text: body))
                 }
                 continue
@@ -1268,9 +1293,11 @@ final class StorySessionService: ObservableObject {
                     break
                 }
             }
-            if let (id, name, body) = matched,
-               !body.isEmpty,
-               emittedCastLines.insert(id.uuidString + "|" + normalizedDuplicateText(body)).inserted {
+            if let (id, name, body) = matched {
+                guard isMeaningfulStoryText(body) else { continue }
+                guard emittedCastLines.insert(id.uuidString + "|" + normalizedDuplicateText(body)).inserted else {
+                    continue
+                }
                 out.append(StoryMessage(author: .cast(characterId: id, displayName: name), text: body))
                 continue
             }
@@ -1346,13 +1373,13 @@ final class StorySessionService: ObservableObject {
     private func gemmaRuntimeNotice(for error: StoryGemma31BAPIError) -> String {
         switch error {
         case .missingAPIKey:
-            return "Gemma4 APIキーが未設定です。NAGIのモデル詳細からAPIキーを設定してください。"
+            return localizedNotice("Gemma4 APIキーが未設定です。NAGIのモデル詳細からAPIキーを設定してください。", "The Gemma4 API key is not set. Add it in NAGI's Model details.")
         case .emptyResponse:
-            return "Gemma4 31B API が空レスポンスを返しました。もう一度試してください。"
+            return localizedNotice("Gemma4 31B API が空レスポンスを返しました。もう一度試してください。", "Gemma4 31B API returned an empty response. Try again.")
         case .emptyText:
-            return "Gemma4 31B API の出力本文が空でした。もう一度試してください。"
+            return localizedNotice("Gemma4 31B API の出力本文が空でした。もう一度試してください。", "Gemma4 31B API returned no response text. Try again.")
         case .invalidURL, .httpStatus:
-            return "Gemma4 31B API の応答に失敗しました。もう一度試してください。"
+            return localizedNotice("Gemma4 31B API の応答に失敗しました。もう一度試してください。", "Gemma4 31B API failed to respond. Try again.")
         }
     }
 
@@ -1366,13 +1393,13 @@ final class StorySessionService: ObservableObject {
                 ? "ローカルモデルの保存先を確認できません。モデル設定で保存状態を確認してください。"
                 : nil
         case .checking:
-            return "iori はまだ端末内で起動確認中です。確認が終わるまで、この場面のローカル生成は開始しません。"
+            return localizedNotice("iori はまだ端末内で起動確認中です。確認が終わるまで、この場面のローカル生成は開始しません。", "iori is still being checked on this device. Local generation will start after the check finishes.")
         case .savedOnly:
-            return "iori のモデルファイルは保存済みです。端末内の実行確認が自動で進行中です。"
+            return localizedNotice("iori のモデルファイルは保存済みです。端末内の実行確認が自動で進行中です。", "iori is saved. The automatic on-device check is in progress.")
         case .recentFailure:
-            return "iori のローカル実行を確認できませんでした。モデルメニューからNAGIへ切り替えられます。"
+            return localizedNotice("iori のローカル実行を確認できませんでした。モデルメニューからNAGIへ切り替えられます。", "iori could not run on this device. Choose NAGI from the model menu to continue.")
         case .modelMissing:
-            return "iori のローカルモデルが未導入です。モデルを保存すると端末内で自動確認します。"
+            return localizedNotice("iori のローカルモデルが未導入です。モデルを保存すると端末内で自動確認します。", "The iori model is not installed. Save a model to start the automatic on-device check.")
         }
     }
 
@@ -1454,23 +1481,29 @@ final class StorySessionService: ObservableObject {
                     ? "iori LiteRT-LM"
                     : "iori ローカル"
             }
-            return "iori モデルパス不明"
+            return localizedNotice("iori モデルパス不明", "iori model path unavailable")
         case .checking:
-            return "iori 起動確認中"
+            return localizedNotice("iori 起動確認中", "iori check in progress")
         case .savedOnly:
-            return "iori 保存済み・未起動"
+            return localizedNotice("iori 保存済み・未起動", "iori saved · not started")
         case .recentFailure:
-            return "iori 起動失敗"
+            return localizedNotice("iori 起動失敗", "iori failed to start")
         case .modelMissing:
-            return "iori 未導入"
+            return localizedNotice("iori 未導入", "iori not installed")
         }
     }
 
     private func localStoryGenerationFailureMessage(runtimeError: String? = nil) -> String {
         if runtimeError?.contains("記号だけ") == true {
-            return "ローカルモデルが「…」のような記号だけを返しました。これは本文ではないため保存していません。もう一度試すか、NAGIで続けられます。"
+            return localizedNotice(
+                "ローカルモデルが「…」のような記号だけを返しました。これは本文ではないため保存していません。もう一度試すか、NAGIで続けられます。",
+                "The local model returned only symbols such as an ellipsis. It was not saved because it is not story text. Try again or continue with NAGI."
+            )
         }
-        return "ローカルモデルが本文を生成できませんでした。会話は変更していません。もう一度試すか、NAGIで続けられます。"
+        return localizedNotice(
+            "ローカルモデルが本文を生成できませんでした。会話は変更していません。もう一度試すか、NAGIで続けられます。",
+            "The local model could not generate story text. The conversation was not changed. Try again or continue with NAGI."
+        )
     }
 
     private func sanitize(_ text: String) -> String {
@@ -1859,6 +1892,10 @@ final class StorySessionService: ObservableObject {
     }
 
     private func statusText(_ japanese: String, _ english: String) -> String {
+        KizunaCopy.text(japanese: japanese, english: english)
+    }
+
+    private func localizedNotice(_ japanese: String, _ english: String) -> String {
         KizunaCopy.text(japanese: japanese, english: english)
     }
 

@@ -100,10 +100,13 @@ struct StoryWorldLibraryView: View {
                 .buttonStyle(.plain)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text("ストーリーライブラリー").font(.system(size: 15, weight: .semibold))
+                Text(KizunaCopy.text(japanese: "ストーリーライブラリー", english: "Story library"))
+                    .font(.system(size: 15, weight: .semibold))
                 Text(vm.isBootstrapping && vm.worlds.isEmpty
-                     ? "初期ストーリーを準備中…"
-                     : "世界観から選ぶ ・ \(vm.worlds.count) 件")
+                     ? KizunaCopy.text(japanese: "初期ストーリーを準備中…", english: "Preparing stories…")
+                     : KizunaCopy.language == .english
+                        ? "Choose a world · \(vm.worlds.count)"
+                        : "世界観から選ぶ ・ \(vm.worlds.count) 件")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -111,7 +114,7 @@ struct StoryWorldLibraryView: View {
             Button {
                 showCreate = true
             } label: {
-                Label("ストーリーを作る", systemImage: "plus")
+                Label(KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story"), systemImage: "plus")
                     .font(.system(size: 12, weight: .semibold))
             }
             .buttonStyle(.borderedProminent)
@@ -125,7 +128,7 @@ struct StoryWorldLibraryView: View {
         HStack(spacing: 8) {
             HStack {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("ストーリー・世界観・タグ検索", text: $vm.searchText)
+                TextField(KizunaCopy.text(japanese: "ストーリー・世界観・タグ検索", english: "Search stories, worlds, or tags"), text: $vm.searchText)
                     .textFieldStyle(.plain)
             }
             .padding(.horizontal, 10)
@@ -133,7 +136,7 @@ struct StoryWorldLibraryView: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
 
             Menu {
-                Button("すべて") { vm.groupFilter = nil }
+                Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.groupFilter = nil }
                 Divider()
                 ForEach(CategoryGroup.allCases) { g in
                     Button { vm.groupFilter = g } label: {
@@ -143,7 +146,7 @@ struct StoryWorldLibraryView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "square.grid.2x2").font(.system(size: 10))
-                    Text(vm.groupFilter?.displayName ?? "グループ")
+                        Text(vm.groupFilter?.displayName ?? KizunaCopy.text(japanese: "グループ", english: "Group"))
                         .font(.system(size: 11, weight: .semibold))
                     Image(systemName: "chevron.down").font(.system(size: 8))
                 }
@@ -162,7 +165,7 @@ struct StoryWorldLibraryView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text("一部の初期ストーリーを読み込めませんでした")
+                Text(KizunaCopy.text(japanese: "一部の初期ストーリーを読み込めませんでした", english: "Some starter stories could not be loaded"))
                     .font(.system(size: 11, weight: .semibold))
                 if let error = vm.seedError {
                     Text(LocalizedStringKey(error.messageKey))
@@ -172,7 +175,7 @@ struct StoryWorldLibraryView: View {
                 }
             }
             Spacer(minLength: 8)
-            Button("再試行") {
+            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
                 Task { await vm.retryBootstrap() }
             }
             .buttonStyle(.bordered)
@@ -189,9 +192,12 @@ struct StoryWorldLibraryView: View {
             VStack(spacing: 12) {
                 ProgressView()
                     .controlSize(.regular)
-                Text("ストーリーを準備しています…")
+                Text(KizunaCopy.text(japanese: "ストーリーを準備しています…", english: "Preparing stories…"))
                     .font(.system(size: 14, weight: .semibold))
-                Text("初回だけ少し時間がかかります。画面を閉じずにお待ちください。")
+                Text(KizunaCopy.text(
+                    japanese: "初回だけ少し時間がかかります。画面を閉じずにお待ちください。",
+                    english: "This may take a little longer the first time. You can keep this screen open."
+                ))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -203,7 +209,7 @@ struct StoryWorldLibraryView: View {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.system(size: 34))
                     .foregroundStyle(.orange)
-                Text("ストーリーを読み込めませんでした")
+                Text(KizunaCopy.text(japanese: "ストーリーを読み込めませんでした", english: "Stories could not be loaded"))
                     .font(.system(size: 14, weight: .semibold))
                 if let loadError = vm.loadError {
                     Text(LocalizedStringKey(loadError.messageKey))
@@ -216,7 +222,7 @@ struct StoryWorldLibraryView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
-                Button("もう一度読み込む") {
+                Button(KizunaCopy.text(japanese: "もう一度読み込む", english: "Load again")) {
                     Task { await vm.retryBootstrap() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -228,13 +234,15 @@ struct StoryWorldLibraryView: View {
                 Image(systemName: "sparkles.rectangle.stack.fill")
                     .font(.system(size: 38))
                     .foregroundStyle(.tertiary)
-                Text(vm.worlds.isEmpty ? "ストーリーはまだありません" : "条件に合うストーリーがありません")
+                Text(vm.worlds.isEmpty
+                     ? KizunaCopy.text(japanese: "ストーリーはまだありません", english: "No stories yet")
+                     : KizunaCopy.text(japanese: "条件に合うストーリーがありません", english: "No stories match your filters"))
                     .font(.system(size: 14, weight: .semibold))
                 if vm.worlds.isEmpty {
                     Button {
                         showCreate = true
                     } label: {
-                        Label("最初のストーリーを作る", systemImage: "plus")
+                        Label(KizunaCopy.text(japanese: "最初のストーリーを作る", english: "Create your first story"), systemImage: "plus")
                     }
                     .buttonStyle(.borderedProminent)
                 }

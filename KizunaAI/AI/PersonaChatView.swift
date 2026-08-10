@@ -7,6 +7,12 @@
 */
 
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct PersonaChatView: View {
     @StateObject private var store = PersonaChatStore.shared
@@ -18,6 +24,8 @@ struct PersonaChatView: View {
     @State private var activeStoryWorld: StoryWorld?
     @State private var activeStorySessionID: UUID?
     @State private var storyHistoryItems: [StoryHistoryItem] = []
+    @State private var isPersonaChatNearBottom = true
+    @State private var unreadPersonaMessageCount = 0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private let storyWorldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
@@ -96,6 +104,10 @@ struct PersonaChatView: View {
         .task {
             await loadStoryHistory()
         }
+        .onChange(of: store.activeThreadID) { _, _ in
+            isPersonaChatNearBottom = true
+            unreadPersonaMessageCount = 0
+        }
     }
 
     /// 上部の細いバー。AI Studio (通常モード) に戻る/モードを切り替える導線を必ず提供する。
@@ -112,10 +124,10 @@ struct PersonaChatView: View {
     private var compactTopSwitchBar: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Kizuna")
+                Text(KizunaCopy.appName)
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(.primary)
-                Text("続きから会話")
+                Text(KizunaCopy.text(japanese: "会話を続ける", english: "Continue a conversation"))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
@@ -132,19 +144,19 @@ struct PersonaChatView: View {
                     .foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Kizunaライブラリー")
+            .accessibilityLabel(KizunaCopy.text(japanese: "kizunaライブラリー", english: "kizuna library"))
 
             Menu {
                 Button {
                     showWorldLibrary = true
                 } label: {
-                    Label("絆シナリオを探す", systemImage: "sparkles.rectangle.stack.fill")
+                    Label(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"), systemImage: "sparkles.rectangle.stack.fill")
                 }
                 Divider()
                 Button {
                     showConfig = true
                 } label: {
-                    Label("単体キャラ設定", systemImage: "slider.horizontal.3")
+                    Label(KizunaCopy.text(japanese: "キャラクター設定", english: "Character settings"), systemImage: "slider.horizontal.3")
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -153,7 +165,7 @@ struct PersonaChatView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .accessibilityLabel("絆メニュー")
+            .accessibilityLabel(KizunaCopy.text(japanese: "kizunaメニュー", english: "kizuna menu"))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -165,7 +177,7 @@ struct PersonaChatView: View {
             HStack(spacing: 7) {
                 Image(systemName: "infinity.circle.fill")
                     .font(.system(size: 13, weight: .semibold))
-                Text("VIUK Kizuna")
+                Text(KizunaCopy.appName)
                     .font(.system(size: 13, weight: .bold))
             }
             .foregroundStyle(Color.accentColor)
@@ -178,7 +190,7 @@ struct PersonaChatView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles.rectangle.stack.fill")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("絆ライブラリー")
+                Text(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"))
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .padding(.horizontal, 10)
@@ -187,19 +199,19 @@ struct PersonaChatView: View {
                 .foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.plain)
-            .help("関係性を継続できる絆シナリオを開く")
+            .help(KizunaCopy.text(japanese: "関係性を続けられるシナリオを開く", english: "Open scenarios that continue your relationship"))
 
             Menu {
                 Button {
                     showWorldLibrary = true
                 } label: {
-                    Label("絆シナリオを探す", systemImage: "sparkles.rectangle.stack.fill")
+                    Label(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"), systemImage: "sparkles.rectangle.stack.fill")
                 }
                 Divider()
                 Button {
                     showConfig = true
                 } label: {
-                    Label("単体キャラ設定", systemImage: "slider.horizontal.3")
+                    Label(KizunaCopy.text(japanese: "キャラクター設定", english: "Character settings"), systemImage: "slider.horizontal.3")
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -208,7 +220,7 @@ struct PersonaChatView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .help("単体キャラなどの補助メニュー")
+            .help(KizunaCopy.text(japanese: "キャラクターなどの補助メニュー", english: "More character options"))
 
         }
         .padding(.horizontal, 14)
@@ -224,7 +236,7 @@ struct PersonaChatView: View {
                 Image(systemName: "sparkles.rectangle.stack.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.tint)
-                Text("絆")
+                Text(KizunaCopy.appName)
                     .font(.system(size: 11, weight: .bold))
                     .tracking(0.6)
                     .textCase(.uppercase)
@@ -238,7 +250,7 @@ struct PersonaChatView: View {
                         .frame(width: 26, height: 26)
                 }
                 .buttonStyle(.plain)
-                .help("Kizunaライブラリーを開く")
+                .help(KizunaCopy.text(japanese: "kizunaライブラリーを開く", english: "Open the kizuna library"))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -266,7 +278,7 @@ struct PersonaChatView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles.rectangle.stack.fill")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Kizunaを探す")
+                    Text(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"))
                         .font(.system(size: 12, weight: .semibold))
                     Spacer()
                 }
@@ -282,7 +294,7 @@ struct PersonaChatView: View {
     private var compactStoryList: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text("継続中の物語")
+                Text(KizunaCopy.text(japanese: "続きのある物語", english: "Stories in progress"))
                     .font(.system(size: 12, weight: .bold))
                     .tracking(0.4)
                     .foregroundStyle(.secondary)
@@ -290,7 +302,7 @@ struct PersonaChatView: View {
                 Button {
                     showWorldLibrary = true
                 } label: {
-                    Label("探す", systemImage: "sparkles.rectangle.stack.fill")
+                    Label(KizunaCopy.text(japanese: "探す", english: "Browse"), systemImage: "sparkles.rectangle.stack.fill")
                         .font(.system(size: 12, weight: .semibold))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
@@ -323,13 +335,13 @@ struct PersonaChatView: View {
     @ViewBuilder
     private var storyListSections: some View {
         if !storyHistoryItems.isEmpty {
-            sidebarSectionTitle("継続中のKizuna")
+            sidebarSectionTitle(KizunaCopy.text(japanese: "続きのある物語", english: "Stories in progress"))
             ForEach(storyHistoryItems) { item in
                 storyHistoryRow(item)
             }
         }
         if !store.threads.isEmpty {
-            sidebarSectionTitle("あなたの物語")
+            sidebarSectionTitle(KizunaCopy.text(japanese: "あなたの物語", english: "Your stories"))
             ForEach(store.threads) { thread in
                 threadRow(thread)
             }
@@ -403,13 +415,13 @@ struct PersonaChatView: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 26))
                 .foregroundStyle(.tertiary)
-            Text("会話はまだありません")
+            Text(KizunaCopy.text(japanese: "会話はまだありません", english: "No conversations yet"))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             Button {
                 showWorldLibrary = true
             } label: {
-                Text("絆を選ぶ")
+                Text(KizunaCopy.text(japanese: "シナリオを選ぶ", english: "Choose a scenario"))
                     .font(.system(size: 12, weight: .semibold))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -436,7 +448,7 @@ struct PersonaChatView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                    Text(thread.messages.last?.text ?? "新しい会話")
+                Text(thread.messages.last?.text ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation"))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -460,7 +472,7 @@ struct PersonaChatView: View {
             Button(role: .destructive) {
                 store.deleteThread(id: thread.id)
             } label: {
-                Label("削除", systemImage: "trash")
+                    Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
             }
         }
     }
@@ -541,12 +553,12 @@ struct PersonaChatView: View {
                 Button {
                     showWorldLibrary = true
                 } label: {
-                    Label("絆ライブラリー", systemImage: "sparkles.rectangle.stack.fill")
+                    Label(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"), systemImage: "sparkles.rectangle.stack.fill")
                 }
                 Button {
                     showConfig = true
                 } label: {
-                    Label("この単体キャラを編集", systemImage: "slider.horizontal.3")
+                    Label(KizunaCopy.text(japanese: "このキャラクターを編集", english: "Edit this character"), systemImage: "slider.horizontal.3")
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -555,7 +567,7 @@ struct PersonaChatView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .help("絆シナリオ/単体キャラの操作")
+            .help(KizunaCopy.text(japanese: "シナリオとキャラクターの操作", english: "Scenario and character actions"))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -584,13 +596,13 @@ struct PersonaChatView: View {
             Image(systemName: "sparkles.rectangle.stack.fill")
                 .font(.system(size: 40))
                 .foregroundStyle(.tertiary)
-            Text("始めましょう")
+            Text(KizunaCopy.text(japanese: "始めましょう", english: "Let’s begin"))
                 .font(.system(size: 16, weight: .semibold))
           
             Button {
                 showWorldLibrary = true
             } label: {
-                Text("物語を見つける")
+                Text(KizunaCopy.text(japanese: "物語を見つける", english: "Find a story"))
                     .font(.system(size: 13, weight: .semibold))
                     .padding(.horizontal, 18)
                     .padding(.vertical, 10)
@@ -604,56 +616,115 @@ struct PersonaChatView: View {
     }
 
     private func messageList(for thread: PersonaThread) -> some View {
-        // 空のアシスタント (まだストリーム前) はタイピングインジケーターと二重に出るので、
-        // テキストが入るまで描画から除外する。
+        // 生成中の最新アシスタント枠は、ストリーミングプレビューと二重に描かない。
+        // 完了後は保存された本文を通常のメッセージとして表示する。
+        let pendingAssistantID: UUID? = {
+            guard service.phase == .thinking else { return nil }
+            return thread.messages.last(where: { $0.role == .assistant })?.id
+        }()
         let visibleMessages = thread.messages.filter { msg in
-            !(msg.role == .assistant && msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            guard msg.id != pendingAssistantID else { return false }
+            return !(msg.role == .assistant && msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         return ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(visibleMessages) { msg in
-                        PersonaMessageBubble(
-                            message: msg,
-                            personaProfile: thread.personaSnapshot
-                        )
-                        .id(msg.id)
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(visibleMessages) { msg in
+                            PersonaMessageBubble(
+                                message: msg,
+                                personaProfile: thread.personaSnapshot
+                            )
+                            .id(msg.id)
+                        }
+                        if service.phase == .thinking {
+                            streamingPreview(personaProfile: thread.personaSnapshot)
+                                .id("streaming-preview")
+                        }
+                        if case let .error(message) = service.phase {
+                            generationError(message)
+                                .id("generation-error")
+                        }
+                        Color.clear.frame(height: 4).id("bottom")
                     }
-                    // 生成中で、まだ最新アシスタント本文が空のときだけタイピング表示。
-                    if service.phase == .thinking,
-                       service.streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        typingIndicator(personaProfile: thread.personaSnapshot)
-                            .id("typing")
-                    }
-                    Color.clear.frame(height: 4).id("bottom")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-            }
-            .onChange(of: thread.messages.count) { _, _ in
-                withAnimation(.easeOut(duration: 0.2)) {
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    let distanceFromBottom = geometry.contentSize.height
+                        - geometry.contentOffset.y
+                        - geometry.containerSize.height
+                    return distanceFromBottom < 72
+                } action: { _, nearBottom in
+                    isPersonaChatNearBottom = nearBottom
+                    if nearBottom {
+                        unreadPersonaMessageCount = 0
+                    }
+                }
+                .onChange(of: thread.messages.count) { _, _ in
+                    if isPersonaChatNearBottom {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
+                    } else {
+                        unreadPersonaMessageCount += 1
+                    }
+                }
+                .onChange(of: service.streamingResponse) { _, _ in
+                    guard isPersonaChatNearBottom else { return }
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
-            }
-            .onChange(of: service.streamingResponse) { _, _ in
-                proxy.scrollTo("bottom", anchor: .bottom)
+
+                if !isPersonaChatNearBottom {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
+                        isPersonaChatNearBottom = true
+                        unreadPersonaMessageCount = 0
+                    } label: {
+                        Label(
+                            unreadPersonaMessageCount > 0
+                                ? "\(unreadPersonaMessageCount) " + KizunaCopy.text(japanese: "新しいメッセージ", english: "new messages")
+                                : KizunaCopy.text(japanese: "最新へ", english: "Latest"),
+                            systemImage: "arrow.down"
+                        )
+                        .font(.system(size: 11, weight: .bold))
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 8)
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(Capsule().stroke(Color.primary.opacity(0.14), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 14)
+                    .accessibilityLabel(KizunaCopy.text(japanese: "最新のメッセージへ移動", english: "Jump to the latest message"))
+                }
             }
         }
     }
 
-    private func typingIndicator(personaProfile: PersonaProfile) -> some View {
-        HStack(alignment: .bottom, spacing: 6) {
+    private func streamingPreview(personaProfile: PersonaProfile) -> some View {
+        let preview = service.streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        return HStack(alignment: .bottom, spacing: 6) {
             PersonaAvatarView(profile: personaProfile, size: 34)
-            HStack(spacing: 4) {
-                ForEach(0..<3) { i in
-                    Circle()
-                        .fill(Color.secondary.opacity(0.6))
-                        .frame(width: 6, height: 6)
-                        .scaleEffect(typingScale(i))
-                        .animation(
-                            .easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.15),
-                            value: service.phase
-                        )
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(personaProfile.name)
+                        .font(.system(size: 11.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Text(KizunaCopy.text(japanese: "生成中…", english: "Writing…"))
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+                if preview.isEmpty {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text(preview)
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.horizontal, 12)
@@ -664,13 +735,57 @@ struct PersonaChatView: View {
                           ? Color(red: 0.22, green: 0.22, blue: 0.26)
                           : Color.white)
             )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(PersonaAvatarStyle(profile: personaProfile).primary.opacity(0.22), lineWidth: 1)
+            )
             Spacer(minLength: 0)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(KizunaCopy.text(
+            japanese: "\(personaProfile.name)が生成中です",
+            english: "\(personaProfile.name) is writing"
+        ))
     }
 
-    private func typingScale(_ index: Int) -> CGFloat {
-        // 単なる視覚装飾 — 値は repeatForever のキーで切り替わるだけ
-        return service.phase == .thinking ? 1.0 : 0.6
+    private func generationError(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(KizunaCopy.text(japanese: "応答を生成できませんでした", english: "Could not generate a reply"))
+                    .font(.system(size: 12, weight: .bold))
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(KizunaCopy.text(
+                    japanese: "入力欄からもう一度送信できます。",
+                    english: "You can send the message again from the composer."
+                ))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                HStack(spacing: 8) {
+                    Button(KizunaCopy.text(japanese: "同じ内容を再送信", english: "Try again")) {
+                        service.retryLastMessage()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Button(KizunaCopy.text(japanese: "閉じる", english: "Dismiss")) {
+                        service.dismissError()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.orange.opacity(0.22), lineWidth: 1)
+        }
     }
 
 }
@@ -855,7 +970,7 @@ struct PersonaMessageBubble: View {
                     .textSelection(.enabled)
             } else if message.text.isEmpty {
                 // ストリーム前の空メッセージ
-                Text("…")
+                Text(KizunaCopy.text(japanese: "…", english: "…"))
                     .font(.system(size: 14))
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 12)
@@ -876,6 +991,24 @@ struct PersonaMessageBubble: View {
                 .foregroundStyle(.tertiary)
                 .padding(message.role == .user ? .trailing : .leading, 4)
         }
+        .contextMenu {
+            if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    copyMessageText()
+                } label: {
+                    Label(KizunaCopy.text(japanese: "本文をコピー", english: "Copy text"), systemImage: "doc.on.doc")
+                }
+            }
+        }
+    }
+
+    private func copyMessageText() {
+        #if canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(message.text, forType: .string)
+        #elseif canImport(UIKit)
+        UIPasteboard.general.string = message.text
+        #endif
     }
 
     private var bubbleBackground: some View {
@@ -929,12 +1062,13 @@ struct PersonaComposer: View {
                     .foregroundStyle(Color.accentColor)
             }
             .frame(width: 34, height: 34)
-            .help("絆AI")
+            .help(KizunaCopy.appName)
 
-            TextField("メッセージを送る…", text: $text, axis: .vertical)
+            TextField(KizunaCopy.text(japanese: "メッセージを送る…", english: "Message…"), text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .focused($focused)
                 .lineLimit(1...4)
+                .submitLabel(.send)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(
@@ -949,17 +1083,26 @@ struct PersonaComposer: View {
                 )
                 .onSubmit(submit)
 
-            Button(action: submit) {
-                Image(systemName: "paperplane.fill")
+            Button {
+                if service.phase == .thinking {
+                    service.cancel()
+                } else {
+                    submit()
+                }
+            } label: {
+                Image(systemName: service.phase == .thinking ? "stop.fill" : "paperplane.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .frame(width: 38, height: 38)
                     .background(
-                        Circle().fill(canSubmit ? Color.accentColor : Color.secondary.opacity(0.25))
+                        Circle().fill(service.phase == .thinking || canSubmit ? Color.accentColor : Color.secondary.opacity(0.25))
                     )
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-            .disabled(!canSubmit)
+            .disabled(service.phase != .thinking && !canSubmit)
+            .accessibilityLabel(service.phase == .thinking
+                                ? KizunaCopy.text(japanese: "生成を停止", english: "Stop generating")
+                                : KizunaCopy.text(japanese: "送信", english: "Send"))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -988,7 +1131,7 @@ private extension View {
         self.toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("閉じる") { focused.wrappedValue = false }
+                Button(KizunaCopy.text(japanese: "閉じる", english: "Done")) { focused.wrappedValue = false }
             }
         }
         #else

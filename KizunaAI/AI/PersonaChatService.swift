@@ -27,6 +27,9 @@ final class PersonaChatService: ObservableObject {
     private var generationTask: Task<Void, Never>?
     private var lastVisibleText: String = ""
     private var activeGenerationID: UUID?
+    private var activeThreadID: UUID?
+    private var lastRequestThreadID: UUID?
+    private var lastRequestText: String?
 
     private init() {}
 
@@ -59,8 +62,11 @@ final class PersonaChatService: ObservableObject {
         phase = .thinking
         streamingResponse = ""
         lastVisibleText = ""
+        lastRequestThreadID = thread.id
+        lastRequestText = trimmed
         let generationID = UUID()
         activeGenerationID = generationID
+        activeThreadID = thread.id
 
         if let charID = thread.characterID {
             // 新パス: キャラライブラリー由来のスレッド → 安全 + メモリーパイプライン
@@ -119,7 +125,14 @@ final class PersonaChatService: ObservableObject {
             // キャラが消えていた → 旧パスにフォールバック
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
-                self.phase = .error("キャラ情報が見つかりませんでした。")
+                PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
+                self.streamingResponse = ""
+                self.phase = .error(KizunaCopy.text(
+                    japanese: "キャラ情報が見つかりませんでした。",
+                    english: "The character information is unavailable."
+                ))
+                self.activeGenerationID = nil
+                self.activeThreadID = nil
             }
             return
         }
@@ -139,6 +152,7 @@ final class PersonaChatService: ObservableObject {
                 self.streamingResponse = polite
                 self.phase = .idle
                 self.activeGenerationID = nil
+                self.activeThreadID = nil
             }
             return
         }
@@ -213,9 +227,20 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
 
         // ── 6) 出力 safety ──
-        var finalText = (reply?.isEmpty == false ? reply! : streamingResponse)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        finalText = sanitizedFinalText(finalText)
+        let rawFinalText = reply?.isEmpty == false ? reply! : streamingResponse
+        guard var finalText = meaningfulResponse(rawFinalText) else {
+            await MainActor.run {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "応答本文を受け取れませんでした。入力欄からもう一度試してください。",
+                        english: "No reply text was received. Try sending the message again."
+                    )
+                )
+            }
+            return
+        }
         let outSafety = await safetyPipeline.evaluateOutput(finalText, character: character)
         guard isGenerationActive(generationID) else { return }
         switch outSafety.action {
@@ -236,6 +261,7 @@ final class PersonaChatService: ObservableObject {
             PersonaChatStore.shared.finalizePersist()
             self.phase = .idle
             self.activeGenerationID = nil
+            self.activeThreadID = nil
         }
 
         // ── 7) メモリー抽出 (UI を idle にした後に await。中断されても致命的ではない) ──
@@ -253,8 +279,40 @@ final class PersonaChatService: ObservableObject {
         generationTask?.cancel()
         generationTask = nil
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
+        if let threadID = activeThreadID {
+            let partial = streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let meaningful = meaningfulResponse(partial) {
+                PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: meaningful)
+                PersonaChatStore.shared.finalizePersist()
+            } else {
+                PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
+            }
+        }
         activeGenerationID = nil
+        activeThreadID = nil
+        streamingResponse = ""
         phase = .idle
+    }
+
+    /// 失敗カードから、直前のユーザー入力を重複させずに再送する。
+    func retryLastMessage() {
+        guard phase != .thinking,
+              let threadID = lastRequestThreadID,
+              let requestText = lastRequestText,
+              let storedThread = PersonaChatStore.shared.thread(id: threadID),
+              let last = storedThread.messages.last,
+              last.role == .user,
+              last.text == requestText else { return }
+
+        PersonaChatStore.shared.removeLastUserMessage(in: threadID, matching: requestText)
+        guard let retryThread = PersonaChatStore.shared.thread(id: threadID) else { return }
+        send(requestText, to: retryThread)
+    }
+
+    func dismissError() {
+        guard case .error = phase else { return }
+        phase = .idle
+        streamingResponse = ""
     }
 
     // MARK: - Streaming
@@ -275,14 +333,24 @@ final class PersonaChatService: ObservableObject {
 
     private func finalize(reply: String?, threadID: UUID, generationID: UUID) {
         guard activeGenerationID == generationID else { return }
-        let final = (reply?.isEmpty == false ? reply! : streamingResponse)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleaned = sanitizedFinalText(final)
+        let final = reply?.isEmpty == false ? reply! : streamingResponse
+        guard let cleaned = meaningfulResponse(final) else {
+            failGeneration(
+                threadID: threadID,
+                generationID: generationID,
+                message: KizunaCopy.text(
+                    japanese: "応答本文を受け取れませんでした。入力欄からもう一度試してください。",
+                    english: "No reply text was received. Try sending the message again."
+                )
+            )
+            return
+        }
         streamingResponse = cleaned
         PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: cleaned)
         PersonaChatStore.shared.finalizePersist()
         phase = .idle
         activeGenerationID = nil
+        activeThreadID = nil
     }
 
     private func startWatchdog(threadID: UUID, generationID: UUID) {
@@ -295,14 +363,23 @@ final class PersonaChatService: ObservableObject {
                 self.generationTask?.cancel()
                 self.generationTask = nil
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
-                let fallback = self.streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? "（応答が止まったため中断しました。もう一度送ってください）"
-                    : self.streamingResponse
-                PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: fallback)
-                PersonaChatStore.shared.finalizePersist()
-                self.streamingResponse = fallback
-                self.phase = .idle
-                self.activeGenerationID = nil
+                if let partial = self.meaningfulResponse(self.streamingResponse) {
+                    PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: partial)
+                    PersonaChatStore.shared.finalizePersist()
+                    self.streamingResponse = partial
+                    self.phase = .idle
+                    self.activeGenerationID = nil
+                    self.activeThreadID = nil
+                } else {
+                    self.failGeneration(
+                        threadID: threadID,
+                        generationID: generationID,
+                        message: KizunaCopy.text(
+                            japanese: "応答が時間内に完了しませんでした。もう一度試してください。",
+                            english: "The reply did not finish in time. Try again."
+                        )
+                    )
+                }
             }
         }
     }
@@ -351,15 +428,21 @@ final class PersonaChatService: ObservableObject {
         """
     }
 
-    private func sanitizedFinalText(_ text: String) -> String {
+    private func meaningfulResponse(_ text: String) -> String? {
         let cleaned = sanitize(text).trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleaned.isEmpty {
-            return "ごめん、少し言葉が詰まった。もう一回だけ聞かせて。"
-        }
-        if cleaned.count <= 1 {
-            return "ごめん、今の返事は短すぎたね。もう少しちゃんと聞かせて。"
-        }
+        guard !cleaned.isEmpty else { return nil }
+        let placeholders: Set<String> = ["…", "・・・", "・・", "...", "..", "."]
+        guard !placeholders.contains(cleaned) else { return nil }
         return cleaned
+    }
+
+    private func failGeneration(threadID: UUID, generationID: UUID, message: String) {
+        guard activeGenerationID == generationID else { return }
+        PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
+        streamingResponse = ""
+        phase = .error(message)
+        activeGenerationID = nil
+        activeThreadID = nil
     }
 
     /// ペルソナ会話用 advancedSettings。ツール/検索を切り、内部システム指示を最小化する。
