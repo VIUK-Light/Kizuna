@@ -9,6 +9,7 @@ struct KizunaUserProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store: KizunaUserProfileStore
     @State private var draft: KizunaUserProfile
+    @State private var showAboutLimitAlert = false
 
     init(store: KizunaUserProfileStore) {
         self.store = store
@@ -61,11 +62,31 @@ struct KizunaUserProfileView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
-                        store.update(draft)
-                        dismiss()
+                        // Old profiles may contain a note written before the
+                        // 500-character limit was introduced. Do not let the
+                        // store silently discard the tail when the user only
+                        // opens the editor and taps Save. Ask them to shorten
+                        // the note first, keeping the original draft intact.
+                        if draft.about.count > Self.maxAboutLength {
+                            showAboutLimitAlert = true
+                        } else {
+                            store.update(draft)
+                            dismiss()
+                        }
                     }
                     .fontWeight(.semibold)
                 }
+            }
+            .alert(
+                KizunaCopy.text(japanese: "メモが長すぎます", english: "Note is too long"),
+                isPresented: $showAboutLimitAlert
+            ) {
+                Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) {}
+            } message: {
+                Text(KizunaCopy.text(
+                    japanese: "会話で伝えておきたいことは500文字以内にしてください。入力内容はそのまま残しているので、短くしてから保存できます。",
+                    english: "Keep your note within 500 characters. The existing text was kept as-is; shorten it before saving."
+                ))
             }
         }
     }
@@ -161,6 +182,14 @@ struct KizunaUserProfileView: View {
                 ))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(draft.about.count >= Self.maxAboutLength ? .orange : .secondary)
+            }
+            if draft.about.count > Self.maxAboutLength {
+                Text(KizunaCopy.text(
+                    japanese: "このメモは上限を超えています。保存するには短くしてください。",
+                    english: "This note is over the limit. Shorten it before saving."
+                ))
+                .font(.caption)
+                .foregroundStyle(.orange)
             }
             Text(KizunaCopy.text(
                 japanese: "住所・連絡先・パスワードなどの秘密は入力しないでください。",
