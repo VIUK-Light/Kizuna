@@ -489,6 +489,16 @@ private struct StorySessionChatBody: View {
                             unreadStoryMessageCount += 1
                         }
                     }
+                    .task(id: vm.session.id) {
+                        // 既存セッションを開いた直後は messages.count が変化しないため、
+                        // onChangeだけでは保存済みの最新発話へ移動できない。LazyVStackの
+                        // レイアウトを1回待ってから、再開時だけ最新へ初期配置する。
+                        await Task.yield()
+                        guard let last = vm.session.messages.last?.id else { return }
+                        proxy.scrollTo(last, anchor: .bottom)
+                        isStoryChatNearLatest = true
+                        unreadStoryMessageCount = 0
+                    }
                     .onChange(of: service.streamingResponse) { _, _ in
                         guard isStoryChatNearLatest, service.phase == .thinking else { return }
                         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("streaming-preview", anchor: .bottom) }
@@ -657,7 +667,7 @@ private struct StorySessionChatBody: View {
                         .font(.system(size: 11.5, weight: .bold))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        if notice.backendName.localizedCaseInsensitiveContains("iori") {
+                        if notice.backend == .local {
                             Button {
                                 vm.generationModel = .b31
                                 _ = vm.retryRuntimeNotice(notice)
@@ -1046,8 +1056,10 @@ private struct StorySessionChatBody: View {
 
     private func shouldOfferNAGISwitch(for message: StoryMessage) -> Bool {
         guard case .system = message.author else { return false }
-        let text = message.text
-        return text.contains("iori") || text.contains("ローカル")
+        // エラー本文は表示言語で変わるため、文字列検索でバックエンドを
+        // 推測しない。新形式は明示値、旧ストアのnilはローカル失敗を
+        // 含む可能性があるため互換的に表示する。
+        return message.retryBackend == nil || message.retryBackend == .local
     }
 
     @ViewBuilder

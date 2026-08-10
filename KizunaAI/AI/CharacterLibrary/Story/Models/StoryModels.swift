@@ -121,6 +121,16 @@ enum StoryGenerationModel: String, Codable, CaseIterable, Identifiable, Hashable
     }
 }
 
+/// 実行失敗の再試行先を表示文言から切り離すためのバックエンド識別子。
+/// 文面は日本語/英語で切り替わるため、UIのフォールバック判定に使ってはいけない。
+enum StoryGenerationBackend: String, Codable, Equatable, Hashable {
+    case local
+    case gemmaAPI
+    case persistence
+    case safety
+    case unknown
+}
+
 // MARK: - StoryWorld
 
 struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
@@ -861,19 +871,24 @@ struct StoryMessage: Codable, Identifiable, Equatable, Hashable {
     /// この発話を生成したターンのID。旧データではnilのまま読み込む。
     /// 同一生成内の重複修復にだけ使い、別ターンの正当な反復は保持する。
     var generationID: UUID?
+    /// system通知をどのバックエンドで再試行できるか。旧ストアには
+    /// このキーがないため optional のまま後方互換にする。
+    var retryBackend: StoryGenerationBackend?
 
     init(
         id: UUID = UUID(),
         author: StoryMessageAuthor,
         text: String,
         createdAt: Date = Date(),
-        generationID: UUID? = nil
+        generationID: UUID? = nil,
+        retryBackend: StoryGenerationBackend? = nil
     ) {
         self.id = id
         self.author = author
         self.text = text
         self.createdAt = createdAt
         self.generationID = generationID
+        self.retryBackend = retryBackend
     }
 }
 

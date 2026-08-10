@@ -71,19 +71,23 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
     let userMessageID: UUID
     let userText: String
     let backendName: String
+    /// UIの再試行先を言語非依存で表す。backendNameは表示/ログ用に残す。
+    let backend: StoryGenerationBackend
 
     init(
         id: UUID = UUID(),
         text: String,
         userMessageID: UUID,
         userText: String,
-        backendName: String
+        backendName: String,
+        backend: StoryGenerationBackend = .unknown
     ) {
         self.id = id
         self.text = text
         self.userMessageID = userMessageID
         self.userText = userText
         self.backendName = backendName
+        self.backend = backend
     }
 }
 
@@ -998,7 +1002,8 @@ final class StorySessionService: ObservableObject {
                     text: noticeText,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: usedBackendName
+                    backendName: usedBackendName,
+                    backend: generationModel == .e4b ? .local : .gemmaAPI
                 )
                 self.latestSafetyConcern = safetyConcern
                 self.streamingResponse = rawFinal
@@ -1027,7 +1032,8 @@ final class StorySessionService: ObservableObject {
                     text: notice,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: usedBackendName + "・安全ブロック"
+                    backendName: usedBackendName + "・安全ブロック",
+                    backend: generationModel == .e4b ? .local : .gemmaAPI
                 )
                 self.latestSafetyConcern = safetyConcern
                 self.streamingResponse = notice
@@ -1056,7 +1062,8 @@ final class StorySessionService: ObservableObject {
                     text: notice,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: usedBackendName + "・無効出力"
+                    backendName: usedBackendName + "・無効出力",
+                    backend: generationModel == .e4b ? .local : .gemmaAPI
                 )
                 self.streamingResponse = notice
                 self.streamingSpeakerName = "システム"
@@ -1289,10 +1296,15 @@ final class StorySessionService: ObservableObject {
         }
     }
 
-    private func retryableSystemMessage(_ text: String, userMessageID: UUID) -> StoryMessage {
+    private func retryableSystemMessage(
+        _ text: String,
+        userMessageID: UUID,
+        backend: StoryGenerationBackend = .local
+    ) -> StoryMessage {
         StoryMessage(
             author: .system,
-            text: StoryRetryMetadata.attachingUserMessageID(userMessageID, to: text)
+            text: StoryRetryMetadata.attachingUserMessageID(userMessageID, to: text),
+            retryBackend: backend
         )
     }
 
@@ -1496,6 +1508,7 @@ final class StorySessionService: ObservableObject {
             }
             let notice: String
             let backendName: String
+            let backend: StoryGenerationBackend
             switch generationModel {
             case .e4b:
                 notice = self.localizedNotice(
@@ -1503,12 +1516,14 @@ final class StorySessionService: ObservableObject {
                     "iori reached its wait limit and stopped. The model response was not saved. Try again or continue with NAGI."
                 )
                 backendName = "iori ローカル・タイムアウト"
+                backend = .local
             case .b31:
                 notice = self.localizedNotice(
                     "Gemma4 31B APIの生成が時間内に完了しませんでした。本文は保存していません。もう一度試してください。",
                     "Gemma4 31B API did not finish in time. The response was not saved. Try again."
                 )
                 backendName = "Gemma4 31B API・タイムアウト"
+                backend = .gemmaAPI
             }
             self.streamingResponse = notice
             self.streamingSpeakerName = "システム"
@@ -1520,7 +1535,8 @@ final class StorySessionService: ObservableObject {
                 text: notice,
                 userMessageID: userMessageID,
                 userText: userText,
-                backendName: backendName
+                backendName: backendName,
+                backend: backend
             )
             guard self.timeoutSaveToken == timeoutToken else { return }
             // timeoutTokenが一致している場合は、このwatchdogが所有する
