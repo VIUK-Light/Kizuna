@@ -201,6 +201,20 @@ enum CharacterLibrarySeed {
                             repairedScene.storyWorldId = existingWorld.id
                             try await sceneRepo.saveScene(repairedScene)
                         }
+                    } else {
+                        // 手書きの旧シードは初期シーンを既に保存済みでも
+                        // imageKey が空のまま残っていることがある。既存の
+                        // 明示的なキーは保持し、未設定のシーンだけタイトルに
+                        // 対応する背景を後付けする。
+                        for (index, existingScene) in existingScenes.enumerated()
+                            where existingScene.imageKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                            let seedScene = package.scenes.indices.contains(index)
+                                ? package.scenes[index]
+                                : package.scenes.first
+                            var repairedScene = existingScene
+                            repairedScene.imageKey = seedScene?.imageKey ?? sceneImageKey(for: package.world.title)
+                            try await sceneRepo.saveScene(repairedScene)
+                        }
                     }
                     if existingWorld.castMode != package.world.castMode {
                         var repairedWorld = existingWorld

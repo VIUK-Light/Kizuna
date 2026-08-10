@@ -215,14 +215,14 @@ final class PersonaChatStore: ObservableObject {
     /// 次回送信時に削除済みUUIDを再取得し続けないよう参照だけを切り離す。
     func detachCharacterReferences(for characterID: UUID) {
         var didChange = false
-        let now = Date()
         for index in threads.indices where threads[index].characterID == characterID {
             threads[index].characterID = nil
-            threads[index].updatedAt = now
             didChange = true
         }
         guard didChange else { return }
-        threads.sort { $0.updatedAt > $1.updatedAt }
+        // Detaching a deleted profile is metadata maintenance, not a new
+        // conversation event. Keep each thread's updatedAt and existing order
+        // so deleting a character cannot reshuffle the user's history.
         persist()
     }
 

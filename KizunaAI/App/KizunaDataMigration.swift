@@ -6,6 +6,10 @@ import Foundation
 private final class KizunaDataMigrationLock: @unchecked Sendable {
     private let lock = NSLock()
 
+    // SwiftLint's required_deinit rule asks synchronization helpers to make
+    // their lifetime explicit. NSLock has no extra teardown work here.
+    deinit {}
+
     nonisolated func withLock<Result>(_ body: () throws -> Result) rethrows -> Result {
         lock.lock()
         defer { lock.unlock() }

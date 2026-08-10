@@ -146,7 +146,10 @@ final class CharacterLibraryViewModel: ObservableObject {
                     english: "The character could not be found. Refresh the library and try again."
                 )
                 return
-            case .deleted:
+            case .deleted, .needsCleanup:
+                // `.needsCleanup` means a previous attempt already removed
+                // the profile. Continue the idempotent orphan cleanup rather
+                // than turning the retry into a misleading not-found error.
                 break
             }
 
@@ -158,9 +161,14 @@ final class CharacterLibraryViewModel: ObservableObject {
             // personaSnapshotへ切り替える。会話本文を削除せず、次回送信が
             // 削除済みUUIDを参照して失敗し続ける状態だけを解消する。
             PersonaChatStore.shared.detachCharacterReferences(for: id)
+            try await characterRepo.completeCharacterDeletionCleanup(id: id)
             await reload()
         } catch {
             NSLog("[CharacterLibraryVM] delete failed: %@", String(describing: error))
+            // 本体削除後の関連データ掃除が失敗しても、一覧には削除済み
+            // キャラを残さない。pending marker は保持されるため、再試行で
+            // story/memory/persona の掃除を続行できる。
+            await reload()
             let message = KizunaCopy.text(
                 japanese: "キャラクターの削除を完了できませんでした。関連データの状態を確認して再試行してください。",
                 english: "Character deletion did not complete. Check the related data and try again."

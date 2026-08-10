@@ -629,7 +629,12 @@ final class StoryWorldCreateViewModel: ObservableObject {
         // 旧バージョンで同じViewModelがすでに保存していた場合も掃除する。
         // 新しい経路では未保存なので、存在しないIDの削除は安全なno-op。
         for id in pendingIDs {
-            try? await characterRepo.deleteCharacter(id: id)
+            guard let result = try? await characterRepo.deleteCharacter(id: id) else { continue }
+            if result == .deleted || result == .needsCleanup {
+                // この経路では物語・メモリーをまだ作っていないため、
+                // リポジトリ所有の掃除を完了してpending markerを残さない。
+                try? await characterRepo.completeCharacterDeletionCleanup(id: id)
+            }
         }
     }
 

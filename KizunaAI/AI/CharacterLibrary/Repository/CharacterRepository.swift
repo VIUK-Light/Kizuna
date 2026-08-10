@@ -11,21 +11,65 @@ import Foundation
 ///
 /// The repository decides whether the current record is protected while it
 /// holds the same file lock used by saves.  Callers must only remove related
-/// story/memory data after receiving `.deleted`.
+/// story/memory data after receiving `.deleted` or `.needsCleanup`.
 enum CharacterDeletionResult: Equatable {
     case deleted
+    /// The profile was removed by an earlier attempt, but related data still
+    /// needs to be cleaned. Retrying must continue the cleanup workflow rather
+    /// than treating the missing profile as a new `.notFound` error.
+    case needsCleanup
     case protected
     case notFound
+}
+
+/// Persists the small amount of state needed to resume a multi-file deletion
+/// after the profile JSON has already been changed. UserDefaults is used only
+/// as a marker store; story, memory, and persona data remain in their existing
+/// repositories and are removed by the view models after the marker is seen.
+private final class CharacterDeletionCleanupMarker: @unchecked Sendable {
+    nonisolated static let shared = CharacterDeletionCleanupMarker()
+
+    private let lock = NSLock()
+    private let keyPrefix = "kizuna.characterDeletion.cleanupPending."
+
+    nonisolated func contains(_ id: UUID) -> Bool {
+        withLock { UserDefaults.standard.bool(forKey: key(for: id)) }
+    }
+
+    nonisolated func insert(_ id: UUID) {
+        withLock { UserDefaults.standard.set(true, forKey: key(for: id)) }
+    }
+
+    nonisolated func remove(_ id: UUID) {
+        withLock { UserDefaults.standard.removeObject(forKey: key(for: id)) }
+    }
+
+    nonisolated private func key(for id: UUID) -> String {
+        "\(keyPrefix)\(id.uuidString)"
+    }
+
+    nonisolated private func withLock<Result>(_ body: () -> Result) -> Result {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
 }
 
 protocol CharacterRepository: AnyObject {
     func fetchCharacters() async throws -> [CharacterProfile]
     func saveCharacter(_ character: CharacterProfile) async throws
     func deleteCharacter(id: UUID) async throws -> CharacterDeletionResult
+    /// Clears the durable marker after story/memory/persona cleanup completes.
+    /// A default keeps lightweight test/future repositories source-compatible.
+    func completeCharacterDeletionCleanup(id: UUID) async throws
 
     // Lorebook (1:1)。CharacterProfile と一緒に管理した方が呼び出し側が楽なのでここに置く。
     func fetchLorebook(characterId: UUID) async throws -> CharacterLorebook?
     func saveLorebook(_ lorebook: CharacterLorebook) async throws
+}
+
+extension CharacterRepository {
+    func completeCharacterDeletionCleanup(id: UUID) async throws {}
 }
 
 /// 複数キャラクターを一度の read-modify-write で保存できるリポジトリ。
@@ -121,6 +165,13 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
     }
 
     func deleteCharacter(id: UUID) async throws -> CharacterDeletionResult {
+        // A previous attempt already removed the profile. Do not turn that
+        // state into `.notFound`, because callers still need to remove orphaned
+        // story/memory/persona references.
+        if CharacterDeletionCleanupMarker.shared.contains(id) {
+            return .needsCleanup
+        }
+
         var result: CharacterDeletionResult = .notFound
         // Protection and removal share the charStore read-modify-write lock.
         // A concurrent seed/save can therefore not turn a protected character
@@ -139,10 +190,21 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
         }
 
         guard result == .deleted else { return result }
+        // Persist the marker before touching the other repositories. If the
+        // process stops during lorebook/story/memory cleanup, the next attempt
+        // resumes instead of reporting a misleading `.notFound` result.
+        CharacterDeletionCleanupMarker.shared.insert(id)
         // Lorebook cleanup belongs to the character repository, but story and
         // memory cleanup is intentionally left to callers after `.deleted`.
         try await loreStore.delete(matching: { $0.characterId == id })
         return result
+    }
+
+    func completeCharacterDeletionCleanup(id: UUID) async throws {
+        // Retry the lorebook cleanup as well. The marker is only removed after
+        // every repository-owned part of deletion has succeeded.
+        try await loreStore.delete(matching: { $0.characterId == id })
+        CharacterDeletionCleanupMarker.shared.remove(id)
     }
 
     func fetchLorebook(characterId: UUID) async throws -> CharacterLorebook? {

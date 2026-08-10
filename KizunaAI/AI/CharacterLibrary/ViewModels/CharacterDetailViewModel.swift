@@ -52,12 +52,18 @@ final class CharacterDetailViewModel: ObservableObject {
         do {
             deletionPhase = .deletingProfile
             let deletionResult = try await characterRepo.deleteCharacter(id: character.id)
-            guard deletionResult == .deleted else {
-                // A protected or already-removed profile must not be treated
-                // as a successful deletion, and more importantly must not
-                // trigger cleanup of its story references or memories.
+            switch deletionResult {
+            case .protected, .notFound:
+                // A protected or unrelated missing profile must not be treated
+                // as a successful deletion, and must not trigger cleanup of
+                // another record's story references or memories.
                 deletionPhase = .idle
                 return deletionResult
+            case .deleted, .needsCleanup:
+                // `.needsCleanup` means the profile was removed by an earlier
+                // attempt. Continue the same idempotent cleanup instead of
+                // returning early with a misleading not-found state.
+                break
             }
 
             deletionPhase = .removingReferences
@@ -67,8 +73,9 @@ final class CharacterDetailViewModel: ObservableObject {
             // プロフィール削除後も会話本文は保持し、関連スレッドだけを
             // personaSnapshotベースへ移行して継続可能にする。
             PersonaChatStore.shared.detachCharacterReferences(for: character.id)
+            try await characterRepo.completeCharacterDeletionCleanup(id: character.id)
             deletionPhase = .completed
-            return deletionResult
+            return .deleted
         } catch {
             // 各Repositoryは個別のJSONを原子的に更新するが、複数ファイルを
             // 1トランザクションにはできない。再実行は冪等な掃除として扱い、

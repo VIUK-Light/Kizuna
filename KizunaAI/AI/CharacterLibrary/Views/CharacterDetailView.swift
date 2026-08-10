@@ -42,6 +42,7 @@ struct CharacterDetailView: View {
     @State private var showReport = false
     @State private var showDeleteConfirm = false
     @State private var deleteError: String?
+    @State private var deleteErrorIsRetryable = false
     @State private var isDeleting = false
 
     init(
@@ -103,13 +104,23 @@ struct CharacterDetailView: View {
         }
         .alert(KizunaCopy.text(japanese: "削除に失敗しました", english: "Deletion failed"), isPresented: Binding(
             get: { deleteError != nil },
-            set: { if !$0 { deleteError = nil } }
-        )) {
-            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
-                deleteError = nil
-                performDelete()
+            set: {
+                if !$0 {
+                    deleteError = nil
+                    deleteErrorIsRetryable = false
+                }
             }
-            Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) { deleteError = nil }
+        )) {
+            if deleteErrorIsRetryable {
+                Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+                    deleteError = nil
+                    performDelete()
+                }
+            }
+            Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) {
+                deleteError = nil
+                deleteErrorIsRetryable = false
+            }
         } message: {
             Text(deleteError ?? "")
         }
@@ -141,21 +152,24 @@ struct CharacterDetailView: View {
             do {
                 let result = try await vm.delete()
                 switch result {
-                case .deleted:
+                case .deleted, .needsCleanup:
                     onDelete?()
                     dismiss()
                 case .protected:
+                    deleteErrorIsRetryable = false
                     deleteError = KizunaCopy.text(
                         japanese: "標準キャラクターは削除できません。",
                         english: "Standard characters cannot be deleted."
                     )
                 case .notFound:
+                    deleteErrorIsRetryable = false
                     deleteError = KizunaCopy.text(
                         japanese: "キャラクターが見つかりません。一覧を更新してから再試行してください。",
                         english: "The character could not be found. Refresh the library and try again."
                     )
                 }
             } catch {
+                deleteErrorIsRetryable = true
                 let message = KizunaCopy.text(
                     japanese: "キャラの削除が途中で失敗しました。関連データが一部変更されている可能性があります。再試行してください。",
                     english: "Character deletion stopped partway through. Some related data may have changed. Retry to finish."
