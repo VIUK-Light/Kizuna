@@ -1726,6 +1726,28 @@ final class StorySessionViewModel: ObservableObject {
     @discardableResult
     func retryRuntimeNotice(_ notice: StoryRuntimeNotice) -> Bool {
         service.dismissRuntimeNotice()
+        switch notice.retryAction {
+        case let .narration(text):
+            Task { [weak self] in
+                guard let self else { return }
+                await self.service.addNarration(text, session: self.session)
+                await self.refreshAfterTurn()
+            }
+            return true
+        case let .restAcknowledgement(characterID, characterName):
+            Task { [weak self] in
+                guard let self else { return }
+                await self.service.addRestAcknowledgement(
+                    characterID: characterID,
+                    characterName: characterName,
+                    session: self.session
+                )
+                await self.refreshAfterTurn()
+            }
+            return true
+        case .userTurn:
+            break
+        }
         let hasPersistedUserTurn = session.messages.contains { message in
             message.id == notice.userMessageID && message.author.isUser
         }
@@ -1764,9 +1786,10 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     func addNarration(_ text: String) {
-        service.addNarration(text, session: session)
         Task { [weak self] in
-            await self?.refreshAfterTurn()
+            guard let self else { return }
+            await self.service.addNarration(text, session: self.session)
+            await self.refreshAfterTurn()
         }
     }
 

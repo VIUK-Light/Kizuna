@@ -63,6 +63,15 @@ enum StoryRetryMetadata {
     }
 }
 
+/// 一時的なランタイム/保存失敗を会話履歴へ永続化せず表示する通知の再試行方法。
+/// 保存に失敗した補助操作も、直前のユーザーターンを誤って再送しないよう、
+/// 操作ごとの再試行を明示的に保持する。
+enum StoryRuntimeNoticeRetryAction: Equatable {
+    case userTurn
+    case narration(text: String)
+    case restAcknowledgement(characterID: UUID, characterName: String)
+}
+
 /// モデル状態/安全ブロック/保存失敗を会話履歴へ永続化せず表示する一時通知。
 /// 過去ログには本文だけを残し、再試行対象はUUIDと入力本文で保持する。
 struct StoryRuntimeNotice: Identifiable, Equatable {
@@ -73,6 +82,7 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
     let backendName: String
     /// UIの再試行先を言語非依存で表す。backendNameは表示/ログ用に残す。
     let backend: StoryGenerationBackend
+    let retryAction: StoryRuntimeNoticeRetryAction
 
     init(
         id: UUID = UUID(),
@@ -80,7 +90,8 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
         userMessageID: UUID,
         userText: String,
         backendName: String,
-        backend: StoryGenerationBackend = .unknown
+        backend: StoryGenerationBackend = .unknown,
+        retryAction: StoryRuntimeNoticeRetryAction = .userTurn
     ) {
         self.id = id
         self.text = text
@@ -88,6 +99,7 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
         self.userText = userText
         self.backendName = backendName
         self.backend = backend
+        self.retryAction = retryAction
     }
 }
 
@@ -196,16 +208,25 @@ final class StorySessionService: ObservableObject {
         return userMessageID
     }
 
-    func addNarration(_ text: String, session: StorySession) {
+    func addNarration(_ text: String, session: StorySession) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         var next = session
         next.messages.append(StoryMessage(author: .narrator, text: trimmed))
-        Task {
-            try? await sessionRepo.saveSession(next)
-            await MainActor.run {
-                self.savedTurnRevision += 1
-            }
+        do {
+            try await sessionRepo.saveSession(next)
+            savedTurnRevision += 1
+        } catch {
+            publishSupplementalSaveFailure(
+                text: localizedNotice(
+                    "ナレーションを保存できませんでした。保存先を確認してからもう一度試してください。",
+                    "The narration could not be saved. Check storage and try again."
+                ),
+                session: session,
+                backendName: "narration save failed",
+                retryAction: .narration(text: trimmed)
+            )
+            NSLog("[StorySession] narration save failed: %@", error.localizedDescription)
         }
     }
 
@@ -223,8 +244,44 @@ final class StorySessionService: ObservableObject {
                 text: localizedNotice("了解。続けよう。", "Okay. Let's continue.")
             )
         )
-        try await sessionRepo.saveSession(next)
-        savedTurnRevision += 1
+        do {
+            try await sessionRepo.saveSession(next)
+            savedTurnRevision += 1
+        } catch {
+            publishSupplementalSaveFailure(
+                text: localizedNotice(
+                    "了承を保存できませんでした。保存先を確認してからもう一度試してください。",
+                    "The acknowledgement could not be saved. Check storage and try again."
+                ),
+                session: session,
+                backendName: "rest acknowledgement save failed",
+                retryAction: .restAcknowledgement(
+                    characterID: characterID,
+                    characterName: characterName
+                )
+            )
+            NSLog("[StorySession] rest acknowledgement save failed: %@", error.localizedDescription)
+        }
+    }
+
+    /// 補助操作の保存失敗も本文へsystem発話として混ぜず、同じ再試行カードへ載せる。
+    /// `session.id` は直前のユーザー入力がないセッションでも通知を構築できる
+    /// 安定した代替IDであり、補助操作のretryActionが再送対象を決める。
+    private func publishSupplementalSaveFailure(
+        text: String,
+        session: StorySession,
+        backendName: String,
+        retryAction: StoryRuntimeNoticeRetryAction
+    ) {
+        let lastUserMessage = session.messages.last(where: { $0.author.isUser })
+        latestRuntimeNotice = StoryRuntimeNotice(
+            text: text,
+            userMessageID: lastUserMessage?.id ?? session.id,
+            userText: lastUserMessage?.text ?? "",
+            backendName: backendName,
+            backend: .unknown,
+            retryAction: retryAction
+        )
     }
 
     /// DEBUG用。会話を変更せず、相談サポートUIだけを表示する。
