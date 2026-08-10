@@ -334,6 +334,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                 let displayed = w.localizedForCurrentLanguage
                 return displayed.title.lowercased().contains(needle)
                     || displayed.shortDescription.lowercased().contains(needle)
+                    || displayed.worldSetting.lowercased().contains(needle)
                     || displayed.tags.contains(where: { $0.lowercased().contains(needle) })
             }
         }

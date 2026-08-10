@@ -170,8 +170,20 @@ final class PersonaChatStore: ObservableObject {
                 && (characterID != nil || $0.personaSnapshot.id == persona.id)
                 && $0.messages.isEmpty
         }) {
+            // An empty thread is only a reusable draft. Refresh its snapshot
+            // before returning it so edits made in Character Library are
+            // reflected in the chat header, avatar style, and future prompt.
+            // Once a message exists, the snapshot remains immutable for the
+            // lifetime of that conversation.
+            if let index = threads.firstIndex(where: { $0.id == existing.id }) {
+                threads[index].personaSnapshot = persona
+                threads[index].title = persona.name
+                threads[index].updatedAt = Date()
+                threads.sort { $0.updatedAt > $1.updatedAt }
+                persist()
+            }
             activeThreadID = existing.id
-            return existing
+            return threads.first(where: { $0.id == existing.id }) ?? existing
         }
         let thread = PersonaThread(
             personaSnapshot: persona,

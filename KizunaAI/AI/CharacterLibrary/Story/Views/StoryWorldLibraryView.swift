@@ -7,7 +7,13 @@
 import SwiftUI
 
 struct StoryWorldLibraryView: View {
-    @ObservedObject private var vm: StoryWorldLibraryViewModel
+    // The library owns its default ViewModel. `View` is a value type and SwiftUI
+    // may recreate it whenever the surrounding sheet/workspace changes; using
+    // `StateObject` keeps the loaded worlds, search text, and filters alive
+    // across those recreations. The injected initializer below still accepts
+    // a parent-owned instance, but stores that instance through the same
+    // observation wrapper so updates continue to flow into this view.
+    @StateObject private var vm: StoryWorldLibraryViewModel
     @Environment(\.dismiss) private var dismiss
     private let showsDismissButton: Bool
     @State private var showCreate = false
@@ -26,7 +32,7 @@ struct StoryWorldLibraryView: View {
         onStartSession: ((StoryWorld) -> Void)? = nil,
         onResumeSession: ((StoryWorld, UUID) -> Void)? = nil
     ) {
-        _vm = ObservedObject(wrappedValue: viewModel)
+        _vm = StateObject(wrappedValue: viewModel)
         self.showsDismissButton = showsDismissButton
         self.onStartSession = onStartSession
         self.onResumeSession = onResumeSession

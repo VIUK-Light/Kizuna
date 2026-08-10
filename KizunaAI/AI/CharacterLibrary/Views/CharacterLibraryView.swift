@@ -494,10 +494,20 @@ struct CharacterLibraryView: View {
             Button { editing = c } label: {
                 Label(KizunaCopy.text(japanese: "編集", english: "Edit"), systemImage: "pencil")
             }
-            Button(role: .destructive) {
-                Task { await vm.delete(id: c.id) }
-            } label: {
-                Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
+            // Built-in characters are intentionally immutable. Do not expose a
+            // destructive action that silently no-ops in the ViewModel; the
+            // detail view already uses the same affordance (a lock label).
+            if c.isSystemProtected == true {
+                Label(
+                    KizunaCopy.text(japanese: "標準キャラ（削除不可）", english: "Built-in (cannot delete)"),
+                    systemImage: "lock.fill"
+                )
+            } else {
+                Button(role: .destructive) {
+                    Task { await vm.delete(id: c.id) }
+                } label: {
+                    Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
+                }
             }
         }
     }
