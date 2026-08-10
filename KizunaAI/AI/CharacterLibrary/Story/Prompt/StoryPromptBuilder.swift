@@ -13,6 +13,18 @@
 import Foundation
 
 struct StoryPromptBuilder {
+    /// Speaker/name matching must use the same Unicode and case rules in both
+    /// prompt construction and generated-line parsing.  Keeping this helper at
+    /// type scope prevents the two paths from drifting apart.
+    static func normalizedCharacterName(_ value: String) -> String {
+        value
+            .precomposedStringWithCanonicalMapping
+            .folding(options: [.caseInsensitive], locale: .current)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     private static func memoryCategoryLabel(_ category: MemoryCategory, isEnglish: Bool) -> String {
         guard isEnglish else { return category.displayName }
         switch category {
@@ -50,14 +62,6 @@ struct StoryPromptBuilder {
         let isEnglish = KizunaCopy.language == .english
         func copy(_ japanese: String, _ english: String) -> String {
             isEnglish ? english : japanese
-        }
-        func normalizedCharacterName(_ value: String) -> String {
-            value
-                .precomposedStringWithCanonicalMapping
-                .folding(options: [.caseInsensitive], locale: .current)
-                .components(separatedBy: .whitespacesAndNewlines)
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
         }
         let narratorLabel = copy("ナレーション", "Narration")
         // Story data is persisted in Japanese in many existing worlds.  The
@@ -396,7 +400,7 @@ struct StoryPromptBuilder {
             guard let profile = characterIndex[member.characterId] else { return nil }
             return (member.characterId, profile.visibleName)
         }
-        let activeNameCounts = Dictionary(grouping: activeEntries, by: { normalizedCharacterName($0.name) })
+        let activeNameCounts = Dictionary(grouping: activeEntries, by: { Self.normalizedCharacterName($0.name) })
         let hasDuplicateActiveNames = activeNameCounts.values.contains { $0.count > 1 }
         if hasDuplicateActiveNames {
             push(copy("同名のactive NPCがいます。該当する発話は必ず「<UUID> 名前: 本文」で始め、characterIdのUUIDを正確に使う。名前だけの発話は禁止。", "Some active NPCs share a name. Every affected line must start with `<UUID> Name: text`, using the exact characterId UUID. Name-only lines are forbidden for duplicated names."))
@@ -454,12 +458,7 @@ struct StoryPromptBuilder {
         let npcName = npc?.name ?? "相手"
         let profile = npc?.profile
         let normalizedActiveNames = Dictionary(grouping: activeCharacters, by: { character in
-            character.name
-                .precomposedStringWithCanonicalMapping
-                .folding(options: [.caseInsensitive], locale: .current)
-                .components(separatedBy: .whitespacesAndNewlines)
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
+            Self.normalizedCharacterName(character.name)
         })
         let hasDuplicateActiveNames = normalizedActiveNames.values.contains { $0.count > 1 }
         let isEnglish = KizunaCopy.language == .english
@@ -672,7 +671,6 @@ struct StoryPromptBuilder {
             "output format",
             "response format",
             "reply only",
-            "first line",
             "off-scene",
             "output reasoning",
             "meta commentary",
@@ -680,7 +678,20 @@ struct StoryPromptBuilder {
             "do not include reasoning",
             "do not include choices"
         ]
-        return keywords.contains { rule.localizedCaseInsensitiveContains($0) }
+        guard !keywords.contains(where: { rule.localizedCaseInsensitiveContains($0) }) else {
+            return true
+        }
+
+        // A safety rule can legitimately mention its first line (for example,
+        // not revealing personal data).  Treat it as a format rule only when
+        // the same sentence explicitly describes a speaker/output layout.
+        let normalized = rule.localizedLowercase
+        guard normalized.contains("first line") else { return false }
+        let outputTerms = [
+            "narration", "narrator", "dialogue", "speaker", "npc",
+            "start with", "begin with", "starts with", "begins with"
+        ]
+        return outputTerms.contains { normalized.contains($0) }
     }
 
     private func utf8Prefix(_ value: String, byteLimit: Int) -> String {

@@ -383,23 +383,7 @@ struct KizunaSettingsView: View {
     }
 
     private func localizedModelDetail(_ option: LocalAssistantModelProfile.DownloadOption) -> String {
-        switch option.kind {
-        case .gemma4E2BLiteRTLM:
-            return KizunaCopy.text(
-                japanese: "スマホ向けLiteRT-LM形式。保存後、端末内で自動確認してから利用できます",
-                english: "LiteRT-LM format for phones. The app checks it on-device before use."
-            )
-        case .viukStoryGGUF:
-            return KizunaCopy.text(
-                japanese: "Hugging FaceのVIUK標準モデル",
-                english: "VIUK standard model from Hugging Face"
-            )
-        case .gemma3nE4BGGUF:
-            return KizunaCopy.text(
-                japanese: "互換用のGemma 3n 4bit GGUF",
-                english: "Compatible Gemma 3n 4-bit GGUF model"
-            )
-        }
+        KizunaCopy.text(japanese: option.detail, english: option.englishDetail)
     }
 
     private var selectedStandardModelRequiresToken: Bool {

@@ -1774,12 +1774,7 @@ final class StorySessionService: ObservableObject {
     /// 生成モデルがKai/KAI/kaiのように表記を揺らしても同じキャストへ解決し、
     /// ユーザー操作キャラの代弁禁止判定も同じ規則で適用する。
     private func normalizedSpeakerName(_ value: String) -> String {
-        value
-            .precomposedStringWithCanonicalMapping
-            .folding(options: [.caseInsensitive], locale: .current)
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+        StoryPromptBuilder.normalizedCharacterName(value)
     }
 
     private func normalizedDuplicateText(_ text: String) -> String {
