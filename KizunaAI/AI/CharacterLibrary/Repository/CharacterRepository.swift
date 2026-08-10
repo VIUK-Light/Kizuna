@@ -7,10 +7,21 @@
 
 import Foundation
 
+/// Result of the serialized character deletion check.
+///
+/// The repository decides whether the current record is protected while it
+/// holds the same file lock used by saves.  Callers must only remove related
+/// story/memory data after receiving `.deleted`.
+enum CharacterDeletionResult: Equatable {
+    case deleted
+    case protected
+    case notFound
+}
+
 protocol CharacterRepository: AnyObject {
     func fetchCharacters() async throws -> [CharacterProfile]
     func saveCharacter(_ character: CharacterProfile) async throws
-    func deleteCharacter(id: UUID) async throws
+    func deleteCharacter(id: UUID) async throws -> CharacterDeletionResult
 
     // Lorebook (1:1)。CharacterProfile と一緒に管理した方が呼び出し側が楽なのでここに置く。
     func fetchLorebook(characterId: UUID) async throws -> CharacterLorebook?
@@ -109,21 +120,29 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
         return result
     }
 
-    func deleteCharacter(id: UUID) async throws {
-        // 保護判定と削除を同じ read-modify-write ロック内で行う。
-        // 先に別ロックで読んでから delete すると、シード／修復が同じIDを
-        // system protected にした直後でも古い判定で削除できてしまう。
-        var shouldDeleteLorebook = true
+    func deleteCharacter(id: UUID) async throws -> CharacterDeletionResult {
+        var result: CharacterDeletionResult = .notFound
+        // Protection and removal share the charStore read-modify-write lock.
+        // A concurrent seed/save can therefore not turn a protected character
+        // into a successful deletion after a caller has already cleaned refs.
         try await charStore.mutate { items in
-            if items.contains(where: { $0.id == id && $0.isSystemProtected == true }) {
-                shouldDeleteLorebook = false
+            guard items.contains(where: { $0.id == id }) else {
+                result = .notFound
+                return
+            }
+            guard !items.contains(where: { $0.id == id && $0.isSystemProtected == true }) else {
+                result = .protected
                 return
             }
             items.removeAll { $0.id == id }
+            result = .deleted
         }
-        if shouldDeleteLorebook {
-            try await loreStore.delete(matching: { $0.characterId == id })
-        }
+
+        guard result == .deleted else { return result }
+        // Lorebook cleanup belongs to the character repository, but story and
+        // memory cleanup is intentionally left to callers after `.deleted`.
+        try await loreStore.delete(matching: { $0.characterId == id })
+        return result
     }
 
     func fetchLorebook(characterId: UUID) async throws -> CharacterLorebook? {

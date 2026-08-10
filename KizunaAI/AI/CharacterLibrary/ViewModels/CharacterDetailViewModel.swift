@@ -48,20 +48,27 @@ final class CharacterDetailViewModel: ObservableObject {
         }
     }
 
-    func delete() async throws {
-        let latest = try await characterRepo.fetchCharacters().first(where: { $0.id == character.id })
-        guard latest?.isSystemProtected != true else { return }
-        deletionPhase = .removingReferences
+    func delete() async throws -> CharacterDeletionResult {
         do {
+            deletionPhase = .deletingProfile
+            let deletionResult = try await characterRepo.deleteCharacter(id: character.id)
+            guard deletionResult == .deleted else {
+                // A protected or already-removed profile must not be treated
+                // as a successful deletion, and more importantly must not
+                // trigger cleanup of its story references or memories.
+                deletionPhase = .idle
+                return deletionResult
+            }
+
+            deletionPhase = .removingReferences
             try await StoryCharacterReferenceCleaner.remove(characterID: character.id)
             deletionPhase = .deletingMemories
             try await memoryRepo.deleteAllMemories(characterId: character.id)
-            deletionPhase = .deletingProfile
-            try await characterRepo.deleteCharacter(id: character.id)
             // プロフィール削除後も会話本文は保持し、関連スレッドだけを
             // personaSnapshotベースへ移行して継続可能にする。
             PersonaChatStore.shared.detachCharacterReferences(for: character.id)
             deletionPhase = .completed
+            return deletionResult
         } catch {
             // 各Repositoryは個別のJSONを原子的に更新するが、複数ファイルを
             // 1トランザクションにはできない。再実行は冪等な掃除として扱い、

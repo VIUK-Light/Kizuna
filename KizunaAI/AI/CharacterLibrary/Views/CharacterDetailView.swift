@@ -139,9 +139,22 @@ struct CharacterDetailView: View {
         Task { @MainActor in
             defer { isDeleting = false }
             do {
-                try await vm.delete()
-                onDelete?()
-                dismiss()
+                let result = try await vm.delete()
+                switch result {
+                case .deleted:
+                    onDelete?()
+                    dismiss()
+                case .protected:
+                    deleteError = KizunaCopy.text(
+                        japanese: "標準キャラクターは削除できません。",
+                        english: "Standard characters cannot be deleted."
+                    )
+                case .notFound:
+                    deleteError = KizunaCopy.text(
+                        japanese: "キャラクターが見つかりません。一覧を更新してから再試行してください。",
+                        english: "The character could not be found. Refresh the library and try again."
+                    )
+                }
             } catch {
                 let message = KizunaCopy.text(
                     japanese: "キャラの削除が途中で失敗しました。関連データが一部変更されている可能性があります。再試行してください。",

@@ -129,30 +129,31 @@ final class CharacterLibraryViewModel: ObservableObject {
         defer { deletingIDs.remove(id) }
         deleteErrorMessage = nil
         do {
-            // 一覧のスナップショットではなく最新保存値で保護状態を確認する。
-            // 標準化処理と削除タップが競合しても、メモリーだけを消さない。
-            let latest = try await characterRepo.fetchCharacters().first(where: { $0.id == id })
-            guard let latest else {
-                deleteErrorMessage = KizunaCopy.text(
-                    japanese: "キャラクターが見つかりません。一覧を更新してから再試行してください。",
-                    english: "The character could not be found. Refresh the library and try again."
-                )
-                return
-            }
-            guard latest.isSystemProtected != true else {
+            // 保護判定と本体削除はリポジトリの同一ロック内で行う。
+            // 先に一覧を読んでから削除すると、標準キャラ化や別の削除と
+            // 競合した際に、保護されたキャラの関連データだけを消し得る。
+            let deletionResult = try await characterRepo.deleteCharacter(id: id)
+            switch deletionResult {
+            case .protected:
                 deleteErrorMessage = KizunaCopy.text(
                     japanese: "標準キャラクターは削除できません。",
                     english: "Standard characters cannot be deleted."
                 )
                 return
+            case .notFound:
+                deleteErrorMessage = KizunaCopy.text(
+                    japanese: "キャラクターが見つかりません。一覧を更新してから再試行してください。",
+                    english: "The character could not be found. Refresh the library and try again."
+                )
+                return
+            case .deleted:
+                break
             }
-            // 物語本文は残すが、今後のシーン/キャストで削除済みIDを使わない。
+
+            // 本体削除が確定した後だけ、物語参照とメモリーを掃除する。
+            // これらの掃除が失敗しても本体削除の結果を成功扱いに戻さない。
             try await StoryCharacterReferenceCleaner.remove(characterID: id)
-            // 一覧のコンテキストメニューから削除した場合も、詳細画面と同じく
-            // キャラに紐づく全体メモリーを孤児化させない。
             try await memoryRepo.deleteAllMemories(characterId: id)
-            // 関連データの掃除に成功してから本体を削除する。
-            try await characterRepo.deleteCharacter(id: id)
             // キャラ本体が消えた後は、Personaスレッドを保存済みの
             // personaSnapshotへ切り替える。会話本文を削除せず、次回送信が
             // 削除済みUUIDを参照して失敗し続ける状態だけを解消する。

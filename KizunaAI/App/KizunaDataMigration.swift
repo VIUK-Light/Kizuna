@@ -1,6 +1,21 @@
 import Foundation
 
+/// WindowGroupの複数シーンから同時に呼ばれても、移行先とステージングを
+/// 共有したまま操作しないためのプロセス内ロック。移行は同一プロセスの
+/// ファイル操作なので、actorをまたぐ非同期処理ではなく短い同期区間で直列化する。
+private final class KizunaDataMigrationLock: @unchecked Sendable {
+    private let lock = NSLock()
+
+    nonisolated func withLock<Result>(_ body: () throws -> Result) rethrows -> Result {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
+}
+
 enum KizunaDataMigration {
+    nonisolated private static let migrationLock = KizunaDataMigrationLock()
+
     nonisolated private static let applicationSupportURL: URL = {
         let support = (try? FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -42,14 +57,16 @@ enum KizunaDataMigration {
     ]
 
     nonisolated static func performIfNeeded() {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: migrationMarker) else { return }
+        migrationLock.withLock {
+            let defaults = UserDefaults.standard
+            guard !defaults.bool(forKey: migrationMarker) else { return }
 
-        let didMigrateCharacters = migrateCharacterLibraryIfAvailable()
-        let didMigrateModels = migrateLocalModelsIfAvailable()
-        migratePersonaDefaultsIfAvailable(into: defaults)
-        if didMigrateCharacters && didMigrateModels {
-            defaults.set(true, forKey: migrationMarker)
+            let didMigrateCharacters = migrateCharacterLibraryIfAvailable()
+            let didMigrateModels = migrateLocalModelsIfAvailable()
+            migratePersonaDefaultsIfAvailable(into: defaults)
+            if didMigrateCharacters && didMigrateModels {
+                defaults.set(true, forKey: migrationMarker)
+            }
         }
     }
 
@@ -144,20 +161,19 @@ enum KizunaDataMigration {
 
         do {
             try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
-            // A directory created by a cancelled/failed migration is not proof
-            // that a model was transferred. Verify actual model artifacts first.
-            if containsModelArtifact(in: localModelsURL) {
-                return true
-            }
-
-            guard fileManager.fileExists(atPath: legacyURL.path) else {
-                try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
-                return true
-            }
-            guard containsModelArtifact(in: legacyURL) else {
-                // Keep an empty destination available for a future download, but
-                // do not copy metadata-only directories and call them a model.
-                try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
+            // 旧保存先を先に調べる。新しい保存先にすでにモデルがあっても、
+            // 旧保存先にもモデルがあればマージし、片方だけを見て早期終了しない。
+            // mergeModelDirectoryContents は既存ファイルを保持し、衝突時は
+            // 移行サフィックスを付けるため、再実行でも上書きしない。
+            let destinationHasArtifact = containsModelArtifact(in: localModelsURL)
+            let legacyHasArtifact = fileManager.fileExists(atPath: legacyURL.path)
+                && containsModelArtifact(in: legacyURL)
+            guard legacyHasArtifact else {
+                // 空の旧ディレクトリやキャンセル途中のメタデータだけでは
+                // 移行完了とみなさない。ただし既存の有効な保存先は保持する。
+                if !destinationHasArtifact {
+                    try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
+                }
                 return true
             }
 
