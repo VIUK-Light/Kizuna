@@ -210,6 +210,22 @@ final class PersonaChatStore: ObservableObject {
         persist()
     }
 
+    /// キャラクター本体を削除した後に、関連する全Personaスレッドを
+    /// 保存済みの `personaSnapshot` へ切り替える。会話本文はそのまま残し、
+    /// 次回送信時に削除済みUUIDを再取得し続けないよう参照だけを切り離す。
+    func detachCharacterReferences(for characterID: UUID) {
+        var didChange = false
+        let now = Date()
+        for index in threads.indices where threads[index].characterID == characterID {
+            threads[index].characterID = nil
+            threads[index].updatedAt = now
+            didChange = true
+        }
+        guard didChange else { return }
+        threads.sort { $0.updatedAt > $1.updatedAt }
+        persist()
+    }
+
     func deleteThread(id: UUID) {
         threads.removeAll { $0.id == id }
         if activeThreadID == id {

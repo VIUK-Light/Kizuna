@@ -148,6 +148,10 @@ final class CharacterLibraryViewModel: ObservableObject {
             try await memoryRepo.deleteAllMemories(characterId: id)
             // 関連データの掃除に成功してから本体を削除する。
             try await characterRepo.deleteCharacter(id: id)
+            // キャラ本体が消えた後は、Personaスレッドを保存済みの
+            // personaSnapshotへ切り替える。会話本文を削除せず、次回送信が
+            // 削除済みUUIDを参照して失敗し続ける状態だけを解消する。
+            PersonaChatStore.shared.detachCharacterReferences(for: id)
             await reload()
         } catch {
             NSLog("[CharacterLibraryVM] delete failed: %@", String(describing: error))

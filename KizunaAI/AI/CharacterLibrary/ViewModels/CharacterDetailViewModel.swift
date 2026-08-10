@@ -58,6 +58,9 @@ final class CharacterDetailViewModel: ObservableObject {
             try await memoryRepo.deleteAllMemories(characterId: character.id)
             deletionPhase = .deletingProfile
             try await characterRepo.deleteCharacter(id: character.id)
+            // プロフィール削除後も会話本文は保持し、関連スレッドだけを
+            // personaSnapshotベースへ移行して継続可能にする。
+            PersonaChatStore.shared.detachCharacterReferences(for: character.id)
             deletionPhase = .completed
         } catch {
             // 各Repositoryは個別のJSONを原子的に更新するが、複数ファイルを
