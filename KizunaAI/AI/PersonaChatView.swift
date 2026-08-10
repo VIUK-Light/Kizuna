@@ -711,8 +711,12 @@ struct PersonaChatView: View {
     private func messageList(for thread: PersonaThread) -> some View {
         // 生成中の最新アシスタント枠は、ストリーミングプレビューと二重に描かない。
         // 完了後は保存された本文を通常のメッセージとして表示する。
+        // `phase` はサービス全体の状態だが、表示対象は thread ID と組み合わせる。
+        // IDだけが一瞬残る遷移でも、別スレッドへプレビューを漏らさない。
         let isGeneratingThisThread = service.activeGenerationThreadID == thread.id
+            && service.phase == .thinking
         let isErrorThisThread = service.lastErrorThreadID == thread.id
+            && isGenerationError
         let pendingAssistantID: UUID? = {
             guard isGeneratingThisThread else { return nil }
             return thread.messages.last(where: { $0.role == .assistant })?.id
@@ -797,6 +801,11 @@ struct PersonaChatView: View {
                 }
             }
         }
+    }
+
+    private var isGenerationError: Bool {
+        if case .error = service.phase { return true }
+        return false
     }
 
     private func streamingPreview(personaProfile: PersonaProfile) -> some View {
@@ -1149,69 +1158,86 @@ struct PersonaComposer: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var isGeneratingThisThread: Bool {
-        service.activeGenerationThreadID == thread.id
+        service.activeGenerationThreadID == thread.id && service.phase == .thinking
     }
 
     private var isGeneratingAnotherThread: Bool {
-        if case .thinking = service.phase {
-            return !isGeneratingThisThread
-        }
-        return false
+        guard let activeThreadID = service.activeGenerationThreadID,
+              service.phase == .thinking else { return false }
+        return activeThreadID != thread.id
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            ZStack {
-                Circle().fill(Color.accentColor.opacity(0.18))
-                Image(systemName: "sparkles")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-            }
-            .frame(width: 34, height: 34)
-            .help(KizunaCopy.appName)
-
-            TextField(KizunaCopy.text(japanese: "メッセージを送る…", english: "Message…"), text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .focused($focused)
-                .lineLimit(1...4)
-                .submitLabel(.send)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(colorScheme == .dark
-                              ? Color(red: 0.20, green: 0.20, blue: 0.24)
-                              : Color.white)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-                )
-                .onSubmit(submit)
-
-            Button {
-                if isGeneratingThisThread {
-                    service.cancel()
-                } else {
-                    submit()
+        VStack(alignment: .leading, spacing: 6) {
+            if isGeneratingAnotherThread {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(KizunaCopy.text(
+                        japanese: "別のスレッドで生成中です。完了するまで送信できません。",
+                        english: "Another thread is generating. You can send after it finishes."
+                    ))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                 }
-            } label: {
-                Image(systemName: isGeneratingThisThread ? "stop.fill" : "paperplane.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 38, height: 38)
-                    .background(
-                        Circle().fill(isGeneratingThisThread || canSubmit ? Color.accentColor : Color.secondary.opacity(0.25))
-                    )
-                    .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .accessibilityElement(children: .combine)
             }
-            .buttonStyle(.plain)
-            .disabled(!isGeneratingThisThread && !canSubmit)
-            .help(isGeneratingAnotherThread
-                  ? KizunaCopy.text(japanese: "別のスレッドで生成中です", english: "Another thread is generating")
-                  : "")
-            .accessibilityLabel(isGeneratingThisThread
-                                ? KizunaCopy.text(japanese: "生成を停止", english: "Stop generating")
-                                : KizunaCopy.text(japanese: "送信", english: "Send"))
+
+            HStack(alignment: .bottom, spacing: 8) {
+                ZStack {
+                    Circle().fill(Color.accentColor.opacity(0.18))
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .frame(width: 34, height: 34)
+                .help(KizunaCopy.appName)
+
+                TextField(KizunaCopy.text(japanese: "メッセージを送る…", english: "Message…"), text: $text, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .focused($focused)
+                    .lineLimit(1...4)
+                    .submitLabel(.send)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(colorScheme == .dark
+                                  ? Color(red: 0.20, green: 0.20, blue: 0.24)
+                                  : Color.white)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                    )
+                    .onSubmit(submit)
+
+                Button {
+                    if isGeneratingThisThread {
+                        service.cancel()
+                    } else {
+                        submit()
+                    }
+                } label: {
+                    Image(systemName: isGeneratingThisThread ? "stop.fill" : "paperplane.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 38, height: 38)
+                        .background(
+                            Circle().fill(isGeneratingThisThread || canSubmit ? Color.accentColor : Color.secondary.opacity(0.25))
+                        )
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .disabled(!isGeneratingThisThread && !canSubmit)
+                .help(isGeneratingAnotherThread
+                      ? KizunaCopy.text(japanese: "別のスレッドで生成中です", english: "Another thread is generating")
+                      : "")
+                .accessibilityLabel(isGeneratingThisThread
+                                    ? KizunaCopy.text(japanese: "生成を停止", english: "Stop generating")
+                                    : KizunaCopy.text(japanese: "送信", english: "Send"))
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

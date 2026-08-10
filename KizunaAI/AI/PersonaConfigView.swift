@@ -112,15 +112,21 @@ struct PersonaConfigView: View {
             HStack {
                 sectionTitle(KizunaCopy.text(japanese: "クイック選択", english: "Quick select"))
                 Spacer()
-                Text(KizunaCopy.text(
-                    japanese: "\(PersonaPreset.allCases.count) 人",
-                    english: "\(PersonaPreset.allCases.count) presets"
-                ))
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.primary.opacity(0.06)))
+                HStack(spacing: 6) {
+                    Text(KizunaCopy.text(
+                        japanese: "\(PersonaPreset.allCases.count) 人",
+                        english: "\(PersonaPreset.allCases.count) presets"
+                    ))
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Text(selectedPresetLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(selectedPreset == nil ? .secondary : Color.accentColor)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.primary.opacity(0.06)))
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 138), spacing: 10)], alignment: .leading, spacing: 10) {
                 ForEach(PersonaPreset.allCases) { preset in
@@ -137,7 +143,7 @@ struct PersonaConfigView: View {
     }
 
     private func presetCard(_ preset: PersonaPreset) -> some View {
-        let selected = draft.name == preset.profile.name
+        let selected = isPresetSelected(preset)
         return Button {
             draft = preset.profile
             ageText = draft.age.map(String.init) ?? ""
@@ -169,6 +175,21 @@ struct PersonaConfigView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    /// 現在の編集内容と完全一致するカードだけを選択状態にする。
+    /// 名前だけが同じカスタムプロフィールをプリセットとして表示しない。
+    private func isPresetSelected(_ preset: PersonaPreset) -> Bool {
+        draft.matchesEditableContent(of: preset.profile)
+    }
+
+    private var selectedPreset: PersonaPreset? {
+        PersonaPreset.allCases.first(where: isPresetSelected)
+    }
+
+    private var selectedPresetLabel: String {
+        selectedPreset?.localizedDisplayName
+            ?? KizunaCopy.text(japanese: "カスタム", english: "Custom")
     }
 
     private var identitySection: some View {
