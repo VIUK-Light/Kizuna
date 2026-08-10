@@ -359,6 +359,8 @@ struct CastMember: Codable, Identifiable, Equatable, Hashable {
     var introductionTiming: IntroductionTiming
     /// この物語の文脈での「ユーザーとの関係」(CharacterProfile.relationshipToUser とは別)。
     var relationshipToUser: String
+    /// 旧データではnil。新しい作成フローでは文字列推測を避けるため明示できる。
+    var isUserControlled: Bool?
     /// 他キャラとの関係性 (この CastMember 視点からの edge 集合)。
     var relationshipToOtherCharacters: [CharacterRelationship]
     /// 現在のシーンに居るか。Scene 切替時に Service が更新。
@@ -372,6 +374,7 @@ struct CastMember: Codable, Identifiable, Equatable, Hashable {
         importance: Double = 0.5,
         introductionTiming: IntroductionTiming = .early,
         relationshipToUser: String = "",
+        isUserControlled: Bool? = nil,
         relationshipToOtherCharacters: [CharacterRelationship] = [],
         isActiveInCurrentScene: Bool = false
     ) {
@@ -382,6 +385,7 @@ struct CastMember: Codable, Identifiable, Equatable, Hashable {
         self.importance = min(max(importance, 0), 1)
         self.introductionTiming = introductionTiming
         self.relationshipToUser = relationshipToUser
+        self.isUserControlled = isUserControlled
         self.relationshipToOtherCharacters = relationshipToOtherCharacters
         self.isActiveInCurrentScene = isActiveInCurrentScene
     }
@@ -414,6 +418,24 @@ enum RelationshipType: String, Codable, CaseIterable, Hashable {
         case .enemy: return "敵対"
         case .unknown: return "不明"
         }
+    }
+
+    /// UI専用の表示名。保存するraw valueと日本語のdisplayNameは変更しない。
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .friend: english = "Friend"
+        case .rival: english = "Rival"
+        case .sibling: english = "Siblings"
+        case .seniorJunior: english = "Senior / junior"
+        case .classmate: english = "Classmates"
+        case .coworker: english = "Coworkers"
+        case .masterServant: english = "Master / servant"
+        case .protectorProtected: english = "Protector / protected"
+        case .enemy: english = "Enemies"
+        case .unknown: english = "Unknown"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
     }
 }
 
@@ -607,15 +629,22 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
         for update in characterUpdates ?? [] {
             let normalizedName = update.characterName.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedName.isEmpty else { continue }
-            let matchedID = characterIndex.first { _, profile in
-                let displayName = profile.displayName.isEmpty ? profile.name : profile.displayName
-                return displayName == normalizedName || profile.name == normalizedName
-            }?.key
-            let index = next.characterStates.firstIndex { current in
+            let matchingIDs = characterIndex.compactMap { id, profile -> UUID? in
+                let displayName = profile.visibleName
+                return displayName == normalizedName || profile.name == normalizedName ? id : nil
+            }
+            // 同名キャラを辞書の先頭へ暗黙に結びつけると、別キャラの状態を
+            // 最初のUUIDへ誤適用する。名前だけでは解決できない場合は今回の
+            // 状態更新を捨て、既存状態を壊さない。
+            guard matchingIDs.count <= 1 else { continue }
+            let matchedID = matchingIDs.first
+            let matchingStateIndices = next.characterStates.indices.filter { index in
+                let current = next.characterStates[index]
                 // matchedID がない場合に nil == nil で別キャラへ誤適用しない。
                 if let matchedID { return current.characterId == matchedID }
                 return current.characterName == normalizedName
             }
+            let index = matchingStateIndices.count == 1 ? matchingStateIndices.first : nil
             if let index {
                 // 今回JSONに含まれなかった項目は、前回値をそのまま保持する。
                 var value = next.characterStates[index]

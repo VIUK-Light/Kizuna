@@ -11,6 +11,10 @@ struct VIUKKizunaWorkspaceView: View {
     @State private var selectedSection: KizunaWorkspaceSection = .stories
     @StateObject private var storyLibraryViewModel = StoryWorldLibraryViewModel()
     @State private var activeStoryWorld: StoryWorld?
+    @State private var activeStorySessionID: UUID?
+    /// Storyカードを連続タップした時、先に予約された古い遷移が後から
+    /// sheetを開いて別Worldを表示しないよう、遷移Taskを一つに限定する。
+    @State private var pendingStoryOpenTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,13 +33,17 @@ struct VIUKKizunaWorkspaceView: View {
         }
 #if os(iOS)
         .fullScreenCover(item: $activeStoryWorld) { world in
-            StorySessionChatView(world: world)
+            StorySessionChatView(world: world, initialSessionID: activeStorySessionID)
         }
 #else
         .sheet(item: $activeStoryWorld) { world in
-            StorySessionChatView(world: world)
+            StorySessionChatView(world: world, initialSessionID: activeStorySessionID)
         }
 #endif
+        .onDisappear {
+            pendingStoryOpenTask?.cancel()
+            pendingStoryOpenTask = nil
+        }
     }
 
     private var myPageButton: some View {
@@ -54,9 +62,11 @@ struct VIUKKizunaWorkspaceView: View {
 
     private func openDebugStory() {
         guard activeStoryWorld == nil else { return }
-        Task { @MainActor in
+        pendingStoryOpenTask?.cancel()
+        pendingStoryOpenTask = Task { @MainActor in
             // 設定シートのdismiss完了を待ってからStoryを表示する。
             try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
             guard activeStoryWorld == nil else { return }
             let repository = LocalJSONStoryWorldRepository()
             // ライブラリーの初期化がまだ終わっていない起動直後でも対象を取得できるようにする。
@@ -66,6 +76,7 @@ struct VIUKKizunaWorkspaceView: View {
             )
             guard let world = (try? await repository.fetchWorlds())?.first else { return }
             activeStoryWorld = world
+            pendingStoryOpenTask = nil
         }
     }
 
@@ -105,13 +116,28 @@ struct VIUKKizunaWorkspaceView: View {
         case .stories:
             StoryWorldLibraryView(
                 viewModel: storyLibraryViewModel,
-                showsDismissButton: false
-            ) { world in
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 500_000_000)
-                    activeStoryWorld = world
+                showsDismissButton: false,
+                onStartSession: { world in
+                    pendingStoryOpenTask?.cancel()
+                    pendingStoryOpenTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        guard !Task.isCancelled else { return }
+                        activeStorySessionID = nil
+                        activeStoryWorld = world
+                        pendingStoryOpenTask = nil
+                    }
+                },
+                onResumeSession: { world, sessionID in
+                    pendingStoryOpenTask?.cancel()
+                    pendingStoryOpenTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        guard !Task.isCancelled else { return }
+                        activeStorySessionID = sessionID
+                        activeStoryWorld = world
+                        pendingStoryOpenTask = nil
+                    }
                 }
-            }
+            )
         case .chat:
             PersonaChatView()
         case .myPage:

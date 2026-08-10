@@ -19,7 +19,10 @@ final class LocalJSONMemoryRepository: MemoryRepository {
     private let perCharacterLimit = 60   // キャラごとの上限
 
     func fetchMemories(characterId: UUID) async throws -> [CharacterMemory] {
-        let all = try await store.load()
+        // 1件の旧形式/破損レコードで全メモリーを空に見せない。
+        // 読み取り時は救出した有効レコードを使い、元ファイルの書き戻しは
+        // mutate/save が成功した時だけ行う。
+        let all = try await store.loadRecoveringCorruptRecords()
         return all
             .filter { $0.characterId == characterId }
             .sorted { lhs, rhs in

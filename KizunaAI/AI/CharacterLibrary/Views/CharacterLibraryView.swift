@@ -47,6 +47,9 @@ struct CharacterLibraryView: View {
             header
             Divider()
             filterBar
+            if let issue = vm.loadError, vm.didLoadCharacters {
+                loadErrorBanner(issue)
+            }
             Divider()
             content
         }
@@ -92,7 +95,9 @@ struct CharacterLibraryView: View {
                 },
                 onDelete: {
                     Task {
-                        await vm.delete(id: c.id)
+                        // 詳細画面が関連データを含めて削除済み。ここで再度
+                        // delete(id:) を呼ぶと二重削除・失敗表示の原因になる。
+                        await vm.reload()
                         selected = nil
                     }
                 }
@@ -102,10 +107,16 @@ struct CharacterLibraryView: View {
         .sheet(isPresented: $showTemplatePicker) {
             TemplatePickerSheet(
                 templates: vm.templates,
+                isLoading: vm.isLoading && !vm.didLoadTemplates,
+                loadError: vm.templateLoadError,
+                didLoadTemplates: vm.didLoadTemplates,
                 onPick: { template in
                     showTemplatePicker = false
                     // template から draft を作って Create に遷移
                     showCreateFromTemplate(template)
+                },
+                onRetry: {
+                    Task { await vm.retryLoad() }
                 }
             )
             .viukAdaptiveSheetSizing(minWidth: 480, minHeight: 560)
@@ -131,12 +142,14 @@ struct CharacterLibraryView: View {
                     .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
-            .help("閉じる")
+            .help(KizunaCopy.text(japanese: "閉じる", english: "Close"))
 
             VStack(alignment: .leading, spacing: 0) {
-                Text("キャラライブラリー")
+                Text(KizunaCopy.text(japanese: "キャラライブラリー", english: "Character library"))
                     .font(.system(size: 15, weight: .semibold))
-                Text("\(vm.allCharacters.count) 件")
+                Text(vm.loadError != nil && !vm.didLoadCharacters
+                     ? KizunaCopy.text(japanese: "読み込みエラー", english: "Load error")
+                     : "\(vm.allCharacters.count) " + KizunaCopy.text(japanese: "件", english: "characters"))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -146,19 +159,21 @@ struct CharacterLibraryView: View {
             Button {
                 showTemplatePicker = true
             } label: {
-                Label("テンプレ", systemImage: "doc.on.doc")
+                Label(KizunaCopy.text(japanese: "テンプレ", english: "Templates"), systemImage: "doc.on.doc")
                     .font(.system(size: 12, weight: .semibold))
             }
             .buttonStyle(.bordered)
+            .disabled(vm.loadError != nil && !vm.didLoadCharacters)
 
             Button {
                 prefillTemplate = nil
                 showCreate = true
             } label: {
-                Label("作成", systemImage: "plus")
+                Label(KizunaCopy.text(japanese: "作成", english: "Create"), systemImage: "plus")
                     .font(.system(size: 12, weight: .semibold))
             }
             .buttonStyle(.borderedProminent)
+            .disabled(vm.loadError != nil && !vm.didLoadCharacters)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -172,7 +187,10 @@ struct CharacterLibraryView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField("検索 (名前・説明・タグ)", text: $vm.searchText)
+                TextField(
+                    KizunaCopy.text(japanese: "検索 (名前・説明・タグ)", english: "Search (name, description, tags)"),
+                    text: $vm.searchText
+                )
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
             }
@@ -186,12 +204,12 @@ struct CharacterLibraryView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     pickerChip(
-                        label: "グループ",
+                        label: KizunaCopy.text(japanese: "グループ", english: "Group"),
                         icon: "square.grid.2x2",
                         selection: vm.groupFilter?.localizedDisplayName
                     ) {
                         Menu {
-                            Button("すべて") { vm.groupFilter = nil; vm.categoryFilter = nil }
+                            Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.groupFilter = nil; vm.categoryFilter = nil }
                             Divider()
                             ForEach(CategoryGroup.allCases) { g in
                                 Button(action: { vm.groupFilter = g; vm.categoryFilter = nil }) {
@@ -204,12 +222,12 @@ struct CharacterLibraryView: View {
                     if let group = vm.groupFilter {
                         let cats = CharacterCategory.allCases.filter { $0.group == group }
                         pickerChip(
-                            label: "カテゴリー",
+                            label: KizunaCopy.text(japanese: "カテゴリー", english: "Category"),
                             icon: "tag",
                         selection: vm.categoryFilter?.localizedDisplayName
                         ) {
                             Menu {
-                                Button("すべて") { vm.categoryFilter = nil }
+                                Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.categoryFilter = nil }
                                 Divider()
                                 ForEach(cats) { c in
                                     Button(c.localizedDisplayName) { vm.categoryFilter = c }
@@ -219,12 +237,12 @@ struct CharacterLibraryView: View {
                     }
 
                     pickerChip(
-                        label: "ジャンル",
+                        label: KizunaCopy.text(japanese: "ジャンル", english: "Genre"),
                         icon: "heart.text.square",
                         selection: vm.genreFilter?.localizedDisplayName
                     ) {
                         Menu {
-                            Button("すべて") { vm.genreFilter = nil }
+                            Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.genreFilter = nil }
                             Divider()
                             ForEach(RelationshipGenre.allCases) { g in
                                 Button(g.localizedDisplayName) { vm.genreFilter = g }
@@ -234,12 +252,12 @@ struct CharacterLibraryView: View {
 
                     if !vm.availableTags.isEmpty {
                         pickerChip(
-                            label: "タグ",
+                            label: KizunaCopy.text(japanese: "タグ", english: "Tags"),
                             icon: "number",
                             selection: vm.tagFilter
                         ) {
                             Menu {
-                                Button("すべて") { vm.tagFilter = nil }
+                                Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.tagFilter = nil }
                                 Divider()
                                 ForEach(vm.availableTags, id: \.self) { t in
                                     Button(t) { vm.tagFilter = t }
@@ -255,7 +273,7 @@ struct CharacterLibraryView: View {
                             vm.genreFilter = nil
                             vm.tagFilter = nil
                         } label: {
-                            Label("クリア", systemImage: "xmark.circle.fill")
+                            Label(KizunaCopy.text(japanese: "クリア", english: "Clear"), systemImage: "xmark.circle.fill")
                                 .font(.system(size: 11, weight: .semibold))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -303,7 +321,9 @@ struct CharacterLibraryView: View {
 
     @ViewBuilder
     private var content: some View {
-        if vm.isLoading && vm.allCharacters.isEmpty {
+        if vm.loadError != nil && !vm.didLoadCharacters {
+            loadErrorState
+        } else if vm.isLoading && vm.allCharacters.isEmpty {
             VStack { ProgressView() }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if vm.filtered.isEmpty {
@@ -323,28 +343,86 @@ struct CharacterLibraryView: View {
         }
     }
 
+    private var loadErrorState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+                .font(.system(size: 42))
+                .foregroundStyle(.orange)
+            Text(KizunaCopy.text(
+                japanese: "キャラライブラリーを読み込めません",
+                english: "Can't load the character library"
+            ))
+                .font(.system(size: 15, weight: .semibold))
+            if let issue = vm.loadError {
+                Text(issue.message)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+            }
+            Button {
+                Task { await vm.retryLoad() }
+            } label: {
+                Label(KizunaCopy.text(japanese: "再読み込み", english: "Retry"), systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(vm.isLoading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
+    }
+
+    private func loadErrorBanner(_ issue: CharacterLibraryLoadIssue) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(issue.message)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button {
+                Task { await vm.retryLoad() }
+            } label: {
+                Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(vm.isLoading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.10))
+    }
+
     private var emptyState: some View {
         VStack(spacing: 14) {
             Image(systemName: "person.3.sequence.fill")
                 .font(.system(size: 42))
                 .foregroundStyle(.tertiary)
-            Text(vm.allCharacters.isEmpty ? "まだキャラがいません" : "条件に合うキャラがいません")
+            Text(vm.allCharacters.isEmpty
+                 ? KizunaCopy.text(japanese: "まだキャラがいません", english: "No characters yet")
+                 : KizunaCopy.text(japanese: "条件に合うキャラがいません", english: "No characters match these filters"))
                 .font(.system(size: 15, weight: .semibold))
             if vm.allCharacters.isEmpty {
-                Text("テンプレから始めるか、新規作成してみよう。")
+                Text(KizunaCopy.text(
+                    japanese: "テンプレから始めるか、新規作成してみよう。",
+                    english: "Start from a template or create a character from scratch."
+                ))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 HStack(spacing: 10) {
                     Button {
                         showTemplatePicker = true
                     } label: {
-                        Label("テンプレから作る", systemImage: "doc.on.doc")
+                        Label(KizunaCopy.text(japanese: "テンプレから作る", english: "Use a template"), systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.bordered)
                     Button {
                         showCreate = true
                     } label: {
-                        Label("ゼロから作る", systemImage: "plus")
+                        Label(KizunaCopy.text(japanese: "ゼロから作る", english: "Create from scratch"), systemImage: "plus")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -362,7 +440,7 @@ struct CharacterLibraryView: View {
                 HStack(spacing: 10) {
                     avatar(for: c, size: 38)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(c.displayName.isEmpty ? c.name : c.displayName)
+                        Text(c.visibleName)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -413,11 +491,13 @@ struct CharacterLibraryView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button { editing = c } label: { Label("編集", systemImage: "pencil") }
+            Button { editing = c } label: {
+                Label(KizunaCopy.text(japanese: "編集", english: "Edit"), systemImage: "pencil")
+            }
             Button(role: .destructive) {
                 Task { await vm.delete(id: c.id) }
             } label: {
-                Label("削除", systemImage: "trash")
+                Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
             }
         }
     }
@@ -443,7 +523,7 @@ struct CharacterLibraryView: View {
                     .clipShape(Circle())
             )
         }
-        let name = c.displayName.isEmpty ? c.name : c.displayName
+        let name = c.visibleName
         var sum = 0
         for s in name.unicodeScalars { sum &+= Int(s.value) }
         let hue = Double(sum % 360) / 360.0
@@ -503,17 +583,21 @@ struct CharacterLibraryView: View {
 
 private struct TemplatePickerSheet: View {
     let templates: [CharacterTemplate]
+    let isLoading: Bool
+    let loadError: String?
+    let didLoadTemplates: Bool
     let onPick: (CharacterTemplate) -> Void
+    let onRetry: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Button("閉じる") { dismiss() }
+                Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("テンプレから作る")
+                Text(KizunaCopy.text(japanese: "テンプレから作る", english: "Use a template"))
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Color.clear.frame(width: 48)
@@ -522,9 +606,43 @@ private struct TemplatePickerSheet: View {
             .padding(.vertical, 12)
             .background(.thinMaterial)
             Divider()
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(templates) { t in
+            if isLoading && templates.isEmpty {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text(KizunaCopy.text(japanese: "テンプレートを読み込み中…", english: "Loading templates…"))
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let loadError {
+                VStack(spacing: 12) {
+                    Image(systemName: "doc.badge.exclamationmark")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.orange)
+                    Text(loadError)
+                        .font(.system(size: 13, weight: .semibold))
+                        .multilineTextAlignment(.center)
+                    Button {
+                        onRetry()
+                    } label: {
+                        Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(30)
+            } else if templates.isEmpty && didLoadTemplates {
+                VStack(spacing: 10) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.secondary)
+                    Text(KizunaCopy.text(japanese: "テンプレートはまだありません", english: "No templates yet"))
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(templates) { t in
                         Button {
                             onPick(t)
                         } label: {
@@ -553,9 +671,10 @@ private struct TemplatePickerSheet: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        }
                     }
+                    .padding(14)
                 }
-                .padding(14)
             }
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())

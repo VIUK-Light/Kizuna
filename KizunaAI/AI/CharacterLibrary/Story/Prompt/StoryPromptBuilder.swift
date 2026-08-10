@@ -38,6 +38,103 @@ struct StoryPromptBuilder {
             isEnglish ? english : japanese
         }
         let narratorLabel = copy("ナレーション", "Narration")
+        // Story data is persisted in Japanese in many existing worlds.  The
+        // labels below are prompt-control text, so they must follow the
+        // selected generation language even when the underlying data is old.
+        func roleLabel(_ role: CastRole) -> String {
+            guard isEnglish else { return role.displayName }
+            switch role {
+            case .main: return "Main"
+            case .secondary: return "Supporting"
+            case .rival: return "Rival"
+            case .friend: return "Friend"
+            case .mentor: return "Mentor"
+            case .antagonist: return "Antagonist"
+            case .background: return "Background"
+            }
+        }
+        func timingLabel(_ timing: IntroductionTiming) -> String {
+            guard isEnglish else { return timing.displayName }
+            switch timing {
+            case .opening: return "Opening"
+            case .early: return "Early"
+            case .middle: return "Middle"
+            case .late: return "Late"
+            case .optional: return "Conditional"
+            }
+        }
+        func relationshipLabel(_ relationship: RelationshipType) -> String {
+            guard isEnglish else { return relationship.displayName }
+            switch relationship {
+            case .friend: return "Friend"
+            case .rival: return "Rival"
+            case .sibling: return "Sibling"
+            case .seniorJunior: return "Senior/junior"
+            case .classmate: return "Classmate"
+            case .coworker: return "Coworker"
+            case .masterServant: return "Master/servant"
+            case .protectorProtected: return "Protector/protected"
+            case .enemy: return "Enemy"
+            case .unknown: return "Unknown"
+            }
+        }
+        func memoryCategoryLabel(_ category: MemoryCategory) -> String {
+            guard isEnglish else { return category.displayName }
+            switch category {
+            case .preference: return "Preference"
+            case .relationship: return "Relationship"
+            case .event: return "Event"
+            case .world: return "World"
+            case .userFact: return "User fact"
+            case .summary: return "Summary"
+            case .safety: return "Safety"
+            case .other: return "Other"
+            }
+        }
+        // Built-in genre rules predate the language switch and are stored as
+        // Japanese literals. Translate those stable safety controls while
+        // leaving user-authored rules untouched when no catalog entry exists.
+        let safetyRuleTranslations: [String: String] = [
+            "ユーザーが拒否や不快感を示したら態度を和らげ、話題を変える。": "If the user refuses or shows discomfort, soften the tone and change the subject.",
+            "個人を特定する情報を聞き出さない。": "Do not solicit personally identifying information.",
+            "現実の危険行為や違法行為の手順を説明しない。": "Do not explain procedures for real-world dangerous or illegal acts.",
+            "恋愛描写は穏やかな範囲に抑える。": "Keep romance within a gentle, non-explicit range.",
+            "強制・脅迫・監禁・支配を肯定的に描かない。": "Do not portray coercion, threats, confinement, or domination positively.",
+            "嫉妬や執着は軽い感情表現に留める。": "Keep jealousy and fixation as mild emotional expressions.",
+            "家族関係は安心できる関係として描く。": "Portray family relationships as safe and supportive.",
+            "兄妹姉弟・親代わりは恋愛化しない。": "Do not turn sibling or parental roles into romance.",
+            "依存や支配を肯定しない。": "Do not endorse dependency or domination.",
+            "犯罪や危険行為の具体的手順を出さない。": "Do not provide concrete steps for crime or dangerous acts.",
+            "暴力や犯罪を現実で実行するよう促さない。": "Do not encourage carrying out violence or crime in real life.",
+            "物語上の雰囲気に留める。": "Keep this at the level of fictional atmosphere.",
+            "過度な残虐描写を避ける。": "Avoid excessively graphic cruelty.",
+            "恐怖演出は雰囲気中心にする。": "Keep horror focused on atmosphere.",
+            "現実の危険行為につながる指示を出さない。": "Do not give instructions that could lead to real-world danger.",
+            "暴力描写は雰囲気の範囲に留める。": "Keep violence at the level of fictional atmosphere.",
+            "現実の戦闘技術を具体化しない。": "Do not provide concrete real-world combat techniques.",
+            "医療・法律・金融などの高リスク領域では断定しすぎない。": "Avoid overconfident claims in high-risk areas such as medicine, law, and finance.",
+            "必要に応じて専門家への相談を促す。": "Encourage consulting a qualified professional when appropriate.",
+            "未成年キャラクターの場合、性的描写を避ける。": "Avoid sexual content involving minor characters.",
+            "ユーザーが不快感や拒否を示したら態度を和らげる。": "If the user shows discomfort or refusal, soften the tone.",
+            "家族・兄弟姉妹的関係は恋愛化しない。": "Do not turn family or sibling-like relationships into romance.",
+            "支配や従属を美化しすぎない。": "Do not excessively romanticize domination or submission.",
+            "現実的な人権侵害を肯定する描写は避ける。": "Avoid portraying real-world human-rights abuses positively.",
+            "競争は健全な範囲に留め、暴力や侮辱を煽らない。": "Keep competition healthy and do not incite violence or insults.",
+            "立場の差を利用した強要や搾取を肯定しない。": "Do not endorse coercion or exploitation based on a power difference.",
+            "暴力的な対立は雰囲気に留め、煽動的な描写を避ける。": "Keep violent conflict atmospheric and avoid inciting descriptions.",
+            "犯罪手順を具体化しない。": "Do not provide concrete crime procedures.",
+            "医療的な確定診断や具体的処方は行わず、必要時に専門家相談を促す。": "Do not provide definitive medical diagnoses or specific prescriptions; encourage professional help when needed.",
+            "法律上の確定見解は出さず、必要時に専門家相談を促す。": "Do not give definitive legal opinions; encourage professional advice when needed.",
+            "過度な残虐描写を避ける。恐怖演出は雰囲気中心に。": "Avoid excessive gore; keep fear focused on atmosphere.",
+            "悪役であってもユーザーへの実害を煽る描写は避ける。": "Even for villains, avoid content that encourages real harm to the user.",
+            "戦闘描写は雰囲気の範囲に留め、現実の暴力指南をしない。": "Keep battle scenes atmospheric and do not provide real-world violence guidance.",
+            "人生選択を強要しない。決定権はユーザーにあると示す。": "Do not force life choices; make clear that the user remains the decision maker.",
+            "押し付けず、ユーザーのペースに合わせる。": "Do not be pushy; follow the user's pace."
+        ]
+        func localizedRule(_ rule: String) -> String {
+            guard isEnglish else { return rule }
+            return safetyRuleTranslations[rule] ?? rule
+        }
 
         // ── 冒頭 ──
         sections.append(
@@ -113,12 +210,12 @@ struct StoryPromptBuilder {
         // 会話全文ではなく、今の状態だけを短く渡して長期整合性を保つ。
         if let storyState {
             var stateLines: [String] = []
-            if !storyState.location.isEmpty { stateLines.append("場所: \(storyState.location)") }
-            if !storyState.timeOfDay.isEmpty { stateLines.append("時間: \(storyState.timeOfDay)") }
-            if !storyState.mood.isEmpty { stateLines.append("ムード: \(storyState.mood)") }
-            if !storyState.weather.isEmpty { stateLines.append("天候: \(storyState.weather)") }
-            if !storyState.relationshipStage.isEmpty { stateLines.append("関係段階: \(storyState.relationshipStage)") }
-            if !storyState.activeGoals.isEmpty { stateLines.append("進行中の目的: \(storyState.activeGoals.joined(separator: " / "))") }
+            if !storyState.location.isEmpty { stateLines.append("\(copy("場所", "Location")): \(storyState.location)") }
+            if !storyState.timeOfDay.isEmpty { stateLines.append("\(copy("時間", "Time")): \(storyState.timeOfDay)") }
+            if !storyState.mood.isEmpty { stateLines.append("\(copy("ムード", "Mood")): \(storyState.mood)") }
+            if !storyState.weather.isEmpty { stateLines.append("\(copy("天候", "Weather")): \(storyState.weather)") }
+            if !storyState.relationshipStage.isEmpty { stateLines.append("\(copy("関係段階", "Relationship stage")): \(storyState.relationshipStage)") }
+            if !storyState.activeGoals.isEmpty { stateLines.append("\(copy("進行中の目的", "Active goals")): \(storyState.activeGoals.joined(separator: " / "))") }
             for character in storyState.characterStates.prefix(StoryConstants.maxActiveCharacters) {
                 let values = [character.mood, character.goal, character.relationship, character.innerThought]
                     .filter { !$0.isEmpty }
@@ -127,9 +224,9 @@ struct StoryPromptBuilder {
             }
             for item in storyState.inventory.prefix(8) {
                 let owner = item.owner.isEmpty ? "" : " [\(item.owner)]"
-                stateLines.append("所持品: \(item.name)\(owner) \(item.detail)".trimmingCharacters(in: .whitespaces))
+                stateLines.append("\(copy("所持品", "Inventory")): \(item.name)\(owner) \(item.detail)".trimmingCharacters(in: .whitespaces))
             }
-            if !stateLines.isEmpty { sections.append("## 現在のStoryState\n" + stateLines.joined(separator: "\n")) }
+            if !stateLines.isEmpty { sections.append("## \(copy("現在のStoryState", "Current story state"))\n" + stateLines.joined(separator: "\n")) }
         }
 
         // ── キーワードに一致したLorebookだけを投入 ──
@@ -138,7 +235,7 @@ struct StoryPromptBuilder {
             let loreLines = selectedLorebookEntries.prefix(6).map { entry in
                 "- [\(entry.title)] \(entry.content.prefix(600))"
             }
-            sections.append("## 今回有効なLorebook\n" + loreLines.joined(separator: "\n"))
+            sections.append("## \(copy("今回有効なLorebook", "Active lorebook entries"))\n" + loreLines.joined(separator: "\n"))
         }
 
         // ── active キャラ (詳細) ──
@@ -146,30 +243,30 @@ struct StoryPromptBuilder {
             var blocks: [String] = []
             for member in activeCast.prefix(StoryConstants.maxActiveCharacters) {
                 guard let profile = characterIndex[member.characterId] else { continue }
-                let name = profile.displayName.isEmpty ? profile.name : profile.displayName
+                let name = profile.visibleName
                 var lines: [String] = []
-                lines.append("◆ \(name) (\(member.roleInStory.displayName))")
-                if !profile.shortDescription.isEmpty { lines.append("  紹介: \(profile.shortDescription)") }
-                if !profile.personality.isEmpty { lines.append("  性格: \(profile.personality)") }
-                if !profile.speakingStyle.isEmpty { lines.append("  口調: \(profile.speakingStyle)") }
-                if !profile.background.isEmpty { lines.append("  背景: \(profile.background)") }
-                if !profile.scenario.isEmpty { lines.append("  この物語での役割: \(profile.scenario)") }
-                if !profile.firstMessage.isEmpty { lines.append("  初回の空気: \(profile.firstMessage)") }
+                lines.append("◆ \(name) (\(roleLabel(member.roleInStory)))")
+                if !profile.shortDescription.isEmpty { lines.append("  \(copy("紹介", "Introduction")): \(profile.shortDescription)") }
+                if !profile.personality.isEmpty { lines.append("  \(copy("性格", "Personality")): \(profile.personality)") }
+                if !profile.speakingStyle.isEmpty { lines.append("  \(copy("口調", "Speaking style")): \(profile.speakingStyle)") }
+                if !profile.background.isEmpty { lines.append("  \(copy("背景", "Background")): \(profile.background)") }
+                if !profile.scenario.isEmpty { lines.append("  \(copy("この物語での役割", "Role in this story")): \(profile.scenario)") }
+                if !profile.firstMessage.isEmpty { lines.append("  \(copy("初回の空気", "Opening tone")): \(profile.firstMessage)") }
                 if !member.relationshipToUser.isEmpty {
-                    lines.append("  あなたとの関係: \(member.relationshipToUser)")
+                    lines.append("  \(copy("あなたとの関係", "Relationship to user")): \(member.relationshipToUser)")
                 } else if !profile.relationshipToUser.isEmpty {
-                    lines.append("  あなたとの関係: \(profile.relationshipToUser)")
+                    lines.append("  \(copy("あなたとの関係", "Relationship to user")): \(profile.relationshipToUser)")
                 }
                 blocks.append(lines.joined(separator: "\n"))
             }
-            sections.append("## 今このシーンに居るキャラ (active)\n" + blocks.joined(separator: "\n\n"))
+            sections.append("## \(copy("今このシーンに居るキャラ", "Characters active in this scene")) (active)\n" + blocks.joined(separator: "\n\n"))
         }
 
         // ── inactive キャラ (短い背景情報のみ) ──
         if !inactiveCast.isEmpty {
             let lines = inactiveCast.compactMap { member -> String? in
                 guard let profile = characterIndex[member.characterId] else { return nil }
-                let name = profile.displayName.isEmpty ? profile.name : profile.displayName
+                let name = profile.visibleName
                 let oneLiner = [
                     profile.shortDescription,
                     profile.personality,
@@ -178,14 +275,14 @@ struct StoryPromptBuilder {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .joined(separator: " / ")
-                return "- \(name) (\(member.roleInStory.displayName), \(member.introductionTiming.displayName)): \(oneLiner.prefix(130))"
+                return "- \(name) (\(roleLabel(member.roleInStory)), \(timingLabel(member.introductionTiming))): \(oneLiner.prefix(130))"
             }
             if !lines.isEmpty {
                 sections.append(
                     """
-                    ## このシーンに居ないが世界には存在するキャラ
+                    ## \(copy("このシーンに居ないが世界には存在するキャラ", "Characters in the world but not in this scene"))
                     \(lines.joined(separator: "\n"))
-                    (上のキャラは今は登場しません。明示的に呼ばれた時だけ言及します。)
+                    (\(copy("上のキャラは今は登場しません。明示的に呼ばれた時だけ言及します。", "These characters are off-scene. Mention them only when explicitly called for.")))
                     """
                 )
             }
@@ -196,16 +293,16 @@ struct StoryPromptBuilder {
         var relationLines: [String] = []
         for member in activeCast {
             for rel in member.relationshipToOtherCharacters where activeIDs.contains(rel.toCharacterId) {
-                let from = characterIndex[rel.fromCharacterId].map { $0.displayName.isEmpty ? $0.name : $0.displayName } ?? "??"
-                let to = characterIndex[rel.toCharacterId].map { $0.displayName.isEmpty ? $0.name : $0.displayName } ?? "??"
-                var l = "- \(from) → \(to): \(rel.relationshipType.displayName)"
+                let from = characterIndex[rel.fromCharacterId]?.visibleName ?? "??"
+                let to = characterIndex[rel.toCharacterId]?.visibleName ?? "??"
+                var l = "- \(from) → \(to): \(relationshipLabel(rel.relationshipType))"
                 if !rel.description.isEmpty { l += " (" + rel.description + ")" }
-                l += " / 信頼 \(String(format: "%.1f", rel.trust)) / 緊張 \(String(format: "%.1f", rel.tension))"
+                l += " / \(copy("信頼", "Trust")) \(String(format: "%.1f", rel.trust)) / \(copy("緊張", "Tension")) \(String(format: "%.1f", rel.tension))"
                 relationLines.append(l)
             }
         }
         if !relationLines.isEmpty {
-            sections.append("## キャラ同士の関係 (active のみ)\n" + relationLines.joined(separator: "\n"))
+            sections.append("## \(copy("キャラ同士の関係", "Character relationships")) (active only)\n" + relationLines.joined(separator: "\n"))
         }
 
         // ── 全体メモリー ──
@@ -214,13 +311,13 @@ struct StoryPromptBuilder {
             let mems = selectedMemories
                 .sorted { $0.importance > $1.importance }
                 .prefix(12)
-                .map { "- [\($0.category.displayName) / \(String(format: "%.1f", $0.importance))] " + $0.text }
+                .map { "- [\(memoryCategoryLabel($0.category)) / \(String(format: "%.1f", $0.importance))] " + $0.text }
                 .joined(separator: "\n")
             sections.append(
                 """
-                ## 全体メモリー (物語をまたいで使う)
+                ## \(copy("全体メモリー (物語をまたいで使う)", "Shared memory (across stories)"))
                 \(mems)
-                (明示的に「覚えてるよ」と言わず、自然に活かす)
+                (\(copy("明示的に「覚えてるよ」と言わず、自然に活かす", "Use naturally without explicitly saying that you remember it.")))
                 """
             )
         }
@@ -231,13 +328,17 @@ struct StoryPromptBuilder {
             let mems = selectedStoryMemories
                 .sorted { $0.importance > $1.importance }
                 .prefix(12)
-                .map { "- [\($0.category.displayName) / \(String(format: "%.1f", $0.importance))] " + $0.text }
+                .map { memory in
+                    let owner = memory.characterId.flatMap { characterIndex[$0]?.visibleName }
+                        ?? copy("共通", "Shared")
+                    return "- [\(owner) / \(memoryCategoryLabel(memory.category)) / \(String(format: "%.1f", memory.importance))] " + memory.text
+                }
                 .joined(separator: "\n")
             sections.append(
                 """
-                ## 物語内メモリー (この世界だけ)
+                ## \(copy("物語内メモリー (この世界だけ)", "Story memory (this world only)"))
                 \(mems)
-                (この物語の過去として自然に活かす。別の世界の出来事として扱わない)
+                (\(copy("この物語の過去として自然に活かす。別の世界の出来事として扱わない", "Use as past events from this story; do not treat them as events from another world.")))
                 """
             )
         }
@@ -249,9 +350,9 @@ struct StoryPromptBuilder {
             return true
         }
         if !storyRecentMessages.isEmpty {
-            let olderAnchor = conversationAnchors(from: storyRecentMessages)
+            let olderAnchor = conversationAnchors(from: storyRecentMessages, isEnglish: isEnglish)
             if !olderAnchor.isEmpty {
-                sections.append("## これまでの流れの目印\n" + olderAnchor)
+                sections.append("## \(copy("これまでの流れの目印", "Earlier conversation anchors"))\n" + olderAnchor)
             }
 
             // 直近48メッセージをそのまま渡す。24件で切ると、ローカルモデルでも
@@ -271,10 +372,10 @@ struct StoryPromptBuilder {
         var rules: [String] = []
         var seen = Set<String>()
         func push(_ r: String) {
-            let t = r.trimmingCharacters(in: .whitespacesAndNewlines)
+            let t = localizedRule(r).trimmingCharacters(in: .whitespacesAndNewlines)
             if !t.isEmpty, seen.insert(t).inserted { rules.append(t) }
         }
-        world.safetyRules.filter { !isStoredOutputRule($0) }.forEach(push)
+        world.safetyRules.filter { !Self.isOutputFormatRule($0) }.forEach(push)
         world.genre.defaultSafetyRules.forEach(push)
         world.relationshipGenre.safetyRules.forEach(push)
         // active キャラ固有のルールも積む
@@ -284,42 +385,42 @@ struct StoryPromptBuilder {
             profile.rules.forEach(push)
         }
         safetyDecision?.addedPromptRules.forEach(push)
-        push("出力は1〜3行。基本は「NPC名: 発話」を1行だけ返す。場所・時間・目的が実際に変化した時、またはユーザーが明示的に求めた時だけ、その前に「ナレーション: 短い場面描写」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答を繰り返さない。通常はNPC 1人だけが返す。")
+        push(copy("出力は1〜3行。基本は「NPC名: 発話」を1行だけ返す。場所・時間・目的が実際に変化した時、またはユーザーが明示的に求めた時だけ、その前に「ナレーション: 短い場面描写」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答を繰り返さない。通常はNPC 1人だけが返す。", "Output 1–3 lines. Normally return one line in the form NPC name: dialogue. Add one short Narration: line only when the location, time, or goal actually changes or the user asks for it. Do not repeat the scene, greeting, or reply. Normally only one NPC speaks."))
         if world.isSoloStory {
-            push("これは単体物語。active NPCは必ず1人だけにし、inactiveのキャラを勝手に登場させない。")
+            push(copy("これは単体物語。active NPCは必ず1人だけにし、inactiveのキャラを勝手に登場させない。", "This is a solo story. Use exactly one active NPC and never introduce an inactive character on your own."))
         } else {
-            push("これは群像劇。掛け合いが場面上不可欠な時だけ、active のNPCを最大2人まで同じ返答で話させる。毎回全員を話させない。")
+            push(copy("これは群像劇。掛け合いが場面上不可欠な時だけ、active のNPCを最大2人まで同じ返答で話させる。毎回全員を話させない。", "This is an ensemble story. Let up to two active NPCs speak together only when the scene truly requires an exchange; do not make everyone speak every turn."))
         }
         if activeCast.count >= 2 {
             let activeNames = activeCast.prefix(StoryConstants.maxActiveCharacters).compactMap { member -> String? in
                 guard let profile = characterIndex[member.characterId] else { return nil }
-                return profile.displayName.isEmpty ? profile.name : profile.displayName
+                return profile.visibleName
             }
             if !activeNames.isEmpty {
-                push("今回の active NPC は \(activeNames.joined(separator: " / "))。別のNPCを出すのは、直前の発話への反応が自然な時だけにする。")
+                push(copy("今回の active NPC は \(activeNames.joined(separator: " / "))。別のNPCを出すのは、直前の発話への反応が自然な時だけにする。", "The active NPCs this turn are \(activeNames.joined(separator: " / ")). Add another NPC only when a natural reaction to the previous line requires it."))
             }
         }
-        push("複数キャラを出す時は、発話ごとに必ず「キャラ名: 本文」で分ける。名前のない発話や、誰が喋ったかわからない文を出さない。")
+        push(copy("複数キャラを出す時は、発話ごとに必ず「キャラ名: 本文」で分ける。名前のない発話や、誰が喋ったかわからない文を出さない。", "When multiple characters speak, separate every line as Character name: text. Never output an unnamed line or unclear speaker."))
         if let userCharacterName {
-            push("「\(userCharacterName):」で始まる行、ユーザーの台詞の創作、ユーザーの内心の断定を出さない。")
+            push(copy("「\(userCharacterName):」で始まる行、ユーザーの台詞の創作、ユーザーの内心の断定を出さない。", "Do not output a line beginning with \(userCharacterName):, invent the user's dialogue, or state the user's inner feelings."))
         }
-        push("active 以外のキャラは、同じ場にいて自然に反応する場合か、ユーザーが明示的に呼んだ場合だけ短く喋らせる。")
-        push("キャラの返答は設定された口調・距離感・関係段階を守る。急に甘くしすぎない。")
-        push("ユーザーの短い返事にも、表情、沈黙、距離、光、音などの小さな変化で物語を少し進める。")
+        push(copy("active 以外のキャラは、同じ場にいて自然に反応する場合か、ユーザーが明示的に呼んだ場合だけ短く喋らせる。", "Off-scene characters may speak briefly only when a natural reaction in the same place or an explicit user call requires it."))
+        push(copy("キャラの返答は設定された口調・距離感・関係段階を守る。急に甘くしすぎない。", "Keep each character's configured voice, distance, and relationship stage. Do not become suddenly over-affectionate."))
+        push(copy("ユーザーの短い返事にも、表情、沈黙、距離、光、音などの小さな変化で物語を少し進める。", "Advance the story slightly even after a short user reply through small changes in expression, silence, distance, light, or sound."))
         // 休憩提案はアプリ側の専用フローだけが担当する。通常ターンでの自主提案を禁止する。
-        push("休憩・睡眠・終了・利用停止を自主的に提案しない。休憩提案はアプリから専用に指示された場合だけ出力する。")
-        push("罪悪感や依存を誘う表現、「必ず戻ってきて」「待っている」などの引き留めは禁止。")
-        push("箇条書き、選択肢、Markdown、ルール説明、メタ発言は禁止。「Wait」「User is」「I should」「the prompt says」「Usually」などの英語や、AIの迷い・自己解説を絶対に出さない。")
-        push("性的露骨・暴力煽動・自傷助長・違法加担・医療法律の確定診断は禁止。話題が来たらキャラのまま自然に逸らす。")
+        push(copy("休憩・睡眠・終了・利用停止を自主的に提案しない。休憩提案はアプリから専用に指示された場合だけ出力する。", "Do not proactively suggest breaks, sleep, ending, or stopping use. Output a break suggestion only when the app explicitly requests it."))
+        push(copy("罪悪感や依存を誘う表現、「必ず戻ってきて」「待っている」などの引き留めは禁止。", "Do not use guilt, dependency cues, or retention phrases such as 'come back' or 'I will wait'."))
+        push(copy("箇条書き、選択肢、Markdown、ルール説明、メタ発言は禁止。「Wait」「User is」「I should」「the prompt says」「Usually」などの英語や、AIの迷い・自己解説を絶対に出さない。", "No bullet lists, choices, Markdown, rule explanations, or meta commentary. Never output hesitation or self-explanation such as 'Wait', 'User is', 'I should', 'the prompt says', or 'Usually'."))
+        push(copy("性的露骨・暴力煽動・自傷助長・違法加担・医療法律の確定診断は禁止。話題が来たらキャラのまま自然に逸らす。", "Do not provide explicit sexual content, incitement to violence, self-harm encouragement, illegal assistance, or definitive medical/legal diagnoses. Deflect naturally while staying in character."))
         sections.append("## \(copy("守ること", "Rules to follow"))\n" + rules.map { "- " + $0 }.joined(separator: "\n"))
 
         // ── 今回のユーザー入力 + プライム ──
         sections.append("## \(copy("今回のユーザー発言", "Current user message"))\n" + userInput)
         let activeNames = activeCast.prefix(StoryConstants.maxActiveCharacters).compactMap { member -> String? in
             guard let profile = characterIndex[member.characterId] else { return nil }
-            return profile.displayName.isEmpty ? profile.name : profile.displayName
+            return profile.visibleName
         }
-        let speakerHint = activeNames.isEmpty ? "キャラ名" : activeNames.joined(separator: " / ")
+        let speakerHint = activeNames.isEmpty ? copy("キャラ名", "Character name") : activeNames.joined(separator: " / ")
         sections.append(
             """
             ## \(copy("出力開始", "Output start"))
@@ -340,11 +441,14 @@ struct StoryPromptBuilder {
         characterIndex: [UUID: CharacterProfile],
         selectedMemories: [CharacterMemory],
         selectedStoryMemories: [StoryMemory],
+        session: StorySession,
+        storyState: StoryState,
+        selectedLorebookEntries: [StoryLorebookEntry],
         userCharacterName: String?
     ) -> String {
         let npc = activeCast.compactMap { member -> (String, CharacterProfile)? in
             guard let profile = characterIndex[member.characterId] else { return nil }
-            let name = profile.displayName.isEmpty ? profile.name : profile.displayName
+            let name = profile.visibleName
             return (name, profile)
         }.first
         let npcName = npc?.0 ?? "相手"
@@ -365,12 +469,59 @@ struct StoryPromptBuilder {
                          : "ユーザー操作キャラ: \(utf8Prefix(userCharacterName, byteLimit: 72))。この名前で発話を生成しない。")
         }
 
+        // 小型モデルでも、長い履歴より先に物語の不変条件を渡す。31B用の
+        // 完全プロンプトをそのまま縮めるのではなく、世界観・目的・進行・
+        // 構造化状態・選択済みLorebookだけを短いスナップショットにする。
+        let worldFacts = [
+            world.worldSetting.isEmpty ? nil : "\(isEnglish ? "World" : "世界観"): \(utf8Prefix(world.worldSetting, byteLimit: 220))",
+            world.userRole.isEmpty ? nil : "\(isEnglish ? "User role" : "ユーザーの役割"): \(utf8Prefix(world.userRole, byteLimit: 88))",
+            world.storyGoal.isEmpty ? nil : "\(isEnglish ? "Story goal" : "物語の目的"): \(utf8Prefix(world.storyGoal, byteLimit: 120))",
+            session.currentObjective?.isEmpty == false ? "\(isEnglish ? "Current objective" : "現在の目的"): \(utf8Prefix(session.currentObjective ?? "", byteLimit: 120))" : nil,
+            session.lastTurnProgress?.isEmpty == false ? "\(isEnglish ? "Last progress" : "直前の進行"): \(utf8Prefix(session.lastTurnProgress ?? "", byteLimit: 120))" : nil,
+            session.lastSceneSummary?.isEmpty == false ? "\(isEnglish ? "Last scene" : "直前の場面"): \(utf8Prefix(session.lastSceneSummary ?? "", byteLimit: 140))" : nil
+        ].compactMap { $0 }
+        if !worldFacts.isEmpty {
+            lines.append((isEnglish ? "Story context: " : "物語コンテキスト: ") + worldFacts.joined(separator: " / "))
+        }
+
+        let stateFacts = [
+            storyState.location.isEmpty ? nil : "\(isEnglish ? "State location" : "状態場所")=\(utf8Prefix(storyState.location, byteLimit: 64))",
+            storyState.timeOfDay.isEmpty ? nil : "\(isEnglish ? "Time" : "時間")=\(utf8Prefix(storyState.timeOfDay, byteLimit: 40))",
+            storyState.mood.isEmpty ? nil : "\(isEnglish ? "Mood" : "空気")=\(utf8Prefix(storyState.mood, byteLimit: 56))",
+            storyState.weather.isEmpty ? nil : "\(isEnglish ? "Weather" : "天候")=\(utf8Prefix(storyState.weather, byteLimit: 48))",
+            storyState.relationshipStage.isEmpty ? nil : "\(isEnglish ? "Relationship" : "関係段階")=\(utf8Prefix(storyState.relationshipStage, byteLimit: 56))",
+            storyState.inventory.prefix(3).map { utf8Prefix($0.name, byteLimit: 40) }.joined(separator: ", ").isEmpty ? nil : "\(isEnglish ? "Items" : "所持品")=\(storyState.inventory.prefix(3).map { utf8Prefix($0.name, byteLimit: 40) }.joined(separator: ", "))",
+            storyState.activeGoals.prefix(2).map { utf8Prefix($0, byteLimit: 56) }.joined(separator: ", ").isEmpty ? nil : "\(isEnglish ? "Goals" : "状態目標")=\(storyState.activeGoals.prefix(2).map { utf8Prefix($0, byteLimit: 56) }.joined(separator: ", "))"
+        ].compactMap { $0 }
+        if !stateFacts.isEmpty {
+            lines.append((isEnglish ? "State snapshot: " : "状態スナップショット: ") + stateFacts.joined(separator: " / "))
+        }
+
+        let loreFacts = selectedLorebookEntries.prefix(2).map {
+            "\(utf8Prefix($0.title, byteLimit: 48)): \(utf8Prefix($0.content, byteLimit: 120))"
+        }
+        if !loreFacts.isEmpty {
+            lines.append((isEnglish ? "Relevant rules: " : "関連ルール: ") + loreFacts.joined(separator: " / "))
+        }
+
         // ローカル実行でも、既に選別済みの記憶を小さな状態カプセルとして渡す。
         // 再検索や追加の推論はせず、最重要の3件だけに絞ってコンテキストを圧迫しない。
         let memoryFacts = selectedStoryMemories
             .sorted { $0.importance > $1.importance }
             .prefix(2)
-            .map { isEnglish ? "Story memory: \(utf8Prefix($0.text, byteLimit: 84))" : "物語の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
+            .map { memory in
+                let owner: String
+                if let characterID = memory.characterId {
+                    owner = characterIndex[characterID]?.visibleName
+                        ?? (isEnglish ? "Character" : "キャラクター")
+                } else {
+                    owner = isEnglish ? "Shared" : "共通"
+                }
+                let category = isEnglish ? memory.category.rawValue : memory.category.displayName
+                return isEnglish
+                    ? "Story memory [\(owner) / \(category)]: \(utf8Prefix(memory.text, byteLimit: 84))"
+                    : "物語の記憶 [\(owner) / \(category)]: \(utf8Prefix(memory.text, byteLimit: 84))"
+            }
             + selectedMemories
                 .sorted { $0.importance > $1.importance }
                 .prefix(1)
@@ -452,8 +603,10 @@ struct StoryPromptBuilder {
             .map { $0 }
     }
 
-    private func isStoredOutputRule(_ rule: String) -> Bool {
-        [
+    /// Story Detailと同じ分類器を使い、英語ルールもPromptから安全ルールへ
+    /// 誤投入しない。保存形式を変えずに既存文字列を分類するための共有API。
+    static func isOutputFormatRule(_ rule: String) -> Bool {
+        let keywords = [
             "ナレーション",
             "1ターン",
             "キャラ発話",
@@ -464,8 +617,30 @@ struct StoryPromptBuilder {
             "メタ発言",
             "場面",
             "描写",
-            "段階的"
-        ].contains { rule.localizedCaseInsensitiveContains($0) }
+            "段階的",
+            "narration",
+            "scene description",
+            "character dialogue",
+            "dialogue",
+            "one turn",
+            "single turn",
+            "multiple character",
+            "active character",
+            "conversation only",
+            "dialogue only",
+            "inner thoughts",
+            "internal thoughts",
+            "thinking process",
+            "output format",
+            "response format",
+            "reply only",
+            "respond in",
+            "no meta",
+            "no bullet",
+            "do not include reasoning",
+            "do not include choices"
+        ]
+        return keywords.contains { rule.localizedCaseInsensitiveContains($0) }
     }
 
     private func utf8Prefix(_ value: String, byteLimit: Int) -> String {
@@ -482,16 +657,16 @@ struct StoryPromptBuilder {
         return result
     }
 
-    private func conversationAnchors(from messages: [StoryMessage]) -> String {
+    private func conversationAnchors(from messages: [StoryMessage], isEnglish: Bool) -> String {
         let older = Array(messages.dropLast(48))
         guard !older.isEmpty else { return "" }
         let anchors = older.enumerated().compactMap { index, message -> String? in
             guard index % 6 == 0 || index == older.count - 1 else { return nil }
             let speaker: String
             switch message.author {
-            case .user: speaker = "ユーザー"
+            case .user: speaker = isEnglish ? "User" : "ユーザー"
             case .system: return nil
-            case .narrator: speaker = "ナレーション"
+            case .narrator: speaker = isEnglish ? "Narration" : "ナレーション"
             case .cast(_, let name): speaker = name
             }
             let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)

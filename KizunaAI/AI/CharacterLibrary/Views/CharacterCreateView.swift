@@ -45,6 +45,9 @@ struct CharacterCreateView: View {
     @State private var newRuleText = ""
     @State private var newSafetyRuleText = ""
     @State private var selectedAvatarItem: PhotosPickerItem?
+    /// PhotosPickerの選択ごとに世代を進める。古いloadTransferableが遅れて
+    /// 完了しても、新しい画像を上書きしない。
+    @State private var avatarLoadGeneration = 0
 
     init(
         existing: CharacterProfile? = nil,
@@ -84,8 +87,11 @@ struct CharacterCreateView: View {
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
         .task {
-            await vm.loadTemplates()
+            // 親画面から渡されたテンプレートは同期的に先に適用する。
+            // テンプレート一覧のI/Oを待ってから適用すると、その待機中に
+            // ユーザーが編集したフォームを後からテンプレートで上書きしてしまう。
             if let t = template { vm.applyTemplate(t) }
+            await vm.loadTemplates()
         }
         .alert("確認が必要です", isPresented: warnAlertBinding) {
             Button("修正に戻る", role: .cancel) { vm.resetState() }
@@ -111,7 +117,9 @@ struct CharacterCreateView: View {
             }
         }
         .onChange(of: selectedAvatarItem) { _, item in
-            Task { await loadAvatar(from: item) }
+            avatarLoadGeneration &+= 1
+            let generation = avatarLoadGeneration
+            Task { await loadAvatar(from: item, generation: generation) }
         }
     }
 
@@ -119,11 +127,13 @@ struct CharacterCreateView: View {
 
     private var header: some View {
         HStack {
-            Button("キャンセル") { dismiss() }
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { dismiss() }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
             Spacer()
-            Text(existing == nil ? "キャラを作る" : "キャラを編集")
+            Text(existing == nil
+                 ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")
+                 : KizunaCopy.text(japanese: "キャラを編集", english: "Edit character"))
                 .font(.system(size: 15, weight: .semibold))
             Spacer()
             Color.clear.frame(width: 80, height: 1)
@@ -138,11 +148,12 @@ struct CharacterCreateView: View {
             if case .validating = vm.state {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("安全性をチェック中…").font(.system(size: 11))
+                    Text(KizunaCopy.text(japanese: "安全性をチェック中…", english: "Checking safety…"))
+                        .font(.system(size: 11))
                 }
             }
             Spacer()
-            Button("保存") {
+            Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
                 Task { await vm.attemptSave() }
             }
             .buttonStyle(.borderedProminent)
@@ -183,7 +194,7 @@ struct CharacterCreateView: View {
 
     private var templateSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("テンプレ")
+            sectionTitle(KizunaCopy.text(japanese: "テンプレ", english: "Templates"))
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(vm.availableTemplates) { t in
@@ -195,7 +206,7 @@ struct CharacterCreateView: View {
                                     .foregroundStyle(.tint)
                                 Text(t.displayName)
                                     .font(.system(size: 13, weight: .semibold))
-                                Text(t.category.displayName)
+                                Text(t.category.localizedDisplayName)
                                     .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
                             }
@@ -219,15 +230,15 @@ struct CharacterCreateView: View {
 
     private var taxonomySection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("ジャンル")
+            sectionTitle(KizunaCopy.text(japanese: "ジャンル", english: "Genre"))
             card {
-                labeledField("カテゴリー") {
+                labeledField(KizunaCopy.text(japanese: "カテゴリー", english: "Category")) {
                     categoryMenu
                 }
                 labeledField("関係性") {
                     Picker("", selection: $vm.draft.relationshipGenre) {
                         ForEach(RelationshipGenre.allCases) { g in
-                            Text(g.displayName).tag(g)
+                            Text(g.localizedDisplayName).tag(g)
                         }
                     }
                     .labelsHidden()
@@ -240,13 +251,18 @@ struct CharacterCreateView: View {
     private var avatarSection: some View {
         let hasAvatar = vm.draft.avatarImageData != nil
         return VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("画像")
+            sectionTitle(KizunaCopy.text(japanese: "画像", english: "Image"))
             card {
                 HStack(alignment: .center, spacing: 14) {
                     characterAvatarPreview
                     VStack(alignment: .leading, spacing: 8) {
                         PhotosPicker(selection: $selectedAvatarItem, matching: .images) {
-                            Label(hasAvatar ? "画像を変更" : "画像を入れる", systemImage: "photo")
+                            Label(
+                                hasAvatar
+                                    ? KizunaCopy.text(japanese: "画像を変更", english: "Change image")
+                                    : KizunaCopy.text(japanese: "画像を入れる", english: "Add image"),
+                                systemImage: "photo"
+                            )
                         }
                         .buttonStyle(.bordered)
 
@@ -254,7 +270,7 @@ struct CharacterCreateView: View {
                             Button(role: .destructive) {
                                 vm.draft.avatarImageData = nil
                             } label: {
-                                Label("画像を削除", systemImage: "trash")
+                                Label(KizunaCopy.text(japanese: "画像を削除", english: "Remove image"), systemImage: "trash")
                             }
                             .buttonStyle(.bordered)
                         }
@@ -294,9 +310,9 @@ struct CharacterCreateView: View {
     private var categoryMenu: some View {
         Menu {
             ForEach(CategoryGroup.allCases) { g in
-                Menu(g.displayName) {
+                Menu(g.localizedDisplayName) {
                     ForEach(CharacterCategory.allCases.filter { $0.group == g }) { c in
-                        Button(c.displayName) { vm.draft.category = c }
+                        Button(c.localizedDisplayName) { vm.draft.category = c }
                     }
                 }
             }
@@ -304,7 +320,7 @@ struct CharacterCreateView: View {
             HStack {
                 Image(systemName: vm.draft.category.group.iconName)
                     .foregroundStyle(.tint)
-                Text(vm.draft.category.displayName)
+                Text(vm.draft.category.localizedDisplayName)
                 Spacer()
                 Image(systemName: "chevron.down").font(.system(size: 10))
             }
@@ -317,18 +333,18 @@ struct CharacterCreateView: View {
 
     private var identitySection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("基本情報")
+            sectionTitle(KizunaCopy.text(japanese: "基本情報", english: "Basic information"))
             card {
-                labeledField("名前") {
-                    TextField("例: アオイ", text: $vm.draft.name)
+                labeledField(KizunaCopy.text(japanese: "名前", english: "Name")) {
+                    TextField(KizunaCopy.text(japanese: "例: アオイ", english: "e.g. Aoi"), text: $vm.draft.name)
                         .textFieldStyle(.roundedBorder)
                 }
-                labeledField("表示名") {
-                    TextField("空欄なら名前を使う", text: $vm.draft.displayName)
+                labeledField(KizunaCopy.text(japanese: "表示名", english: "Display name")) {
+                    TextField(KizunaCopy.text(japanese: "空欄なら名前を使う", english: "Leave blank to use the name"), text: $vm.draft.displayName)
                         .textFieldStyle(.roundedBorder)
                 }
-                labeledField("ひとこと説明") {
-                    TextField("例: 落ち着いた幼なじみ", text: $vm.draft.shortDescription)
+                labeledField(KizunaCopy.text(japanese: "ひとこと説明", english: "Short description")) {
+                    TextField(KizunaCopy.text(japanese: "例: 落ち着いた幼なじみ", english: "e.g. A calm childhood friend"), text: $vm.draft.shortDescription)
                         .textFieldStyle(.roundedBorder)
                 }
             }
@@ -337,29 +353,35 @@ struct CharacterCreateView: View {
 
     private var personaSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("人物像")
+            sectionTitle(KizunaCopy.text(japanese: "人物像", english: "Character"))
             card {
-                multilineField("性格", $vm.draft.personality, hint: "例: 落ち着いていて聞き上手。少し天然。")
-                multilineField("口調", $vm.draft.speakingStyle, hint: "例: 柔らかく、少し甘い。")
-                multilineField("背景", $vm.draft.background, hint: "例: 大学生。バイトで知り合った。")
-                multilineField("相手との関係", $vm.draft.relationshipToUser, hint: "例: 幼なじみ。最近距離が近い。")
+                multilineField(KizunaCopy.text(japanese: "性格", english: "Personality"), $vm.draft.personality,
+                               hint: KizunaCopy.text(japanese: "例: 落ち着いていて聞き上手。少し天然。", english: "e.g. Calm, a good listener, and a little absent-minded."))
+                multilineField(KizunaCopy.text(japanese: "口調", english: "Speaking style"), $vm.draft.speakingStyle,
+                               hint: KizunaCopy.text(japanese: "例: 柔らかく、少し甘い。", english: "e.g. Gentle and a little sweet."))
+                multilineField(KizunaCopy.text(japanese: "背景", english: "Background"), $vm.draft.background,
+                               hint: KizunaCopy.text(japanese: "例: 大学生。バイトで知り合った。", english: "e.g. A university student you met at a part-time job."))
+                multilineField(KizunaCopy.text(japanese: "相手との関係", english: "Relationship to user"), $vm.draft.relationshipToUser,
+                               hint: KizunaCopy.text(japanese: "例: 幼なじみ。最近距離が近い。", english: "e.g. Childhood friends who have grown closer recently."))
             }
         }
     }
 
     private var sceneSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("シーンと初回メッセージ")
+            sectionTitle(KizunaCopy.text(japanese: "シーンと初回メッセージ", english: "Scene and first message"))
             card {
-                multilineField("シナリオ", $vm.draft.scenario, hint: "例: 放課後、雨の教室で二人きり。")
-                multilineField("初回メッセージ", $vm.draft.firstMessage, hint: "ユーザーへの最初の一言。")
+                multilineField(KizunaCopy.text(japanese: "シナリオ", english: "Scenario"), $vm.draft.scenario,
+                               hint: KizunaCopy.text(japanese: "例: 放課後、雨の教室で二人きり。", english: "e.g. Alone together in a classroom after school while it rains."))
+                multilineField(KizunaCopy.text(japanese: "初回メッセージ", english: "First message"), $vm.draft.firstMessage,
+                               hint: KizunaCopy.text(japanese: "ユーザーへの最初の一言。", english: "The character's opening line to the user."))
             }
         }
     }
 
     private var tagsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("タグ")
+            sectionTitle(KizunaCopy.text(japanese: "タグ", english: "Tags"))
             card {
                 if !vm.draft.tags.isEmpty {
                     chipList(vm.draft.tags, accent: .accentColor) { idx in
@@ -367,10 +389,10 @@ struct CharacterCreateView: View {
                     }
                 }
                 HStack {
-                    TextField("タグを追加 (Enter で確定)", text: $newTagText)
+                    TextField(KizunaCopy.text(japanese: "タグを追加 (Enter で確定)", english: "Add a tag (press Enter to commit)"), text: $newTagText)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { commitTag() }
-                    Button("追加") { commitTag() }
+                    Button(KizunaCopy.text(japanese: "追加", english: "Add")) { commitTag() }
                         .buttonStyle(.bordered)
                         .disabled(newTagText.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -386,10 +408,11 @@ struct CharacterCreateView: View {
     }
 
     @MainActor
-    private func loadAvatar(from item: PhotosPickerItem?) async {
+    private func loadAvatar(from item: PhotosPickerItem?, generation: Int) async {
         guard let item,
               let data = try? await item.loadTransferable(type: Data.self),
-              let normalized = normalizedImageData(from: data) else { return }
+              let normalized = normalizedImageData(from: data),
+              generation == avatarLoadGeneration else { return }
         vm.draft.avatarImageData = normalized
     }
 
@@ -419,7 +442,7 @@ struct CharacterCreateView: View {
 
     private var rulesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("会話ルール (任意)")
+            sectionTitle(KizunaCopy.text(japanese: "会話ルール (任意)", english: "Conversation rules (optional)"))
             card {
                 if !vm.draft.rules.isEmpty {
                     chipList(vm.draft.rules, accent: .blue) { idx in
@@ -427,10 +450,10 @@ struct CharacterCreateView: View {
                     }
                 }
                 HStack {
-                    TextField("ルールを追加", text: $newRuleText)
+                    TextField(KizunaCopy.text(japanese: "ルールを追加", english: "Add a conversation rule"), text: $newRuleText)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { commitRule() }
-                    Button("追加") { commitRule() }
+                    Button(KizunaCopy.text(japanese: "追加", english: "Add")) { commitRule() }
                         .buttonStyle(.bordered)
                         .disabled(newRuleText.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -440,20 +463,24 @@ struct CharacterCreateView: View {
 
     private func commitRule() {
         let t = newRuleText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
+        guard !t.isEmpty,
+              !vm.draft.rules.contains(where: { normalizedRule($0) == normalizedRule(t) }) else { return }
         vm.draft.rules.append(t)
         newRuleText = ""
     }
 
     private var safetyRulesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("安全ルール (このキャラ専用)")
+            sectionTitle(KizunaCopy.text(japanese: "安全ルール (このキャラ専用)", english: "Safety rules (for this character)"))
             card {
                 // 自動推奨ルール (group + genre + category)
                 let recommended = (vm.draft.category.defaultSafetyRules
                                     + vm.draft.relationshipGenre.safetyRules)
                 if !recommended.isEmpty {
-                    Text("カテゴリー/関係性に基づき自動で適用される推奨ルール:")
+                    Text(KizunaCopy.text(
+                        japanese: "カテゴリー/関係性に基づき自動で適用される推奨ルール:",
+                        english: "Recommended rules based on the category and relationship:"
+                    ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(Array(Set(recommended)).sorted(), id: \.self) { r in
@@ -472,10 +499,10 @@ struct CharacterCreateView: View {
                     }
                 }
                 HStack {
-                    TextField("追加の安全ルール", text: $newSafetyRuleText)
+                    TextField(KizunaCopy.text(japanese: "追加の安全ルール", english: "Add a safety rule"), text: $newSafetyRuleText)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { commitSafetyRule() }
-                    Button("追加") { commitSafetyRule() }
+                    Button(KizunaCopy.text(japanese: "追加", english: "Add")) { commitSafetyRule() }
                         .buttonStyle(.bordered)
                         .disabled(newSafetyRuleText.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -485,28 +512,39 @@ struct CharacterCreateView: View {
 
     private func commitSafetyRule() {
         let t = newSafetyRuleText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
+        guard !t.isEmpty,
+              !vm.draft.safetyRules.contains(where: { normalizedRule($0) == normalizedRule(t) }) else { return }
         vm.draft.safetyRules.append(t)
         newSafetyRuleText = ""
     }
 
+    /// 余分な空白や大文字小文字だけが違うルールを同一視する。
+    /// 保存済みの旧データはそのまま表示できるが、新規登録では重複を増やさない。
+    private func normalizedRule(_ value: String) -> String {
+        value
+            .precomposedStringWithCanonicalMapping
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
     private var visibilitySection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("公開設定")
+            sectionTitle(KizunaCopy.text(japanese: "公開設定", english: "Visibility"))
             card {
-                labeledField("公開状態") {
+                labeledField(KizunaCopy.text(japanese: "公開状態", english: "Visibility")) {
                     Picker("", selection: $vm.draft.visibility) {
                         ForEach(CharacterVisibility.allCases) { v in
-                            Label(v.displayName, systemImage: v.iconName).tag(v)
+                            Label(v.localizedDisplayName, systemImage: v.iconName).tag(v)
                         }
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
                 }
-                labeledField("安全レーティング") {
+                labeledField(KizunaCopy.text(japanese: "安全レーティング", english: "Safety rating")) {
                     Picker("", selection: $vm.draft.safetyRating) {
                         ForEach(SafetyRating.allCases) { r in
-                            Label(r.displayName, systemImage: r.iconName).tag(r)
+                            Label(r.localizedDisplayName, systemImage: r.iconName).tag(r)
                         }
                     }
                     .labelsHidden()

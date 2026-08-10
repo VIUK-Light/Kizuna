@@ -23,7 +23,9 @@ struct PersonaChatView: View {
     @State private var showWorldLibrary = false
     @State private var activeStoryWorld: StoryWorld?
     @State private var activeStorySessionID: UUID?
+    @State private var compactShowsChat = false
     @State private var storyHistoryItems: [StoryHistoryItem] = []
+    @State private var storyHistoryLoadError: String?
     @State private var isPersonaChatNearBottom = true
     @State private var unreadPersonaMessageCount = 0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -36,7 +38,11 @@ struct PersonaChatView: View {
             topSwitchBar
             Divider()
             if horizontalSizeClass == .compact {
-                compactStoryList
+                if compactShowsChat, store.activeThread != nil {
+                    compactChat
+                } else {
+                    compactStoryList
+                }
             } else {
                 HStack(spacing: 0) {
                     sidebar
@@ -90,6 +96,11 @@ struct PersonaChatView: View {
                     activeStorySessionID = nil
                     activeStoryWorld = world
                     showWorldLibrary = false
+                },
+                onResumeSession: { world, sessionID in
+                    activeStorySessionID = sessionID
+                    activeStoryWorld = world
+                    showWorldLibrary = false
                 }
             )
             .viukAdaptiveSheetSizing(minWidth: 820, minHeight: 720)
@@ -107,6 +118,29 @@ struct PersonaChatView: View {
         .onChange(of: store.activeThreadID) { _, _ in
             isPersonaChatNearBottom = true
             unreadPersonaMessageCount = 0
+        }
+    }
+
+    private var compactChat: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    compactShowsChat = false
+                } label: {
+                    Label(KizunaCopy.text(japanese: "一覧", english: "List"), systemImage: "chevron.left")
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Text(KizunaCopy.text(japanese: "あなたの物語", english: "Your story"))
+                    .font(.system(size: 13, weight: .bold))
+                Spacer()
+                Color.clear.frame(width: 48)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.thinMaterial)
+            Divider()
+            mainArea
         }
     }
 
@@ -257,6 +291,11 @@ struct PersonaChatView: View {
 
             Divider()
 
+            if let storyHistoryLoadError {
+                storyHistoryErrorBanner(storyHistoryLoadError)
+                Divider()
+            }
+
             if storyHistoryItems.isEmpty && store.threads.isEmpty {
                 emptyThreadState
             } else {
@@ -315,6 +354,11 @@ struct PersonaChatView: View {
             .padding(.vertical, 12)
 
             Divider()
+
+            if let storyHistoryLoadError {
+                storyHistoryErrorBanner(storyHistoryLoadError)
+                Divider()
+            }
 
             if storyHistoryItems.isEmpty && store.threads.isEmpty {
                 noActiveThreadState
@@ -384,7 +428,7 @@ struct PersonaChatView: View {
                 .frame(width: 40, height: 40)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.world.title)
+                    Text(item.world.localizedForCurrentLanguage.title)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
@@ -440,6 +484,9 @@ struct PersonaChatView: View {
         let style = PersonaAvatarStyle(profile: thread.personaSnapshot)
         return Button {
             store.selectThread(id: thread.id)
+            if horizontalSizeClass == .compact {
+                compactShowsChat = true
+            }
         } label: {
             HStack(spacing: 11) {
                 PersonaAvatarView(profile: thread.personaSnapshot, size: 40)
@@ -479,13 +526,59 @@ struct PersonaChatView: View {
 
     @MainActor
     private func loadStoryHistory() async {
-        let worlds = (try? await storyWorldRepo.fetchWorlds()) ?? []
-        var items: [StoryHistoryItem] = []
-        for world in worlds {
-            let sessions = (try? await storySessionRepo.fetchSessions(storyWorldId: world.id)) ?? []
-            items.append(contentsOf: sessions.map { StoryHistoryItem(world: world, session: $0) })
+        do {
+            let worlds = try await storyWorldRepo.fetchWorlds()
+            var items: [StoryHistoryItem] = []
+            var failedWorlds = 0
+            for world in worlds {
+                do {
+                    let sessions = try await storySessionRepo.fetchSessions(storyWorldId: world.id)
+                    items.append(contentsOf: sessions.map { StoryHistoryItem(world: world, session: $0) })
+                } catch {
+                    // 1つの壊れたWorldで、正常に読めた他Worldの履歴まで消さない。
+                    failedWorlds += 1
+                    NSLog("[PersonaChatView] story history session load failed for %@: %@", world.id.uuidString, error.localizedDescription)
+                }
+            }
+            storyHistoryItems = items.sorted { $0.session.updatedAt > $1.session.updatedAt }
+            storyHistoryLoadError = failedWorlds == 0
+                ? nil
+                : KizunaCopy.text(
+                    japanese: "一部のストーリー履歴を読み込めませんでした。表示中の履歴は削除されていません。",
+                    english: "Some story history could not be loaded. The displayed history was not deleted."
+                )
+        } catch {
+            // 読み込み失敗を空配列へ変換すると「履歴なし」と区別できず、
+            // 既存表示も消えてデータ消失と誤認される。
+            storyHistoryLoadError = KizunaCopy.text(
+                japanese: "ストーリー履歴を読み込めませんでした。再試行してください。",
+                english: "Story history could not be loaded. Try again."
+            )
+            NSLog("[PersonaChatView] story history world load failed: %@", error.localizedDescription)
         }
-        storyHistoryItems = items.sorted { $0.session.updatedAt > $1.session.updatedAt }
+    }
+
+    private func storyHistoryErrorBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 6)
+            Button {
+                Task { await loadStoryHistory() }
+            } label: {
+                Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.10))
     }
 
     // MARK: - Main chat area
@@ -536,14 +629,14 @@ struct PersonaChatView: View {
                     Text(thread.personaSnapshot.name)
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.primary)
-                    Text(thread.personaSnapshot.relation.displayName)
+                    Text(thread.personaSnapshot.relation.localizedDisplayName)
                         .font(.system(size: 10, weight: .bold))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(Capsule().fill(style.primary.opacity(0.16)))
                         .foregroundStyle(style.primary)
                 }
-                Text(thread.personaSnapshot.tone.displayName + " ・ " + thread.personaSnapshot.personality)
+                Text(thread.personaSnapshot.tone.localizedDisplayName + KizunaCopy.text(japanese: " ・ ", english: " · ") + thread.personaSnapshot.personality)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -618,8 +711,10 @@ struct PersonaChatView: View {
     private func messageList(for thread: PersonaThread) -> some View {
         // 生成中の最新アシスタント枠は、ストリーミングプレビューと二重に描かない。
         // 完了後は保存された本文を通常のメッセージとして表示する。
+        let isGeneratingThisThread = service.activeGenerationThreadID == thread.id
+        let isErrorThisThread = service.lastErrorThreadID == thread.id
         let pendingAssistantID: UUID? = {
-            guard service.phase == .thinking else { return nil }
+            guard isGeneratingThisThread else { return nil }
             return thread.messages.last(where: { $0.role == .assistant })?.id
         }()
         let visibleMessages = thread.messages.filter { msg in
@@ -637,11 +732,11 @@ struct PersonaChatView: View {
                             )
                             .id(msg.id)
                         }
-                        if service.phase == .thinking {
+                        if isGeneratingThisThread {
                             streamingPreview(personaProfile: thread.personaSnapshot)
                                 .id("streaming-preview")
                         }
-                        if case let .error(message) = service.phase {
+                        if isErrorThisThread, case let .error(message) = service.phase {
                             generationError(message)
                                 .id("generation-error")
                         }
@@ -671,7 +766,7 @@ struct PersonaChatView: View {
                     }
                 }
                 .onChange(of: service.streamingResponse) { _, _ in
-                    guard isPersonaChatNearBottom else { return }
+                    guard isGeneratingThisThread, isPersonaChatNearBottom else { return }
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
 
@@ -1053,6 +1148,17 @@ struct PersonaComposer: View {
     @FocusState private var focused: Bool
     @Environment(\.colorScheme) private var colorScheme
 
+    private var isGeneratingThisThread: Bool {
+        service.activeGenerationThreadID == thread.id
+    }
+
+    private var isGeneratingAnotherThread: Bool {
+        if case .thinking = service.phase {
+            return !isGeneratingThisThread
+        }
+        return false
+    }
+
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             ZStack {
@@ -1084,23 +1190,26 @@ struct PersonaComposer: View {
                 .onSubmit(submit)
 
             Button {
-                if service.phase == .thinking {
+                if isGeneratingThisThread {
                     service.cancel()
                 } else {
                     submit()
                 }
             } label: {
-                Image(systemName: service.phase == .thinking ? "stop.fill" : "paperplane.fill")
+                Image(systemName: isGeneratingThisThread ? "stop.fill" : "paperplane.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .frame(width: 38, height: 38)
                     .background(
-                        Circle().fill(service.phase == .thinking || canSubmit ? Color.accentColor : Color.secondary.opacity(0.25))
+                        Circle().fill(isGeneratingThisThread || canSubmit ? Color.accentColor : Color.secondary.opacity(0.25))
                     )
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-            .disabled(service.phase != .thinking && !canSubmit)
-            .accessibilityLabel(service.phase == .thinking
+            .disabled(!isGeneratingThisThread && !canSubmit)
+            .help(isGeneratingAnotherThread
+                  ? KizunaCopy.text(japanese: "別のスレッドで生成中です", english: "Another thread is generating")
+                  : "")
+            .accessibilityLabel(isGeneratingThisThread
                                 ? KizunaCopy.text(japanese: "生成を停止", english: "Stop generating")
                                 : KizunaCopy.text(japanese: "送信", english: "Send"))
         }
@@ -1112,7 +1221,7 @@ struct PersonaComposer: View {
 
     private var canSubmit: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && service.phase != .thinking
+            && !isGeneratingAnotherThread
     }
 
     private func submit() {

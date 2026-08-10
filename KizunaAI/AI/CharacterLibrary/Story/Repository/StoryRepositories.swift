@@ -16,6 +16,8 @@ enum StoryCharacterReferenceCleaner {
         let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
         let castRepo: CastRepository = LocalJSONCastRepository()
         let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
+        let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
+        let storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository()
 
         let worlds = try await worldRepo.fetchWorlds()
         for var world in worlds {
@@ -56,6 +58,29 @@ enum StoryCharacterReferenceCleaner {
                     scene.activeCharacterIds = filteredActiveIDs
                     try await sceneRepo.saveScene(scene)
                 }
+            }
+
+            // セッション本文は過去ログとして残すが、現在状態にだけ残った
+            // characterIdは削除する。次回プロンプトが削除済みキャラを復活させない。
+            let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
+            for var session in sessions {
+                guard var storyState = session.storyState else { continue }
+                let filteredStates = storyState.characterStates.filter {
+                    $0.characterId != characterID
+                }
+                if filteredStates != storyState.characterStates {
+                    storyState.characterStates = filteredStates
+                    storyState.updatedAt = Date()
+                    session.storyState = storyState
+                    try await sessionRepo.saveSession(session)
+                }
+            }
+
+            // キャラ固有の物語メモリーは参照先がなくなるため削除する。
+            // characterId == nil の世界イベントは保持して、物語の流れを壊さない。
+            let memories = try await storyMemoryRepo.fetchMemories(storyWorldId: world.id)
+            for memory in memories where memory.characterId == characterID {
+                try await storyMemoryRepo.deleteMemory(id: memory.id)
             }
         }
     }
@@ -203,9 +228,21 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         var repairedSessions: [StorySession] = []
         for session in sessions {
             let repaired = StorySessionMessageRepair.repaired(session)
+            var effectiveSession = repaired
             if repaired.messages != session.messages {
                 do {
-                    try await store.appendOrReplace(repaired, idEquals: { $0.id == $1.id })
+                    // 修復対象を読み込んだ後に別ターンが保存されている
+                    // 可能性がある。ファイルロック内で同じスナップショットかを
+                    // 確認し、変わっていれば新しいターンを上書きしない。
+                    try await store.mutate { current in
+                        guard let index = current.firstIndex(where: { $0.id == session.id }) else { return }
+                        guard current[index].messages == session.messages,
+                              current[index].updatedAt == session.updatedAt else {
+                            effectiveSession = current[index]
+                            return
+                        }
+                        current[index] = repaired
+                    }
                     NSLog(
                         "[StorySession] repaired duplicate generated messages session=%@ removed=%ld",
                         session.id.uuidString,
@@ -216,7 +253,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                     NSLog("[StorySession] duplicate repair save failed session=%@: %@", session.id.uuidString, error.localizedDescription)
                 }
             }
-            repairedSessions.append(repaired)
+            repairedSessions.append(effectiveSession)
         }
         return repairedSessions
     }
@@ -248,7 +285,10 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
 private enum StorySessionMessageRepair {
     static func repaired(_ session: StorySession) -> StorySession {
         var repaired = session
-        var seen = Set<String>()
+        // 重複は「同じ話者の同じ本文が隣接している」場合だけ修復する。
+        // セッション全体で一度しか許さないと、意図的な反復（同じ台詞を
+        // 時間を空けて言う演出や、同じナレーションの再提示）まで消える。
+        var previousGeneratedKey: String?
         repaired.messages = session.messages.filter { message in
             let key: String
             switch message.author {
@@ -257,6 +297,7 @@ private enum StorySessionMessageRepair {
             case let .cast(characterID, _):
                 key = "cast:\(characterID.uuidString)"
             case .user, .system:
+                previousGeneratedKey = nil
                 return true
             }
 
@@ -267,10 +308,16 @@ private enum StorySessionMessageRepair {
                     session.id.uuidString,
                     message.id.uuidString
                 )
+                previousGeneratedKey = nil
                 return false
             }
-            guard normalized.count >= 4 else { return true }
-            return seen.insert(key + "|" + normalized).inserted
+            guard normalized.count >= 4 else {
+                previousGeneratedKey = nil
+                return true
+            }
+            let generatedKey = key + "|" + normalized
+            defer { previousGeneratedKey = generatedKey }
+            return previousGeneratedKey != generatedKey
         }
         return repaired
     }
@@ -344,7 +391,14 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
         try await store.mutate { all in
             let normalized = normalize(memory.text)
             if let index = all.firstIndex(where: {
-                $0.storyWorldId == memory.storyWorldId && normalize($0.text) == normalized
+                // 同じ本文でもキャラクターごとの記憶は別レコードとして保持する。
+                // world/textだけをキーにすると、別キャラの帰属・カテゴリ・出典が
+                // 最初のレコードへ統合されてしまい、次回のプロンプト選択も壊れる。
+                $0.storyWorldId == memory.storyWorldId
+                    && $0.characterId == memory.characterId
+                    && $0.category == memory.category
+                    && $0.source == memory.source
+                    && normalize($0.text) == normalized
             }) {
                 var existing = all[index]
                 existing.importance = max(existing.importance, memory.importance)
@@ -377,6 +431,9 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             if let targetIndex = all.indices.first(where: {
                 $0 != sourceIndex
                     && all[$0].storyWorldId == storyWorldId
+                    && all[$0].characterId == memory.characterId
+                    && all[$0].category == memory.category
+                    && all[$0].source == memory.source
                     && normalize(all[$0].text) == normalized
             }) {
                 var target = all[targetIndex]

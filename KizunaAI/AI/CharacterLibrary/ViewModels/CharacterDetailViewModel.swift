@@ -35,15 +35,11 @@ final class CharacterDetailViewModel: ObservableObject {
         }
     }
 
-    func delete() async {
-        do {
-            let latest = try await characterRepo.fetchCharacters().first(where: { $0.id == character.id })
-            guard latest?.isSystemProtected != true else { return }
-            try await StoryCharacterReferenceCleaner.remove(characterID: character.id)
-            try await memoryRepo.deleteAllMemories(characterId: character.id)
-            try await characterRepo.deleteCharacter(id: character.id)
-        } catch {
-            NSLog("[CharacterDetailVM] delete failed: %@", String(describing: error))
-        }
+    func delete() async throws {
+        let latest = try await characterRepo.fetchCharacters().first(where: { $0.id == character.id })
+        guard latest?.isSystemProtected != true else { return }
+        try await StoryCharacterReferenceCleaner.remove(characterID: character.id)
+        try await memoryRepo.deleteAllMemories(characterId: character.id)
+        try await characterRepo.deleteCharacter(id: character.id)
     }
 }

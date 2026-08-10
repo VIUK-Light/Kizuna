@@ -48,11 +48,11 @@ struct PersonaConfigView: View {
 
     private var header: some View {
         HStack {
-            Button("キャンセル") { dismiss() }
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { dismiss() }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
             Spacer()
-            Text("絆を設定")
+            Text(KizunaCopy.text(japanese: "絆を設定", english: "Kizuna settings"))
                 .font(.system(size: 15, weight: .semibold))
             Spacer()
             // ヘッダーは中央タイトル + 左キャンセル。保存はフッターに寄せる (mac の sheet 様式)。
@@ -66,7 +66,7 @@ struct PersonaConfigView: View {
     private var footer: some View {
         HStack {
             Spacer()
-            Button("保存") {
+            Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
                 commit()
                 dismiss()
             }
@@ -110,9 +110,12 @@ struct PersonaConfigView: View {
     private var presetSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                sectionTitle("クイック選択")
+                sectionTitle(KizunaCopy.text(japanese: "クイック選択", english: "Quick select"))
                 Spacer()
-                Text("\(PersonaPreset.allCases.count) 人")
+                Text(KizunaCopy.text(
+                    japanese: "\(PersonaPreset.allCases.count) 人",
+                    english: "\(PersonaPreset.allCases.count) presets"
+                ))
                     .font(.system(size: 10, weight: .bold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
@@ -124,7 +127,10 @@ struct PersonaConfigView: View {
                     presetCard(preset)
                 }
             }
-            Text("プリセットを選ぶと下の項目が一括で書き換わります。後から自由に調整できます。")
+            Text(KizunaCopy.text(
+                japanese: "プリセットを選ぶと下の項目が一括で書き換わります。後から自由に調整できます。",
+                english: "Selecting a preset fills the fields below. You can adjust everything afterwards."
+            ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -143,7 +149,7 @@ struct PersonaConfigView: View {
                 Text(preset.profile.name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
-                Text(preset.displayName)
+                Text(preset.localizedDisplayName)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -167,14 +173,14 @@ struct PersonaConfigView: View {
 
     private var identitySection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("基本情報")
+            sectionTitle(KizunaCopy.text(japanese: "基本情報", english: "Basic information"))
             card {
-                labeledField("名前") {
-                    TextField("例: アオイ", text: $draft.name)
+                labeledField(KizunaCopy.text(japanese: "名前", english: "Name")) {
+                    TextField(KizunaCopy.text(japanese: "例: アオイ", english: "e.g. Aoi"), text: $draft.name)
                         .textFieldStyle(.roundedBorder)
                 }
-                labeledField("年齢 (任意)") {
-                    TextField("例: 22", text: $ageText)
+                labeledField(KizunaCopy.text(japanese: "年齢 (任意)", english: "Age (optional)")) {
+                    TextField(KizunaCopy.text(japanese: "例: 22", english: "e.g. 22"), text: $ageText)
                         .textFieldStyle(.roundedBorder)
 #if os(iOS)
                         .keyboardType(.numberPad)
@@ -191,10 +197,13 @@ struct PersonaConfigView: View {
 
     private var personalitySection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("性格")
+            sectionTitle(KizunaCopy.text(japanese: "性格", english: "Personality"))
             card {
                 TextField(
-                    "例: 落ち着いていて聞き上手。少し天然。",
+                    KizunaCopy.text(
+                        japanese: "例: 落ち着いていて聞き上手。少し天然。",
+                        english: "e.g. Calm, a good listener, and a little absent-minded."
+                    ),
                     text: $draft.personality,
                     axis: .vertical
                 )
@@ -206,21 +215,21 @@ struct PersonaConfigView: View {
 
     private var relationshipSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("関係性と口調")
+            sectionTitle(KizunaCopy.text(japanese: "関係性と口調", english: "Relationship and tone"))
             card {
-                labeledField("関係性") {
+                labeledField(KizunaCopy.text(japanese: "関係性", english: "Relationship")) {
                     Picker("", selection: $draft.relation) {
                         ForEach(PersonaRelation.allCases) { r in
-                            Text(r.displayName).tag(r)
+                            Text(r.localizedDisplayName).tag(r)
                         }
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
                 }
-                labeledField("口調") {
+                labeledField(KizunaCopy.text(japanese: "口調", english: "Tone")) {
                     Picker("", selection: $draft.tone) {
                         ForEach(PersonaTone.allCases) { t in
-                            Text(t.displayName).tag(t)
+                            Text(t.localizedDisplayName).tag(t)
                         }
                     }
                     .labelsHidden()
@@ -232,16 +241,19 @@ struct PersonaConfigView: View {
 
     private var addendumSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("自由記述")
+            sectionTitle(KizunaCopy.text(japanese: "自由記述", english: "Additional notes"))
             card {
                 TextField(
-                    "例: 趣味は読書。寒がり。",
+                    KizunaCopy.text(japanese: "例: 趣味は読書。寒がり。", english: "e.g. Enjoys reading and gets cold easily."),
                     text: $draft.freeFormAddendum,
                     axis: .vertical
                 )
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(2...5)
-                Text("プロンプトの末尾に追記されます。長くしすぎるとレスポンスが遅くなります。")
+                Text(KizunaCopy.text(
+                    japanese: "プロンプトの末尾に追記されます。長くしすぎるとレスポンスが遅くなります。",
+                    english: "This is appended to the prompt. Very long notes can slow down replies."
+                ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -250,14 +262,19 @@ struct PersonaConfigView: View {
 
     private var previewSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("プロンプトプレビュー")
+            sectionTitle(KizunaCopy.text(japanese: "プロンプトプレビュー", english: "Prompt preview"))
             card {
-                Text(draft.promptText.isEmpty ? "(プレビューなし)" : draft.promptText)
+                Text(draft.promptText.isEmpty
+                     ? KizunaCopy.text(japanese: "(プレビューなし)", english: "(No preview)")
+                     : draft.promptText)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
-                Text("実際は会話モードの基本指示 (1〜2文・記号禁止・安全ルール) と合わせて送られます。")
+                Text(KizunaCopy.text(
+                    japanese: "実際は会話モードの基本指示 (1〜2文・記号禁止・安全ルール) と合わせて送られます。",
+                    english: "The conversation mode adds its own short, safe-response instructions."
+                ))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -323,7 +340,7 @@ struct PersonaModeEntryChip: View {
             HStack(spacing: 6) {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.system(size: 13, weight: .semibold))
-                Text("絆: \(settings.active.name)")
+                Text(KizunaCopy.text(japanese: "絆: ", english: "Kizuna: ") + settings.active.name)
                     .font(.system(size: 12, weight: .semibold))
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 10, weight: .semibold))

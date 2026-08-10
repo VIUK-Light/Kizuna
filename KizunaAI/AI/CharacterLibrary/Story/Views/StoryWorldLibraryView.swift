@@ -16,27 +16,33 @@ struct StoryWorldLibraryView: View {
 
     /// セッション開始時に呼ぶ。呼び出し側 (PersonaChatView 等) がシート閉じてセッション画面へ。
     var onStartSession: ((StoryWorld) -> Void)?
+    /// 履歴行から既存セッションを指定して再開する。
+    var onResumeSession: ((StoryWorld, UUID) -> Void)?
 
     @MainActor
     init(
         viewModel: StoryWorldLibraryViewModel,
         showsDismissButton: Bool = true,
-        onStartSession: ((StoryWorld) -> Void)? = nil
+        onStartSession: ((StoryWorld) -> Void)? = nil,
+        onResumeSession: ((StoryWorld, UUID) -> Void)? = nil
     ) {
         _vm = ObservedObject(wrappedValue: viewModel)
         self.showsDismissButton = showsDismissButton
         self.onStartSession = onStartSession
+        self.onResumeSession = onResumeSession
     }
 
     @MainActor
     init(
         showsDismissButton: Bool = true,
-        onStartSession: ((StoryWorld) -> Void)? = nil
+        onStartSession: ((StoryWorld) -> Void)? = nil,
+        onResumeSession: ((StoryWorld, UUID) -> Void)? = nil
     ) {
         self.init(
             viewModel: StoryWorldLibraryViewModel(),
             showsDismissButton: showsDismissButton,
-            onStartSession: onStartSession
+            onStartSession: onStartSession,
+            onResumeSession: onResumeSession
         )
     }
 
@@ -48,6 +54,10 @@ struct StoryWorldLibraryView: View {
             Divider()
             if vm.seedError != nil {
                 seedErrorBanner
+                Divider()
+            }
+            if vm.loadError != nil {
+                loadErrorBanner
                 Divider()
             }
             content
@@ -79,12 +89,18 @@ struct StoryWorldLibraryView: View {
                     onStartSession?(world)
                     dismiss()
                 },
+                onResumeSession: { world, sessionID in
+                    selected = nil
+                    onResumeSession?(world, sessionID)
+                    dismiss()
+                },
                 onEdit: { world in
                     selected = nil
                     editing = world
                 },
                 onDelete: {
-                    Task { await vm.delete(id: w.id); selected = nil }
+                    try await vm.delete(id: w.id)
+                    selected = nil
                 }
             )
             .viukAdaptiveSheetSizing(minWidth: 600, minHeight: 720)
@@ -140,13 +156,13 @@ struct StoryWorldLibraryView: View {
                 Divider()
                 ForEach(CategoryGroup.allCases) { g in
                     Button { vm.groupFilter = g } label: {
-                        Label(g.displayName, systemImage: g.iconName)
+                        Label(g.localizedDisplayName, systemImage: g.iconName)
                     }
                 }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "square.grid.2x2").font(.system(size: 10))
-                        Text(vm.groupFilter?.displayName ?? KizunaCopy.text(japanese: "グループ", english: "Group"))
+                        Text(vm.groupFilter?.localizedDisplayName ?? KizunaCopy.text(japanese: "グループ", english: "Group"))
                         .font(.system(size: 11, weight: .semibold))
                     Image(systemName: "chevron.down").font(.system(size: 8))
                 }
@@ -180,6 +196,30 @@ struct StoryWorldLibraryView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.10))
+    }
+
+    private var loadErrorBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+                .foregroundStyle(.orange)
+            Text(KizunaCopy.text(
+                japanese: "最新のストーリー一覧を読み込めませんでした。表示中の一覧は削除されていません。",
+                english: "The latest story list could not be loaded. The displayed list was not deleted."
+            ))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+                Task { await vm.retryBootstrap() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(vm.isBootstrapping)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -285,7 +325,7 @@ struct StoryWorldLibraryView: View {
                                     .font(.system(size: 18, weight: .bold))
                                     .foregroundStyle(.white)
                                     .lineLimit(2)
-                                Text(coverCharacter?.displayName ?? displayedWorld.genre.group.localizedDisplayName)
+                                Text(coverCharacter?.visibleName ?? displayedWorld.genre.group.localizedDisplayName)
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.white.opacity(0.86))
                             }

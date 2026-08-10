@@ -32,7 +32,7 @@ final class MockSceneCharacterSelector: SceneCharacterSelecting {
         for member in cast {
             guard let profile = characterIndex[member.characterId] else { continue }
             var s: Double = member.importance * 0.4
-            let name = (profile.displayName.isEmpty ? profile.name : profile.displayName).lowercased()
+            let name = profile.visibleName.lowercased()
             if !name.isEmpty, input.contains(name) { s += 0.8 }
             if currentlyActiveSet.contains(member.characterId) { s += 0.35 }
             switch member.roleInStory {

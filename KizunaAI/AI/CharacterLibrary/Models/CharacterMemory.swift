@@ -29,6 +29,22 @@ enum MemoryCategory: String, Codable, CaseIterable, Hashable {
         case .other: return "その他"
         }
     }
+
+    /// UI表示専用。rawValue/displayNameと保存データは変更しない。
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .preference: english = "Preference"
+        case .relationship: english = "Relationship"
+        case .event: english = "Event"
+        case .world: english = "World"
+        case .userFact: english = "Profile"
+        case .summary: english = "Summary"
+        case .safety: english = "Safety"
+        case .other: english = "Other"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
 }
 
 enum MemorySource: String, Codable, CaseIterable, Hashable {

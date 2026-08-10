@@ -23,6 +23,11 @@ final class PersonaChatService: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     /// ストリーミング中の最新応答テキスト。完了時に PersonaChatStore に永続化される。
     @Published private(set) var streamingResponse: String = ""
+    /// 生成中/失敗中の表示を現在のスレッドだけに紐付けるためのID。
+    /// phase はサービス全体の状態なので、スレッド切替時にそのままUIへ使うと
+    /// Aの生成表示がBへ伝播してしまう。
+    @Published private(set) var activeGenerationThreadID: UUID?
+    @Published private(set) var lastErrorThreadID: UUID?
 
     private var generationTask: Task<Void, Never>?
     private var lastVisibleText: String = ""
@@ -61,12 +66,14 @@ final class PersonaChatService: ObservableObject {
 
         phase = .thinking
         streamingResponse = ""
+        lastErrorThreadID = nil
         lastVisibleText = ""
         lastRequestThreadID = thread.id
         lastRequestText = trimmed
         let generationID = UUID()
         activeGenerationID = generationID
         activeThreadID = thread.id
+        activeGenerationThreadID = thread.id
 
         if let charID = thread.characterID {
             // 新パス: キャラライブラリー由来のスレッド → 安全 + メモリーパイプライン
@@ -74,34 +81,59 @@ final class PersonaChatService: ObservableObject {
                 await self?.runCharacterPipeline(threadID: thread.id, characterID: charID, userText: trimmed, generationID: generationID)
             }
         } else {
-            // 旧パス: PersonaSettings 由来のスレッド → 既存ストリーミングのまま
-            let composedPrompt = buildPrompt(forThread: thread, latestUser: trimmed)
-            let personaPrompt = legacyPersonaSystemPrompt(for: thread.personaSnapshot)
-            let advanced = voiceOptimizedAdvancedSettings
+            // 旧パス: PersonaSettings由来のスレッド → 既存ストリーミングのまま
             generationTask = Task { [weak self, threadID = thread.id] in
-                guard let self else { return }
-                let bridge = LocalAssistantRuntimeBridge.shared
-                let reply = await bridge.generateReply(
-                    prompt: composedPrompt,
-                    contextPrompt: nil,
-                    coachMode: .studio,
-                    reasoningMode: .persona,
-                    researchMode: .off,
-                    childAge: 12,
-                    pageInfo: nil,
-                    safetySnapshot: nil,
-                    advancedSettings: advanced,
-                    overrideSystemPrompt: personaPrompt,
-                    onUpdate: { @MainActor [weak self] update in
-                        self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
-                    }
+                await self?.runLegacyPersonaGeneration(
+                    threadID: threadID,
+                    userText: trimmed,
+                    generationID: generationID
                 )
-                await MainActor.run {
-                    self.finalize(reply: reply, threadID: threadID, generationID: generationID)
-                }
             }
         }
         startWatchdog(threadID: thread.id, generationID: generationID)
+    }
+
+    private func runLegacyPersonaGeneration(
+        threadID: UUID,
+        userText: String,
+        generationID: UUID
+    ) async {
+        guard let thread = PersonaChatStore.shared.thread(id: threadID) else {
+            // スレッド削除・破損などで本文を取得できない場合も、生成タスクを
+            // 無反応のまま終了させず、サービス状態を解放してエラー導線を出す。
+            await MainActor.run {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "会話スレッドを読み込めなかったため、応答を生成できませんでした。もう一度お試しください。",
+                        english: "The conversation thread could not be loaded, so no reply was generated. Please try again."
+                    )
+                )
+            }
+            return
+        }
+        let composedPrompt = buildPrompt(forThread: thread, latestUser: userText)
+        let personaPrompt = legacyPersonaSystemPrompt(for: thread.personaSnapshot)
+        let advanced = voiceOptimizedAdvancedSettings
+        let reply = await LocalAssistantRuntimeBridge.shared.generateReply(
+            prompt: composedPrompt,
+            contextPrompt: nil,
+            coachMode: .studio,
+            reasoningMode: .persona,
+            researchMode: .off,
+            childAge: 12,
+            pageInfo: nil,
+            safetySnapshot: nil,
+            advancedSettings: advanced,
+            overrideSystemPrompt: personaPrompt,
+            onUpdate: { @MainActor [weak self] update in
+                self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
+            }
+        )
+        await MainActor.run {
+            self.finalize(reply: reply, threadID: threadID, generationID: generationID)
+        }
     }
 
     func addNarration(_ text: String, to thread: PersonaThread) {
@@ -119,21 +151,36 @@ final class PersonaChatService: ObservableObject {
     /// → 6) 出力 safety → 7) async でメモリー抽出・保存。
     private func runCharacterPipeline(threadID: UUID, characterID: UUID, userText: String, generationID: UUID) async {
         // ── 1) CharacterProfile / Lorebook 取得 ──
-        let allCharacters = (try? await characterRepo.fetchCharacters()) ?? []
+        let allCharacters: [CharacterProfile]
+        do {
+            allCharacters = try await characterRepo.fetchCharacters()
+        } catch {
+            // 読み込み失敗を「キャラが存在しない」と扱うと、参照を切り離して
+            // 旧Persona経路へ黙って移行し、空のアシスタント枠だけが残る。
+            // 保存データの問題は明示的な失敗カードにして、入力を保持したまま
+            // ユーザーが再試行できるようにする。
+            await MainActor.run {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "キャラクターを読み込めなかったため、応答を生成できませんでした。保存データを確認して再試行してください。",
+                        english: "The character could not be loaded, so no reply was generated. Check the saved data and try again."
+                    )
+                )
+            }
+            return
+        }
         guard isGenerationActive(generationID) else { return }
         guard let character = allCharacters.first(where: { $0.id == characterID }) else {
-            // キャラが消えていた → 旧パスにフォールバック
+            // キャラ本体が削除されてもスレッドのスナップショットで会話を続ける。
+            // 参照だけを残して永久にエラーにするのではなく、旧Personaパスへ移行する。
+            PersonaChatStore.shared.detachCharacterReference(threadID: threadID)
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
-                self.streamingResponse = ""
-                self.phase = .error(KizunaCopy.text(
-                    japanese: "キャラ情報が見つかりませんでした。",
-                    english: "The character information is unavailable."
-                ))
-                self.activeGenerationID = nil
-                self.activeThreadID = nil
             }
+            await runLegacyPersonaGeneration(threadID: threadID, userText: userText, generationID: generationID)
             return
         }
         let lorebook = try? await characterRepo.fetchLorebook(characterId: characterID)
@@ -153,6 +200,7 @@ final class PersonaChatService: ObservableObject {
                 self.phase = .idle
                 self.activeGenerationID = nil
                 self.activeThreadID = nil
+                self.activeGenerationThreadID = nil
             }
             return
         }
@@ -262,6 +310,7 @@ final class PersonaChatService: ObservableObject {
             self.phase = .idle
             self.activeGenerationID = nil
             self.activeThreadID = nil
+            self.activeGenerationThreadID = nil
         }
 
         // ── 7) メモリー抽出 (UI を idle にした後に await。中断されても致命的ではない) ──
@@ -290,6 +339,8 @@ final class PersonaChatService: ObservableObject {
         }
         activeGenerationID = nil
         activeThreadID = nil
+        activeGenerationThreadID = nil
+        lastErrorThreadID = nil
         streamingResponse = ""
         phase = .idle
     }
@@ -313,6 +364,7 @@ final class PersonaChatService: ObservableObject {
         guard case .error = phase else { return }
         phase = .idle
         streamingResponse = ""
+        lastErrorThreadID = nil
     }
 
     // MARK: - Streaming
@@ -351,6 +403,8 @@ final class PersonaChatService: ObservableObject {
         phase = .idle
         activeGenerationID = nil
         activeThreadID = nil
+        activeGenerationThreadID = nil
+        lastErrorThreadID = nil
     }
 
     private func startWatchdog(threadID: UUID, generationID: UUID) {
@@ -370,6 +424,7 @@ final class PersonaChatService: ObservableObject {
                     self.phase = .idle
                     self.activeGenerationID = nil
                     self.activeThreadID = nil
+                    self.activeGenerationThreadID = nil
                 } else {
                     self.failGeneration(
                         threadID: threadID,
@@ -393,23 +448,25 @@ final class PersonaChatService: ObservableObject {
     private func buildPrompt(forThread thread: PersonaThread, latestUser: String) -> String {
         // 履歴は最新 6 メッセージ程度に絞り、レイテンシを抑える。
         let recent = thread.messages.suffix(6)
+        let userLabel = KizunaCopy.text(japanese: "相手", english: "User")
+        let narrationLabel = KizunaCopy.text(japanese: "ナレーション", english: "Narration")
         var lines: [String] = []
         for msg in recent {
             switch msg.role {
             case .user:
-                lines.append("相手: " + msg.text)
+                lines.append(userLabel + ": " + msg.text)
             case .assistant:
                 if !msg.text.isEmpty {
                     lines.append("\(thread.personaSnapshot.name): " + msg.text)
                 }
             case .narrator:
                 if !msg.text.isEmpty {
-                    lines.append("ナレーション: " + msg.text)
+                    lines.append(narrationLabel + ": " + msg.text)
                 }
             }
         }
-        if lines.last != "相手: " + latestUser {
-            lines.append("相手: " + latestUser)
+        if lines.last != userLabel + ": " + latestUser {
+            lines.append(userLabel + ": " + latestUser)
         }
         // 末尾でキャラ名 + ":" でプライム。これにより Gemma 4 は
         // 「\(name): 」の直後にメッセージ本体を続けざるを得なくなり、
@@ -420,11 +477,23 @@ final class PersonaChatService: ObservableObject {
 
     private func legacyPersonaSystemPrompt(for profile: PersonaProfile) -> String {
         let persona = profile.promptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let languageInstruction = KizunaCopy.text(
+            japanese: "次の設定を守り、相手へ自然な日本語で返してください。",
+            english: "Follow the settings below and reply naturally in English unless the user writes in another language."
+        )
+        let outputRules = KizunaCopy.text(
+            japanese: "前置き、役割説明、内部推論、Markdown、選択肢、特殊タグは本文へ出さないでください。",
+            english: "Do not expose preambles, role explanations, internal reasoning, Markdown, choices, or special tags in the reply."
+        )
+        let safetyRules = KizunaCopy.text(
+            japanese: "危険・違法・露骨な性的内容・自傷助長には、人格を崩さず安全な方向へ寄せてください。",
+            english: "For dangerous, illegal, explicit sexual, or self-harm content, stay in character while steering toward a safe alternative."
+        )
         return """
-        あなたはKizunaの会話相手です。次の設定を守り、相手へ自然な日本語で返してください。
+        \(KizunaCopy.text(japanese: "あなたはKizunaの会話相手です。", english: "You are the user's kizuna conversation partner.")) \(languageInstruction)
         \(persona)
-        前置き、役割説明、内部推論、Markdown、選択肢、特殊タグは本文へ出さないでください。
-        危険・違法・露骨な性的内容・自傷助長には、人格を崩さず安全な方向へ寄せてください。
+        \(outputRules)
+        \(safetyRules)
         """
     }
 
@@ -443,6 +512,8 @@ final class PersonaChatService: ObservableObject {
         phase = .error(message)
         activeGenerationID = nil
         activeThreadID = nil
+        activeGenerationThreadID = nil
+        lastErrorThreadID = threadID
     }
 
     /// ペルソナ会話用 advancedSettings。ツール/検索を切り、内部システム指示を最小化する。

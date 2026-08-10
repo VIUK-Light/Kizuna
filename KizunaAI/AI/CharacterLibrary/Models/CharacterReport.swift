@@ -28,6 +28,21 @@ enum ReportReason: String, Codable, CaseIterable, Identifiable, Hashable {
         case .other: return "その他"
         }
     }
+
+    /// UI表示専用。通報保存にはrawValueを使い、既存データ形式を維持する。
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .inappropriate: english = "Inappropriate content"
+        case .sexualMinor: english = "Sexual content involving a minor"
+        case .harassment: english = "Harassment or discrimination"
+        case .violence: english = "Excessive violence"
+        case .crime: english = "Crime encouragement"
+        case .spam: english = "Spam or irrelevant content"
+        case .other: english = "Other"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
 }
 
 struct CharacterReport: Codable, Identifiable, Equatable, Hashable {

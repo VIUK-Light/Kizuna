@@ -14,6 +14,7 @@ struct ReportCharacterView: View {
     @State private var detail: String = ""
     @State private var isSubmitting = false
     @State private var didSubmit = false
+    @State private var submissionError: String?
 
     private let repo: ReportRepository = LocalJSONReportRepository()
 
@@ -23,32 +24,75 @@ struct ReportCharacterView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("キャラクター: \(character.displayName.isEmpty ? character.name : character.displayName)")
+                    Text(KizunaCopy.text(japanese: "キャラクター: ", english: "Character: ") + character.visibleName)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
 
-                    sectionTitle("通報理由")
-                    Picker("理由", selection: $reason) {
+                    sectionTitle(KizunaCopy.text(japanese: "通報理由", english: "Report reason"))
+                    Picker(KizunaCopy.text(japanese: "理由", english: "Reason"), selection: $reason) {
                         ForEach(ReportReason.allCases) { r in
-                            Text(r.displayName).tag(r)
+                            Text(r.localizedDisplayName).tag(r)
                         }
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
 
-                    sectionTitle("詳細 (任意)")
-                    TextField("具体的な内容を書いてください", text: $detail, axis: .vertical)
+                    sectionTitle(KizunaCopy.text(japanese: "詳細 (任意)", english: "Details (optional)"))
+                    TextField(
+                        KizunaCopy.text(japanese: "具体的な内容を書いてください", english: "Describe what happened (optional)"),
+                        text: $detail,
+                        axis: .vertical
+                    )
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(3...6)
 
                     if didSubmit {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                            Text("通報を受け付けました。ご協力ありがとうございます。")
+                            Text(KizunaCopy.text(
+                                japanese: "通報を受け付けました。ご協力ありがとうございます。",
+                                english: "Your report was saved. Thank you for helping."
+                            ))
                                 .font(.system(size: 12))
                         }
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.10)))
+                    }
+
+                    if let submissionError {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(
+                                KizunaCopy.text(
+                                    japanese: "通報を保存できませんでした",
+                                    english: "The report could not be saved"
+                                ),
+                                systemImage: "exclamationmark.triangle.fill"
+                            )
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            Text(submissionError)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button {
+                                Task { await submit() }
+                            } label: {
+                                Label(
+                                    KizunaCopy.text(japanese: "もう一度送信", english: "Try again"),
+                                    systemImage: "arrow.clockwise"
+                                )
+                                .font(.system(size: 11, weight: .semibold))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(isSubmitting)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.orange.opacity(0.10))
+                        )
                     }
                 }
                 .padding(16)
@@ -56,7 +100,7 @@ struct ReportCharacterView: View {
             Divider()
             HStack {
                 Spacer()
-                Button("送信") {
+                Button(KizunaCopy.text(japanese: "送信", english: "Submit")) {
                     Task { await submit() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -71,11 +115,12 @@ struct ReportCharacterView: View {
 
     private var header: some View {
         HStack {
-            Button("閉じる") { dismiss() }
+            Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
             Spacer()
-            Text("キャラクターを通報").font(.system(size: 14, weight: .semibold))
+            Text(KizunaCopy.text(japanese: "キャラクターを通報", english: "Report character"))
+                .font(.system(size: 14, weight: .semibold))
             Spacer()
             Color.clear.frame(width: 48, height: 1)
         }
@@ -93,6 +138,7 @@ struct ReportCharacterView: View {
     }
 
     private func submit() async {
+        submissionError = nil
         isSubmitting = true
         defer { isSubmitting = false }
         let report = CharacterReport(
@@ -103,7 +149,14 @@ struct ReportCharacterView: View {
         do {
             try await repo.saveReport(report)
             didSubmit = true
+            submissionError = nil
         } catch {
+            // 入力内容はそのまま保持し、成功表示へ遷移させない。
+            // 保存先の詳細はログに残し、利用者には再試行可能な状態だけを伝える。
+            submissionError = KizunaCopy.text(
+                japanese: "保存先に書き込めませんでした。空き容量や権限を確認して、もう一度お試しください。",
+                english: "The report could not be written to local storage. Check available space or permissions, then try again."
+            )
             NSLog("[ReportCharacterView] save failed: %@", String(describing: error))
         }
     }

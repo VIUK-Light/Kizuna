@@ -902,14 +902,23 @@ final class LocalAssistantRuntimeBridge {
 
         let timeout = DispatchTime.now() + .seconds(LocalAssistantModelProfile.prewarmTimeoutSeconds)
         let completed = terminationSemaphore.wait(timeout: timeout) == .success
-        if !completed, process.isRunning {
-            process.terminate()
+        if !completed {
+            if process.isRunning {
+                process.terminate()
+            }
+            // terminate() は非同期なので、古い prewarm が残ったまま次の
+            // 起動確認を始めない。タイムアウトは成功ではなく失敗として扱う。
+            _ = terminationSemaphore.wait(timeout: .now() + .seconds(1))
+            NSLog("[Kizuna] bundled CLI prewarm timed out")
+            _ = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            _ = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            return false
         }
 
         _ = outputPipe.fileHandleForReading.readDataToEndOfFile()
         _ = errorPipe.fileHandleForReading.readDataToEndOfFile()
 
-        return completed ? process.terminationStatus == 0 : true
+        return process.terminationStatus == 0
     }
 
     private func terminateBundledServer() {

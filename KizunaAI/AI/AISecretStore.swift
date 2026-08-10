@@ -34,12 +34,14 @@ final class AISecretStore {
         splitSecretList(string(for: key)).compactMap { $0 }
     }
 
-    func setString(_ value: String, for key: SecretKey) {
+    @discardableResult
+    func setString(_ value: String, for key: SecretKey) -> Bool {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if normalized.isEmpty {
             removeValue(for: key)
+            return true
         } else {
-            _ = KeychainHelper.shared.setString(normalized, forKey: key.rawValue)
+            return KeychainHelper.shared.setString(normalized, forKey: key.rawValue)
         }
     }
 

@@ -36,23 +36,28 @@ private extension Image {
 struct StoryWorldDetailView: View {
     let world: StoryWorld
     var onStartSession: ((StoryWorld) -> Void)?
+    var onResumeSession: ((StoryWorld, UUID) -> Void)?
     var onEdit: ((StoryWorld) -> Void)?
-    var onDelete: (() -> Void)?
+    var onDelete: (() async throws -> Void)?
 
     @StateObject private var vm: StoryWorldDetailViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDeleteConfirmation = false
+    @State private var deleteError: String?
+    @State private var isDeleting = false
     @State private var spotlightCharacter: CharacterProfile?
 
     init(
         world: StoryWorld,
         onStartSession: ((StoryWorld) -> Void)? = nil,
+        onResumeSession: ((StoryWorld, UUID) -> Void)? = nil,
         onEdit: ((StoryWorld) -> Void)? = nil,
-        onDelete: (() -> Void)? = nil
+        onDelete: (() async throws -> Void)? = nil
     ) {
         self.world = world
         self.onStartSession = onStartSession
+        self.onResumeSession = onResumeSession
         self.onEdit = onEdit
         self.onDelete = onDelete
         _vm = StateObject(wrappedValue: StoryWorldDetailViewModel(world: world))
@@ -79,8 +84,17 @@ struct StoryWorldDetailView: View {
         .task { await vm.reload() }
         .alert(KizunaCopy.text(japanese: "この世界を削除しますか？", english: "Delete this story world?"), isPresented: $showDeleteConfirmation) {
             Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
-                onDelete?()
-                dismiss()
+                guard !isDeleting else { return }
+                isDeleting = true
+                Task { @MainActor in
+                    defer { isDeleting = false }
+                    do {
+                        try await onDelete?()
+                        dismiss()
+                    } catch {
+                        deleteError = String(describing: error)
+                    }
+                }
             }
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
@@ -88,6 +102,14 @@ struct StoryWorldDetailView: View {
                 japanese: "キャスト、シーン、保存済みセッションも削除対象になります。",
                 english: "Characters, scenes, and saved sessions will also be deleted."
             ))
+        }
+        .alert(KizunaCopy.text(japanese: "削除できませんでした", english: "Could not delete"), isPresented: Binding(
+            get: { deleteError != nil },
+            set: { if !$0 { deleteError = nil } }
+        )) {
+            Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) {}
+        } message: {
+            Text(deleteError ?? KizunaCopy.text(japanese: "保存データを変更できませんでした。", english: "The saved data could not be changed."))
         }
         .sheet(item: $spotlightCharacter) { character in
             StoryDetailCharacterSpotlight(character: character)
@@ -97,6 +119,34 @@ struct StoryWorldDetailView: View {
 
     private var displayedWorld: StoryWorld {
         world.localizedForCurrentLanguage
+    }
+
+    /// StoryScene predates the presentation-localization catalog and therefore
+    /// has no language-specific payload of its own.  Standard worlds do have
+    /// an English opening-scene translation, so use it for the opening scene
+    /// when the stored scene still mirrors the Japanese world opening.  This
+    /// keeps the detail screen from mixing an English world card with a raw
+    /// Japanese opening while leaving user-authored/custom scenes untouched.
+    private func displayedScene(_ scene: StoryScene) -> StoryScene {
+        guard KizunaCopy.language == .english,
+              let localization = StoryEnglishCatalog.localization(for: world),
+              let translatedOpening = localization.openingScene?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !translatedOpening.isEmpty,
+              (scene.summary.trimmingCharacters(in: .whitespacesAndNewlines) == world.openingScene.trimmingCharacters(in: .whitespacesAndNewlines)
+                || (scene.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && scene.id == vm.scenes.first?.id))
+        else {
+            return scene
+        }
+
+        var copy = scene
+        copy.title = "Opening scene"
+        copy.location = "Story setting"
+        copy.timeOfDay = ""
+        copy.mood = localization.mood ?? displayedWorld.mood
+        copy.sceneGoal = localization.storyGoal ?? displayedWorld.storyGoal
+        copy.conflict = nil
+        copy.summary = translatedOpening
+        return copy
     }
 
     private var header: some View {
@@ -199,8 +249,21 @@ struct StoryWorldDetailView: View {
     }
 
     private var relationshipHero: some View {
-        let coverCharacter = vm.characterIndex[world.mainCharacterId ?? UUID()]
-            ?? vm.characterIndex.values.first
+        // mainCharacterIdが欠落/壊れていても、アプリ内の無関係なキャラを
+        // Dictionaryの順序で拾わない。Worldが保持するcharacterIdsと、
+        // 保存済みCastの順序だけをカバー候補にする。
+        var orderedCharacterIDs: [UUID] = []
+        for id in world.characterIds + vm.cast.map(\.characterId) where !orderedCharacterIDs.contains(id) {
+            orderedCharacterIDs.append(id)
+        }
+        let coverCharacter: CharacterProfile? = {
+            if let mainID = world.mainCharacterId,
+               orderedCharacterIDs.contains(mainID),
+               let main = vm.characterIndex[mainID] {
+                return main
+            }
+            return orderedCharacterIDs.compactMap { vm.characterIndex[$0] }.first
+        }()
         return VStack(alignment: .leading, spacing: 18) {
             StoryCoverView(world: displayedWorld, character: coverCharacter)
                 .aspectRatio(1.22, contentMode: .fit)
@@ -212,7 +275,7 @@ struct StoryWorldDetailView: View {
                 }
                 .overlay(alignment: .bottomLeading) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(coverCharacter?.displayName ?? displayedWorld.genre.group.localizedDisplayName)
+                        Text(coverCharacter?.visibleName ?? displayedWorld.genre.group.localizedDisplayName)
                             .font(.system(size: 15, weight: .bold))
                         Text(displayedWorld.mood.isEmpty ? displayedWorld.relationshipGenre.localizedDisplayName : displayedWorld.mood)
                             .font(.system(size: 12, weight: .semibold))
@@ -260,7 +323,7 @@ struct StoryWorldDetailView: View {
 
     private var overviewCard: some View {
         detailCard(title: KizunaCopy.text(japanese: "概要", english: "Overview"), icon: "book.closed.fill") {
-            if !world.shortDescription.isEmpty {
+            if !displayedWorld.shortDescription.isEmpty {
                 detailText(displayedWorld.shortDescription)
             }
             detailPair(KizunaCopy.text(japanese: "ユーザーの役割", english: "Your role"), displayedWorld.userRole)
@@ -277,11 +340,13 @@ struct StoryWorldDetailView: View {
     private var progressCard: some View {
         let session = vm.sessions.first
         let messageCount = session?.messages.count ?? 0
-        let progress = min(1.0, Double(max(messageCount, 1)) / 24.0)
-        let sceneTitle = session?.currentSceneId.flatMap { id in vm.scenes.first(where: { $0.id == id })?.title }
-            ?? vm.scenes.first?.title
+        let progress = session == nil ? 0 : min(1.0, Double(messageCount) / 24.0)
+        let currentScene = session?.currentSceneId.flatMap { id in vm.scenes.first(where: { $0.id == id }) }
+            ?? vm.scenes.first
+        let presentationScene = currentScene.map { displayedScene($0) }
+        let sceneTitle = presentationScene?.title
             ?? KizunaCopy.text(japanese: "第1場面", english: "Scene 1")
-        let objective = session?.currentObjective ?? vm.scenes.first?.sceneGoal ?? world.storyGoal
+        let objective = session?.currentObjective ?? presentationScene?.sceneGoal ?? displayedWorld.storyGoal
         let stage = session?.relationshipStage ?? (session == nil
             ? KizunaCopy.text(japanese: "未開始", english: "Not started")
             : KizunaCopy.text(japanese: "進行中", english: "In progress"))
@@ -401,7 +466,7 @@ struct StoryWorldDetailView: View {
                                 .font(.system(size: 11, weight: .bold).monospacedDigit())
                                 .foregroundStyle(.white.opacity(0.86))
                         }
-                        Text(character?.displayName ?? KizunaCopy.text(japanese: "未登録キャラ", english: "Unregistered character"))
+                        Text(character?.visibleName ?? KizunaCopy.text(japanese: "未登録キャラ", english: "Unregistered character"))
                             .font(.system(size: 20, weight: .heavy))
                             .lineLimit(1)
                         Text(member.introductionTiming.localizedDisplayName)
@@ -486,7 +551,8 @@ struct StoryWorldDetailView: View {
                 emptyLine(KizunaCopy.text(japanese: "まだシーンがありません。", english: "No scenes yet."))
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(vm.scenes) { scene in
+                    ForEach(vm.scenes) { storedScene in
+                        let scene = displayedScene(storedScene)
                         VStack(alignment: .leading, spacing: 4) {
                             StorySceneImageView(scene: scene, world: displayedWorld)
                                 .frame(maxWidth: .infinity)
@@ -496,19 +562,9 @@ struct StoryWorldDetailView: View {
                                  ? KizunaCopy.text(japanese: "無題のシーン", english: "Untitled scene")
                                  : scene.title)
                                 .font(.system(size: 13, weight: .semibold))
-                            HStack(spacing: 8) {
-                                if !scene.location.isEmpty {
-                                    Label(scene.location, systemImage: "mappin.and.ellipse")
-                                }
-                                if !scene.timeOfDay.isEmpty {
-                                    Label(scene.timeOfDay, systemImage: "clock")
-                                }
-                                if !scene.mood.isEmpty {
-                                    Label(scene.mood, systemImage: "theatermasks")
-                                }
+                            if !scene.location.isEmpty || !scene.timeOfDay.isEmpty || !scene.mood.isEmpty {
+                                sceneMetadata(scene)
                             }
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.secondary)
                             if !scene.sceneGoal.isEmpty {
                                 detailText(scene.sceneGoal)
                             }
@@ -524,17 +580,55 @@ struct StoryWorldDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private func sceneMetadata(_ scene: StoryScene) -> some View {
+        // 広い画面では1行、compact幅や長い英語/ユーザー入力では縦に折り返す。
+        // HStack側はfixedSizeで必要幅を正しく申告し、ViewThatFitsが
+        // 狭い提案幅でVStackへ切り替えられるようにする。
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                if !scene.location.isEmpty {
+                    Label(scene.location, systemImage: "mappin.and.ellipse")
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                if !scene.timeOfDay.isEmpty {
+                    Label(scene.timeOfDay, systemImage: "clock")
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                if !scene.mood.isEmpty {
+                    Label(scene.mood, systemImage: "theatermasks")
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                if !scene.location.isEmpty {
+                    Label(scene.location, systemImage: "mappin.and.ellipse")
+                }
+                if !scene.timeOfDay.isEmpty {
+                    Label(scene.timeOfDay, systemImage: "clock")
+                }
+                if !scene.mood.isEmpty {
+                    Label(scene.mood, systemImage: "theatermasks")
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var rulesCard: some View {
         detailCard(title: KizunaCopy.text(japanese: "ルール / 安全", english: "Rules / safety"), icon: "shield.lefthalf.filled") {
             detailPair(KizunaCopy.text(japanese: "公開状態", english: "Visibility"), world.visibility.localizedDisplayName)
-            if !world.worldSetting.isEmpty {
-                detailPair(KizunaCopy.text(japanese: "世界観", english: "World setting"), world.worldSetting)
+            if !displayedWorld.worldSetting.isEmpty {
+                detailPair(KizunaCopy.text(japanese: "世界観", english: "World setting"), displayedWorld.worldSetting)
             }
-            if !world.openingScene.isEmpty {
-                detailPair(KizunaCopy.text(japanese: "オープニング", english: "Opening"), world.openingScene)
+            if !displayedWorld.openingScene.isEmpty {
+                detailPair(KizunaCopy.text(japanese: "オープニング", english: "Opening"), displayedWorld.openingScene)
             }
-            let outputRules = world.safetyRules.filter(isOutputFormatRule)
-            let safetyRules = world.safetyRules.filter { !isOutputFormatRule($0) }
+            let outputRules = displayedWorld.safetyRules.filter(isOutputFormatRule)
+            let safetyRules = displayedWorld.safetyRules.filter { !isOutputFormatRule($0) }
             if !outputRules.isEmpty {
                 ruleGroup(KizunaCopy.text(japanese: "出力形式", english: "Output format"), outputRules)
             }
@@ -561,18 +655,7 @@ struct StoryWorldDetailView: View {
     }
 
     private func isOutputFormatRule(_ rule: String) -> Bool {
-        [
-            "ナレーション",
-            "1ターン",
-            "キャラ発話",
-            "複数キャラ",
-            "active",
-            "会話だけ",
-            "思考過程",
-            "場面",
-            "描写",
-            "段階的"
-        ].contains { rule.localizedCaseInsensitiveContains($0) }
+        StoryPromptBuilder.isOutputFormatRule(rule)
     }
 
     private var historyCard: some View {
@@ -582,17 +665,25 @@ struct StoryWorldDetailView: View {
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(vm.sessions.prefix(5)) { session in
-                        HStack {
-                            Text(session.updatedAt, style: .date)
-                            Text(session.updatedAt, style: .time)
-                            Spacer()
-                            Text(KizunaCopy.language == .english
-                                 ? "\(session.messages.count) messages"
-                                 : "\(session.messages.count) 件")
-                                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                        Button {
+                            onResumeSession?(displayedWorld, session.id)
+                        } label: {
+                            HStack {
+                                Image(systemName: "play.circle.fill")
+                                    .foregroundStyle(Color.accentColor)
+                                Text(session.updatedAt, style: .date)
+                                Text(session.updatedAt, style: .time)
+                                Spacer()
+                                Text(KizunaCopy.language == .english
+                                     ? "\(session.messages.count) messages"
+                                     : "\(session.messages.count) 件")
+                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            }
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .contentShape(Rectangle())
                         }
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -653,7 +744,7 @@ private struct FlowTagRow: View {
     let tags: [String]
 
     var body: some View {
-        HStack(spacing: 6) {
+        FlowTagLayout(horizontalSpacing: 6, verticalSpacing: 6) {
             ForEach(tags.prefix(8), id: \.self) { tag in
                 Text(tag)
                     .font(.system(size: 10, weight: .semibold))
@@ -662,6 +753,75 @@ private struct FlowTagRow: View {
                     .background(Capsule().fill(Color.primary.opacity(0.06)))
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+/// A small wrapping layout for tags. An HStack silently grows past the detail
+/// card's width on compact windows, which made the last tags unreachable (and
+/// could also push the card's content outside the scroll view).
+private struct FlowTagLayout: Layout {
+    var horizontalSpacing: CGFloat
+    var verticalSpacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let maxWidth = proposal.width ?? .greatestFiniteMagnitude
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var widestRow: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let nextWidth = rowWidth == 0 ? size.width : rowWidth + horizontalSpacing + size.width
+            if rowWidth > 0, nextWidth > maxWidth {
+                widestRow = max(widestRow, rowWidth)
+                totalHeight += rowHeight + verticalSpacing
+                rowWidth = size.width
+                rowHeight = size.height
+            } else {
+                rowWidth = nextWidth
+                rowHeight = max(rowHeight, size.height)
+            }
+        }
+
+        widestRow = max(widestRow, rowWidth)
+        totalHeight += rowHeight
+        // Preserve a finite proposal so placement uses the same width that
+        // sizing used to decide where rows break.
+        let width = proposal.width ?? widestRow
+        return CGSize(width: width, height: totalHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+
+            subview.place(
+                at: CGPoint(x: x, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: size.width, height: size.height)
+            )
+            x += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }
@@ -682,7 +842,7 @@ private struct StoryDetailCharacterSpotlight: View {
                             LinearGradient(colors: [.clear, .black.opacity(0.74)], startPoint: .top, endPoint: .bottom)
                                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(character.displayName)
+                                Text(character.visibleName)
                                     .font(.system(size: 32, weight: .heavy))
                                 if !character.shortDescription.isEmpty {
                                     Text(character.shortDescription)
@@ -701,7 +861,7 @@ private struct StoryDetailCharacterSpotlight: View {
                 }
                 .padding(18)
             }
-            .navigationTitle(character.displayName)
+            .navigationTitle(character.visibleName)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }

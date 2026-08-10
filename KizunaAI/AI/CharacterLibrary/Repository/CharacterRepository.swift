@@ -37,7 +37,7 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
     }
 
     func saveCharacter(_ character: CharacterProfile) async throws {
-        var updated = character
+        var updated = character.normalizedForPersistence
         if let existing = (try? await charStore.loadRecoveringCorruptRecords().first(where: { $0.id == character.id })),
            existing.isSystemProtected == true {
             updated.isSystemProtected = true
@@ -65,7 +65,7 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
             let timestamp = Date()
 
             for character in characters {
-                var updated = character
+                var updated = character.normalizedForPersistence
                 if let index = indexByID[character.id] {
                     let existing = items[index]
                     if existing.isSystemProtected == true {

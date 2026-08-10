@@ -82,6 +82,10 @@ struct StoryWorldCreateView: View {
                 }
                 .padding(18)
             }
+            // 初期スナップショットの読込が終わる前に編集すると、完了後の
+            // cast/lorebook/scene代入で入力を巻き戻すため、フォーム自体を
+            // ロックする。キャンセルと再試行はヘッダー側で引き続き可能。
+            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
             Divider()
             footer
         }
@@ -109,7 +113,14 @@ struct StoryWorldCreateView: View {
 
     private var header: some View {
         HStack {
-            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { dismiss() }.buttonStyle(.plain).foregroundStyle(.secondary)
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) {
+                Task {
+                    await vm.discardPendingGeneratedCharacters()
+                    dismiss()
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
             Spacer()
             Text(existing == nil
                  ? KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story")
@@ -142,8 +153,9 @@ struct StoryWorldCreateView: View {
                     }
                 } label: {
                     Label(KizunaCopy.text(japanese: "保存して試す", english: "Save and try"), systemImage: "play.fill")
-                }
-                .buttonStyle(.bordered)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
             }
             Spacer()
             Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
@@ -155,6 +167,7 @@ struct StoryWorldCreateView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate)
             .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 16)
@@ -219,7 +232,7 @@ struct StoryWorldCreateView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(vm.isGeneratingTemplate || vm.generationBrief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(vm.isGeneratingTemplate || vm.isSaving || vm.generationBrief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     Spacer()
                 }
@@ -385,16 +398,16 @@ struct StoryWorldCreateView: View {
                     Text(KizunaCopy.text(japanese: "ジャンル", english: "Genre")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Menu {
                         ForEach(CategoryGroup.allCases) { g in
-                            Menu(g.displayName) {
+                            Menu(g.localizedDisplayName) {
                                 ForEach(CharacterCategory.allCases.filter { $0.group == g }) { c in
-                                    Button(c.displayName) { vm.draft.genre = c }
+                                    Button(c.localizedDisplayName) { vm.draft.genre = c }
                                 }
                             }
                         }
                     } label: {
                         HStack {
                             Image(systemName: vm.draft.genre.group.iconName).foregroundStyle(.tint)
-                            Text(vm.draft.genre.displayName)
+                            Text(vm.draft.genre.localizedDisplayName)
                             Image(systemName: "chevron.down").font(.system(size: 9))
                         }
                         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -406,7 +419,7 @@ struct StoryWorldCreateView: View {
                 HStack {
                     Text(KizunaCopy.text(japanese: "関係性", english: "Relationship")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Picker("", selection: $vm.draft.relationshipGenre) {
-                        ForEach(RelationshipGenre.allCases) { g in Text(g.displayName).tag(g) }
+                        ForEach(RelationshipGenre.allCases) { g in Text(g.localizedDisplayName).tag(g) }
                     }.labelsHidden().pickerStyle(.menu)
                 }
 
@@ -621,15 +634,15 @@ struct StoryWorldCreateView: View {
             HStack {
                 characterAvatar(profile, size: 34)
                 Image(systemName: member.roleInStory.iconName).foregroundStyle(.tint)
-                Text(profile.displayName.isEmpty ? profile.name : profile.displayName)
+                Text(profile.visibleName)
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Menu {
                     ForEach(CastRole.allCases, id: \.self) { r in
-                        Button(r.displayName) { vm.setRole(r, for: member.characterId) }
+                        Button(r.localizedDisplayName) { vm.setRole(r, for: member.characterId) }
                     }
                 } label: {
-                    Text(member.roleInStory.displayName).font(.system(size: 10, weight: .semibold))
+                    Text(member.roleInStory.localizedDisplayName).font(.system(size: 10, weight: .semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentColor.opacity(0.12)))
                         .foregroundStyle(Color.accentColor)
@@ -655,12 +668,12 @@ struct StoryWorldCreateView: View {
 
                 Menu {
                     ForEach(IntroductionTiming.allCases, id: \.self) { timing in
-                        Button(timing.displayName) {
+                        Button(timing.localizedDisplayName) {
                             vm.setIntroductionTiming(timing, for: member.characterId)
                         }
                     }
                 } label: {
-                    Label(member.introductionTiming.displayName, systemImage: "clock")
+                    Label(member.introductionTiming.localizedDisplayName, systemImage: "clock")
                         .font(.system(size: 10, weight: .semibold))
                 }
                 .menuStyle(.borderlessButton)
@@ -732,7 +745,7 @@ struct StoryWorldCreateView: View {
                     set: { vm.updateRelationship(from: pair.from.characterId, to: pair.to.characterId, type: $0) }
                 )) {
                     ForEach(RelationshipType.allCases, id: \.self) { type in
-                        Text(type.displayName).tag(type)
+                        Text(type.localizedDisplayName).tag(type)
                     }
                 }
                 .labelsHidden()
@@ -905,9 +918,9 @@ private struct CharacterPickerForStory: View {
                         ForEach(filtered) { c in
                             Button { onPick(c) } label: {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(c.displayName.isEmpty ? c.name : c.displayName)
+                                    Text(c.visibleName)
                                         .font(.system(size: 13, weight: .semibold))
-                                    Text(c.category.displayName + " ・ " + c.relationshipGenre.displayName)
+                                    Text(c.category.localizedDisplayName + KizunaCopy.text(japanese: " ・ ", english: " · ") + c.relationshipGenre.localizedDisplayName)
                                         .font(.system(size: 10)).foregroundStyle(.secondary)
                                     if !c.shortDescription.isEmpty {
                                         Text(c.shortDescription).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(2)
@@ -938,10 +951,10 @@ private struct StoryRelationshipPair: Identifiable {
     }
 
     var fromName: String {
-        fromProfile.displayName.isEmpty ? fromProfile.name : fromProfile.displayName
+        fromProfile.visibleName
     }
 
     var toName: String {
-        toProfile.displayName.isEmpty ? toProfile.name : toProfile.displayName
+        toProfile.visibleName
     }
 }

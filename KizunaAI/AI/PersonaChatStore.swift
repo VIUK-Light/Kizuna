@@ -85,6 +85,10 @@ final class PersonaChatStore: ObservableObject {
 
     /// 新しい順 (updatedAt 降順) でソートして保持。
     @Published private(set) var threads: [PersonaThread] = []
+    /// 保存データのデコードに失敗した場合は、空配列を正常値として書き戻さない。
+    /// 破損データを上書きすると、復旧可能な履歴まで失われるため、明示的な
+    /// リセット/再保存が行われるまで現在のファイルを保持する。
+    private var didFailToLoadPersistedThreads = false
     @Published var activeThreadID: UUID? {
         didSet {
             if let id = activeThreadID {
@@ -106,12 +110,24 @@ final class PersonaChatStore: ObservableObject {
 
     private init() {
         load()
+        guard !didFailToLoadPersistedThreads else {
+            NSLog("[PersonaChatStore] thread data was not decoded; preserving the source file")
+            if let saved = defaults.string(forKey: Key.activeThreadID),
+               let uuid = UUID(uuidString: saved) {
+                self.activeThreadID = uuid
+            }
+            return
+        }
         // 起動時に「空メッセージのスレッド」を 1 件残して残りを掃除する。
         // (バグや誤操作で同じキャラの空スレッドが大量に残るのを防ぐ)
-        var seenEmptyPersonaNames = Set<String>()
+        var seenEmptyPersonaKeys = Set<String>()
         threads.removeAll { thread in
             guard thread.messages.isEmpty else { return false }
-            if seenEmptyPersonaNames.insert(thread.personaSnapshot.name).inserted {
+            // 名前だけでまとめると、同名だが別UUIDのキャラを削除してしまう。
+            // キャラ由来はcharacterID、旧ペルソナはprofile UUIDで識別する。
+            let key = thread.characterID.map { "character:\($0.uuidString)" }
+                ?? "persona:\(thread.personaSnapshot.id.uuidString)"
+            if seenEmptyPersonaKeys.insert(key).inserted {
                 return false   // 各キャラで最初の 1 件は残す
             }
             return true        // 2 件目以降は削除
@@ -125,11 +141,16 @@ final class PersonaChatStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = defaults.data(forKey: Key.threads),
-              let decoded = try? JSONDecoder().decode([PersonaThread].self, from: data) else {
+        guard let data = defaults.data(forKey: Key.threads) else {
             return
         }
-        self.threads = decoded.sorted { $0.updatedAt > $1.updatedAt }
+        do {
+            let decoded = try JSONDecoder().decode([PersonaThread].self, from: data)
+            self.threads = decoded.sorted { $0.updatedAt > $1.updatedAt }
+        } catch {
+            didFailToLoadPersistedThreads = true
+            NSLog("[PersonaChatStore] failed to decode saved threads: %@", error.localizedDescription)
+        }
     }
 
     private func persist() {
@@ -145,8 +166,8 @@ final class PersonaChatStore: ObservableObject {
     @discardableResult
     func createThread(with persona: PersonaProfile, characterID: UUID? = nil) -> PersonaThread {
         if let existing = threads.first(where: {
-            $0.personaSnapshot.name == persona.name
-                && $0.characterID == characterID
+            $0.characterID == characterID
+                && (characterID != nil || $0.personaSnapshot.id == persona.id)
                 && $0.messages.isEmpty
         }) {
             activeThreadID = existing.id
@@ -166,6 +187,15 @@ final class PersonaChatStore: ObservableObject {
     func selectThread(id: UUID) {
         guard threads.contains(where: { $0.id == id }) else { return }
         activeThreadID = id
+    }
+
+    /// キャラ本体が削除されても、会話スナップショットは残して再開できるようにする。
+    func detachCharacterReference(threadID: UUID) {
+        guard let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
+        guard threads[index].characterID != nil else { return }
+        threads[index].characterID = nil
+        threads[index].updatedAt = Date()
+        persist()
     }
 
     func deleteThread(id: UUID) {

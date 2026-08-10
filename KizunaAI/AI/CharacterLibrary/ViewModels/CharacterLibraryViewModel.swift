@@ -8,6 +8,20 @@
 import Foundation
 import Combine
 
+enum CharacterLibraryLoadIssue: Equatable {
+    case characterStorageFailure
+
+    var message: String {
+        switch self {
+        case .characterStorageFailure:
+            return KizunaCopy.text(
+                japanese: "キャラクターの保存データを読み込めませんでした。データは削除されていません。",
+                english: "The saved characters could not be loaded. Your data has not been deleted."
+            )
+        }
+    }
+}
+
 @MainActor
 final class CharacterLibraryViewModel: ObservableObject {
     @Published private(set) var allCharacters: [CharacterProfile] = []
@@ -18,6 +32,13 @@ final class CharacterLibraryViewModel: ObservableObject {
     @Published var genreFilter: RelationshipGenre? = nil
     @Published var tagFilter: String? = nil
     @Published private(set) var isLoading: Bool = false
+    /// キャラクターの読込に失敗した時だけ設定する。空配列を「未作成」と解釈させない。
+    @Published private(set) var loadError: CharacterLibraryLoadIssue?
+    /// 少なくとも一度、キャラクター配列の読込に成功したか。
+    @Published private(set) var didLoadCharacters: Bool = false
+    /// テンプレートを読み込めない状態。空のテンプレート一覧とは区別する。
+    @Published private(set) var templateLoadError: String?
+    @Published private(set) var didLoadTemplates: Bool = false
 
     private let characterRepo: CharacterRepository
     private let templateRepo: TemplateRepository
@@ -36,18 +57,66 @@ final class CharacterLibraryViewModel: ObservableObject {
     func bootstrap() async {
         isLoading = true
         defer { isLoading = false }
-        await CharacterTemplateSeed.seedIfNeeded(into: templateRepo)
+        let templateSeedSucceeded = await CharacterTemplateSeed.seedIfNeeded(into: templateRepo)
+        if !templateSeedSucceeded {
+            templateLoadError = KizunaCopy.text(
+                japanese: "テンプレートの初期データを準備できませんでした。",
+                english: "Starter templates could not be prepared."
+            )
+        }
         await CharacterLibrarySeed.seedIfNeeded(characterRepo: characterRepo)
         await reload()
     }
 
     func reload() async {
+        let wasLoading = isLoading
+        if !wasLoading { isLoading = true }
+        defer {
+            if !wasLoading { isLoading = false }
+        }
+
+        // キャラクター本体とテンプレートを分けて読む。テンプレート側の
+        // 一時的な失敗で、既存キャラクターまで空表示にしない。
         do {
             self.allCharacters = try await characterRepo.fetchCharacters()
-            self.templates = try await templateRepo.fetchTemplates()
+            didLoadCharacters = true
+            loadError = nil
         } catch {
-            NSLog("[CharacterLibraryVM] reload failed: %@", String(describing: error))
+            // 既存のメモリー上の一覧は保持し、初回失敗時だけエラー画面へ
+            // 分岐できるようにする。読み込み失敗を空データで上書きしない。
+            loadError = .characterStorageFailure
+            NSLog("[CharacterLibraryVM] character reload failed: %@", String(describing: error))
+            return
         }
+
+        do {
+            self.templates = try await templateRepo.fetchTemplates()
+            didLoadTemplates = true
+            if !templates.isEmpty {
+                templateLoadError = nil
+            }
+        } catch {
+            // キャラクター一覧は利用できるため、テンプレートだけにエラーを
+            // 表示する。空配列を「テンプレートなし」と誤認させない。
+            templateLoadError = KizunaCopy.text(
+                japanese: "テンプレートを読み込めませんでした。データは削除されていません。",
+                english: "Templates could not be loaded. Your data has not been deleted."
+            )
+            NSLog("[CharacterLibraryVM] template reload failed: %@", String(describing: error))
+        }
+    }
+
+    func retryLoad() async {
+        if templates.isEmpty {
+            let seedSucceeded = await CharacterTemplateSeed.seedIfNeeded(into: templateRepo)
+            if !seedSucceeded {
+                templateLoadError = KizunaCopy.text(
+                    japanese: "テンプレートの初期データを準備できませんでした。",
+                    english: "Starter templates could not be prepared."
+                )
+            }
+        }
+        await reload()
     }
 
     func delete(id: UUID) async {
