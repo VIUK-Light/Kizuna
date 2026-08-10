@@ -680,10 +680,10 @@ final class LocalAssistantRuntimeBridge {
         }
     }
 
-    func cancelActiveGeneration() {
+    func cancelActiveGeneration(generationID: UUID? = nil) {
         // LiteRT-LMはURLSession/bundled serverではないため、SDKのConversationへ
         // 明示的にcancelを届ける。これをしないとUIだけ停止して推論は続行する。
-        LocalAssistantLiteRTLMRuntime.shared.cancelActiveGeneration()
+        LocalAssistantLiteRTLMRuntime.shared.cancelActiveGeneration(generationID: generationID)
         activeBundledRequestLock.lock()
         let task = activeBundledRequestTask
         activeBundledRequestTask = nil
@@ -1787,6 +1787,7 @@ final class BundledServerLogAggregator {
         /// LiteRT-LMへrole付きで渡す短い会話履歴。SDK非対応のruntimeでは使わない。
         initialMessages: [LocalAssistantLiteRTLMHistoryMessage] = [],
         overrideModelURL: URL? = nil,
+        generationID: UUID? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> String? {
         guard let installedModelURL = overrideModelURL ?? LocalAssistantModelManager.shared.installedModelURL else {
@@ -1843,6 +1844,7 @@ final class BundledServerLogAggregator {
                 stage: .generation,
                 startedAt: startedAt,
                 initialMessages: initialMessages,
+                generationID: generationID,
                 onUpdate: onUpdate
             )
             return await withCheckedContinuation { continuation in
@@ -2748,6 +2750,7 @@ final class BundledServerLogAggregator {
         stage: LocalAssistantRuntimeDiagnostic.Stage,
         startedAt: Date,
         initialMessages: [LocalAssistantLiteRTLMHistoryMessage],
+        generationID: UUID? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> VIUKEmbeddedRuntimeResult {
         // A fixed seed made every retry repeat the same poor first token path.
@@ -2804,7 +2807,8 @@ final class BundledServerLogAggregator {
                 topP: parameters.topP,
                 topK: parameters.topK,
                 seed: turnSeed,
-                initialMessages: initialMessages
+                initialMessages: initialMessages,
+                generationID: generationID
             )
         )
     }

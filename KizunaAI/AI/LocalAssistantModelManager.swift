@@ -2111,6 +2111,46 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 applyStatusPresentation()
             }
         } catch {
+            // 壊れたJSONだけを理由に有効なresumeデータまで捨てない。
+            // 先に元の状態ファイルを退避し、続きから復元できる最小状態を
+            // 再構成する。resumeデータ自体が無効な場合だけ失敗表示にする。
+            if let resumeData = try? Data(contentsOf: resumeDataStorageURL),
+               !resumeData.isEmpty,
+               resumeDataLooksUsable(resumeData) {
+                let backupURL = downloadStateURL
+                    .deletingPathExtension()
+                    .appendingPathExtension("corrupt-\(UUID().uuidString).json")
+                do {
+                    try FileManager.default.copyItem(at: downloadStateURL, to: backupURL)
+                    let recovered = LocalAssistantDownloadState(
+                        sourceURL: resolvedSourceURLString,
+                        resolvedURL: nil,
+                        expectedBytes: LocalAssistantModelProfile.expectedModelSizeBytes,
+                        eTag: nil,
+                        resumeDataPath: resumeDataStorageURL.path,
+                        status: .resumable,
+                        startedAt: nil,
+                        updatedAt: Date(),
+                        lastError: "ダウンロード状態を復元しました。続きから再開できます。",
+                        suggestedFilename: nil
+                    )
+                    persistDownloadState(recovered)
+                    persistedDownloadState = recovered
+                    hasInvalidPersistedDownloadState = false
+                    downloadStatus = .resumable
+                    expectedBytes = recovered.expectedBytes
+                    downloadedBytes = estimatedResumeBytes(for: recovered)
+                    activeDownloadBaseBytes = 0
+                    resetDownloadProgressMetrics()
+                    lastErrorMessage = recovered.lastError
+                    applyStatusPresentation()
+                    NSLog("[KizunaModelManager] recovered resumable download state from valid resume data; backup=%@", backupURL.lastPathComponent)
+                    return
+                } catch {
+                    NSLog("[KizunaModelManager] could not back up corrupt download state: %@", error.localizedDescription)
+                }
+            }
+
             // 壊れた/読めない状態ファイルを「未導入」として隠さない。
             // ファイルは保持し、再開不能な失敗として表示することで、
             // ユーザーが再ダウンロードを選べる状態にする。

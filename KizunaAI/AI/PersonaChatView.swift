@@ -31,6 +31,10 @@ struct PersonaChatView: View {
     @State private var storyHistoryReloadID = UUID()
     @State private var isPersonaChatNearBottom = true
     @State private var unreadPersonaMessageCount = 0
+    /// スレッドを切り替えても入力途中の本文が別スレッドへ移らないよう、
+    /// 下書きをスレッドIDごとに保持する。会話本文とは別の一時UI状態であり、
+    /// 永続化は行わない。
+    @State private var personaDrafts: [UUID: String] = [:]
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private let storyWorldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
@@ -613,14 +617,27 @@ struct PersonaChatView: View {
                 Divider()
                 // Composerの入力状態はスレッド単位。Viewを再利用すると
                 // Stateに残った下書きが別スレッドの送信欄へ移るため、
-                // thread.idをidentityにして切替時に必ず再生成する。
-                PersonaComposer(thread: active)
+                // Bindingもthread.id単位に分け、identityも切替時に更新する。
+                PersonaComposer(thread: active, draft: draftBinding(for: active.id))
                     .id(active.id)
             }
             .background(personaChatBackground)
         } else {
             noActiveThreadState
         }
+    }
+
+    private func draftBinding(for threadID: UUID) -> Binding<String> {
+        Binding(
+            get: { personaDrafts[threadID] ?? "" },
+            set: { value in
+                if value.isEmpty {
+                    personaDrafts.removeValue(forKey: threadID)
+                } else {
+                    personaDrafts[threadID] = value
+                }
+            }
+        )
     }
 
     @Environment(\.colorScheme) private var colorScheme
@@ -1177,9 +1194,14 @@ struct PersonaMessageBubble: View {
 struct PersonaComposer: View {
     let thread: PersonaThread
     @StateObject private var service = PersonaChatService.shared
-    @State private var text: String = ""
+    @Binding private var text: String
     @FocusState private var focused: Bool
     @Environment(\.colorScheme) private var colorScheme
+
+    init(thread: PersonaThread, draft: Binding<String>) {
+        self.thread = thread
+        _text = draft
+    }
 
     private var isGeneratingThisThread: Bool {
         service.activeGenerationThreadID == thread.id && service.phase == .thinking

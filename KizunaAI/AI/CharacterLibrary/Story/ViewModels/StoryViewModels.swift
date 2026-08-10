@@ -39,6 +39,31 @@ enum StoryLibraryLoadIssue: String, Equatable, Sendable {
     var messageKey: String { "ストーリーの保存データを読み込めません" }
 }
 
+/// 世界と関連レコードを複数のJSONストアから削除する処理は、アプリ終了や
+/// 1つのストアの一時的なI/O失敗で途中停止しうる。削除対象のIDだけを
+/// UserDefaultsへ記録し、次のライブラリー起動時に同じ冪等処理を再試行する。
+/// 本文やキャラクター情報は保存しない。
+enum StoryWorldDeletionJournal {
+    private static let key = "kizuna.story.pendingWorldDeletions"
+
+    static var pendingIDs: [UUID] {
+        let values = UserDefaults.standard.stringArray(forKey: key) ?? []
+        return values.compactMap(UUID.init(uuidString:))
+    }
+
+    static func mark(_ id: UUID) {
+        var ids = pendingIDs
+        guard ids.contains(id) == false else { return }
+        ids.append(id)
+        UserDefaults.standard.set(ids.map(\.uuidString), forKey: key)
+    }
+
+    static func clear(_ id: UUID) {
+        let remaining = pendingIDs.filter { $0 != id }
+        UserDefaults.standard.set(remaining.map(\.uuidString), forKey: key)
+    }
+}
+
 @MainActor
 final class StoryWorldLibraryViewModel: ObservableObject {
     @Published private(set) var worlds: [StoryWorld] = []
@@ -48,6 +73,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     @Published private(set) var didBootstrap = false
     @Published private(set) var loadError: StoryLibraryLoadIssue?
     @Published private(set) var seedError: CharacterLibrarySeed.SeedIssue?
+    @Published private(set) var migrationError: String?
     @Published var searchText: String = ""
     @Published var groupFilter: CategoryGroup? = nil
 
@@ -65,6 +91,12 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         isBootstrapping = true
         loadError = nil
         seedError = nil
+        migrationError = nil
+
+        // 前回の削除がアプリ終了や一時的なI/O失敗で途中停止していた場合、
+        // 一覧を表示する前に同じ削除を再試行する。各操作は対象IDに対して
+        // 冪等なので、途中まで消えていても安全に続きから実行できる。
+        await resumePendingWorldDeletions()
 
         // 既存データは初期シードを待たずに表示する。大きなJSONを持つMacでも
         // 一覧が空のまま固まったように見えないようにする。
@@ -83,7 +115,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         isBootstrapping = false
         // 一時的なI/O／Bundle失敗を「初期化済み」として固定しない。
         // エラー表示を残したまま、次回表示時に自動再試行できるようにする。
-        didBootstrap = error == nil && loadError == nil
+        didBootstrap = error == nil && loadError == nil && migrationError == nil
     }
 
     func reload() async {
@@ -174,6 +206,10 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                             duplicate.id.uuidString,
                             String(describing: error)
                         )
+                        migrationError = KizunaCopy.text(
+                            japanese: "重複ストーリーの統合に失敗しました。一覧は表示できますが、再試行してください。",
+                            english: "Some duplicate stories could not be merged. The library is available, but please retry."
+                        )
                     }
                 }
             }
@@ -181,7 +217,50 @@ final class StoryWorldLibraryViewModel: ObservableObject {
             // 一覧を空にしたり、ユーザーデータを推測で削除したりせず、
             // 次回起動で再試行できるよう診断だけを残す。
             NSLog("[StoryLibraryVM] duplicate system world migration failed: %@", String(describing: error))
+            migrationError = KizunaCopy.text(
+                japanese: "重複ストーリーの統合に失敗しました。一覧は表示できますが、再試行してください。",
+                english: "Some duplicate stories could not be merged. The library is available, but please retry."
+            )
         }
+    }
+
+    private func resumePendingWorldDeletions() async {
+        for id in StoryWorldDeletionJournal.pendingIDs {
+            do {
+                guard let world = try await worldRepo.fetchWorlds().first(where: { $0.id == id }) else {
+                    // 世界レコードは消えていても、関連データだけ残っている可能性がある。
+                    try await deleteRelatedWorldData(id: id)
+                    StoryWorldDeletionJournal.clear(id)
+                    continue
+                }
+                guard world.isSystemProtected != true else {
+                    // 保護された標準Worldを誤って削除しない。
+                    StoryWorldDeletionJournal.clear(id)
+                    continue
+                }
+                try await deleteRelatedWorldData(id: id)
+                try await worldRepo.deleteWorld(id: id)
+                StoryWorldDeletionJournal.clear(id)
+            } catch {
+                NSLog("[StoryLibraryVM] pending world deletion retry failed %@: %@", id.uuidString, String(describing: error))
+                migrationError = KizunaCopy.text(
+                    japanese: "前回のストーリー削除を完了できませんでした。再試行してください。",
+                    english: "A previous story deletion could not be completed. Please retry."
+                )
+            }
+        }
+    }
+
+    private func deleteRelatedWorldData(id: UUID) async throws {
+        for session in try await sessionRepo.fetchSessions(storyWorldId: id) {
+            try await sessionRepo.deleteSession(id: session.id)
+        }
+        for entry in try await lorebookRepo.fetchAllEntries(storyWorldId: id) {
+            try await lorebookRepo.deleteEntry(id: entry.id)
+        }
+        try await castRepo.deleteAllCast(storyWorldId: id)
+        try await sceneRepo.deleteAllScenes(storyWorldId: id)
+        try await storyMemoryRepo.deleteAllMemories(storyWorldId: id)
     }
 
     /// Merge references that live on StoryWorld itself before the duplicate
@@ -308,20 +387,12 @@ final class StoryWorldLibraryViewModel: ObservableObject {
 
     func delete(id: UUID) async throws {
         guard let world = worlds.first(where: { $0.id == id }), world.isSystemProtected != true else { return }
+        StoryWorldDeletionJournal.mark(id)
         // 一覧画面からの削除も詳細画面と同じく関連データを掃除する。
         // エラーはUIへ返し、世界だけ閉じて孤児データを隠すことを防ぐ。
-        let sessions = try await sessionRepo.fetchSessions(storyWorldId: id)
-        for session in sessions {
-            try await sessionRepo.deleteSession(id: session.id)
-        }
-        let lorebookEntries = try await lorebookRepo.fetchAllEntries(storyWorldId: id)
-        for entry in lorebookEntries {
-            try await lorebookRepo.deleteEntry(id: entry.id)
-        }
-        try await castRepo.deleteAllCast(storyWorldId: id)
-        try await sceneRepo.deleteAllScenes(storyWorldId: id)
-        try await storyMemoryRepo.deleteAllMemories(storyWorldId: id)
+        try await deleteRelatedWorldData(id: id)
         try await worldRepo.deleteWorld(id: id)
+        StoryWorldDeletionJournal.clear(id)
         await reload()
     }
 
@@ -1407,6 +1478,8 @@ final class StoryWorldDetailViewModel: ObservableObject {
         // 標準ストーリーはUI以外からこのメソッドが呼ばれても削除しない。
         guard world.isSystemProtected != true else { return }
 
+        StoryWorldDeletionJournal.mark(world.id)
+
         // セッションとLorebookは別ファイルのため、世界だけ消すと孤児データが残る。
         let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
         for session in sessions {
@@ -1421,6 +1494,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
         // 物語を削除する時は、その世界だけの思い出も一緒に削除する。
         try await storyMemoryRepo.deleteAllMemories(storyWorldId: world.id)
         try await worldRepo.deleteWorld(id: world.id)
+        StoryWorldDeletionJournal.clear(world.id)
     }
 
     private func defaultCastMembers(for world: StoryWorld, existingScenes: [StoryScene]) -> [CastMember] {

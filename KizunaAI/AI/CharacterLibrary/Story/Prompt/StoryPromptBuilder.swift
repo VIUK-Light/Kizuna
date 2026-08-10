@@ -396,6 +396,7 @@ struct StoryPromptBuilder {
             }
         }
         push(copy("複数キャラを出す時は、発話ごとに必ず「キャラ名: 本文」で分ける。名前のない発話や、誰が喋ったかわからない文を出さない。", "When multiple characters speak, separate every line as Character name: text. Never output an unnamed line or unclear speaker."))
+        push(copy("本文の後に、場所・時間・天候・関係・キャラ状態・所持品が今回明確に変化した時だけ、表示から除去される1行の `STATE_UPDATE: {JSON}` を付ける。キーは location,timeOfDay,mood,weather,relationshipStage,characterUpdates,inventoryChanges,activeGoals。変化がなければ付けない。", "After the dialogue, only when a state clearly changes, append one hidden `STATE_UPDATE: {JSON}` line. Use keys location,timeOfDay,mood,weather,relationshipStage,characterUpdates,inventoryChanges,activeGoals; omit it when nothing changed."))
         let activeEntries = activeCast.prefix(StoryConstants.maxActiveCharacters).compactMap { member -> (id: UUID, name: String)? in
             guard let profile = characterIndex[member.characterId] else { return nil }
             return (member.characterId, profile.visibleName)
@@ -480,8 +481,8 @@ struct StoryPromptBuilder {
                 ? "You are the scene partner in a Kizuna story chat. Reply in English only; no reasoning, explanations, translations, lists, or symbol-only output."
                 : "あなたは絆の物語チャットの相手役です。本文は日本語だけを返す。思考、説明、翻訳、箇条書き、記号だけの返答は禁止。",
             isEnglish
-                ? "Start with \(npcSpeakerLabel): a natural reply. \(duplicateInstruction) Add one Narration: text line only when the location, time, or goal changes or the user explicitly asks for it. Do not repeat the previous scene, greeting, or reply. Never invent the user's dialogue, actions, or feelings."
-                : "基本は「\(npcSpeakerLabel): 自然な返事」を1行だけ返す。\(duplicateInstruction) 場所・時間・目的が実際に変化した時、またはユーザーが明示した時だけ、その前に短い「ナレーション: 本文」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答は禁止。ユーザーの台詞・行動・感情は代弁しない。"
+                ? "Start with \(npcSpeakerLabel): a natural reply. \(duplicateInstruction) Add one Narration: text line only when the location, time, or goal changes or the user explicitly asks for it. Do not repeat the previous scene, greeting, or reply. Never invent the user's dialogue, actions, or feelings. If location, weather, relationship, character state, or inventory clearly changes, append one hidden STATE_UPDATE: {JSON} line after the dialogue using only the documented keys; omit it when nothing changed."
+                : "基本は「\(npcSpeakerLabel): 自然な返事」を1行だけ返す。\(duplicateInstruction) 場所・時間・目的が実際に変化した時、またはユーザーが明示した時だけ、その前に短い「ナレーション: 本文」を1行添える。毎ターンの場面説明、直前と同じ情景・挨拶・返答は禁止。ユーザーの台詞・行動・感情は代弁しない。場所・天候・関係・キャラ状態・所持品が明確に変化した時だけ、本文の後に `STATE_UPDATE: {JSON}` を1行付ける。変化がなければ付けない。"
         ]
         if let userCharacterName, !userCharacterName.isEmpty {
             lines.append(isEnglish

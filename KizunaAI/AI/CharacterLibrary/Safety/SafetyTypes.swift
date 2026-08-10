@@ -180,6 +180,55 @@ struct SafetyDecision: Equatable, Hashable {
     }
 
     static let allow = SafetyDecision()
+
+    /// Safety checker は保存データやプロンプトと同じ日本語の理由を返す。
+    /// その値を判定ロジック側で英訳すると安全ルールの比較やテストが壊れるため、
+    /// UI が表示するときだけローカライズする。
+    var localizedReasons: [String] {
+        reasons.map(SafetyReasonLocalization.localized)
+    }
+}
+
+/// SafetyDecision の説明文だけを画面向けにローカライズする。
+/// 未知の理由は原文を残し、安全警告を空文字にして意味を隠さない。
+enum SafetyReasonLocalization {
+    private static let englishByJapanese: [String: String] = [
+        "犯罪行為の具体的な手順が含まれている可能性があります。":
+            "This character may contain specific instructions for criminal acts.",
+        "未成年と性的内容を組み合わせることはできません。":
+            "Sexual content cannot be combined with minors.",
+        "性的表現が含まれるため safetyRating の再検討を推奨します。":
+            "Sexual content is present; reconsider the safety rating.",
+        "家族・兄弟姉妹的な関係性で恋愛表現が含まれています。":
+            "Romantic content is present in a family or sibling relationship.",
+        "裏社会設定でも犯罪手順は禁止です。":
+            "Criminal instructions are not allowed, even in an underworld setting.",
+        "プロフィールがほぼ空です。性格や関係性を記述してください。":
+            "The profile is almost empty. Describe the personality or relationship.",
+        "自傷の示唆を検知しました。":
+            "Possible self-harm content was detected.",
+        "個人情報のやり取りが含まれている可能性があります。":
+            "This may contain an exchange of personal information.",
+        "犯罪行為の手順依頼を検知しました。":
+            "A request for criminal instructions was detected.",
+        "攻撃的な表現が含まれています。":
+            "Aggressive language is present.",
+        "出力に犯罪手順が含まれています。":
+            "The output contains criminal instructions.",
+        "一般向け設定で性的表現が含まれています。":
+            "Sexual content is present in a general-audience character.",
+        "保存に失敗しました。少し時間を置いて再度お試しください。":
+            "Saving failed. Wait a moment and try again.",
+        "保存に失敗しました。入力内容と保存先を確認して、もう一度試してください。":
+            "Saving failed. Check the input and destination, then try again."
+    ]
+
+    static func localized(_ japanese: String) -> String {
+        KizunaCopy.text(
+            japanese: japanese,
+            english: englishByJapanese[japanese] ?? japanese
+        )
+    }
 }
 
 // MARK: - 相談サポート分類
