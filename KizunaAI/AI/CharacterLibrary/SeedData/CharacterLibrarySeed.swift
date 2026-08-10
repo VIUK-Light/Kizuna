@@ -61,7 +61,10 @@ enum CharacterLibrarySeed {
         "深海研究船の帰港日": "StorySceneDeepSeaResearch",
         "演劇部の代役は幕が下りても": "StorySceneTheaterUnderstudy",
         "星降る温室の管理人": "StorySceneStarlitGreenhouse",
-        "青いバス停で、次の季節を待つ": "StorySceneBlueBusStop"
+        "青いバス停で、次の季節を待つ": "StorySceneBlueBusStop",
+        // 手書きの旧シードも、bundle JSON由来の物語と同じシーン画像規則へ寄せる。
+        "雨上がり、放課後の屋上で": "StorySceneRainUmbrella",
+        "図書室の窓辺で、君を待つ": "StorySceneMagicLibrary"
     ]
 
     private static let fallbackSceneImageKeys = [
@@ -1414,7 +1417,8 @@ enum CharacterLibrarySeed {
                 activeCharacterIds: [ren.id],
                 sceneGoal: "ユーザーと蓮が初めて少し長く会話するきっかけを作る。",
                 conflict: "蓮は人と距離を取ろうとするが、本当は誰かに気づいてほしいと思っている。",
-                summary: "ユーザーと蓮は同じクラスだが、これまでほとんど話したことがない。蓮はいつも一人でいて、周囲からは少し近寄りにくい存在だと思われている。"
+                summary: "ユーザーと蓮は同じクラスだが、これまでほとんど話したことがない。蓮はいつも一人でいて、周囲からは少し近寄りにくい存在だと思われている。",
+                imageKey: sceneImageKey(for: world.title)
             )
             packages.append(WorldPackage(world: world, cast: cast, scenes: [scene]))
         }
@@ -1494,7 +1498,8 @@ enum CharacterLibrarySeed {
                 activeCharacterIds: [mizuki.id],
                 sceneGoal: "ユーザーと美月が初めて落ち着いて言葉を交わす。",
                 conflict: "ユーザーは先輩に話しかけたいが緊張している。美月は優しいが、どこか一線を引いている。",
-                summary: "ユーザーは新しい学校生活に慣れず、放課後に図書室へ来た。そこで、前から少し気になっていた先輩・美月と二人きりになる。"
+                summary: "ユーザーは新しい学校生活に慣れず、放課後に図書室へ来た。そこで、前から少し気になっていた先輩・美月と二人きりになる。",
+                imageKey: sceneImageKey(for: world.title)
             )
             packages.append(WorldPackage(world: world, cast: cast, scenes: [scene]))
         }
