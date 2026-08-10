@@ -346,7 +346,10 @@ struct StoryWorldDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !displayedWorld.tags.isEmpty {
-                    Text(displayedWorld.tags.prefix(8).map { "#\($0)" }.joined(separator: " "))
+                    // Keep the compact hero summary complete as well as the
+                    // pill row below; fixedSize allows long tag lists to wrap
+                    // instead of silently hiding the remaining tags.
+                    Text(displayedWorld.tags.map { "#\($0)" }.joined(separator: " "))
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -797,7 +800,9 @@ private struct FlowTagRow: View {
 
     var body: some View {
         FlowTagLayout(horizontalSpacing: 6, verticalSpacing: 6) {
-            ForEach(tags.prefix(8), id: \.self) { tag in
+            // Do not silently drop tags: the wrapping layout keeps every tag
+            // reachable on compact windows instead of hiding the ninth item.
+            ForEach(tags, id: \.self) { tag in
                 Text(tag)
                     .font(.system(size: 10, weight: .semibold))
                     .padding(.horizontal, 7)

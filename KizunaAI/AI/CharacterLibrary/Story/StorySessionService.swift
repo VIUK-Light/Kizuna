@@ -83,6 +83,9 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
     /// UIの再試行先を言語非依存で表す。backendNameは表示/ログ用に残す。
     let backend: StoryGenerationBackend
     let retryAction: StoryRuntimeNoticeRetryAction
+    /// A readiness timeout may be retried automatically once the local model
+    /// becomes executable. Other failures remain user-controlled.
+    let retryWhenLocalReady: Bool
 
     init(
         id: UUID = UUID(),
@@ -91,7 +94,8 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
         userText: String,
         backendName: String,
         backend: StoryGenerationBackend,
-        retryAction: StoryRuntimeNoticeRetryAction = .userTurn
+        retryAction: StoryRuntimeNoticeRetryAction = .userTurn,
+        retryWhenLocalReady: Bool = false
     ) {
         self.id = id
         self.text = text
@@ -100,6 +104,7 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
         self.backendName = backendName
         self.backend = backend
         self.retryAction = retryAction
+        self.retryWhenLocalReady = retryWhenLocalReady
     }
 }
 
@@ -389,7 +394,7 @@ final class StorySessionService: ObservableObject {
         generationTask?.cancel()
         generationTask = nil
         if activeGenerationModel == .e4b {
-            LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
+            LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: activeGenerationID)
         }
         activeGenerationID = nil
         activeGenerationModel = nil
@@ -890,7 +895,7 @@ final class StorySessionService: ObservableObject {
         let localModelManager = LocalAssistantModelManager.shared
         let selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
 
-        func generateStoryReply(systemPrompt: String) async -> (reply: String?, runtimeNotice: Bool, backend: String) {
+        func generateStoryReply(systemPrompt: String) async -> (reply: String?, runtimeNotice: Bool, backend: String, retryWhenLocalReady: Bool) {
             if generationModel == .b31 {
                 if StoryGemma31BAPIService.shared.hasAPIKey {
                     let reply = await generateWithGemma31BAPI(
@@ -902,7 +907,8 @@ final class StorySessionService: ObservableObject {
                     return (
                         reply: reply,
                         runtimeNotice: isNotice,
-                        backend: isNotice ? "Gemma4 31B API失敗" : "Gemma4 31B API"
+                        backend: isNotice ? "Gemma4 31B API失敗" : "Gemma4 31B API",
+                        retryWhenLocalReady: false
                     )
                 }
 
@@ -913,7 +919,8 @@ final class StorySessionService: ObservableObject {
                         "NAGI's Gemma4 31B API key is not set. Add it in Model details before continuing."
                     ),
                     runtimeNotice: true,
-                    backend: "Gemma4 31B API未設定"
+                    backend: "Gemma4 31B API未設定",
+                    retryWhenLocalReady: false
                 )
             }
 
@@ -926,7 +933,7 @@ final class StorySessionService: ObservableObject {
             // watchdogへ足し戻すと、60秒の起動確認 + 75秒の生成で
             // 1ターンが最大135秒まで伸びてしまう。
             guard isGenerationActive(generationID) else {
-                return (reply: nil, runtimeNotice: true, backend: "iori 生成キャンセル")
+                return (reply: nil, runtimeNotice: true, backend: "iori 生成キャンセル", retryWhenLocalReady: false)
             }
 
             // self-check が保存状態を復元した後のURLを再取得する。起動直後に
@@ -944,7 +951,8 @@ final class StorySessionService: ObservableObject {
                     backend: localStoryBackendStatusName(
                         availability: availability,
                         selectedModelURL: availableModelURL
-                    )
+                    ),
+                    retryWhenLocalReady: availability == .checking || availability == .savedOnly
                 )
             }
 
@@ -966,6 +974,7 @@ final class StorySessionService: ObservableObject {
                 overrideSystemPrompt: systemPrompt,
                 initialMessages: localConversationHistory,
                 overrideModelURL: availableModelURL,
+                generationID: generationID,
                 onUpdate: { @MainActor [weak self] update in
                     self?.handleStreamUpdate(update, generationID: generationID)
                 }
@@ -978,10 +987,11 @@ final class StorySessionService: ObservableObject {
                 return (
                     reply: localStoryGenerationFailureMessage(runtimeError: runtimeError),
                     runtimeNotice: true,
-                    backend: "iori ローカル生成失敗"
+                    backend: "iori ローカル生成失敗",
+                    retryWhenLocalReady: false
                 )
             }
-            return (reply: reply, runtimeNotice: false, backend: backend)
+            return (reply: reply, runtimeNotice: false, backend: backend, retryWhenLocalReady: false)
         }
 
         var generationPrompt = prompt
@@ -989,16 +999,18 @@ final class StorySessionService: ObservableObject {
         var reply = generated.reply
         var isRuntimeNotice = generated.runtimeNotice
         var usedBackendName = generated.backend
+        var retryWhenLocalReady = generated.retryWhenLocalReady
 
         // キャンセルやウォッチドッグ後に、古い生成結果を後段へ保存しない。
         guard isGenerationActive(generationID) else { return }
 
         // 9) 出力 safety
         streamingStatusText = statusText("発話を整形中", "Formatting response")
-        var rawFinal = sanitizedFinalText(
-            (reply?.isEmpty == false ? reply! : streamingResponse)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+        let initialRawOutput = (reply?.isEmpty == false ? reply! : streamingResponse)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let initialStateMetadata = parseStateMetadata(from: initialRawOutput)
+        var modelStatePatch = initialStateMetadata.patch
+        var rawFinal = sanitizedFinalText(initialStateMetadata.visibleText)
 
         // 前ターンと同じ本文を保存しない。最初の重複は一度だけ再生成し、
         // それでも同じなら原因を隠さず system 通知として保存する。
@@ -1029,10 +1041,12 @@ final class StorySessionService: ObservableObject {
                 reply = generated.reply
                 isRuntimeNotice = generated.runtimeNotice
                 usedBackendName = generated.backend + "・重複再試行"
-                rawFinal = sanitizedFinalText(
-                    (reply?.isEmpty == false ? reply! : streamingResponse)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                )
+                retryWhenLocalReady = generated.retryWhenLocalReady
+                let retryRawOutput = (reply?.isEmpty == false ? reply! : streamingResponse)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let retryStateMetadata = parseStateMetadata(from: retryRawOutput)
+                modelStatePatch = retryStateMetadata.patch ?? modelStatePatch
+                rawFinal = sanitizedFinalText(retryStateMetadata.visibleText)
 
                 if !isRuntimeNotice,
                    isMeaningfulStoryText(rawFinal) {
@@ -1081,7 +1095,8 @@ final class StorySessionService: ObservableObject {
                     userMessageID: userMessageID,
                     userText: userText,
                     backendName: usedBackendName,
-                    backend: generationModel == .e4b ? .local : .gemmaAPI
+                    backend: generationModel == .e4b ? .local : .gemmaAPI,
+                    retryWhenLocalReady: retryWhenLocalReady
                 )
                 self.latestSafetyConcern = safetyConcern
                 self.streamingResponse = rawFinal
@@ -1265,6 +1280,7 @@ final class StorySessionService: ObservableObject {
         deterministicState.updatedAt = Date()
         session.storyState = deterministicState
 
+        let progressStatePatch = modelStatePatch ?? structuredProgressUpdate?.storyState
         let progressUpdate = StoryProgressUpdate(
             progressLabel: structuredProgressUpdate?.progressLabel.nonEmpty
                 ?? session.progressLabel.nonEmpty
@@ -1282,7 +1298,7 @@ final class StorySessionService: ObservableObject {
                 structuredProgressUpdate?.unresolvedHooks,
                 fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
             ),
-            storyState: structuredProgressUpdate?.storyState
+            storyState: progressStatePatch
         )
         session.progressLabel = progressUpdate.progressLabel.nonEmpty
             ?? session.progressLabel.nonEmpty
@@ -1602,7 +1618,7 @@ final class StorySessionService: ObservableObject {
             self.activeGenerationModel = nil
             self.generationWatchdogDeadline = nil
             if generationModel == .e4b {
-                LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
+                LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
             }
             let notice: String
             let backendName: String
@@ -2240,6 +2256,62 @@ final class StorySessionService: ObservableObject {
             return update
         }
         return nil
+    }
+
+    /// Extract the optional state delta emitted at the end of a model turn.
+    /// It is deliberately kept out of the visible story transcript: the model
+    /// writes one compact `STATE_UPDATE: {JSON}` line only when a durable state
+    /// change occurred, and the parser removes that line before speaker parsing.
+    private func parseStateMetadata(
+        from text: String
+    ) -> (visibleText: String, patch: StoryStatePatch?) {
+        let markers = ["STATE_UPDATE:", "状態更新:"]
+        guard let marker = markers
+            .compactMap({ marker in text.range(of: marker, options: [.caseInsensitive]) })
+            .min(by: { $0.lowerBound < $1.lowerBound }) else {
+            return (text, nil)
+        }
+
+        let payload = text[marker.upperBound...]
+        guard let open = payload.firstIndex(of: "{") else { return (text, nil) }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var close: String.Index?
+        for index in payload.indices {
+            let character = payload[index]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    inString = false
+                }
+                continue
+            }
+            if character == "\"" {
+                inString = true
+            } else if character == "{" {
+                depth += 1
+            } else if character == "}" {
+                depth -= 1
+                if depth == 0 {
+                    close = index
+                    break
+                }
+            }
+        }
+        guard let close,
+              let data = String(payload[open...close]).data(using: .utf8),
+              let patch = try? progressDecoder.decode(StoryStatePatch.self, from: data) else {
+            return (text, nil)
+        }
+
+        let trailingStart = payload.index(after: close)
+        let visible = (String(text[..<marker.lowerBound]) + String(payload[trailingStart...]))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (visible, patch)
     }
 
     private func normalizedHooks(_ hooks: [String]?, fallback: [String]) -> [String] {

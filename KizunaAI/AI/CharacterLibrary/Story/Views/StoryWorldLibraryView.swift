@@ -66,6 +66,10 @@ struct StoryWorldLibraryView: View {
                 loadErrorBanner
                 Divider()
             }
+            if vm.migrationError != nil {
+                migrationErrorBanner
+                Divider()
+            }
             content
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
@@ -215,6 +219,30 @@ struct StoryWorldLibraryView: View {
             Text(KizunaCopy.text(
                 japanese: "最新のストーリー一覧を読み込めませんでした。表示中の一覧は削除されていません。",
                 english: "The latest story list could not be loaded. The displayed list was not deleted."
+            ))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+                Task { await vm.retryBootstrap() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(vm.isBootstrapping)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.10))
+    }
+
+    private var migrationErrorBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                .foregroundStyle(.orange)
+            Text(vm.migrationError ?? KizunaCopy.text(
+                japanese: "保存データの整理を完了できませんでした。",
+                english: "Saved-data cleanup could not be completed."
             ))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)

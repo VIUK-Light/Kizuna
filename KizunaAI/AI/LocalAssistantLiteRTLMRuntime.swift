@@ -47,6 +47,10 @@ struct LocalAssistantLiteRTLMRequest {
     // local execution.
     let isRuntimeCheck: Bool
 
+    /// Caller-owned turn identity used to scope native cancellation. A delayed
+    /// cancel from turn A must never stop the newer conversation B.
+    let generationID: UUID?
+
     // GPU is intentionally opt-in.  The current iOS release establishes a
     // stable CPU baseline first, rather than treating a native crash as a
     // recoverable Swift error.
@@ -63,7 +67,8 @@ struct LocalAssistantLiteRTLMRequest {
         seed: UInt32,
         initialMessages: [LocalAssistantLiteRTLMHistoryMessage] = [],
         isRuntimeCheck: Bool = false,
-        preferGPU: Bool = false
+        preferGPU: Bool = false,
+        generationID: UUID? = nil
     ) {
         self.prompt = prompt
         self.systemPrompt = systemPrompt
@@ -76,6 +81,7 @@ struct LocalAssistantLiteRTLMRequest {
         self.initialMessages = initialMessages
         self.isRuntimeCheck = isRuntimeCheck
         self.preferGPU = preferGPU
+        self.generationID = generationID
     }
 }
 
@@ -116,11 +122,13 @@ private actor LiteRTLMExecutionGate {
 private final class LiteRTLMActiveConversation: @unchecked Sendable {
     private let lock = NSLock()
     private var conversation: Conversation?
+    private var generationID: UUID?
 
     @MainActor
-    func set(_ conversation: Conversation) {
+    func set(_ conversation: Conversation, generationID: UUID?) {
         lock.lock()
         self.conversation = conversation
+        self.generationID = generationID
         lock.unlock()
     }
 
@@ -129,14 +137,22 @@ private final class LiteRTLMActiveConversation: @unchecked Sendable {
         lock.lock()
         if self.conversation === conversation {
             self.conversation = nil
+            self.generationID = nil
         }
         lock.unlock()
     }
 
-    func cancel() {
+    /// A supplied generation only cancels its own conversation. Nil is used by
+    /// app lifecycle cancellation and intentionally cancels any active turn.
+    func cancel(generationID requestedGenerationID: UUID? = nil) {
         lock.lock()
         let activeConversation = conversation
+        let activeGenerationID = generationID
         lock.unlock()
+        if let requestedGenerationID,
+           activeGenerationID != requestedGenerationID {
+            return
+        }
         try? activeConversation?.cancel()
     }
 }
@@ -364,13 +380,13 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
 
     /// UIの停止・watchdogから呼ぶ。Swift TaskだけでなくネイティブConversationにも
     /// cancelを届け、次ターンがexecution gateで待ち続けないようにする。
-    nonisolated func cancelActiveGeneration() {
+    nonisolated func cancelActiveGeneration(generationID: UUID? = nil) {
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
 #if canImport(LiteRTLM)
         // 遅延した MainActor Task にすると、A のキャンセル要求が実行される前に
         // B の Conversation が登録され、Bまでキャンセルする競合が起きる。
         // Conversation は内部ロックで保護しているため、ここで同じ世代を即時停止する。
-        activeConversation.cancel()
+        activeConversation.cancel(generationID: generationID)
 #endif
 #endif
     }
@@ -440,7 +456,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     maxOutputTokens: sizedRequest.maxTokens
                 )
             )
-            await activeConversation.set(conversation)
+            await activeConversation.set(conversation, generationID: sizedRequest.generationID)
             NSLog("[KizunaLiteRTLM] conversation ready; sending message")
             let response: Message
             do {
@@ -561,7 +577,8 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     )
                 },
                 isRuntimeCheck: candidate.isRuntimeCheck,
-                preferGPU: false
+                preferGPU: false,
+                generationID: candidate.generationID
             )
         }
 
@@ -624,7 +641,8 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             seed: request.seed,
             initialMessages: initialMessages,
             isRuntimeCheck: request.isRuntimeCheck,
-            preferGPU: false
+            preferGPU: false,
+            generationID: request.generationID
         )
     }
 

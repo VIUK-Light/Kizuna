@@ -584,6 +584,16 @@ private struct StorySessionChatBody: View {
         .sheet(isPresented: $isShowingSafetyHelp) {
             SafetyConcernHelpSheetFrame()
         }
+        .onChange(of: localModelManager.runtimeAvailability) { _, availability in
+            guard availability == .executable,
+                  let notice = service.latestRuntimeNotice,
+                  notice.backend == .local,
+                  notice.retryWhenLocalReady else { return }
+            // A readiness timeout is not a generation failure. Reuse the
+            // persisted user-message ID so the same turn resumes once the
+            // background self-check finishes, without duplicating input.
+            _ = vm.retryRuntimeNotice(notice)
+        }
     }
 
     // 休憩提案はアラートではなく、会話画面内に表示するカード。

@@ -95,21 +95,27 @@ struct CharacterCreateView: View {
             if let t = template { vm.applyTemplate(t) }
             await vm.loadTemplates()
         }
-        .alert("確認が必要です", isPresented: warnAlertBinding) {
-            Button("修正に戻る", role: .cancel) { vm.resetState() }
-            Button("このまま保存") {
+        .alert(
+            KizunaCopy.text(japanese: "確認が必要です", english: "Review required"),
+            isPresented: warnAlertBinding
+        ) {
+            Button(KizunaCopy.text(japanese: "修正に戻る", english: "Edit"), role: .cancel) { vm.resetState() }
+            Button(KizunaCopy.text(japanese: "このまま保存", english: "Save anyway")) {
                 Task { await vm.attemptSave(force: true) }
             }
         } message: {
             if case let .warned(decision) = vm.state {
-                Text(decision.reasons.joined(separator: "\n"))
+                Text(decision.localizedReasons.joined(separator: "\n"))
             }
         }
-        .alert("保存できません", isPresented: blockedAlertBinding) {
-            Button("修正に戻る", role: .cancel) { vm.resetState() }
+        .alert(
+            KizunaCopy.text(japanese: "保存できません", english: "Cannot save"),
+            isPresented: blockedAlertBinding
+        ) {
+            Button(KizunaCopy.text(japanese: "修正に戻る", english: "Edit"), role: .cancel) { vm.resetState() }
         } message: {
             if case let .blocked(decision) = vm.state {
-                Text(decision.reasons.joined(separator: "\n"))
+                Text(decision.localizedReasons.joined(separator: "\n"))
             }
         }
         .onChange(of: vm.state) { _, new in

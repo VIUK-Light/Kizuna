@@ -131,6 +131,7 @@ final class PersonaChatService: ObservableObject {
             safetySnapshot: nil,
             advancedSettings: advanced,
             overrideSystemPrompt: personaPrompt,
+            generationID: generationID,
             onUpdate: { @MainActor [weak self] update in
                 self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
             }
@@ -284,6 +285,7 @@ final class PersonaChatService: ObservableObject {
             safetySnapshot: nil,
             advancedSettings: advanced,
             overrideSystemPrompt: systemPrompt,
+            generationID: generationID,
             onUpdate: { @MainActor [weak self] update in
                 self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
             }
@@ -346,7 +348,7 @@ final class PersonaChatService: ObservableObject {
     func cancel() {
         generationTask?.cancel()
         generationTask = nil
-        LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
+        LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: activeGenerationID)
         if let threadID = activeThreadID {
             let partial = streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines)
             if let meaningful = meaningfulResponse(partial) {
@@ -435,7 +437,7 @@ final class PersonaChatService: ObservableObject {
                       self.phase == .thinking else { return }
                 self.generationTask?.cancel()
                 self.generationTask = nil
-                LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
+                LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
                 if let partial = self.meaningfulResponse(self.streamingResponse) {
                     PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: partial)
                     PersonaChatStore.shared.finalizePersist()
