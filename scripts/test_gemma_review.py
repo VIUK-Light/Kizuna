@@ -82,7 +82,7 @@ class GemmaReviewTests(unittest.TestCase):
         self.assertEqual(request.call_count, 3)
         self.assertEqual(sleep.call_args_list, [call(1), call(2)])
 
-    def test_api_failure_fails_check_and_reports_skipped_files(self):
+    def test_transient_api_failure_is_neutral_and_reports_skipped_files(self):
         event = {
             "pull_request": {
                 "number": 1,
@@ -108,9 +108,45 @@ class GemmaReviewTests(unittest.TestCase):
                     "patch": "@@ -1 +1 @@\n+let value = 1",
                 }]
                 gemma_type.return_value.review.side_effect = review.ApiStatusError("Gemma", 503)
-                self.assertEqual(review.main(["--event-path", path, "--repo", "VIUK-Light/Kizuna"]), 1)
+                self.assertEqual(review.main(["--event-path", path, "--repo", "VIUK-Light/Kizuna"]), 0)
                 publish.assert_called_once()
                 self.assertIn("APIレビュー失敗", publish.call_args.args[3])
+                self.assertIn("一時的に利用できなかった", publish.call_args.args[3])
+        finally:
+            os.unlink(path)
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_invalid_model_response_still_fails_check(self):
+        event = {
+            "pull_request": {
+                "number": 1,
+                "head": {"repo": {"full_name": "VIUK-Light/Kizuna"}},
+                "base": {"repo": {"full_name": "VIUK-Light/Kizuna"}},
+            }
+        }
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            json.dump(event, handle)
+            path = handle.name
+        previous = {key: os.environ.get(key) for key in ("GITHUB_TOKEN", "GEMINI_API_KEY")}
+        os.environ["GITHUB_TOKEN"] = "test-token"
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        try:
+            with patch.object(review, "GitHubClient") as github_type, \
+                 patch.object(review, "GeminiClient") as gemma_type, \
+                 patch.object(review, "upsert_review_comment"):
+                github = github_type.return_value
+                github.get_pull_request.return_value = {"title": "Test", "body": ""}
+                github.get_changed_files.return_value = [{
+                    "filename": "Diary/A.swift",
+                    "status": "modified",
+                    "patch": "@@ -1 +1 @@\n+let value = 1",
+                }]
+                gemma_type.return_value.review.side_effect = review.ReviewError("invalid response")
+                self.assertEqual(review.main(["--event-path", path, "--repo", "VIUK-Light/Kizuna"]), 1)
         finally:
             os.unlink(path)
             for key, value in previous.items():

@@ -655,18 +655,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             gemma = GeminiClient(api_key, os.getenv("GEMMA_MODEL"), timeout)
             results: list[dict[str, Any]] = []
             review_failed = False
+            only_transient_api_failures = True
             for index, chunk in enumerate(chunks, start=1):
                 logging.info("Reviewing chunk %d/%d (%d files).", index, len(chunks), len(chunk.files))
                 try:
                     raw_result = gemma.review(prompt_for(args.repo, title, body, chunk))
                     results.append(validate_result(raw_result, chunk))
+                except ApiStatusError as exc:
+                    logging.warning("Gemma chunk %d failed: %s", index, exc)
+                    review_failed = True
+                    # A quota/rate-limit or provider outage is not a code
+                    # finding. Keep the skipped files visible in the comment,
+                    # but do not make the PR check red when the provider was
+                    # the only component that failed.
+                    if exc.status_code not in RETRYABLE_STATUS_CODES:
+                        only_transient_api_failures = False
+                    skipped.extend(f.filename + "（APIレビュー失敗）" for f in chunk.files)
                 except ReviewError as exc:
                     logging.warning("Gemma chunk %d failed: %s", index, exc)
                     review_failed = True
+                    only_transient_api_failures = False
                     skipped.extend(f.filename + "（APIレビュー失敗）" for f in chunk.files)
             final = merge_results(results, skipped)
+            if review_failed and only_transient_api_failures:
+                final["summary"] = (
+                    str(final.get("summary", "")).strip()
+                    + " Gemma APIが一時的に利用できなかったため、一部ファイルは未レビューです。"
+                ).strip()[:1_000]
             upsert_review_comment(github, args.repo, number, render_comment(final, len(files)))
             if review_failed:
+                if only_transient_api_failures:
+                    logging.warning("Gemma review was incomplete because the provider returned a retryable HTTP error; the check is neutral.")
+                    return 0
                 logging.error("Gemma review failed for one or more chunks; the check is failing.")
                 return 1
         except ReviewError as exc:
