@@ -98,6 +98,10 @@ final class PersonaChatService: ObservableObject {
         userText: String,
         generationID: UUID
     ) async {
+        // A cancelled legacy task can still be scheduled after the caller has
+        // switched threads. Do not start another runtime generation for that
+        // stale generation.
+        guard isGenerationActive(generationID) else { return }
         guard let thread = PersonaChatStore.shared.thread(id: threadID) else {
             // スレッド削除・破損などで本文を取得できない場合も、生成タスクを
             // 無反応のまま終了させず、サービス状態を解放してエラー導線を出す。
@@ -176,8 +180,8 @@ final class PersonaChatService: ObservableObject {
             // キャラ本体が削除されてもスレッドのスナップショットで会話を続ける。
             // 参照だけを残して永久にエラーにするのではなく、旧Personaパスへ移行する。
             PersonaChatStore.shared.detachCharacterReference(threadID: threadID)
-            await MainActor.run {
-                guard self.activeGenerationID == generationID else { return }
+            let canFallback = await MainActor.run { () -> Bool in
+                guard self.isGenerationActive(generationID) else { return false }
                 PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
                 // updateLastAssistantMessageは末尾のassistant枠を更新する。
                 // 先ほどの削除後に空枠を再追加して、旧応答を上書きせず
@@ -186,7 +190,9 @@ final class PersonaChatService: ObservableObject {
                     PersonaMessage(role: .assistant, text: ""),
                     toThread: threadID
                 )
+                return true
             }
+            guard canFallback else { return }
             await runLegacyPersonaGeneration(threadID: threadID, userText: userText, generationID: generationID)
             return
         }
