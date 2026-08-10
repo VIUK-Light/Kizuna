@@ -89,7 +89,16 @@ struct StoryWorldDetailView: View {
                 Task { @MainActor in
                     defer { isDeleting = false }
                     do {
-                        try await onDelete?()
+                        // Library callers can inject their coordinated delete
+                        // operation.  Standalone detail presentations still
+                        // need to execute the throwing view-model path; an
+                        // optional action must never turn Delete into a
+                        // dismiss-only no-op.
+                        if let onDelete {
+                            try await onDelete()
+                        } else {
+                            try await vm.delete()
+                        }
                         dismiss()
                     } catch {
                         NSLog("[StoryWorldDetailView] story world deletion failed: %@", error.localizedDescription)
