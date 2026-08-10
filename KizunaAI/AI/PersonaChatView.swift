@@ -537,9 +537,12 @@ struct PersonaChatView: View {
             // 戻す経路も、この集合を共有して同じ規則で判定する。
             var seenSessionIDs = Set<UUID>()
             var failedWorldIDs = Set<UUID>()
+            var successfulWorldIDs = Set<UUID>()
             for world in worlds {
                 do {
                     let sessions = try await storySessionRepo.fetchSessions(storyWorldId: world.id)
+                    successfulWorldIDs.insert(world.id)
+                    failedWorldIDs.remove(world.id)
                     for session in sessions where seenSessionIDs.insert(session.id).inserted {
                         items.append(StoryHistoryItem(world: world, session: session))
                     }
@@ -553,6 +556,7 @@ struct PersonaChatView: View {
             // 同じセッションを重複表示しないようIDで抑止する。
             for item in storyHistoryItems
                 where failedWorldIDs.contains(item.world.id)
+                && !successfulWorldIDs.contains(item.world.id)
                 && seenSessionIDs.insert(item.session.id).inserted {
                 items.append(item)
             }
