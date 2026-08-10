@@ -1619,36 +1619,36 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func applyStatusPresentation() {
         // ダウンロード失敗時に「未導入」で上書きせず、原因を最上段へ出す。
-        let nextStatus: (kind: LocalAssistantStatusKind, japaneseMessage: String)
+        var nextStatus: (kind: LocalAssistantStatusKind, japaneseMessage: String)
         if downloadStatus == .failed, let lastErrorMessage, !lastErrorMessage.isEmpty {
             let message = classifyReadableError(lastErrorMessage)
             nextStatus = (.downloadFailure(message: message), message)
         } else {
-            nextStatus = switch displayState {
+            switch displayState {
             case .downloading:
                 if downloadStatus == .preflighting {
-                    (.preflighting, "配布元と保存先を確認しています")
+                    nextStatus = (.preflighting, "配布元と保存先を確認しています")
                 } else if let progressValue {
                     let percent = Int(progressValue * 100)
-                    (.downloading(resuming: false, percent: percent), "モデルを受信しています (\(percent)%)")
+                    nextStatus = (.downloading(resuming: false, percent: percent), "モデルを受信しています (\(percent)%)")
                 } else {
-                    (.downloading(resuming: false, percent: nil), "モデルを受信しています")
+                    nextStatus = (.downloading(resuming: false, percent: nil), "モデルを受信しています")
                 }
             case .resumable:
-                (.resumeAvailable, "前回の続きから再開できます")
+                nextStatus = (.resumeAvailable, "前回の続きから再開できます")
             case .checking:
-                (.checking, "ローカルモデルを起動確認しています")
+                nextStatus = (.checking, "ローカルモデルを起動確認しています")
             case .executable:
-                (.executable, "ローカルモデルを実行できます")
+                nextStatus = (.executable, "ローカルモデルを実行できます")
             case .savedOnly:
-                (.savedOnly, "モデルファイルは保存済みです")
+                nextStatus = (.savedOnly, "モデルファイルは保存済みです")
             case .recentFailure:
-                (.recentFailure, runtimeDiagnosticSummary ?? "ローカル実行の確認に失敗しました")
+                nextStatus = (.recentFailure, runtimeDiagnosticSummary ?? "ローカル実行の確認に失敗しました")
             case .modelMissing:
                 if hasLegacyInstalledModel {
-                    (.modelMissing(hasLegacyModel: true), "旧ローカルモデルを検出しました。Gemma 4 は未導入です")
+                    nextStatus = (.modelMissing(hasLegacyModel: true), "旧ローカルモデルを検出しました。Gemma 4 は未導入です")
                 } else {
-                    (.modelMissing(hasLegacyModel: false), "ローカルモデルは未導入です")
+                    nextStatus = (.modelMissing(hasLegacyModel: false), "ローカルモデルは未導入です")
                 }
             }
         }
