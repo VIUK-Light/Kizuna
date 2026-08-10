@@ -257,7 +257,7 @@ struct CharacterCreateView: View {
                 labeledField(KizunaCopy.text(japanese: "カテゴリー", english: "Category")) {
                     categoryMenu
                 }
-                labeledField("関係性") {
+                labeledField(KizunaCopy.text(japanese: "関係性", english: "Relationship")) {
                     Picker("", selection: $vm.draft.relationshipGenre) {
                         ForEach(RelationshipGenre.allCases) { g in
                             Text(g.localizedDisplayName).tag(g)
@@ -520,7 +520,9 @@ struct CharacterCreateView: View {
                             Image(systemName: "checkmark.shield.fill")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.green)
-                            Text(r).font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(SafetyReasonLocalization.localized(r))
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
                         }
                     }
                     Divider()
