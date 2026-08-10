@@ -242,6 +242,20 @@ struct StoryWorld: Codable, Identifiable, Equatable, Hashable {
         if let value = localization.tags, !value.isEmpty {
             copy.tags = Self.normalizedUniqueValues(value)
         }
+        if let value = localization.safetyRules, !value.isEmpty {
+            // An explicit localization wins, including for user-created
+            // worlds.  This is presentation-only and never writes back to the
+            // Japanese source values.
+            copy.safetyRules = Self.normalizedUniqueValues(value)
+        } else if isSystemProtected == true {
+            // Bundled worlds predate the localization payload and keep their
+            // safety/output rules in Japanese.  Translate only the stable
+            // bundled catalog; unknown text remains visible rather than being
+            // discarded or replaced with a misleading placeholder.
+            copy.safetyRules = Self.normalizedUniqueValues(
+                safetyRules.map(StoryEnglishCatalog.localizedSafetyRule)
+            )
+        }
         return copy
     }
 

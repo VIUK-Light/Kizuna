@@ -11,6 +11,9 @@ struct StoryWorldLocalization: Codable, Equatable, Hashable {
     var storyGoal: String?
     var mood: String?
     var tags: [String]?
+    /// Presentation-only translations for the safety/output rules stored on a world.
+    /// This is optional so older saved worlds continue to decode unchanged.
+    var safetyRules: [String]?
 
     init(
         title: String? = nil,
@@ -20,7 +23,8 @@ struct StoryWorldLocalization: Codable, Equatable, Hashable {
         openingScene: String? = nil,
         storyGoal: String? = nil,
         mood: String? = nil,
-        tags: [String]? = nil
+        tags: [String]? = nil,
+        safetyRules: [String]? = nil
     ) {
         self.title = title
         self.shortDescription = shortDescription
@@ -30,6 +34,7 @@ struct StoryWorldLocalization: Codable, Equatable, Hashable {
         self.storyGoal = storyGoal
         self.mood = mood
         self.tags = tags
+        self.safetyRules = safetyRules
     }
 }
 
@@ -121,6 +126,82 @@ enum StoryEnglishCatalog {
         "演劇部の代役は幕が下りても": "The Drama Club Stand-In After the Curtain Falls",
         "青いバス停で、次の季節を待つ": "Waiting for the Next Season at the Blue Bus Stop"
     ]
+
+    /// Stable rules shipped with bundled worlds are persisted in Japanese for
+    /// prompt compatibility.  The detail screen and the English prompt share
+    /// this catalog so presentation translation never changes the stored rule
+    /// or the behavior of user-authored worlds.
+    private static let safetyRuleTranslations: [String: String] = [
+        "ユーザーが拒否や不快感を示したら態度を和らげ、話題を変える。": "If the user refuses or shows discomfort, soften the tone and change the subject.",
+        "個人を特定する情報を聞き出さない。": "Do not solicit personally identifying information.",
+        "現実の危険行為や違法行為の手順を説明しない。": "Do not explain procedures for real-world dangerous or illegal acts.",
+        "恋愛描写は穏やかな範囲に抑える。": "Keep romance within a gentle, non-explicit range.",
+        "強制・脅迫・監禁・支配を肯定的に描かない。": "Do not portray coercion, threats, confinement, or domination positively.",
+        "嫉妬や執着は軽い感情表現に留める。": "Keep jealousy and fixation as mild emotional expressions.",
+        "家族関係は安心できる関係として描く。": "Portray family relationships as safe and supportive.",
+        "兄妹姉弟・親代わりは恋愛化しない。": "Do not turn sibling or parental roles into romance.",
+        "依存や支配を肯定しない。": "Do not endorse dependency or domination.",
+        "犯罪や危険行為の具体的手順を出さない。": "Do not provide concrete steps for crime or dangerous acts.",
+        "暴力や犯罪を現実で実行するよう促さない。": "Do not encourage carrying out violence or crime in real life.",
+        "物語上の雰囲気に留める。": "Keep this at the level of fictional atmosphere.",
+        "過度な残虐描写を避ける。": "Avoid excessively graphic cruelty.",
+        "恐怖演出は雰囲気中心にする。": "Keep horror focused on atmosphere.",
+        "現実の危険行為につながる指示を出さない。": "Do not give instructions that could lead to real-world danger.",
+        "暴力描写は雰囲気の範囲に留める。": "Keep violence at the level of fictional atmosphere.",
+        "現実の戦闘技術を具体化しない。": "Do not provide concrete real-world combat techniques.",
+        "医療・法律・金融などの高リスク領域では断定しすぎない。": "Avoid overconfident claims in high-risk areas such as medicine, law, and finance.",
+        "必要に応じて専門家への相談を促す。": "Encourage consulting a qualified professional when appropriate.",
+        "未成年キャラクターの場合、性的描写を避ける。": "Avoid sexual content involving minor characters.",
+        "ユーザーが不快感や拒否を示したら態度を和らげる。": "If the user shows discomfort or refusal, soften the tone.",
+        "家族・兄弟姉妹的関係は恋愛化しない。": "Do not turn family or sibling-like relationships into romance.",
+        "支配や従属を美化しすぎない。": "Do not excessively romanticize domination or submission.",
+        "現実的な人権侵害を肯定する描写は避ける。": "Avoid portraying real-world human-rights abuses positively.",
+        "競争は健全な範囲に留め、暴力や侮辱を煽らない。": "Keep competition healthy and do not incite violence or insults.",
+        "立場の差を利用した強要や搾取を肯定しない。": "Do not endorse coercion or exploitation based on a power difference.",
+        "暴力的な対立は雰囲気に留め、煽動的な描写を避ける。": "Keep violent conflict atmospheric and avoid inciting descriptions.",
+        "犯罪手順を具体化しない。": "Do not provide concrete crime procedures.",
+        "医療的な確定診断や具体的処方は行わず、必要時に専門家相談を促す。": "Do not provide definitive medical diagnoses or specific prescriptions; encourage professional help when needed.",
+        "法律上の確定見解は出さず、必要時に専門家相談を促す。": "Do not give definitive legal opinions; encourage professional advice when needed.",
+        "過度な残虐描写を避ける。恐怖演出は雰囲気中心に。": "Avoid excessive gore; keep fear focused on atmosphere.",
+        "悪役であってもユーザーへの実害を煽る描写は避ける。": "Even for villains, avoid content that encourages real harm to the user.",
+        "戦闘描写は雰囲気の範囲に留め、現実の暴力指南をしない。": "Keep battle scenes atmospheric and do not provide real-world violence guidance.",
+        "人生選択を強要しない。決定権はユーザーにあると示す。": "Do not force life choices; make clear that the user remains the decision maker.",
+        "押し付けず、ユーザーのペースに合わせる。": "Do not be pushy; follow the user's pace.",
+        // Rules used by the hand-authored bundled worlds.
+        "犯罪を美化しない": "Do not glamorize crime.",
+        "危険な行動を促さない": "Do not encourage dangerous actions.",
+        "現実の違法行為に使える手順を出さない": "Do not provide procedures that could be used for real-world illegal acts.",
+        "個人情報を雑に扱わない": "Handle personal information carefully.",
+        "いじめを面白がらない": "Do not treat bullying as entertainment.",
+        "過激な恋愛表現は避ける": "Avoid overly intense romantic content.",
+        "依存や束縛を美化しない": "Do not romanticize dependency or possessiveness.",
+        "恋愛感情は段階的に進める": "Let romantic feelings develop gradually.",
+        "初期段階で過度に甘い表現を使わない": "Avoid overly sweet expressions at the beginning.",
+        "年齢差や立場差を強引に使わない": "Do not exploit age or power differences.",
+        "依存的な関係にしない": "Do not create a dependent relationship.",
+        "ユーザーの意思を尊重する": "Respect the user's choices.",
+        "初期段階では憧れ・緊張・安心感を中心に描く": "At the beginning, focus on admiration, nervousness, and a sense of safety.",
+        "危険な行動は具体手順ではなく、回避・相談・安全確保に寄せる": "Frame dangerous situations around avoidance, seeking help, and safety—not concrete instructions.",
+        "同時に詳しく描く activeCharacters は最大 3 人までにする": "Describe no more than three active characters in detail at once.",
+        "衝突はあるが、相手を一方的に悪者にしない": "Allow conflict without portraying the other person as wholly evil.",
+        "爽やかさと少しの寂しさを両方入れる": "Balance freshness with a little loneliness.",
+        "星空や夜風の描写を自然に入れる": "Weave in the night sky and evening breeze naturally.",
+        // Shared generation/output-format rules.
+        "最初の行は必ず「ナレーション: 本文」": "The first line must be \"Narration: text\".",
+        "場面が自然なら1ターンで複数キャラが話してよい": "Multiple characters may speak in one turn when natural for the scene.",
+        "キャラ発話は「名前: 本文」": "Character dialogue must use \"Name: text\".",
+        "複数キャラを出す時は発話ごとに名前を分ける": "When multiple characters appear, separate each line with the speaker's name.",
+        "active以外のキャラは同じ場にいて自然に反応する時だけ短く喋る": "Off-scene characters speak briefly only when a natural reaction in the same scene calls for it.",
+        "会話だけで終わらせず、場面・表情・沈黙・空気を少し描写する": "Do not end with dialogue alone; add a little scene, expression, silence, or atmosphere.",
+        "思考過程、案、選択肢、メタ発言は出さない": "Do not output reasoning, suggestions, choices, or meta commentary."
+    ]
+
+    /// Translate a built-in rule for presentation/prompt use.  Unknown rules
+    /// intentionally remain unchanged so user-authored text is never hidden or
+    /// silently rewritten.
+    static func localizedSafetyRule(_ rule: String) -> String {
+        safetyRuleTranslations[rule] ?? rule
+    }
 
     private static let detailed: [String: StoryWorldLocalization] = [
         "雨宿りの喫茶街": StoryWorldLocalization(
