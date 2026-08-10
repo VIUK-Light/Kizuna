@@ -169,4 +169,14 @@ final class CharacterCreateViewModel: ObservableObject {
         saveOperationID = nil
         state = .editing
     }
+
+    /// 画面が閉じられた時に、検証完了後の遅延保存を無効化する。
+    /// リポジトリへの保存が既に開始された場合は中断できないため、
+    /// `attemptSave` 側でもoperationIDを再確認して完了状態を公開しない。
+    func cancelPendingSave() {
+        saveOperationID = nil
+        if case .validating = state {
+            state = .editing
+        }
+    }
 }

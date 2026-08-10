@@ -87,6 +87,7 @@ struct CharacterCreateView: View {
             footer
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
+        .interactiveDismissDisabled(isFormLocked)
         .task {
             // 親画面から渡されたテンプレートは同期的に先に適用する。
             // テンプレート一覧のI/Oを待ってから適用すると、その待機中に
@@ -117,6 +118,13 @@ struct CharacterCreateView: View {
                 dismiss()
             }
         }
+        .onDisappear {
+            // A parent may dismiss the sheet programmatically. Invalidate any
+            // in-flight safety task so it cannot persist after this editor is
+            // gone. Interactive dismissal and the header button are blocked
+            // while validation is active, but this is the final race guard.
+            vm.cancelPendingSave()
+        }
         .onChange(of: selectedAvatarItem) { _, item in
             avatarLoadGeneration &+= 1
             let generation = avatarLoadGeneration
@@ -131,6 +139,7 @@ struct CharacterCreateView: View {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { dismiss() }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .disabled(isFormLocked)
             Spacer()
             Text(existing == nil
                  ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")

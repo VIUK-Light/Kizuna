@@ -212,7 +212,13 @@ enum CharacterLibrarySeed {
                                 ? package.scenes[index]
                                 : package.scenes.first
                             var repairedScene = existingScene
-                            repairedScene.imageKey = seedScene?.imageKey ?? sceneImageKey(for: package.world.title)
+                            if let imageKey = seedScene?.imageKey?
+                                .trimmingCharacters(in: .whitespacesAndNewlines),
+                               !imageKey.isEmpty {
+                                repairedScene.imageKey = imageKey
+                            } else {
+                                repairedScene.imageKey = sceneImageKey(for: package.world.title)
+                            }
                             try await sceneRepo.saveScene(repairedScene)
                         }
                     }
