@@ -206,6 +206,23 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
         }
         return lines.joined(separator: " ")
     }
+
+    /// プリセットの選択状態を判定するための内容比較。
+    ///
+    /// `PersonaPreset.profile` は呼び出すたびに新しい UUID を持つ値を返すため、
+    /// `PersonaProfile` の `Hashable`/`==` をそのまま使うと、同じプリセットを
+    /// 選択していても ID の違いで不一致になります。一方、名前だけの比較では
+    /// 名前を編集したカスタムプロフィールや、同名の保存データを誤って
+    /// プリセット扱いしてしまいます。設定画面では編集可能な全フィールドだけを
+    /// 比較し、ID は意図的に無視します。
+    func matchesEditableContent(of other: PersonaProfile) -> Bool {
+        name == other.name
+            && age == other.age
+            && personality == other.personality
+            && tone == other.tone
+            && relation == other.relation
+            && freeFormAddendum == other.freeFormAddendum
+    }
 }
 
 /// プリセット (UI で「クイック選択」できる雛形)。
