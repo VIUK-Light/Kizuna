@@ -981,8 +981,13 @@ final class StoryWorldCreateViewModel: ObservableObject {
 
         var charactersByName: [String: [UUID]] = [:]
         for character in availableCharacters {
-            charactersByName[character.visibleName, default: []].append(character.id)
-            charactersByName[character.name, default: []].append(character.id)
+            // visibleName と name が同じ場合でも同じIDを二重登録しない。
+            // 重複したままだと、単一キャラの関係まで「曖昧」と判定される。
+            for key in Set([character.visibleName, character.name]) where !key.isEmpty {
+                if charactersByName[key, default: []].contains(character.id) == false {
+                    charactersByName[key, default: []].append(character.id)
+                }
+            }
         }
         for relationship in template.relationships {
             guard let fromIDs = charactersByName[relationship.from], fromIDs.count == 1,
