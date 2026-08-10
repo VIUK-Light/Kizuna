@@ -92,7 +92,11 @@ struct StoryWorldDetailView: View {
                         try await onDelete?()
                         dismiss()
                     } catch {
-                        deleteError = String(describing: error)
+                        NSLog("[StoryWorldDetailView] story world deletion failed: %@", error.localizedDescription)
+                        deleteError = KizunaCopy.text(
+                            japanese: "保存データを削除できませんでした。もう一度試してください。",
+                            english: "The saved story could not be deleted. Try again."
+                        )
                     }
                 }
             }
@@ -830,9 +834,9 @@ private struct FlowTagLayout: Layout {
 
         widestRow = max(widestRow, rowWidth)
         totalHeight += rowHeight
-        // Preserve a finite proposal so placement uses the same width that
-        // sizing used to decide where rows break.
-        let width = proposal.width ?? widestRow
+        // The proposal is only an input to row wrapping. Return the actual
+        // content width so a short row does not claim the entire parent width.
+        let width = min(widestRow, proposal.width ?? widestRow)
         return CGSize(width: width, height: totalHeight)
     }
 

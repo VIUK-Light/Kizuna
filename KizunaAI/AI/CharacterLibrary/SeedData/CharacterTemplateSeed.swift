@@ -113,8 +113,9 @@ enum CharacterTemplateSeed {
     static func seedIfNeeded(into repository: TemplateRepository) async -> Bool {
         do {
             let existing = try await repository.fetchTemplates()
-            if !existing.isEmpty { return true }
-            for t in all {
+            let existingIDs = Set(existing.map(\.id))
+            let missing = all.filter { !existingIDs.contains($0.id) }
+            for t in missing {
                 try await repository.saveTemplate(t)
             }
             return true

@@ -408,6 +408,36 @@ struct SafetyConcern: Identifiable, Equatable, Hashable {
                 ),
                 internationalResource
             ]
+        case "GB":
+            return [
+                SafetySupportResource(
+                    title: "緊急時（英国）",
+                    detail: "今すぐ危険がある場合は999へ連絡してください。",
+                    englishTitle: "Emergency services (United Kingdom)",
+                    englishDetail: "If there is immediate danger in the United Kingdom, call 999."
+                ),
+                internationalResource
+            ]
+        case "CA":
+            return [
+                SafetySupportResource(
+                    title: "緊急時（カナダ）",
+                    detail: "今すぐ危険がある場合は911へ連絡してください。",
+                    englishTitle: "Emergency services (Canada)",
+                    englishDetail: "If there is immediate danger in Canada, call 911."
+                ),
+                internationalResource
+            ]
+        case "AU":
+            return [
+                SafetySupportResource(
+                    title: "緊急時（オーストラリア）",
+                    detail: "今すぐ危険がある場合は000へ連絡してください。",
+                    englishTitle: "Emergency services (Australia)",
+                    englishDetail: "If there is immediate danger in Australia, call 000."
+                ),
+                internationalResource
+            ]
         default:
             return [internationalResource]
         }

@@ -97,6 +97,8 @@ protocol StoryWorldRepository: AnyObject {
 protocol CastRepository: AnyObject {
     func fetchCast(storyWorldId: UUID) async throws -> [CastMember]
     func saveCast(_ cast: CastMember) async throws
+    /// Replace all members for a world in one read-modify-write transaction.
+    func replaceCast(_ cast: [CastMember], storyWorldId: UUID) async throws
     func deleteCast(id: UUID) async throws
     func deleteAllCast(storyWorldId: UUID) async throws
 }
@@ -179,6 +181,18 @@ final class LocalJSONCastRepository: CastRepository {
     }
     func saveCast(_ cast: CastMember) async throws {
         try await store.appendOrReplace(cast, idEquals: { $0.id == $1.id })
+    }
+    func replaceCast(_ cast: [CastMember], storyWorldId: UUID) async throws {
+        var replacement = cast
+        replacement = replacement.map { member in
+            var member = member
+            member.storyWorldId = storyWorldId
+            return member
+        }
+        try await store.mutate { values in
+            values.removeAll { $0.storyWorldId == storyWorldId }
+            values.append(contentsOf: replacement)
+        }
     }
     func deleteCast(id: UUID) async throws {
         try await store.delete(matching: { $0.id == id })

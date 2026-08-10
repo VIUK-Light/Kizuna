@@ -444,9 +444,8 @@ final class StorySessionService: ObservableObject {
         let reconciledCast = reconciledCast(cast, for: world, scene: scene)
         if Set(cast.map(\.characterId)) != Set(reconciledCast.map(\.characterId)) || cast.count != reconciledCast.count {
             do {
-                try await castRepo.deleteAllCast(storyWorldId: world.id)
+                try await castRepo.replaceCast(reconciledCast, storyWorldId: world.id)
                 cast = reconciledCast
-                for member in cast { try await castRepo.saveCast(member) }
             } catch {
                 await finishGenerationWithoutSaving(
                     generationID: generationID,
@@ -658,9 +657,9 @@ final class StorySessionService: ObservableObject {
             .filter { memory in
                 // キャラ削除後に古いメモリーJSONが残っていても、次のターンへ
                 // そのキャラを再注入しない。世界イベント(nil)は保持する。
-                memory.characterId == nil
-                    || (validCastCharacterIDs.contains(memory.characterId!)
-                        && contextualCharacterIDs.contains(memory.characterId!))
+                guard let characterID = memory.characterId else { return true }
+                return validCastCharacterIDs.contains(characterID)
+                    && contextualCharacterIDs.contains(characterID)
             }
         guard isGenerationActive(generationID) else { return }
         let selectedStoryMemories = selectStoryMemories(
@@ -1193,7 +1192,11 @@ final class StorySessionService: ObservableObject {
             fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
         )
         if let statePatch = progressUpdate.storyState {
-            session.storyState = statePatch.applying(to: session.storyState ?? StoryState(), characterIndex: charIndex)
+            session.storyState = statePatch.applying(
+                to: session.storyState ?? StoryState(),
+                characterIndex: charIndex,
+                validCharacterIDs: Set(cast.map(\.characterId))
+            )
         }
         do {
             try await sessionRepo.saveSession(session)
@@ -1512,8 +1515,11 @@ final class StorySessionService: ObservableObject {
                 userText: userText,
                 backendName: backendName
             )
-            guard self.timeoutSaveToken == timeoutToken,
-                  self.phase == .thinking else { return }
+            guard self.timeoutSaveToken == timeoutToken else { return }
+            guard self.phase == .thinking else {
+                self.timeoutSaveToken = nil
+                return
+            }
             self.streamingStatusText = ""
             self.savedTurnRevision += 1
             self.timeoutSaveToken = nil

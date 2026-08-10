@@ -107,15 +107,20 @@ final class KeychainHelper {
         return nil
     }
 
-    func delete(key: String) {
+    @discardableResult
+    func delete(key: String) -> Bool {
         let cacheIdentifier = cacheKey(for: key)
+        var succeeded = true
         for service in readableServices {
             let legacyQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
                 kSecAttrAccount as String: key
             ]
-            SecItemDelete(legacyQuery as CFDictionary)
+            let legacyStatus = SecItemDelete(legacyQuery as CFDictionary)
+            if legacyStatus != errSecSuccess && legacyStatus != errSecItemNotFound {
+                succeeded = false
+            }
 
             let dataProtectionQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
@@ -123,10 +128,16 @@ final class KeychainHelper {
                 kSecAttrAccount as String: key,
                 kSecUseDataProtectionKeychain as String: true
             ]
-            SecItemDelete(dataProtectionQuery as CFDictionary)
+            let dataProtectionStatus = SecItemDelete(dataProtectionQuery as CFDictionary)
+            if dataProtectionStatus != errSecSuccess && dataProtectionStatus != errSecItemNotFound {
+                succeeded = false
+            }
         }
-        cachedValues.removeValue(forKey: cacheIdentifier)
-        missingKeys.insert(cacheIdentifier)
+        if succeeded {
+            cachedValues.removeValue(forKey: cacheIdentifier)
+            missingKeys.insert(cacheIdentifier)
+        }
+        return succeeded
     }
 
     private func deleteLegacyOnly(key: String) {

@@ -13,6 +13,20 @@
 import Foundation
 
 struct StoryPromptBuilder {
+    private static func memoryCategoryLabel(_ category: MemoryCategory, isEnglish: Bool) -> String {
+        guard isEnglish else { return category.displayName }
+        switch category {
+        case .preference: return "Preference"
+        case .relationship: return "Relationship"
+        case .event: return "Event"
+        case .world: return "World"
+        case .userFact: return "User fact"
+        case .summary: return "Summary"
+        case .safety: return "Safety"
+        case .other: return "Other"
+        }
+    }
+
     /// マルチキャラ Scene 用プロンプト。
     /// activeCast に渡すのは「現在のシーンで喋ってよいキャラ」だけにする (≤ 3 名)。
     func build(
@@ -79,17 +93,7 @@ struct StoryPromptBuilder {
             }
         }
         func memoryCategoryLabel(_ category: MemoryCategory) -> String {
-            guard isEnglish else { return category.displayName }
-            switch category {
-            case .preference: return "Preference"
-            case .relationship: return "Relationship"
-            case .event: return "Event"
-            case .world: return "World"
-            case .userFact: return "User fact"
-            case .summary: return "Summary"
-            case .safety: return "Safety"
-            case .other: return "Other"
-            }
+            Self.memoryCategoryLabel(category, isEnglish: isEnglish)
         }
         // Built-in genre rules predate the language switch and are stored as
         // Japanese literals. Translate those stable safety controls while
@@ -517,7 +521,7 @@ struct StoryPromptBuilder {
                 } else {
                     owner = isEnglish ? "Shared" : "共通"
                 }
-                let category = isEnglish ? memory.category.rawValue : memory.category.displayName
+                let category = Self.memoryCategoryLabel(memory.category, isEnglish: isEnglish)
                 return isEnglish
                     ? "Story memory [\(owner) / \(category)]: \(utf8Prefix(memory.text, byteLimit: 84))"
                     : "物語の記憶 [\(owner) / \(category)]: \(utf8Prefix(memory.text, byteLimit: 84))"
@@ -565,7 +569,25 @@ struct StoryPromptBuilder {
 
         // LiteRT側でも1,400 UTF-8 bytesへ上限を設けている。重要な出力規則を
         // 先頭に置いたうえで、ここでも余裕を持って切り詰める。
-        return utf8Prefix(lines.joined(separator: "\n"), byteLimit: 1_250)
+        // The current scene, active character traits, user profile, and title
+        // are mandatory for continuity.  Keep them ahead of optional lore and
+        // memory snapshots so the byte cap trims background context first.
+        let mandatoryPrefixes = [
+            isEnglish ? "Current scene: " : "現在の場面: ",
+            isEnglish ? "\(npcName)'s traits: " : "\(npcName)の設定: ",
+            isEnglish ? "User profile: " : "ユーザープロフィール: ",
+            isEnglish ? "Story title: " : "物語タイトル: ",
+            isEnglish ? "User-controlled character: " : "ユーザー操作キャラ: "
+        ]
+        let header = Array(lines.prefix(2))
+        let body = Array(lines.dropFirst(2))
+        let mandatory = body.filter { line in
+            mandatoryPrefixes.contains { line.hasPrefix($0) }
+        }
+        let optional = body.filter { line in
+            !mandatoryPrefixes.contains { line.hasPrefix($0) }
+        }
+        return utf8Prefix((header + mandatory + optional).joined(separator: "\n"), byteLimit: 1_250)
     }
 
     // MARK: - Lorebook selection
@@ -611,7 +633,6 @@ struct StoryPromptBuilder {
             "1ターン",
             "キャラ発話",
             "複数キャラ",
-            "active",
             "会話だけ",
             "思考過程",
             "メタ発言",
@@ -621,7 +642,6 @@ struct StoryPromptBuilder {
             "narration",
             "scene description",
             "character dialogue",
-            "dialogue",
             "one turn",
             "single turn",
             "multiple character",
@@ -634,8 +654,6 @@ struct StoryPromptBuilder {
             "output format",
             "response format",
             "reply only",
-            "respond in",
-            "no meta",
             "no bullet",
             "do not include reasoning",
             "do not include choices"

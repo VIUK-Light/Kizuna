@@ -118,30 +118,30 @@ struct VIUKKizunaWorkspaceView: View {
                 viewModel: storyLibraryViewModel,
                 showsDismissButton: false,
                 onStartSession: { world in
-                    pendingStoryOpenTask?.cancel()
-                    pendingStoryOpenTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 500_000_000)
-                        guard !Task.isCancelled else { return }
-                        activeStorySessionID = nil
-                        activeStoryWorld = world
-                        pendingStoryOpenTask = nil
-                    }
+                    scheduleStoryOpen(world: world, sessionID: nil)
                 },
                 onResumeSession: { world, sessionID in
-                    pendingStoryOpenTask?.cancel()
-                    pendingStoryOpenTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 500_000_000)
-                        guard !Task.isCancelled else { return }
-                        activeStorySessionID = sessionID
-                        activeStoryWorld = world
-                        pendingStoryOpenTask = nil
-                    }
+                    scheduleStoryOpen(world: world, sessionID: sessionID)
                 }
             )
         case .chat:
             PersonaChatView()
         case .myPage:
             KizunaMyPageView()
+        }
+    }
+
+    private func scheduleStoryOpen(world: StoryWorld, sessionID: UUID?) {
+        pendingStoryOpenTask?.cancel()
+        pendingStoryOpenTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled, selectedSection == .stories else {
+                pendingStoryOpenTask = nil
+                return
+            }
+            activeStorySessionID = sessionID
+            activeStoryWorld = world
+            pendingStoryOpenTask = nil
         }
     }
 }

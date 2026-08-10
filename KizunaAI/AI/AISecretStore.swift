@@ -38,8 +38,7 @@ final class AISecretStore {
     func setString(_ value: String, for key: SecretKey) -> Bool {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if normalized.isEmpty {
-            removeValue(for: key)
-            return true
+            return removeValue(for: key)
         } else {
             return KeychainHelper.shared.setString(normalized, forKey: key.rawValue)
         }
@@ -55,7 +54,8 @@ final class AISecretStore {
         setString(unique.joined(separator: "\n"), for: key)
     }
 
-    func removeValue(for key: SecretKey) {
+    @discardableResult
+    func removeValue(for key: SecretKey) -> Bool {
         KeychainHelper.shared.delete(key: key.rawValue)
     }
 

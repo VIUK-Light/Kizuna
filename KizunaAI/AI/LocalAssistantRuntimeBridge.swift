@@ -908,8 +908,23 @@ final class LocalAssistantRuntimeBridge {
             }
             // terminate() は非同期なので、古い prewarm が残ったまま次の
             // 起動確認を始めない。タイムアウトは成功ではなく失敗として扱う。
-            _ = terminationSemaphore.wait(timeout: .now() + .seconds(1))
+            var settled = terminationSemaphore.wait(timeout: .now() + .milliseconds(700)) == .success
+                || !process.isRunning
+            if !settled, process.isRunning {
+                process.interrupt()
+                settled = terminationSemaphore.wait(timeout: .now() + .milliseconds(700)) == .success
+                    || !process.isRunning
+            }
+            if !settled, process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                settled = terminationSemaphore.wait(timeout: .now() + .seconds(1)) == .success
+                    || !process.isRunning
+            }
             NSLog("[Kizuna] bundled CLI prewarm timed out")
+            guard settled, !process.isRunning else {
+                NSLog("[Kizuna] bundled CLI prewarm process did not settle; skipping pipe drain")
+                return false
+            }
             _ = outputPipe.fileHandleForReading.readDataToEndOfFile()
             _ = errorPipe.fileHandleForReading.readDataToEndOfFile()
             return false

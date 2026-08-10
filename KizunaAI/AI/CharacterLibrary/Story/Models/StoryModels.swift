@@ -655,7 +655,11 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
     var activeGoals: [String]?
 
     /// 既存値を保ちつつ、空文字の更新は無視する。
-    func applying(to state: StoryState, characterIndex: [UUID: CharacterProfile]) -> StoryState {
+    func applying(
+        to state: StoryState,
+        characterIndex: [UUID: CharacterProfile],
+        validCharacterIDs: Set<UUID>? = nil
+    ) -> StoryState {
         var next = state
         if let location, !location.isEmpty { next.location = location }
         if let timeOfDay, !timeOfDay.isEmpty { next.timeOfDay = timeOfDay }
@@ -669,6 +673,7 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
             let normalizedName = update.characterName.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedName.isEmpty else { continue }
             let matchingIDs = characterIndex.compactMap { id, profile -> UUID? in
+                guard validCharacterIDs?.contains(id) ?? true else { return nil }
                 let displayName = profile.visibleName
                 return displayName == normalizedName || profile.name == normalizedName ? id : nil
             }

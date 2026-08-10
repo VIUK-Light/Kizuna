@@ -165,6 +165,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private var resolvedInstalledModelURL: URL?
     private var legacyResolvedInstalledModelURL: URL?
     private var persistedDownloadState: LocalAssistantDownloadState?
+    /// A corrupt state file must not let directory scanning adopt an unfinished
+    /// model. This is cleared only by an explicit download/state reset or a
+    /// successfully validated installation.
+    private var hasInvalidPersistedDownloadState = false
 
     private var urlSession: URLSession?
     private var downloadTask: URLSessionDownloadTask?
@@ -553,8 +557,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     func updateAccessToken(_ value: String) -> Bool {
         accessToken = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if accessToken.isEmpty {
-            secretStore.removeValue(for: .localModelAccessToken)
-            return true
+            return secretStore.removeValue(for: .localModelAccessToken)
         } else {
             return secretStore.setString(accessToken, for: .localModelAccessToken)
         }
@@ -1146,6 +1149,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func discoverLegacyInstalledModelURL() -> URL? {
+        guard !hasInvalidPersistedDownloadState else { return nil }
         for directory in legacyModelCandidateDirectories {
             guard let contents = try? FileManager.default.contentsOfDirectory(
                 at: directory,
@@ -1200,6 +1204,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func isRemovableLegacyModelFile(at url: URL) -> Bool {
+        guard !hasInvalidPersistedDownloadState else { return false }
         guard isValidModelFile(at: url) else { return false }
         if url.standardizedFileURL == resolvedInstalledModelURL?.standardizedFileURL {
             return false
@@ -1246,6 +1251,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func isAvailableInstalledModel(at url: URL) -> Bool {
+        guard !hasInvalidPersistedDownloadState else { return false }
         guard !isBlockedByIncompleteDownloadState(url) else { return false }
         return isValidModelFile(at: url, expectedBytes: expectedBytesForCompletedModel(at: url))
     }
@@ -1467,6 +1473,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             do {
                 try FileManager.default.moveItem(at: tempURL, to: destinationURL)
             } catch {
+                try? FileManager.default.removeItem(at: tempURL)
                 if FileManager.default.fileExists(atPath: backupURL.path) {
                     try? FileManager.default.moveItem(at: backupURL, to: destinationURL)
                 }
@@ -1641,6 +1648,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func persistDownloadState(_ state: LocalAssistantDownloadState) {
         persistedDownloadState = state
+        hasInvalidPersistedDownloadState = false
         do {
             try FileManager.default.createDirectory(at: installationDirectoryURL, withIntermediateDirectories: true)
             let encoder = JSONEncoder()
@@ -1709,6 +1717,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private func restorePersistedDownloadState() {
         guard FileManager.default.fileExists(atPath: downloadStateURL.path) else {
             persistedDownloadState = nil
+            hasInvalidPersistedDownloadState = false
             if !isDownloading {
                 downloadStatus = .idle
                 downloadedBytes = 0
@@ -1758,6 +1767,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             }
 
             persistedDownloadState = state
+            hasInvalidPersistedDownloadState = false
             if isUsingDefaultSource, hasStaleAuthorizationFailureState {
                 clearPersistedDownloadState(removeResumeData: true)
                 if !isDownloading {
@@ -1792,6 +1802,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             // ファイルは保持し、再開不能な失敗として表示することで、
             // ユーザーが再ダウンロードを選べる状態にする。
             persistedDownloadState = nil
+            hasInvalidPersistedDownloadState = true
             downloadStatePersistenceError = "ダウンロード状態を復元できませんでした。再ダウンロードしてください。"
             lastErrorMessage = downloadStatePersistenceError
             downloadStatus = .failed
@@ -1804,6 +1815,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func clearPersistedDownloadState(removeResumeData shouldRemoveResumeData: Bool) {
         persistedDownloadState = nil
+        hasInvalidPersistedDownloadState = false
         try? FileManager.default.removeItem(at: downloadStateURL)
         if shouldRemoveResumeData {
             removeResumeData()

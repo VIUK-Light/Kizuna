@@ -64,7 +64,30 @@ enum CharacterLibrarySeed {
         "青いバス停で、次の季節を待つ": "StorySceneBlueBusStop"
     ]
 
-    private static func sceneImageKey(for title: String) -> String? {
+    private static let fallbackSceneImageKeys = [
+        "StorySceneAfterSchoolMystery",
+        "StorySceneTwilightCafe",
+        "StorySceneShadowMarket",
+        "StorySceneFuturePost",
+        "StorySceneRobotLab",
+        "StorySceneInfirmary",
+        "StorySceneKyudo",
+        "StorySceneDormNight",
+        "StorySceneArtRoom",
+        "StorySceneMagicLibrary",
+        "StorySceneSummerFestival",
+        "StorySceneRainUmbrella",
+        "StorySceneStudentCouncil",
+        "StorySceneMidnightRadio",
+        "StorySceneRainyCohabitation",
+        "StorySceneUnsentPhoto",
+        "StorySceneDeepSeaResearch",
+        "StorySceneTheaterUnderstudy",
+        "StorySceneStarlitGreenhouse",
+        "StorySceneBlueBusStop"
+    ]
+
+    private static func sceneImageKey(for title: String) -> String {
         let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if let key = bundledSceneImageKeys[normalizedTitle] {
             return key
@@ -74,30 +97,8 @@ enum CharacterLibrarySeed {
         // nilのまま保存すると全件がグラデーションへ落ちるため、既存の
         // シーン背景アセットからタイトルごとに安定したフォールバックを選ぶ。
         // 将来専用画像を追加した場合は上の辞書が優先される。
-        let fallbackKeys = [
-            "StorySceneAfterSchoolMystery",
-            "StorySceneTwilightCafe",
-            "StorySceneShadowMarket",
-            "StorySceneFuturePost",
-            "StorySceneRobotLab",
-            "StorySceneInfirmary",
-            "StorySceneKyudo",
-            "StorySceneDormNight",
-            "StorySceneArtRoom",
-            "StorySceneMagicLibrary",
-            "StorySceneSummerFestival",
-            "StorySceneRainUmbrella",
-            "StorySceneStudentCouncil",
-            "StorySceneMidnightRadio",
-            "StorySceneRainyCohabitation",
-            "StorySceneUnsentPhoto",
-            "StorySceneDeepSeaResearch",
-            "StorySceneTheaterUnderstudy",
-            "StorySceneStarlitGreenhouse",
-            "StorySceneBlueBusStop"
-        ]
         let seed = normalizedTitle.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }
-        return fallbackKeys[(seed == Int.min ? 0 : abs(seed)) % fallbackKeys.count]
+        return fallbackSceneImageKeys[(seed == Int.min ? 0 : abs(seed)) % fallbackSceneImageKeys.count]
     }
 
     /// 初期データを準備する。失敗理由は呼び出し側へ返し、一覧画面が
