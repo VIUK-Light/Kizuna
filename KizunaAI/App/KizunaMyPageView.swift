@@ -39,7 +39,7 @@ struct KizunaMyPageView: View {
             isPresented: $isShowingResetLaunchAlert
         ) {
             Button(KizunaCopy.text(japanese: "開く", english: "Open")) {
-                UserDefaults.standard.set(false, forKey: "kizuna.launch.completed")
+                UserDefaults.standard.set(false, forKey: KizunaStorageKeys.launchCompleted)
             }
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {

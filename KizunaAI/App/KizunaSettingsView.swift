@@ -168,7 +168,7 @@ struct KizunaSettingsView: View {
 
                     Text(modelManager.localizedStatusMessage)
                         .font(.caption)
-                        .foregroundStyle(modelManager.lastErrorMessage == nil ? Color.secondary : Color.red)
+                        .foregroundStyle(modelManager.isDownloadStateFailure ? Color.red : Color.secondary)
 
                     if let error = modelManager.localizedSupplementalLastErrorMessage {
                         Text(error)
@@ -328,7 +328,7 @@ struct KizunaSettingsView: View {
             isPresented: $showResetLaunchAlert
         ) {
             Button(KizunaCopy.text(japanese: "開く", english: "Open")) {
-                UserDefaults.standard.set(false, forKey: "kizuna.launch.completed")
+                UserDefaults.standard.set(false, forKey: KizunaStorageKeys.launchCompleted)
                 // KizunaMigrationGateView observes this AppStorage value. Close this
                 // sheet so the immediate transition is visible instead of appearing
                 // to take effect only after the next process launch.
@@ -383,25 +383,26 @@ struct KizunaSettingsView: View {
     }
 
     private func localizedModelDetail(_ option: LocalAssistantModelProfile.DownloadOption) -> String {
-        if option.url.contains("gemma-4-E2B-it-litert-lm") {
+        switch option.kind {
+        case .gemma4E2BLiteRTLM:
             return KizunaCopy.text(
                 japanese: "スマホ向けLiteRT-LM形式。保存後、端末内で自動確認してから利用できます",
                 english: "LiteRT-LM format for phones. The app checks it on-device before use."
             )
-        }
-        if option.url.contains("VIUK-Story-v2.5-GGUF") {
+        case .viukStoryGGUF:
             return KizunaCopy.text(
                 japanese: "Hugging FaceのVIUK標準モデル",
                 english: "VIUK standard model from Hugging Face"
             )
-        }
-        if option.url.contains("gemma-3n") {
+        case .gemma3nE4BGGUF:
             return KizunaCopy.text(
                 japanese: "互換用のGemma 3n 4bit GGUF",
                 english: "Compatible Gemma 3n 4-bit GGUF model"
             )
         }
-        return option.detail
+        // Keep the fallback explicit so an option added later cannot leak a
+        // Japanese-only detail into English UI.
+        return KizunaCopy.text(japanese: option.detail, english: option.englishDetail)
     }
 
     private var selectedStandardModelRequiresToken: Bool {

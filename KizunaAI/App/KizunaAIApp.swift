@@ -26,7 +26,7 @@ struct KizunaAIApp: App {
 private struct KizunaMigrationGateView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var isReady = false
-    @AppStorage("kizuna.launch.completed") private var launchCompleted = false
+    @AppStorage(KizunaStorageKeys.launchCompleted) private var launchCompleted = false
 
     var body: some View {
         Group {
