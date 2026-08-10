@@ -169,7 +169,7 @@ enum KizunaDataMigration {
             try fileManager.copyItem(at: legacyURL, to: stagingURL)
             try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
             try mergeModelDirectoryContents(from: stagingURL, to: localModelsURL)
-            try? fileManager.removeItem(at: stagingURL)
+            try fileManager.removeItem(at: stagingURL)
 
             // Verify the post-merge destination, not merely the directory.
             return containsModelArtifact(in: localModelsURL)
