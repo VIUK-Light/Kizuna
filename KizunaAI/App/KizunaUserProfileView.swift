@@ -4,6 +4,8 @@ import SwiftUI
 /// 保存形式は既存のKizunaUserProfileと互換にしている。
 @MainActor
 struct KizunaUserProfileView: View {
+    private static let maxAboutLength = 500
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store: KizunaUserProfileStore
     @State private var draft: KizunaUserProfile
@@ -21,6 +23,16 @@ struct KizunaUserProfileView: View {
                 // 旧バージョンのdisplayNameも更新し、古い画面に戻っても表示がずれないようにする。
                 draft.displayName = String($0.prefix(60))
             }
+        )
+    }
+
+    /// Keep the draft and the persisted value in sync while typing. The store
+    /// also enforces this limit at its boundary, but truncating only on Save
+    /// makes the editor appear to accept text that will silently disappear.
+    private var aboutBinding: Binding<String> {
+        Binding(
+            get: { draft.about },
+            set: { draft.about = String($0.prefix(Self.maxAboutLength)) }
         )
     }
 
@@ -130,7 +142,7 @@ struct KizunaUserProfileView: View {
             ),
             icon: "note.text"
         ) {
-            TextEditor(text: $draft.about)
+            TextEditor(text: aboutBinding)
                 .frame(minHeight: 92)
                 .padding(8)
                 .background(
@@ -141,6 +153,15 @@ struct KizunaUserProfileView: View {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(Color.primary.opacity(0.10), lineWidth: 1)
                 }
+            HStack {
+                Spacer()
+                Text(KizunaCopy.text(
+                    japanese: "\(draft.about.count)/\(Self.maxAboutLength)文字",
+                    english: "\(draft.about.count)/\(Self.maxAboutLength) characters"
+                ))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(draft.about.count >= Self.maxAboutLength ? .orange : .secondary)
+            }
             Text(KizunaCopy.text(
                 japanese: "住所・連絡先・パスワードなどの秘密は入力しないでください。",
                 english: "Do not enter addresses, contact details, passwords, or secrets."

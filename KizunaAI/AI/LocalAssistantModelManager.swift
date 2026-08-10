@@ -141,6 +141,26 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     @Published private(set) var runtimeAvailabilitySnapshot: LocalAssistantRuntimeAvailability = .modelMissing
     @Published private(set) var modelLoadProgress: LocalAssistantLoadProgress?
 
+    /// 状態保存は日本語の内部メッセージを維持し、画面へ出す直前に現在言語へ
+    /// 変換する。ダウンロード中に表示言語を切り替えても、次の状態通知を
+    /// 待たずに設定画面を再描画できる。
+    var localizedStatusMessage: String {
+        localizeStatusMessage(statusMessage)
+    }
+
+    var localizedSupplementalLastErrorMessage: String? {
+        let message = lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !message.isEmpty else { return nil }
+        if message == rawRuntimeWarningMessage || message == rawDownloadStateSummary {
+            return nil
+        }
+        if let diagnostic = LocalAssistantRuntimeBridge.shared.lastRuntimeDiagnostic,
+           message == diagnostic.detailedMessage {
+            return localizedRuntimeDiagnosticMessage
+        }
+        return localizedReadableError(message)
+    }
+
     private var modelLoadProgressClearTask: Task<Void, Never>?
 
     func updateModelLoadProgress(_ progress: LocalAssistantLoadProgress?) {
@@ -291,7 +311,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     var transferRateSummary: String? {
         guard let transferRateBytesPerSecond, transferRateBytesPerSecond > 0 else { return nil }
-        return "\(ByteCountFormatter.string(fromByteCount: Int64(transferRateBytesPerSecond), countStyle: .file))/秒"
+        let value = ByteCountFormatter.string(fromByteCount: Int64(transferRateBytesPerSecond), countStyle: .file)
+        return KizunaCopy.text(japanese: "\(value)/秒", english: "\(value)/s")
     }
 
     var estimatedRemainingSummary: String? {
@@ -301,20 +322,29 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
         let totalSeconds = Int(estimatedRemainingSeconds.rounded(.up))
         if totalSeconds < 60 {
-            return "残り約\(max(totalSeconds, 1))秒"
+            return KizunaCopy.text(
+                japanese: "残り約\(max(totalSeconds, 1))秒",
+                english: "About \(max(totalSeconds, 1)) sec remaining"
+            )
         }
 
         let totalMinutes = Int((Double(totalSeconds) / 60).rounded(.up))
         if totalMinutes < 60 {
-            return "残り約\(max(totalMinutes, 1))分"
+            return KizunaCopy.text(
+                japanese: "残り約\(max(totalMinutes, 1))分",
+                english: "About \(max(totalMinutes, 1)) min remaining"
+            )
         }
 
         let hours = totalMinutes / 60
         let minutes = totalMinutes % 60
         if minutes == 0 {
-            return "残り約\(hours)時間"
+            return KizunaCopy.text(japanese: "残り約\(hours)時間", english: "About \(hours) hr remaining")
         }
-        return "残り約\(hours)時間\(minutes)分"
+        return KizunaCopy.text(
+            japanese: "残り約\(hours)時間\(minutes)分",
+            english: "About \(hours) hr \(minutes) min remaining"
+        )
     }
 
     var resolvedSourceURLString: String {
@@ -326,11 +356,17 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     var sourceDisplayLabel: String {
-        isUsingDefaultSource ? LocalAssistantModelProfile.defaultDownloadLabel : "カスタムURL"
+        isUsingDefaultSource
+            ? KizunaCopy.text(
+                japanese: LocalAssistantModelProfile.defaultDownloadLabel,
+                english: "\(LocalAssistantModelProfile.internalModelName) standard link"
+            )
+            : KizunaCopy.text(japanese: "カスタムURL", english: "Custom URL")
     }
 
     var sourceHostLabel: String {
-        URL(string: resolvedSourceURLString)?.host ?? "標準ソース"
+        URL(string: resolvedSourceURLString)?.host
+            ?? KizunaCopy.text(japanese: "標準ソース", english: "Standard source")
     }
 
     var canResumeDownload: Bool {
@@ -361,7 +397,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
     }
 
-    var downloadStateSummary: String {
+    private var rawDownloadStateSummary: String {
         switch downloadStatus {
         case .preflighting:
             return "配布元と保存先、空き容量を確認しています。"
@@ -389,22 +425,26 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
     }
 
+    var downloadStateSummary: String {
+        localizedDownloadStateSummary(rawDownloadStateSummary)
+    }
+
     var statusTitle: String {
         switch displayState {
         case .downloading:
-            return "ダウンロード中"
+            return KizunaCopy.text(japanese: "ダウンロード中", english: "Downloading")
         case .resumable:
-            return "再開可能"
+            return KizunaCopy.text(japanese: "再開可能", english: "Ready to resume")
         case .checking:
-            return "起動確認中"
+            return KizunaCopy.text(japanese: "起動確認中", english: "Checking runtime")
         case .executable:
-            return "実行可能"
+            return KizunaCopy.text(japanese: "実行可能", english: "Ready to run")
         case .savedOnly:
-            return "保存のみ"
+            return KizunaCopy.text(japanese: "保存のみ", english: "Saved only")
         case .recentFailure:
-            return "直近失敗"
+            return KizunaCopy.text(japanese: "直近失敗", english: "Recent failure")
         case .modelMissing:
-            return "未導入"
+            return KizunaCopy.text(japanese: "未導入", english: "Not installed")
         }
     }
 
@@ -425,42 +465,71 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     var runnerStatusLabel: String {
         switch runtimeAvailability {
         case .checking:
-            return "起動確認中"
+            return KizunaCopy.text(japanese: "起動確認中", english: "Checking runtime")
         case .executable:
-            return "この端末で会話可能"
+            return KizunaCopy.text(japanese: "この端末で会話可能", english: "Ready for on-device chat")
         case .recentFailure:
-            return "起動失敗"
+            return KizunaCopy.text(japanese: "起動失敗", english: "Runtime failed")
         case .savedOnly:
-            return "保存済み・未起動"
+            return KizunaCopy.text(japanese: "保存済み・未起動", english: "Saved, not started")
         case .modelMissing:
-            return "未導入"
+            return KizunaCopy.text(japanese: "未導入", english: "Not installed")
         }
     }
 
     var runtimeStatusSummary: String {
         switch runtimeAvailability {
         case .checking:
-            return "\(LocalAssistantModelProfile.modelName) を端末内で起動確認しています。"
+            return KizunaCopy.text(
+                japanese: "\(LocalAssistantModelProfile.modelName) を端末内で起動確認しています。",
+                english: "Checking \(LocalAssistantModelProfile.modelName) on this device."
+            )
         case .executable:
-            return "\(LocalAssistantModelProfile.modelName) をこの端末で実行できます。"
+            return KizunaCopy.text(
+                japanese: "\(LocalAssistantModelProfile.modelName) をこの端末で実行できます。",
+                english: "\(LocalAssistantModelProfile.modelName) can run on this device."
+            )
         case .recentFailure:
-            return runtimeDiagnosticSummary ?? "ローカル実行の自動確認に失敗しました。モデル形式と端末の空き容量を確認してください。"
+            return localizedRuntimeDiagnosticSummary ?? KizunaCopy.text(
+                japanese: "ローカル実行の自動確認に失敗しました。モデル形式と端末の空き容量を確認してください。",
+                english: "The automatic on-device check failed. Check the model format and free space."
+            )
         case .savedOnly:
-            return "モデルファイルは保存済みです。端末内の実行確認を自動で開始します。"
+            return KizunaCopy.text(
+                japanese: "モデルファイルは保存済みです。端末内の実行確認を自動で開始します。",
+                english: "The model file is saved. An automatic on-device check will start shortly."
+            )
         case .modelMissing:
             if hasLegacyInstalledModel {
-                return "旧ローカルモデルは残っていますが、既定の \(LocalAssistantModelProfile.internalModelName) は未導入です。"
+                return KizunaCopy.text(
+                    japanese: "旧ローカルモデルは残っていますが、既定の \(LocalAssistantModelProfile.internalModelName) は未導入です。",
+                    english: "An older local model remains, but the default \(LocalAssistantModelProfile.internalModelName) is not installed."
+                )
             }
-            return "\(LocalAssistantModelProfile.modelName) は未導入です。"
+            return KizunaCopy.text(
+                japanese: "\(LocalAssistantModelProfile.modelName) は未導入です。",
+                english: "\(LocalAssistantModelProfile.modelName) is not installed."
+            )
         }
     }
 
     var downloadHelpText: String {
-        "標準ダウンロードリンクはアプリに内蔵しています。別ソースを使いたい時だけ、URLや Bearer トークンを詳細設定で上書きします。"
+        KizunaCopy.text(
+            japanese: "標準ダウンロードリンクはアプリに内蔵しています。別ソースを使いたい時だけ、URLや Bearer トークンを詳細設定で上書きします。",
+            english: "A standard download link is built in. Override it with a URL or Bearer token only when using another source."
+        )
     }
 
     var runtimeDiagnosticSummary: String? {
         LocalAssistantRuntimeBridge.shared.lastRuntimeDiagnostic?.summary
+    }
+
+    var localizedRuntimeDiagnosticSummary: String? {
+        guard let diagnostic = LocalAssistantRuntimeBridge.shared.lastRuntimeDiagnostic else { return nil }
+        return KizunaCopy.text(
+            japanese: diagnostic.summary,
+            english: englishRuntimeDiagnosticSummary(for: diagnostic.kind)
+        )
     }
 
     var runtimeDiagnosticMessage: String? {
@@ -468,7 +537,27 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             ?? LocalAssistantRuntimeBridge.shared.lastRuntimeError
     }
 
-    var runtimeWarningMessage: String? {
+    var localizedRuntimeDiagnosticMessage: String? {
+        guard let diagnostic = LocalAssistantRuntimeBridge.shared.lastRuntimeDiagnostic else {
+            return LocalAssistantRuntimeBridge.shared.lastRuntimeError.map(localizedReadableError)
+        }
+
+        var lines = [KizunaCopy.text(
+            japanese: diagnostic.summary,
+            english: englishRuntimeDiagnosticSummary(for: diagnostic.kind)
+        )]
+        if let terminationStatus = diagnostic.terminationStatus {
+            lines.append(KizunaCopy.text(
+                japanese: "終了コード: \(terminationStatus)",
+                english: "Exit code: \(terminationStatus)"
+            ))
+        }
+        // runner/modelの絶対パスや日本語の生ログは表示言語を汚染し、
+        // 端末情報を必要以上に露出するため、詳細はログだけに残す。
+        return lines.joined(separator: "\n")
+    }
+
+    private var rawRuntimeWarningMessage: String? {
         switch runtimeAvailability {
         case .checking:
             return "ローカルモデルを端末内で起動確認中です。完了するまで実行可能とは表示しません。"
@@ -481,13 +570,17 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
     }
 
+    var runtimeWarningMessage: String? {
+        rawRuntimeWarningMessage.map { localizedRuntimeWarning($0) }
+    }
+
     var supplementalLastErrorMessage: String? {
         let message = lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !message.isEmpty else { return nil }
-        if message == runtimeWarningMessage {
+        if message == rawRuntimeWarningMessage {
             return nil
         }
-        if message == downloadStateSummary {
+        if message == rawDownloadStateSummary {
             return nil
         }
         return message
@@ -1359,6 +1452,117 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         return abs(fileSize - expectedBytes) <= tolerance
     }
 
+    private func localizeStatusMessage(_ rawMessage: String) -> String {
+        guard KizunaCopy.language == .english else { return rawMessage }
+        let message = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return "" }
+
+        if let diagnostic = LocalAssistantRuntimeBridge.shared.lastRuntimeDiagnostic,
+           message == diagnostic.summary {
+            return englishRuntimeDiagnosticSummary(for: diagnostic.kind)
+        }
+        if message == "未導入" || message.contains("ローカルモデルは未導入") {
+            return "Local model not installed"
+        }
+        if message.contains("旧ローカルモデル") || message.contains("旧 Gemma") {
+            return "An older local model was found. Gemma 4 is not installed."
+        }
+        if message.contains("配布元と保存先") {
+            return "Checking the download source, destination, and free space"
+        }
+        if message.contains("ダウンロード準備を停止") {
+            return "Download preparation stopped"
+        }
+        if message.contains("前回の続き") || message.contains("途中から再開") {
+            return "The previous download can be resumed"
+        }
+        if message.contains("ダウンロードをキャンセル") {
+            return "Download cancelled"
+        }
+        if message.contains("モデルを受信") || message.contains("モデルをダウンロード中") {
+            if let percent = message
+                .split(whereSeparator: { $0 == " " || $0 == "(" || $0 == ")" })
+                .first(where: { $0.hasSuffix("%") }) {
+                return "Downloading model (\(percent))"
+            }
+            return "Downloading model"
+        }
+        if message.contains("モデルの続きをダウンロード") || message.contains("モデルをダウンロードしています") {
+            return "Downloading the rest of the model"
+        }
+        if message.contains("ローカルモデルを端末内で確認") || message.contains("起動確認") {
+            return "Checking the local model on this device"
+        }
+        if message.contains("ローカルモデルを実行できます") {
+            return "The local model can run on this device"
+        }
+        if message.contains("ローカルモデルを保存") {
+            return "Local model saved"
+        }
+        if message.contains("モデルファイルは保存済み") {
+            return "The model file is saved"
+        }
+        if message.contains("保存済みモデルを確認") {
+            return "A saved model is available"
+        }
+        if message.contains("ローカルモデルを削除しました") {
+            return "Local model deleted"
+        }
+        if message.contains("ローカルモデルの削除に失敗") {
+            return "The local model could not be deleted"
+        }
+        if message.contains("旧 Gemma 3n モデルは見つかりません") {
+            return "No older Gemma 3n model was found"
+        }
+        if message.contains("旧 Gemma 3n モデルを削除しました") {
+            return "Older Gemma 3n model deleted"
+        }
+        return localizedReadableError(message)
+    }
+
+    private func localizedDownloadStateSummary(_ rawMessage: String) -> String {
+        localizeStatusMessage(rawMessage)
+    }
+
+    private func localizedRuntimeWarning(_ rawMessage: String) -> String {
+        guard KizunaCopy.language == .english else { return rawMessage }
+        if rawMessage.contains("起動確認中") {
+            return "Checking the local model on this device. It will not be marked ready until the check finishes."
+        }
+        if rawMessage.contains("自動確認に失敗") {
+            return "The automatic on-device check failed."
+        }
+        if rawMessage.contains("保存済み") {
+            return "The model is saved. An automatic on-device check will start shortly."
+        }
+        return localizedReadableError(rawMessage)
+    }
+
+    private func englishRuntimeDiagnosticSummary(for kind: LocalAssistantRuntimeFailureKind) -> String {
+        switch kind {
+        case .runnerUnavailable:
+            return "The on-device runtime is unavailable."
+        case .runnerStartupFailed:
+            return "The on-device runtime could not start."
+        case .modelLoadFailed:
+            return "The model could not be loaded on this device."
+        case .thinkingUnsupported:
+            return "This model does not support the requested thinking mode."
+        case .toolCallingUnsupported:
+            return "This model does not support the requested tools."
+        case .timeout:
+            return "The on-device runtime timed out."
+        case .emptyOutput:
+            return "The on-device runtime returned no response."
+        case .selfCheckFailed:
+            return "The on-device runtime check failed."
+        case .generationFailed:
+            return "The local model failed to generate a response."
+        case .supportBriefFailed:
+            return "The safety-support response could not be generated."
+        }
+    }
+
     private func applyStatusPresentation() {
         // ダウンロード失敗時に「未導入」で上書きせず、原因を最上段へ出す。
         let nextStatusMessage: String
@@ -1414,6 +1618,53 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return "配布元がエラーを返しました"
         }
         return message
+    }
+
+    private func localizedReadableError(_ rawMessage: String?) -> String {
+        let message = rawMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !message.isEmpty else { return "The last model download failed." }
+        guard KizunaCopy.language == .english else { return message }
+
+        if message.contains("空き容量") {
+            return "There is not enough free space to store the model."
+        }
+        if message.contains("Bearer") || message.contains("認証") {
+            return "The download source requires authentication. Check the access token."
+        }
+        if message.contains("HTML") {
+            return "The source returned an HTML page instead of model data. Check the URL or authentication."
+        }
+        if message.contains("安全なHTTPS") {
+            return "Use a secure HTTPS URL without embedded credentials."
+        }
+        if message.contains("安全でないモデルファイル名") {
+            return "The source returned an unsafe model filename."
+        }
+        if message.contains("再開データ") {
+            return "The previous resume data is unavailable. Resume or download the model again."
+        }
+        if message.contains("再開") || message.contains("中断") {
+            return "The connection was interrupted. You can resume or try again."
+        }
+        if message.contains("HTTP") {
+            return "The download source returned an HTTP error. Try again later."
+        }
+        if message.contains("保存先") || message.contains("フォルダ") || message.contains("書き込") {
+            return "The model could not be saved. Check storage permissions and free space."
+        }
+        if message.contains("不完全") || message.contains("扱えません") {
+            return "The saved file is incomplete or is not a supported model. Download it again."
+        }
+        if message.contains("ダウンロード状態を保存") {
+            return "Download progress could not be saved; resuming may not be possible after interruption."
+        }
+        if message.contains("配布元") && message.contains("変更") {
+            return "The download source changed. Download the new model explicitly."
+        }
+        if message.contains("削除") {
+            return "The local model could not be deleted. Close apps using it and try again."
+        }
+        return "The local model operation failed. Check the model source and try again."
     }
 
     private func finalizeDownloadedFile(tempURL: URL, response: URLResponse?) {

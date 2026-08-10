@@ -597,7 +597,11 @@ struct PersonaChatView: View {
                 Divider()
                 messageList(for: active)
                 Divider()
+                // Composerの入力状態はスレッド単位。Viewを再利用すると
+                // Stateに残った下書きが別スレッドの送信欄へ移るため、
+                // thread.idをidentityにして切替時に必ず再生成する。
                 PersonaComposer(thread: active)
+                    .id(active.id)
             }
             .background(personaChatBackground)
         } else {
