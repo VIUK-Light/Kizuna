@@ -804,17 +804,18 @@ final class StoryWorldCreateViewModel: ObservableObject {
         }
         var didSaveWorld = false
         do {
-            // 生成キャラは世界保存の直前に確定する。雛形を反映しただけでは
-            // CharacterRepositoryへ書かず、キャンセル/再生成で孤児を残さない。
-            for profile in pendingGeneratedCharacters.values {
-                try await characterRepo.saveCharacter(profile)
-            }
-
             // 破壊的な置換の前に、すべての既存関連データを読み取っておく。
             // ここで読み取りに失敗した場合はWorld/Cast/Lorebook/Sceneのいずれも
             // 書き換えず、次回の再試行で正しいスナップショットを取り直せる。
             _ = try await lorebookRepo.fetchAllEntries(storyWorldId: draft.id)
             let existingScenes = try await sceneRepo.fetchScenes(storyWorldId: draft.id)
+
+            // 関連データの読取が全て成功した後にだけ生成キャラを確定する。
+            // 雛形を反映しただけではCharacterRepositoryへ書かず、読取失敗・
+            // キャンセル・再生成のいずれでもキャラだけが孤児にならないようにする。
+            for profile in pendingGeneratedCharacters.values {
+                try await characterRepo.saveCharacter(profile)
+            }
 
             // World 保存
             var world = draft.normalizedForPersistence
