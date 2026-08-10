@@ -215,7 +215,7 @@ final class StorySessionService: ObservableObject {
         characterID: UUID,
         characterName: String,
         session: StorySession
-    ) async {
+    ) async throws {
         var next = session
         next.messages.append(
             StoryMessage(
@@ -223,7 +223,7 @@ final class StorySessionService: ObservableObject {
                 text: localizedNotice("了解。続けよう。", "Okay. Let's continue.")
             )
         )
-        try? await sessionRepo.saveSession(next)
+        try await sessionRepo.saveSession(next)
         savedTurnRevision += 1
     }
 
