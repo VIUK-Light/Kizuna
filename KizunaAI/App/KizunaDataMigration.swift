@@ -136,8 +136,6 @@ enum KizunaDataMigration {
     @discardableResult
     nonisolated private static func migrateLocalModelsIfAvailable() -> Bool {
         let fileManager = FileManager.default
-        guard !fileManager.fileExists(atPath: localModelsURL.path) else { return true }
-
         let legacyURL = applicationSupportURL
             .appendingPathComponent("VIUK One", isDirectory: true)
             .appendingPathComponent("LocalModels", isDirectory: true)
@@ -146,19 +144,125 @@ enum KizunaDataMigration {
 
         do {
             try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+            // A directory created by a cancelled/failed migration is not proof
+            // that a model was transferred. Verify actual model artifacts first.
+            if containsModelArtifact(in: localModelsURL) {
+                return true
+            }
+
+            guard fileManager.fileExists(atPath: legacyURL.path) else {
+                try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
+                return true
+            }
+            guard containsModelArtifact(in: legacyURL) else {
+                // Keep an empty destination available for a future download, but
+                // do not copy metadata-only directories and call them a model.
+                try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
+                return true
+            }
+
+            // Stage the complete legacy tree before touching the destination. A
+            // failed copy leaves no migration marker and can be retried safely.
             if fileManager.fileExists(atPath: stagingURL.path) {
                 try fileManager.removeItem(at: stagingURL)
             }
-            if fileManager.fileExists(atPath: legacyURL.path) {
-                try fileManager.copyItem(at: legacyURL, to: stagingURL)
-                try fileManager.moveItem(at: stagingURL, to: localModelsURL)
-            } else {
-                try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
-            }
-            return true
+            try fileManager.copyItem(at: legacyURL, to: stagingURL)
+            try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
+            try mergeModelDirectoryContents(from: stagingURL, to: localModelsURL)
+            try? fileManager.removeItem(at: stagingURL)
+
+            // Verify the post-merge destination, not merely the directory.
+            return containsModelArtifact(in: localModelsURL)
         } catch {
+            try? fileManager.removeItem(at: stagingURL)
+            NSLog("[KizunaDataMigration] local model migration failed: %@", String(describing: error))
             return false
         }
+    }
+
+    /// Model files are the only evidence that a LocalModels tree is useful.
+    /// JSON state, resume data, and empty folders must not make migration look
+    /// complete. Keep this list aligned with LocalAssistantModelManager's
+    /// accepted local formats without depending on its instance state.
+    nonisolated private static let modelFileExtensions: Set<String> = ["gguf", "bin", "litertlm"]
+    nonisolated private static let minimumModelArtifactSize: Int64 = 50 * 1024 * 1024
+
+    nonisolated private static func containsModelArtifact(in directoryURL: URL) -> Bool {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directoryURL,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            return false
+        }
+
+        for case let candidateURL as URL in enumerator {
+            guard isModelArtifact(candidateURL) else { continue }
+            return true
+        }
+        return false
+    }
+
+    nonisolated private static func isModelArtifact(_ url: URL) -> Bool {
+        let extensionName = url.pathExtension.lowercased()
+        guard modelFileExtensions.contains(extensionName) else { return false }
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              Int64(fileSize) >= minimumModelArtifactSize else {
+            return false
+        }
+        return true
+    }
+
+    /// Merge a staged legacy tree without overwriting files already created by
+    /// Kizuna. A differing filename collision gets a deterministic-looking
+    /// migration suffix while retaining the original extension so a model file
+    /// remains discoverable by the runtime.
+    nonisolated private static func mergeModelDirectoryContents(from sourceURL: URL, to destinationURL: URL) throws {
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(
+            at: sourceURL,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+
+        for case let sourceFileURL as URL in enumerator {
+            let values = try sourceFileURL.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true else { continue }
+
+            let relativePath = String(sourceFileURL.path.dropFirst(sourceURL.path.count).drop(while: { $0 == "/" }))
+            guard !relativePath.isEmpty else { continue }
+            let destinationFileURL = destinationURL.appendingPathComponent(relativePath)
+            try fileManager.createDirectory(
+                at: destinationFileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+
+            if !fileManager.fileExists(atPath: destinationFileURL.path) {
+                try fileManager.copyItem(at: sourceFileURL, to: destinationFileURL)
+                continue
+            }
+
+            // Preserve an existing destination file. If it is byte-identical,
+            // no second copy is needed; otherwise retain both copies.
+            if fileManager.contentsEqual(atPath: sourceFileURL.path, andPath: destinationFileURL.path) {
+                continue
+            }
+            let collisionURL = migrationCollisionURL(for: destinationFileURL)
+            try fileManager.copyItem(at: sourceFileURL, to: collisionURL)
+        }
+    }
+
+    nonisolated private static func migrationCollisionURL(for url: URL) -> URL {
+        let ext = url.pathExtension
+        let stem = url.deletingPathExtension().lastPathComponent
+        let fileName = ext.isEmpty
+            ? "\(stem).migrated-\(UUID().uuidString)"
+            : "\(stem).migrated-\(UUID().uuidString).\(ext)"
+        return url.deletingLastPathComponent().appendingPathComponent(fileName)
     }
 
     nonisolated private static func migratePersonaDefaultsIfAvailable(into defaults: UserDefaults) {
