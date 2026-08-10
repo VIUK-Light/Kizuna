@@ -268,9 +268,7 @@ struct CharacterCreateView: View {
 
                         if hasAvatar {
                             Button(role: .destructive) {
-                                avatarLoadGeneration &+= 1
-                                selectedAvatarItem = nil
-                                vm.draft.avatarImageData = nil
+                                removeAvatar()
                             } label: {
                                 Label(KizunaCopy.text(japanese: "画像を削除", english: "Remove image"), systemImage: "trash")
                             }
@@ -407,6 +405,16 @@ struct CharacterCreateView: View {
         guard !t.isEmpty, !vm.draft.tags.contains(t) else { return }
         vm.draft.tags.append(t)
         newTagText = ""
+    }
+
+    /// Invalidate an in-flight PhotosPicker load before removing the preview.
+    /// `loadTransferable` may still resume after the user taps remove; the
+    /// generation check in `loadAvatar` must therefore advance for this path
+    /// too, otherwise the removed image can reappear when the old load wins.
+    private func removeAvatar() {
+        avatarLoadGeneration &+= 1
+        selectedAvatarItem = nil
+        vm.draft.avatarImageData = nil
     }
 
     @MainActor

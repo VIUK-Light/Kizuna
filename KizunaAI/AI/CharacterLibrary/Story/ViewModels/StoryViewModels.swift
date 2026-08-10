@@ -1372,27 +1372,30 @@ final class StoryWorldDetailViewModel: ObservableObject {
         return (session, firstScene)
     }
 
-    func delete() async {
+    /// Delete this world and every owned record.
+    ///
+    /// This method intentionally propagates the first repository error.  The
+    /// detail view uses the throwing result to keep the sheet open and show a
+    /// retryable error; swallowing the error here would make a partial delete
+    /// look successful and leave the user with orphaned records.
+    func delete() async throws {
         // 標準ストーリーはUI以外からこのメソッドが呼ばれても削除しない。
         guard world.isSystemProtected != true else { return }
-        do {
-            // セッションとLorebookは別ファイルのため、世界だけ消すと孤児データが残る。
-            let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
-            for session in sessions {
-                try await sessionRepo.deleteSession(id: session.id)
-            }
-            let lorebookEntries = try await lorebookRepo.fetchAllEntries(storyWorldId: world.id)
-            for entry in lorebookEntries {
-                try await lorebookRepo.deleteEntry(id: entry.id)
-            }
-            try await castRepo.deleteAllCast(storyWorldId: world.id)
-            try await sceneRepo.deleteAllScenes(storyWorldId: world.id)
-            // 物語を削除する時は、その世界だけの思い出も一緒に削除する。
-            try await storyMemoryRepo.deleteAllMemories(storyWorldId: world.id)
-            try await worldRepo.deleteWorld(id: world.id)
-        } catch {
-            NSLog("[StoryDetailVM] delete failed: %@", String(describing: error))
+
+        // セッションとLorebookは別ファイルのため、世界だけ消すと孤児データが残る。
+        let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
+        for session in sessions {
+            try await sessionRepo.deleteSession(id: session.id)
         }
+        let lorebookEntries = try await lorebookRepo.fetchAllEntries(storyWorldId: world.id)
+        for entry in lorebookEntries {
+            try await lorebookRepo.deleteEntry(id: entry.id)
+        }
+        try await castRepo.deleteAllCast(storyWorldId: world.id)
+        try await sceneRepo.deleteAllScenes(storyWorldId: world.id)
+        // 物語を削除する時は、その世界だけの思い出も一緒に削除する。
+        try await storyMemoryRepo.deleteAllMemories(storyWorldId: world.id)
+        try await worldRepo.deleteWorld(id: world.id)
     }
 
     private func defaultCastMembers(for world: StoryWorld, existingScenes: [StoryScene]) -> [CastMember] {

@@ -843,6 +843,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             preflightSession?.invalidateAndCancel()
             preflightSession = nil
             preflightDelegate = nil
+            // Invalidate the preflight generation immediately. URLSession can
+            // still deliver a response/failure after cancel() returns.
+            activeTransferID = UUID()
             isDownloading = false
             downloadStatus = .idle
             clearPersistedDownloadState(removeResumeData: true)
@@ -853,10 +856,18 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
 
         guard let downloadTask else { return }
+        // The resume-data callback is asynchronous. Keep the identity of the
+        // task being cancelled so a new download started before that callback
+        // cannot persist A's resume data or reset B's session.
+        let cancelledTransferID = activeTransferID
         isCancellingForResume = true
         downloadTask.cancel(byProducingResumeData: { [weak self] resumeData in
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard self.activeTransferID == cancelledTransferID else {
+                    NSLog("[Kizuna] ignored stale cancel callback for download generation")
+                    return
+                }
                 self.persistResumeData(resumeData)
                 self.isDownloading = false
                 self.resetActiveSession()
@@ -972,6 +983,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func beginDownload(resuming: Bool) {
         activeTransferID = UUID()
+        // A previous cancel(byProducingResumeData:) may still be waiting on
+        // its callback. The new transfer owns cancellation state from here;
+        // the old callback is rejected by its transfer ID below.
+        isCancellingForResume = false
         LocalAssistantRuntimeBridge.shared.clearRuntimeError()
         if isUsingDefaultSource, hasStaleAuthorizationFailureState {
             clearPersistedDownloadState(removeResumeData: true)
@@ -2358,12 +2373,25 @@ extension LocalAssistantModelManager: URLSessionDownloadDelegate {
             preservedLocation = try preserveDownloadFileForFinalization(from: location)
         } catch {
             DispatchQueue.main.async {
+                // didFinishDownloadingTo is delivered off the main queue. A
+                // new transfer may be started before this block runs; do not
+                // let the old transfer turn the new one into a failure.
+                guard session === self.urlSession, downloadTask === self.downloadTask else { return }
                 self.applyFailure(message: "ダウンロードしたモデルの一時ファイルを保持できませんでした。保存先を確認して再試行してください。")
             }
             return
         }
 
         DispatchQueue.main.async {
+            // The temporary file belongs to this exact URLSession task. The
+            // callback can be queued while the user cancels and starts a new
+            // model (or a new resume) before the main queue processes it.
+            // Compare object identity again at execution time, and clean up
+            // the stale copy instead of finalizing it into the new download.
+            guard session === self.urlSession, downloadTask === self.downloadTask else {
+                try? FileManager.default.removeItem(at: preservedLocation)
+                return
+            }
             self.finalizeDownloadedFile(tempURL: preservedLocation, response: downloadTask.response)
         }
     }
