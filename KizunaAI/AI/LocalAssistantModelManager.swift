@@ -137,6 +137,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     @Published private(set) var isDownloading: Bool = false
     @Published private(set) var runtimeRefreshedAt = Date()
     @Published private(set) var downloadStatus: LocalAssistantDownloadStatus = .idle
+    @Published private(set) var downloadStatePersistenceError: String?
     @Published private(set) var runtimeAvailabilitySnapshot: LocalAssistantRuntimeAvailability = .modelMissing
     @Published private(set) var modelLoadProgress: LocalAssistantLoadProgress?
 
@@ -164,6 +165,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private var resolvedInstalledModelURL: URL?
     private var legacyResolvedInstalledModelURL: URL?
     private var persistedDownloadState: LocalAssistantDownloadState?
+    /// A corrupt state file must not let directory scanning adopt an unfinished
+    /// model. This is cleared only by an explicit download/state reset or a
+    /// successfully validated installation.
+    private var hasInvalidPersistedDownloadState = false
 
     private var urlSession: URLSession?
     private var downloadTask: URLSessionDownloadTask?
@@ -174,6 +179,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private var isCancellingForResume = false
     private var progressSamples: [(time: TimeInterval, bytes: Int64)] = []
     private var activeDownloadBaseBytes: Int64 = 0
+    /// URLSessionの古いdelegate callbackが、後から開始した転送へ混ざらないための世代。
+    private var activeTransferID = UUID()
     private var isEnvironmentRefreshScheduled = false
     // 端末内 runtime の確認は UI ボタンではなく、モデル検出後に一度だけ自動実行する。
     // 同じモデルで refreshEnvironment() が連続しても、重いモデル初期化を重ねない。
@@ -495,13 +502,37 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         // 3Nなど別モデルへ切り替える時、前モデルの途中データを再利用しない。
         if Self.normalizedSourceURL(sourceURLString) != Self.normalizedSourceURL(nextSourceURL) {
             cancelActiveTasksWithoutResume()
-            // URLを変更しても、すでに完成しているモデル本体は残す。
-            // 起動確認の前に設定保存が呼ばれた場合でも、モデルを消さないための保護。
-            clearPersistedDownloadState(removeResumeData: true)
+            // 旧モデル本体は削除せず保持するが、状態JSONを消してしまうと
+            // ディレクトリ走査で旧ファイルを新しいモデルとして再採用する。
+            // 旧ファイル名を状態へ残したまま失敗扱いにし、sourceURL変更後は
+            // 必ず新しいモデルを明示的にダウンロードする。
+            let previous = persistedDownloadState
+            let invalidatedState = LocalAssistantDownloadState(
+                sourceURL: nextSourceURL,
+                resolvedURL: previous?.resolvedURL,
+                expectedBytes: previous?.expectedBytes ?? installedFileSize,
+                eTag: previous?.eTag,
+                resumeDataPath: nil,
+                status: .failed,
+                startedAt: previous?.startedAt ?? Date(),
+                updatedAt: Date(),
+                lastError: "モデルの配布元を変更しました。新しいモデルをダウンロードしてください。",
+                suggestedFilename: previous?.suggestedFilename ?? installedFileName
+            )
+            persistDownloadState(invalidatedState)
+            removeResumeData()
             downloadedBytes = 0
             expectedBytes = 0
-            lastErrorMessage = nil
-            downloadStatus = resolvedInstalledModelURL == nil ? .idle : .completed
+            resolvedInstalledModelURL = nil
+            legacyResolvedInstalledModelURL = nil
+            installedFileName = nil
+            installedFileSize = 0
+            AILegacyCompatibility.removeValue(
+                primaryKey: installedFileNameKey,
+                aliases: AILegacyCompatibility.localModelInstalledFileAliases,
+                defaults: defaults
+            )
+            runtimeAvailabilitySnapshot = .modelMissing
         }
 
         if trimmed.isEmpty {
@@ -522,12 +553,13 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
     }
 
-    func updateAccessToken(_ value: String) {
+    @discardableResult
+    func updateAccessToken(_ value: String) -> Bool {
         accessToken = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if accessToken.isEmpty {
-            secretStore.removeValue(for: .localModelAccessToken)
+            return secretStore.removeValue(for: .localModelAccessToken)
         } else {
-            secretStore.setString(accessToken, for: .localModelAccessToken)
+            return secretStore.setString(accessToken, for: .localModelAccessToken)
         }
     }
 
@@ -597,6 +629,11 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         restorePersistedDownloadState()
         refreshInstalledState()
         refreshRuntimeAvailabilitySnapshot()
+        // 起動直後はモデルの存在確認とランタイムの環境確認が別々の非同期経路で
+        // 走るため、先に環境が更新されると prewarm が一度も実行されないことがある。
+        // インストール済みモデルを再検出した直後に一度だけ暖機を試し、保存済み
+        // モデルが「確認待ち」のまま残らないようにする。
+        LocalAssistantRuntimeBridge.shared.prewarmIfPossible()
         DispatchQueue.main.async { [weak self] in
             self?.runtimeRefreshedAt = Date()
         }
@@ -748,13 +785,26 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         })
     }
 
-    func removeInstalledModel() {
+    @discardableResult
+    func removeInstalledModel() -> Bool {
         cancelActiveTasksWithoutResume()
         LocalAssistantRuntimeBridge.shared.clearRuntimeError()
         removeIncompleteDownloadedFileIfNeeded()
 
         if let installedModelURL {
-            try? FileManager.default.removeItem(at: installedModelURL)
+            do {
+                if FileManager.default.fileExists(atPath: installedModelURL.path) {
+                    try FileManager.default.removeItem(at: installedModelURL)
+                }
+            } catch {
+                // ファイル削除に失敗したのに状態だけ消すと、UIは未導入と表示し、
+                // 次回起動で同じモデルが残る。実体を保持したまま状態も保持する。
+                lastErrorMessage = "ローカルモデルの削除に失敗しました。ファイルを使用中のアプリを閉じてから再試行してください。"
+                statusMessage = "ローカルモデルの削除に失敗しました"
+                refreshInstalledState()
+                applyStatusPresentation()
+                return false
+            }
         }
 
         clearPersistedDownloadState(removeResumeData: true)
@@ -773,6 +823,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         resolvedInstalledModelURL = nil
         downloadStatus = .idle
         statusMessage = "ローカルモデルを削除しました"
+        return true
     }
 
     func removeLegacyInstalledModel() {
@@ -827,6 +878,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func beginDownload(resuming: Bool) {
+        activeTransferID = UUID()
         LocalAssistantRuntimeBridge.shared.clearRuntimeError()
         if isUsingDefaultSource, hasStaleAuthorizationFailureState {
             clearPersistedDownloadState(removeResumeData: true)
@@ -865,27 +917,31 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             )
         )
         applyStatusPresentation()
-        performPreflight(for: url, resuming: resuming)
+        performPreflight(for: url, resuming: resuming, transferID: activeTransferID)
     }
 
-    private func performPreflight(for url: URL, resuming: Bool) {
+    private func performPreflight(for url: URL, resuming: Bool, transferID: UUID) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 45
         configuration.timeoutIntervalForResource = 60
         let delegate = LocalAssistantPreflightDelegate { [weak self] response in
             DispatchQueue.main.async {
                 guard let self else { return }
-                guard self.isDownloading, self.downloadStatus == .preflighting else { return }
+                guard self.activeTransferID == transferID,
+                      self.isDownloading,
+                      self.downloadStatus == .preflighting else { return }
                 self.preflightTask = nil
                 self.preflightSession?.invalidateAndCancel()
                 self.preflightSession = nil
                 self.preflightDelegate = nil
-                self.handlePreflightResponse(response, sourceURL: url, resuming: resuming)
+                self.handlePreflightResponse(response, sourceURL: url, resuming: resuming, transferID: transferID)
             }
         } failureHandler: { [weak self] error in
             DispatchQueue.main.async {
                 guard let self else { return }
-                guard self.isDownloading, self.downloadStatus == .preflighting else { return }
+                guard self.activeTransferID == transferID,
+                      self.isDownloading,
+                      self.downloadStatus == .preflighting else { return }
                 self.preflightTask = nil
                 self.preflightSession?.invalidateAndCancel()
                 self.preflightSession = nil
@@ -916,8 +972,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private func handlePreflightResponse(
         _ response: HTTPURLResponse,
         sourceURL: URL,
-        resuming: Bool
+        resuming: Bool,
+        transferID: UUID
     ) {
+        guard activeTransferID == transferID else { return }
         let statusCode = response.statusCode
         if statusCode == 401 || statusCode == 403 {
             applyFailure(message: "配布元が認証を要求しました。Bearer トークンを確認してください。")
@@ -967,10 +1025,15 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             suggestedFilename: suggestedFileName(from: response, fallbackURL: response.url ?? sourceURL),
             acceptsResume: acceptsResume
         )
-        startDownloadTask(with: preflight, resuming: resuming)
+        startDownloadTask(with: preflight, resuming: resuming, transferID: transferID)
     }
 
-    private func startDownloadTask(with preflight: LocalAssistantDownloadPreflight, resuming: Bool) {
+    private func startDownloadTask(
+        with preflight: LocalAssistantDownloadPreflight,
+        resuming: Bool,
+        transferID: UUID
+    ) {
+        guard activeTransferID == transferID else { return }
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 60 * 60 * 6
@@ -1086,6 +1149,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func discoverLegacyInstalledModelURL() -> URL? {
+        guard !hasInvalidPersistedDownloadState else { return nil }
         for directory in legacyModelCandidateDirectories {
             guard let contents = try? FileManager.default.contentsOfDirectory(
                 at: directory,
@@ -1140,6 +1204,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func isRemovableLegacyModelFile(at url: URL) -> Bool {
+        guard !hasInvalidPersistedDownloadState else { return false }
         guard isValidModelFile(at: url) else { return false }
         if url.standardizedFileURL == resolvedInstalledModelURL?.standardizedFileURL {
             return false
@@ -1186,6 +1251,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func isAvailableInstalledModel(at url: URL) -> Bool {
+        guard !hasInvalidPersistedDownloadState else { return false }
         guard !isBlockedByIncompleteDownloadState(url) else { return false }
         return isValidModelFile(at: url, expectedBytes: expectedBytesForCompletedModel(at: url))
     }
@@ -1392,18 +1458,38 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
         let destinationURL = installationDirectoryURL.appendingPathComponent(fileName)
         let expectedBytesForValidation = persistedDownloadState?.expectedBytes ?? expectedBytes
+        let backupURL = destinationURL.appendingPathExtension("previous")
 
         do {
             try FileManager.default.createDirectory(at: installationDirectoryURL, withIntermediateDirectories: true)
+            // 既存の正常なモデルを先に消さない。新しいファイルを検証してから置き換え、
+            // 検証失敗や移動失敗時には必ず既存ファイルを戻す。
             if FileManager.default.fileExists(atPath: destinationURL.path) {
-                try FileManager.default.removeItem(at: destinationURL)
+                if FileManager.default.fileExists(atPath: backupURL.path) {
+                    try FileManager.default.removeItem(at: backupURL)
+                }
+                try FileManager.default.moveItem(at: destinationURL, to: backupURL)
             }
-            try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+            do {
+                try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+            } catch {
+                try? FileManager.default.removeItem(at: tempURL)
+                if FileManager.default.fileExists(atPath: backupURL.path) {
+                    try? FileManager.default.moveItem(at: backupURL, to: destinationURL)
+                }
+                throw error
+            }
 
             guard isValidModelFile(at: destinationURL, expectedBytes: expectedBytesForValidation > 0 ? expectedBytesForValidation : nil) else {
                 try? FileManager.default.removeItem(at: destinationURL)
+                if FileManager.default.fileExists(atPath: backupURL.path) {
+                    try? FileManager.default.moveItem(at: backupURL, to: destinationURL)
+                }
                 applyFailure(message: "保存したファイルが不完全か、モデル本体として扱えませんでした。最初からやり直してください。")
                 return
+            }
+            if FileManager.default.fileExists(atPath: backupURL.path) {
+                try FileManager.default.removeItem(at: backupURL)
             }
 
             let savedSize = (try? destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
@@ -1562,6 +1648,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func persistDownloadState(_ state: LocalAssistantDownloadState) {
         persistedDownloadState = state
+        hasInvalidPersistedDownloadState = false
         do {
             try FileManager.default.createDirectory(at: installationDirectoryURL, withIntermediateDirectories: true)
             let encoder = JSONEncoder()
@@ -1569,7 +1656,13 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             let data = try encoder.encode(state)
             try data.write(to: downloadStateURL, options: .atomic)
             downloadStatus = state.status
+            downloadStatePersistenceError = nil
         } catch {
+            // 状態JSONだけの失敗をidleに戻すと、再開可否と原因が消える。
+            // 本体転送は継続できる場合があるため、転送状態は維持しつつ、
+            // 次回起動でも確認できる明示的なエラーを残す。
+            downloadStatePersistenceError = "ダウンロード状態を保存できません。中断すると再開情報を失う可能性があります。"
+            lastErrorMessage = downloadStatePersistenceError
             downloadStatus = state.status
         }
     }
@@ -1624,6 +1717,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private func restorePersistedDownloadState() {
         guard FileManager.default.fileExists(atPath: downloadStateURL.path) else {
             persistedDownloadState = nil
+            hasInvalidPersistedDownloadState = false
             if !isDownloading {
                 downloadStatus = .idle
                 downloadedBytes = 0
@@ -1673,6 +1767,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             }
 
             persistedDownloadState = state
+            hasInvalidPersistedDownloadState = false
             if isUsingDefaultSource, hasStaleAuthorizationFailureState {
                 clearPersistedDownloadState(removeResumeData: true)
                 if !isDownloading {
@@ -1703,16 +1798,24 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 applyStatusPresentation()
             }
         } catch {
+            // 壊れた/読めない状態ファイルを「未導入」として隠さない。
+            // ファイルは保持し、再開不能な失敗として表示することで、
+            // ユーザーが再ダウンロードを選べる状態にする。
             persistedDownloadState = nil
-            downloadStatus = .idle
+            hasInvalidPersistedDownloadState = true
+            downloadStatePersistenceError = "ダウンロード状態を復元できませんでした。再ダウンロードしてください。"
+            lastErrorMessage = downloadStatePersistenceError
+            downloadStatus = .failed
             downloadedBytes = 0
             activeDownloadBaseBytes = 0
             resetDownloadProgressMetrics()
+            applyStatusPresentation()
         }
     }
 
     private func clearPersistedDownloadState(removeResumeData shouldRemoveResumeData: Bool) {
         persistedDownloadState = nil
+        hasInvalidPersistedDownloadState = false
         try? FileManager.default.removeItem(at: downloadStateURL)
         if shouldRemoveResumeData {
             removeResumeData()
@@ -1908,6 +2011,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func cancelActiveTasksWithoutResume() {
+        activeTransferID = UUID()
         preflightTask?.cancel()
         preflightTask = nil
         preflightSession?.invalidateAndCancel()
@@ -1967,6 +2071,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 extension LocalAssistantModelManager: URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         DispatchQueue.main.async {
+            guard self.isDownloading,
+                  session === self.urlSession,
+                  downloadTask === self.downloadTask else { return }
             let combinedBytes = self.activeDownloadBaseBytes + totalBytesWritten
             self.downloadedBytes = combinedBytes
             let combinedExpectedBytes = totalBytesExpectedToWrite > 0
@@ -1992,6 +2099,9 @@ extension LocalAssistantModelManager: URLSessionDownloadDelegate {
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        guard isDownloading,
+              session === self.urlSession,
+              downloadTask === self.downloadTask else { return }
         let preservedLocation: URL
         do {
             preservedLocation = try preserveDownloadFileForFinalization(from: location)
@@ -2009,6 +2119,7 @@ extension LocalAssistantModelManager: URLSessionDownloadDelegate {
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         DispatchQueue.main.async {
+            guard session === self.urlSession, task === self.downloadTask else { return }
             self.isDownloading = false
             self.resetActiveSession()
             self.activeDownloadBaseBytes = 0

@@ -34,12 +34,13 @@ final class AISecretStore {
         splitSecretList(string(for: key)).compactMap { $0 }
     }
 
-    func setString(_ value: String, for key: SecretKey) {
+    @discardableResult
+    func setString(_ value: String, for key: SecretKey) -> Bool {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if normalized.isEmpty {
-            removeValue(for: key)
+            return removeValue(for: key)
         } else {
-            _ = KeychainHelper.shared.setString(normalized, forKey: key.rawValue)
+            return KeychainHelper.shared.setString(normalized, forKey: key.rawValue)
         }
     }
 
@@ -53,7 +54,8 @@ final class AISecretStore {
         setString(unique.joined(separator: "\n"), for: key)
     }
 
-    func removeValue(for key: SecretKey) {
+    @discardableResult
+    func removeValue(for key: SecretKey) -> Bool {
         KeychainHelper.shared.delete(key: key.rawValue)
     }
 

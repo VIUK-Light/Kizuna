@@ -94,14 +94,15 @@ final class StoryGemma31BAPIService {
 
         logEmptyResponse(decoded)
 
-        // 高いThinking予算が候補を使い切る端末・入力では、Thinkingを切らずに
-        // 中程度へ下げて本文の余白を確保する。空本文の時だけ一度実行するため、
-        // 通常ターンの待ち時間やAPI使用量は増やさない。
+        // Gemma 4 APIのThinkingは high / minimal の切り替えだけを受け付ける。
+        // highで思考トークンが候補を使い切って本文が空になった場合は、
+        // 未対応の medium を送らず、minimalで本文の余白を確保する。
+        // 空本文の時だけ一度実行するため、通常ターンの待ち時間やAPI使用量は増やさない。
         let fallbackBody = try makeRequestBody(
             prompt: prompt,
             temperature: temperature,
             maxOutputTokens: max(maxOutputTokens, 1_536),
-            thinkingLevel: "medium"
+            thinkingLevel: "minimal"
         )
         let fallbackData = try await performRequestWithRetry(
             apiKey: apiKey,
@@ -130,7 +131,7 @@ final class StoryGemma31BAPIService {
                 temperature: temperature,
                 topP: 0.92,
                 maxOutputTokens: maxOutputTokens,
-                // Gemma 4 APIではThinkingを常に有効化する。medium は空本文時だけの復旧用。
+                // Gemma 4 APIではThinkingを常に有効化する。minimal は空本文時だけの復旧用。
                 thinkingConfig: ThinkingConfig(thinkingLevel: thinkingLevel)
             )
         ))

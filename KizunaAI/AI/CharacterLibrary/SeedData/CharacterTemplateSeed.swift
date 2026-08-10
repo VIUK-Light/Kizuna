@@ -109,16 +109,20 @@ enum CharacterTemplateSeed {
 
     /// 起動時 seed エントリーポイント。
     /// 既に何か入っていれば何もしない (重複防止)。
-    static func seedIfNeeded(into repository: TemplateRepository) async {
+    @discardableResult
+    static func seedIfNeeded(into repository: TemplateRepository) async -> Bool {
         do {
             let existing = try await repository.fetchTemplates()
-            if !existing.isEmpty { return }
-            for t in all {
+            let existingIDs = Set(existing.map(\.id))
+            let missing = all.filter { !existingIDs.contains($0.id) }
+            for t in missing {
                 try await repository.saveTemplate(t)
             }
+            return true
         } catch {
-            // 失敗しても起動自体は止めない。
+            // 起動自体は止めないが、呼び出し側が空配列と区別できるように返す。
             NSLog("[CharacterTemplateSeed] seed failed: %@", String(describing: error))
+            return false
         }
     }
 }

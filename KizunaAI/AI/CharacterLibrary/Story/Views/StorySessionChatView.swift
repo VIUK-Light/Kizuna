@@ -52,12 +52,16 @@ struct StorySessionChatView: View {
     @State private var isShowingRestHelp = false
 
     init(world: StoryWorld, initialSessionID: UUID? = nil) {
-        // 一覧・詳細以外の入口から直接開かれても、現在の表示言語を
-        // セッション生成へ引き継ぐ。保存データ自体は日本語のまま保持する。
-        let localizedWorld = world.localizedForCurrentLanguage
-        self.world = localizedWorld
+        // Keep the raw persisted world at the session boundary.  Localized
+        // copies are presentation-only and must never seed StorySession's
+        // durable goal, summary, or first narration.
+        self.world = world
         self.initialSessionID = initialSessionID
-        _detailVM = StateObject(wrappedValue: StoryWorldDetailViewModel(world: localizedWorld))
+        _detailVM = StateObject(wrappedValue: StoryWorldDetailViewModel(world: world))
+    }
+
+    private var displayedWorld: StoryWorld {
+        world.localizedForCurrentLanguage
     }
 
     var body: some View {
@@ -75,6 +79,11 @@ struct StorySessionChatView: View {
             }
         }
         .background(storyCanvas.ignoresSafeArea())
+        // 戻る操作だけでなく、親のNavigationStack/sheetから実際に画面が
+        // 消えた場合も、旧セッションへの遅延保存を止める最後の安全網にする。
+        .onDisappear {
+            sessionVM?.cancelGeneration()
+        }
         .sheet(isPresented: $isShowingRestHelp) {
             // UIフレーム: 詳細な説明・設定画面はここを差し替えて実装する。
             RestBreakHelpSheetFrame()
@@ -82,22 +91,47 @@ struct StorySessionChatView: View {
         .task(id: world.id) {
             guard sessionVM == nil else { return }
             await detailVM.reload()
+            if detailVM.sessionLoadFailed || detailVM.sceneLoadFailed || detailVM.characterLoadFailed {
+                loadError = storyCopy(
+                    "ストーリーの保存データを読み込めませんでした。データを空として扱わず、再試行してください。",
+                    "The story data could not be loaded. It was not treated as empty; try again."
+                )
+                return
+            }
+            guard !detailVM.cast.isEmpty else {
+                loadError = storyCopy(
+                    "このストーリーにはキャストが設定されていません。詳細画面からキャラクターを追加してください。",
+                    "This story has no cast. Add at least one character from the story details before starting it."
+                )
+                return
+            }
             guard let (session, scene) = await detailVM.createOrResumeSession(preferredSessionID: initialSessionID) else {
                 loadError = storyCopy(
-                    "開始シーンがありません。世界観の詳細からシーンを確認してください。",
-                    "This story has no opening scene. Add one from the story details."
+                    detailVM.sessionSaveFailed
+                        ? "セッションを保存できませんでした。保存先を確認してから再試行してください。"
+                        : "開始シーンがありません。世界観の詳細からシーンを確認してください。",
+                    detailVM.sessionSaveFailed
+                        ? "The story session could not be saved. Check storage and try again."
+                        : "This story has no opening scene. Add one from the story details."
                 )
                 return
             }
             let vm = StorySessionViewModel(world: world, session: session, scene: scene)
             await vm.bootstrap()
+            if let bootstrapError = vm.bootstrapError {
+                loadError = bootstrapError
+                return
+            }
             sessionVM = vm
         }
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            Button { dismiss() } label: {
+            Button {
+                sessionVM?.cancelGeneration()
+                dismiss()
+            } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: horizontalSizeClass == .compact ? 20 : 22, weight: .semibold))
                     .frame(width: horizontalSizeClass == .compact ? 30 : 34, height: horizontalSizeClass == .compact ? 30 : 34)
@@ -106,13 +140,13 @@ struct StorySessionChatView: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(world.title)
+                Text(displayedWorld.title)
                     .font(.system(size: horizontalSizeClass == .compact ? 17 : 20, weight: .heavy))
                     .foregroundStyle(storyText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
-                if !world.shortDescription.isEmpty && horizontalSizeClass != .compact {
-                    Text(world.shortDescription)
+                if !displayedWorld.shortDescription.isEmpty && horizontalSizeClass != .compact {
+                    Text(displayedWorld.shortDescription)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(storyMuted)
                         .lineLimit(1)
@@ -129,7 +163,10 @@ struct StorySessionChatView: View {
             }
 
             Menu {
-                Button(storyCopy("セッションを閉じる", "Close session")) { dismiss() }
+                Button(storyCopy("セッションを閉じる", "Close session")) {
+                    sessionVM?.cancelGeneration()
+                    dismiss()
+                }
             } label: {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: horizontalSizeClass == .compact ? 21 : 23, weight: .semibold))
@@ -410,6 +447,7 @@ private struct StorySessionChatBody: View {
                             // 最新のキャラクター発話の後ろに、会話の一部として表示する。
                             restSuggestionCard
                             safetySupportCard
+                            runtimeNoticeCard
                         }
                         .padding(18)
                     }
@@ -457,6 +495,12 @@ private struct StorySessionChatBody: View {
                             proxy.scrollTo("safety-support-card", anchor: .bottom)
                         }
                     }
+                    .onChange(of: service.latestRuntimeNotice?.id) { _, noticeID in
+                        guard noticeID != nil, isStoryChatNearLatest else { return }
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            proxy.scrollTo("runtime-notice-card", anchor: .bottom)
+                        }
+                    }
 
                     if !isStoryChatNearLatest {
                         Button {
@@ -489,8 +533,8 @@ private struct StorySessionChatBody: View {
                     }
                 }
                 .background(storyCanvas)
-                .alert("モデルを準備してください", isPresented: $isShowingUnavailableModelAlert) {
-                    Button("閉じる", role: .cancel) { }
+                .alert(storyCopy("モデルを準備してください", "Prepare a model"), isPresented: $isShowingUnavailableModelAlert) {
+                    Button(storyCopy("閉じる", "Close"), role: .cancel) { }
                 } message: {
                     Text(unavailableModelMessage)
                 }
@@ -570,13 +614,75 @@ private struct StorySessionChatBody: View {
         }
     }
 
+    /// ランタイム/保存失敗の通知は履歴へ書き込まず、現在の画面だけに表示する。
+    /// これにより「エラーをsystem発話として会話に混ぜる」「再試行のたびにカードが
+    /// 増える」問題を防ぎつつ、入力本文を失わずに再試行できる。
+    @ViewBuilder
+    private var runtimeNoticeCard: some View {
+        if let notice = service.latestRuntimeNotice {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.orange.opacity(0.9))
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(storyCopy("モデル状態", "Model status"))
+                        .font(.system(size: 10, weight: .heavy))
+                        .foregroundStyle(storyMuted)
+                    Text(notice.text)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(storyText.opacity(0.78))
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Button(storyCopy("もう一度試す", "Try again")) {
+                            _ = vm.retryRuntimeNotice(notice)
+                        }
+                        .font(.system(size: 11.5, weight: .bold))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        if notice.backendName.localizedCaseInsensitiveContains("iori") {
+                            Button {
+                                vm.generationModel = .b31
+                                _ = vm.retryRuntimeNotice(notice)
+                            } label: {
+                                Label(
+                                    StoryGemma31BAPIService.shared.hasAPIKey
+                                        ? storyCopy("NAGIで再試行", "Retry with NAGI")
+                                        : storyCopy("NAGI APIキー未設定", "NAGI API key not set"),
+                                    systemImage: "arrow.triangle.2.circlepath"
+                                )
+                                .font(.system(size: 11.5, weight: .bold))
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(!StoryGemma31BAPIService.shared.hasAPIKey)
+                        }
+                    }
+                }
+                .frame(maxWidth: 560, alignment: .leading)
+                Spacer(minLength: 28)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.orange.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.orange.opacity(0.18), lineWidth: 1)
+            )
+            .id("runtime-notice-card")
+        }
+    }
+
     // 危険相談の検知は会話を止めず、本文とは別のサポートカードだけを追加する。
     @ViewBuilder
     private var safetySupportCard: some View {
         if let concern = service.latestSafetyConcern {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 10) {
-                    Label(concern.title, systemImage: concern.level == .urgent ? "exclamationmark.triangle.fill" : "heart.text.square")
+                    Label(concern.localizedTitle, systemImage: concern.level == .urgent ? "exclamationmark.triangle.fill" : "heart.text.square")
                         .font(.headline.weight(.bold))
                         .foregroundStyle(concern.level == .urgent ? .orange : storyText)
                     Spacer(minLength: 8)
@@ -592,7 +698,7 @@ private struct StorySessionChatBody: View {
                     .accessibilityIdentifier("story.safety.help")
                     .accessibilityLabel(storyCopy("この相談サポートについて", "About this support"))
                 }
-                Text(concern.message)
+                Text(concern.localizedMessage)
                     .font(.subheadline)
                     .foregroundStyle(storyText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -663,7 +769,10 @@ private struct StorySessionChatBody: View {
         // APIキーの削除や端末内セルフチェックの失敗は、メニューを開いた後にも
         // 起こり得る。送信を失敗させる前に、次回送信のモデルを切り替える。
         vm.generationModel = fallback
-        unavailableModelMessage = "\(unavailableModel.displayName) は現在利用できないため、\(fallback.displayName) に切り替えました。内容を確認して、もう一度送信してください。"
+        unavailableModelMessage = storyCopy(
+            "\(unavailableModel.displayName) は現在利用できないため、\(fallback.displayName) に切り替えました。内容を確認して、もう一度送信してください。",
+            "\(unavailableModel.displayName) is unavailable, so the model was switched to \(fallback.displayName). Review the change and send again."
+        )
         isShowingUnavailableModelAlert = true
     }
 
@@ -672,18 +781,38 @@ private struct StorySessionChatBody: View {
         case .e4b:
             switch localModelManager.runtimeAvailability {
             case .checking:
-                unavailableModelMessage = "iori は端末内で起動確認中です。確認が終わるまで待つか、モデルメニューから利用可能なモデルを選択してください。"
+                unavailableModelMessage = storyCopy(
+                    "iori は端末内で起動確認中です。確認が終わるまで待つか、モデルメニューから利用可能なモデルを選択してください。",
+                    "iori is being checked on this device. Wait for the check to finish or choose an available model from the model menu."
+                )
             case .savedOnly:
-                unavailableModelMessage = "iori のモデルは保存済みですが、端末内の起動確認がまだ完了していません。確認が終わるまで待つか、モデルメニューから利用可能なモデルを選択してください。"
+                unavailableModelMessage = storyCopy(
+                    "iori のモデルは保存済みですが、端末内の起動確認がまだ完了していません。確認が終わるまで待つか、モデルメニューから利用可能なモデルを選択してください。",
+                    "The iori model is saved, but its on-device check has not finished. Wait for the check or choose an available model from the model menu."
+                )
             case .recentFailure:
-                unavailableModelMessage = localModelManager.runtimeDiagnosticSummary ?? "iori を端末内で起動できませんでした。モデル詳細で状態を確認するか、利用可能なモデルを選択してください。"
+                // runtimeDiagnosticSummary may come from a Japanese native
+                // runtime log. Do not leak that raw diagnostic into an
+                // English alert; the details sheet can still show it.
+                unavailableModelMessage = KizunaCopy.language == .english
+                    ? "iori could not start on this device. Check the model details or choose an available model."
+                    : localModelManager.runtimeDiagnosticSummary ?? "iori を端末内で起動できませんでした。モデル詳細で状態を確認するか、利用可能なモデルを選択してください。"
             case .modelMissing:
-                unavailableModelMessage = "iori のモデルが端末にありません。設定でモデルを保存するか、モデルメニューから利用可能なモデルを選択してください。"
+                unavailableModelMessage = storyCopy(
+                    "iori のモデルが端末にありません。設定でモデルを保存するか、モデルメニューから利用可能なモデルを選択してください。",
+                    "The iori model is not installed on this device. Save it in Settings or choose an available model from the model menu."
+                )
             case .executable:
-                unavailableModelMessage = "iori は利用できます。もう一度送信してください。"
+                unavailableModelMessage = storyCopy(
+                    "iori は利用できます。もう一度送信してください。",
+                    "iori is ready. Try sending again."
+                )
             }
         case .b31:
-            unavailableModelMessage = "NAGI を使うには Gemma4 API キーが必要です。設定で API キーを登録するか、モデルメニューから iori を選択してください。"
+            unavailableModelMessage = storyCopy(
+                "NAGI を使うには Gemma4 API キーが必要です。設定で API キーを登録するか、モデルメニューから iori を選択してください。",
+                "NAGI requires a Gemma4 API key. Add the key in Settings or choose iori from the model menu."
+            )
         }
         isShowingUnavailableModelAlert = true
     }
@@ -733,7 +862,7 @@ private struct StorySessionChatBody: View {
     }
 
     private var sceneVisual: some View {
-        StorySceneImageView(scene: vm.scene, world: vm.world)
+        StorySceneImageView(scene: vm.scene, world: vm.world.localizedForCurrentLanguage)
             .frame(maxWidth: .infinity)
             .frame(height: horizontalSizeClass == .compact ? 78 : 104)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -757,7 +886,7 @@ private struct StorySessionChatBody: View {
                 } label: {
                     HStack(spacing: 5) {
                         characterAvatar(character, size: 18)
-                        Text(character.displayName)
+                        Text(character.visibleName)
                             .font(.system(size: 10.5, weight: .bold))
                             .lineLimit(1)
                     }
@@ -1107,7 +1236,7 @@ private struct StoryCharacterSpotlightSheet: View {
                                         StoryCharacterHero.image(for: character)
                                             .frame(width: 72, height: 72)
                                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                        Text(character.displayName)
+                                        Text(character.visibleName)
                                             .font(.system(size: 11, weight: .bold))
                                             .lineLimit(1)
                                     }
@@ -1128,7 +1257,7 @@ private struct StoryCharacterSpotlightSheet: View {
                 }
                 .padding(18)
             }
-            .navigationTitle(selected?.displayName ?? storyCopy("登場キャラ", "Characters"))
+            .navigationTitle(selected?.visibleName ?? storyCopy("登場キャラ", "Characters"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(storyCopy("閉じる", "Close")) { dismiss() }
@@ -1153,7 +1282,7 @@ private struct StoryCharacterHero: View {
                 )
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(character.displayName)
+                Text(character.visibleName)
                     .font(.system(size: 30, weight: .heavy))
                     .foregroundStyle(storyText)
                 if !character.shortDescription.isEmpty {
@@ -1376,18 +1505,18 @@ struct SafetySupportSheet: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text(concern.category.displayName)
+                    Text(concern.category.localizedDisplayName)
                         .font(.headline)
 
                     ForEach(concern.resources) { resource in
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(resource.title)
+                            Text(resource.localizedTitle)
                                 .font(.headline)
-                            Text(resource.detail)
+                            Text(resource.localizedDetail)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
-                            if let actionTitle = resource.actionTitle,
+                            if let actionTitle = resource.localizedActionTitle,
                                let urlString = resource.urlString,
                                let url = URL(string: urlString) {
                                 Link(actionTitle, destination: url)

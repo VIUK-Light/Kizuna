@@ -64,7 +64,24 @@ final class CharacterCreateViewModel: ObservableObject {
         // 既に入力済みの shortDescription/firstMessage は上書きしないようにする
         if !draft.shortDescription.isEmpty { d.shortDescription = draft.shortDescription }
         if !draft.firstMessage.isEmpty { d.firstMessage = draft.firstMessage }
+        // テンプレート由来の重複ルールも、詳細画面のForEachへそのまま渡さない。
+        // 順序は維持し、正規化した文字列だけで重複を除く。
+        d.rules = uniqueRules(d.rules)
+        d.safetyRules = uniqueRules(d.safetyRules)
         self.draft = d
+    }
+
+    private func uniqueRules(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { value in
+            let normalized = value
+                .precomposedStringWithCanonicalMapping
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalized.isEmpty else { return false }
+            return seen.insert(normalized).inserted
+        }
     }
 
     /// 保存しようとした時に呼ぶ。Safety を通したのち state を遷移させる。
@@ -72,7 +89,9 @@ final class CharacterCreateViewModel: ObservableObject {
         state = .validating
 
         // ベースの safetyRating を起点に内部解決
-        var working = draft
+        // The editor intentionally allows an empty display-name field, but
+        // persisted profiles must not carry an empty label into Story views.
+        var working = draft.normalizedForPersistence
         working.updatedAt = Date()
 
         let decision = await safetyPipeline.evaluateCharacter(working)
@@ -99,9 +118,10 @@ final class CharacterCreateViewModel: ObservableObject {
     }
 
     private func persist(_ c: CharacterProfile) async {
+        let normalized = c.normalizedForPersistence
         do {
-            try await characterRepo.saveCharacter(c)
-            state = .saved(c)
+            try await characterRepo.saveCharacter(normalized)
+            state = .saved(normalized)
         } catch {
             NSLog("[CharacterCreateVM] save failed: %@", String(describing: error))
             state = .blocked(

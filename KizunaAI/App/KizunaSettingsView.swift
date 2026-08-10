@@ -11,6 +11,7 @@ struct KizunaSettingsView: View {
     @State private var modelSourceSelection: LocalModelSourceSelection = .standard
     @State private var selectedStandardModelURL = LocalAssistantModelProfile.defaultDownloadURL
     @State private var saveMessage: String?
+    @State private var saveMessageIsError = false
     @State private var showDeleteAlert = false
     @State private var showResetLaunchAlert = false
     @State private var isShowingProfile = false
@@ -281,8 +282,8 @@ struct KizunaSettingsView: View {
 
                 if let saveMessage {
                     Section {
-                        Label(saveMessage, systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                        Label(saveMessage, systemImage: saveMessageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                            .foregroundStyle(saveMessageIsError ? .red : .green)
                     }
                 }
             }
@@ -340,7 +341,7 @@ struct KizunaSettingsView: View {
     }
 
     private func saveSecretsAndModelSource() {
-        AISecretStore.shared.setString(nagiAPIKey, for: .gemmaWebReaderAPIKey)
+        let apiKeySaved = AISecretStore.shared.setString(nagiAPIKey, for: .gemmaWebReaderAPIKey)
 
         if modelSourceSelection == .standard {
             modelManager.updateSourceURL(selectedStandardModelURL)
@@ -348,8 +349,14 @@ struct KizunaSettingsView: View {
             modelManager.updateSourceURL(modelSourceURL)
         }
 
-        modelManager.updateAccessToken(modelAccessToken)
-        saveMessage = KizunaCopy.text(japanese: "設定を保存しました", english: "Settings saved")
+        let accessTokenSaved = modelManager.updateAccessToken(modelAccessToken)
+        saveMessageIsError = !(apiKeySaved && accessTokenSaved)
+        saveMessage = saveMessageIsError
+            ? KizunaCopy.text(
+                japanese: "秘密情報をKeychainへ保存できませんでした。入力は保持したまま、もう一度試してください。",
+                english: "A secret could not be saved to Keychain. Your input was kept; try again."
+            )
+            : KizunaCopy.text(japanese: "設定を保存しました", english: "Settings saved")
     }
 
     private var standardModelOptions: [LocalAssistantModelProfile.DownloadOption] {

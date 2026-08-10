@@ -33,21 +33,26 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
 
     func fetchCharacters() async throws -> [CharacterProfile] {
         let all = try await charStore.loadRecoveringCorruptRecords()
-        return all.sorted { $0.updatedAt > $1.updatedAt }
+        return deduplicatedCharacters(all).sorted { $0.updatedAt > $1.updatedAt }
     }
 
     func saveCharacter(_ character: CharacterProfile) async throws {
-        var updated = character
-        if let existing = (try? await charStore.loadRecoveringCorruptRecords().first(where: { $0.id == character.id })),
-           existing.isSystemProtected == true {
-            updated.isSystemProtected = true
-            if existing.avatarImageData != nil, updated.avatarImageData == nil {
-                updated.avatarImageData = existing.avatarImageData
-                updated.imageKey = existing.imageKey
+        try await charStore.mutate { items in
+            var updated = character.normalizedForPersistence
+            let existing = items.filter { $0.id == character.id }
+            if let protected = existing.first(where: { $0.isSystemProtected == true }) {
+                updated.isSystemProtected = true
+                if updated.avatarImageData == nil, let imageData = protected.avatarImageData {
+                    updated.avatarImageData = imageData
+                    updated.imageKey = protected.imageKey
+                }
             }
+            updated.updatedAt = Date()
+            // appendOrReplaceは最初の1件だけを置き換えるため、旧データに
+            // 残った同UUIDレコードを一緒に除去して保存層を一意に保つ。
+            items.removeAll { $0.id == updated.id }
+            items.append(updated)
         }
-        updated.updatedAt = Date()
-        try await charStore.appendOrReplace(updated, idEquals: { $0.id == $1.id })
     }
 
     func saveCharacters(_ characters: [CharacterProfile]) async throws {
@@ -56,34 +61,52 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
         // charStore.mutate はファイルの読み込み・変更・保存を同じロック内で
         // 完了させる。初期シードで数百回発生していた全量I/Oを1回にまとめる。
         try await charStore.mutate { items in
-            var indexByID: [UUID: Int] = [:]
-            for (index, item) in items.enumerated() {
-                // 旧データに同じUUIDが残っていてもクラッシュせず、最後の
-                // レコードを置換対象にする。
-                indexByID[item.id] = index
-            }
             let timestamp = Date()
 
+            // 先に既存ファイル全体をUUID単位へ正規化し、バッチ入力にも同じ
+            // IDが複数ある場合は最後の入力を採用する。
+            var normalized = deduplicatedCharacters(items)
             for character in characters {
-                var updated = character
-                if let index = indexByID[character.id] {
-                    let existing = items[index]
-                    if existing.isSystemProtected == true {
-                        updated.isSystemProtected = true
-                        if existing.avatarImageData != nil, updated.avatarImageData == nil {
-                            updated.avatarImageData = existing.avatarImageData
-                            updated.imageKey = existing.imageKey
-                        }
+                var updated = character.normalizedForPersistence
+                let existing = normalized.filter { $0.id == character.id }
+                if let protected = existing.first(where: { $0.isSystemProtected == true }) {
+                    updated.isSystemProtected = true
+                    if updated.avatarImageData == nil, let imageData = protected.avatarImageData {
+                        updated.avatarImageData = imageData
+                        updated.imageKey = protected.imageKey
                     }
-                    updated.updatedAt = timestamp
-                    items[index] = updated
-                } else {
-                    updated.updatedAt = timestamp
-                    indexByID[updated.id] = items.count
-                    items.append(updated)
                 }
+                updated.updatedAt = timestamp
+                normalized.removeAll { $0.id == updated.id }
+                normalized.append(updated)
             }
+            items = normalized
         }
+    }
+
+    /// 旧バージョンや中断したシードで残った同一UUIDを1件へ統合する。
+    /// 保護済みフラグと画像は失わず、本文は更新日時が新しいレコードを優先する。
+    private func deduplicatedCharacters(_ characters: [CharacterProfile]) -> [CharacterProfile] {
+        var result: [CharacterProfile] = []
+        var indexByID: [UUID: Int] = [:]
+        for character in characters {
+            guard let existingIndex = indexByID[character.id] else {
+                indexByID[character.id] = result.count
+                result.append(character)
+                continue
+            }
+            let existing = result[existingIndex]
+            let protected = existing.isSystemProtected == true || character.isSystemProtected == true
+            var preferred = character.updatedAt >= existing.updatedAt ? character : existing
+            preferred.isSystemProtected = protected
+            if preferred.avatarImageData == nil {
+                let fallback = character.avatarImageData ?? existing.avatarImageData
+                preferred.avatarImageData = fallback
+                if preferred.imageKey == nil { preferred.imageKey = character.imageKey ?? existing.imageKey }
+            }
+            result[existingIndex] = preferred
+        }
+        return result
     }
 
     func deleteCharacter(id: UUID) async throws {

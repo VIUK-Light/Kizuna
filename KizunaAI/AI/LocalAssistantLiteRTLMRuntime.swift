@@ -133,7 +133,6 @@ private final class LiteRTLMActiveConversation: @unchecked Sendable {
         lock.unlock()
     }
 
-    @MainActor
     func cancel() {
         lock.lock()
         let activeConversation = conversation
@@ -368,9 +367,10 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated func cancelActiveGeneration() {
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
 #if canImport(LiteRTLM)
-        Task { @MainActor in
-            activeConversation.cancel()
-        }
+        // 遅延した MainActor Task にすると、A のキャンセル要求が実行される前に
+        // B の Conversation が登録され、Bまでキャンセルする競合が起きる。
+        // Conversation は内部ロックで保護しているため、ここで同じ世代を即時停止する。
+        activeConversation.cancel()
 #endif
 #endif
     }
@@ -380,9 +380,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated func releaseResourcesForBackground() {
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
 #if canImport(LiteRTLM)
-        Task { @MainActor in
-            activeConversation.cancel()
-        }
+        activeConversation.cancel()
         Task(priority: .utility) {
             await executionGate.acquire()
             await engineStore.release()

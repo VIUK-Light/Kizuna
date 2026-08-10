@@ -64,8 +64,41 @@ enum CharacterLibrarySeed {
         "青いバス停で、次の季節を待つ": "StorySceneBlueBusStop"
     ]
 
-    private static func sceneImageKey(for title: String) -> String? {
-        bundledSceneImageKeys[title.trimmingCharacters(in: .whitespacesAndNewlines)]
+    private static let fallbackSceneImageKeys = [
+        "StorySceneAfterSchoolMystery",
+        "StorySceneTwilightCafe",
+        "StorySceneShadowMarket",
+        "StorySceneFuturePost",
+        "StorySceneRobotLab",
+        "StorySceneInfirmary",
+        "StorySceneKyudo",
+        "StorySceneDormNight",
+        "StorySceneArtRoom",
+        "StorySceneMagicLibrary",
+        "StorySceneSummerFestival",
+        "StorySceneRainUmbrella",
+        "StorySceneStudentCouncil",
+        "StorySceneMidnightRadio",
+        "StorySceneRainyCohabitation",
+        "StorySceneUnsentPhoto",
+        "StorySceneDeepSeaResearch",
+        "StorySceneTheaterUnderstudy",
+        "StorySceneStarlitGreenhouse",
+        "StorySceneBlueBusStop"
+    ]
+
+    private static func sceneImageKey(for title: String) -> String {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let key = bundledSceneImageKeys[normalizedTitle] {
+            return key
+        }
+
+        // 旧SeedStoryPacksの一部は初期SceneにimageKeyを持たない。
+        // nilのまま保存すると全件がグラデーションへ落ちるため、既存の
+        // シーン背景アセットからタイトルごとに安定したフォールバックを選ぶ。
+        // 将来専用画像を追加した場合は上の辞書が優先される。
+        let seed = normalizedTitle.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }
+        return fallbackSceneImageKeys[(seed == Int.min ? 0 : abs(seed)) % fallbackSceneImageKeys.count]
     }
 
     /// 初期データを準備する。失敗理由は呼び出し側へ返し、一覧画面が
@@ -100,7 +133,10 @@ enum CharacterLibrarySeed {
         do {
             let seeds = characterSeeds()
             var existingCharacters = try await characterRepo.fetchCharacters()
-            var existingByName = dictionaryByName(existingCharacters)
+            // 名前はユーザーが自由に付けられるため、標準キャラとの照合キーに
+            // ユーザーレコードを含めない。同名のユーザーキャラを標準保護へ
+            // 昇格させず、標準レコードが無ければ別UUIDで新規作成する。
+            var existingByName = dictionaryByName(existingCharacters.filter { $0.isSystemProtected == true })
             var initialCharactersToSave: [CharacterProfile] = []
 
             for seed in seeds {
@@ -118,7 +154,7 @@ enum CharacterLibrarySeed {
             try await saveCharacters(initialCharactersToSave, using: characterRepo)
 
             existingCharacters = try await characterRepo.fetchCharacters()
-            existingByName = dictionaryByName(existingCharacters)
+            existingByName = dictionaryByName(existingCharacters.filter { $0.isSystemProtected == true })
             var bundledPackIssue: SeedIssue?
             do {
                 try await seedBundledStoryPacks(
@@ -137,7 +173,7 @@ enum CharacterLibrarySeed {
             }
 
             let allCharacters = try await characterRepo.fetchCharacters()
-            let characterIndex = dictionaryByName(allCharacters)
+            let characterIndex = dictionaryByName(allCharacters.filter { $0.isSystemProtected == true })
 
             let existingWorlds = try await worldRepo.fetchWorlds()
             // 表示名はユーザーが自由に設定できるため、タイトルだけで

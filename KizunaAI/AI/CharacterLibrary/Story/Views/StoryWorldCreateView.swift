@@ -82,6 +82,10 @@ struct StoryWorldCreateView: View {
                 }
                 .padding(18)
             }
+            // 初期スナップショットの読込が終わる前に編集すると、完了後の
+            // cast/lorebook/scene代入で入力を巻き戻すため、フォーム自体を
+            // ロックする。キャンセルと再試行はヘッダー側で引き続き可能。
+            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
             Divider()
             footer
         }
@@ -109,7 +113,14 @@ struct StoryWorldCreateView: View {
 
     private var header: some View {
         HStack {
-            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { dismiss() }.buttonStyle(.plain).foregroundStyle(.secondary)
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) {
+                Task {
+                    await vm.discardPendingGeneratedCharacters()
+                    dismiss()
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
             Spacer()
             Text(existing == nil
                  ? KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story")
@@ -142,8 +153,9 @@ struct StoryWorldCreateView: View {
                     }
                 } label: {
                     Label(KizunaCopy.text(japanese: "保存して試す", english: "Save and try"), systemImage: "play.fill")
-                }
-                .buttonStyle(.bordered)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
             }
             Spacer()
             Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
@@ -155,6 +167,7 @@ struct StoryWorldCreateView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
             .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 16)
@@ -219,7 +232,7 @@ struct StoryWorldCreateView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(vm.isGeneratingTemplate || vm.generationBrief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(vm.isGeneratingTemplate || vm.isSaving || vm.generationBrief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     Spacer()
                 }
@@ -287,10 +300,30 @@ struct StoryWorldCreateView: View {
     private var quickPromptChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                quickPromptButton(KizunaCopy.text(japanese: "BL 部活", english: "BL · Club")) { "BL。放課後の部活で、無口な先輩と少しずつ信頼を深める青春ストーリー" }
-                quickPromptButton(KizunaCopy.text(japanese: "GL 寮生活", english: "GL · Dorm")) { "GL。女子寮の夜、同室の先輩と秘密を共有して距離が近づく日常ストーリー" }
-                quickPromptButton(KizunaCopy.text(japanese: "幻想図書館", english: "Fantasy library")) { "夜だけ開く魔法図書館で、契約者と秘密の本を探すファンタジー" }
-                quickPromptButton(KizunaCopy.text(japanese: "夏祭り", english: "Summer festival")) { "BL。幼なじみと夏祭りで再会し、昔の約束を少しずつ思い出す話" }
+                quickPromptButton(KizunaCopy.text(japanese: "BL 部活", english: "BL · Club")) {
+                    KizunaCopy.text(
+                        japanese: "BL。放課後の部活で、無口な先輩と少しずつ信頼を深める青春ストーリー",
+                        english: "BL. A coming-of-age story where a quiet senior and the new club member slowly build trust after school."
+                    )
+                }
+                quickPromptButton(KizunaCopy.text(japanese: "GL 寮生活", english: "GL · Dorm")) {
+                    KizunaCopy.text(
+                        japanese: "GL。女子寮の夜、同室の先輩と秘密を共有して距離が近づく日常ストーリー",
+                        english: "GL. A slice-of-life story where roommates in a girls' dorm share a secret late at night and grow closer."
+                    )
+                }
+                quickPromptButton(KizunaCopy.text(japanese: "幻想図書館", english: "Fantasy library")) {
+                    KizunaCopy.text(
+                        japanese: "夜だけ開く魔法図書館で、契約者と秘密の本を探すファンタジー",
+                        english: "A fantasy story about searching for a secret book with a contractor in a magic library that opens only at night."
+                    )
+                }
+                quickPromptButton(KizunaCopy.text(japanese: "夏祭り", english: "Summer festival")) {
+                    KizunaCopy.text(
+                        japanese: "BL。幼なじみと夏祭りで再会し、昔の約束を少しずつ思い出す話",
+                        english: "BL. Childhood friends reunite at a summer festival and slowly remember the promise they made long ago."
+                    )
+                }
             }
         }
     }
@@ -385,16 +418,16 @@ struct StoryWorldCreateView: View {
                     Text(KizunaCopy.text(japanese: "ジャンル", english: "Genre")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Menu {
                         ForEach(CategoryGroup.allCases) { g in
-                            Menu(g.displayName) {
+                            Menu(g.localizedDisplayName) {
                                 ForEach(CharacterCategory.allCases.filter { $0.group == g }) { c in
-                                    Button(c.displayName) { vm.draft.genre = c }
+                                    Button(c.localizedDisplayName) { vm.draft.genre = c }
                                 }
                             }
                         }
                     } label: {
                         HStack {
                             Image(systemName: vm.draft.genre.group.iconName).foregroundStyle(.tint)
-                            Text(vm.draft.genre.displayName)
+                            Text(vm.draft.genre.localizedDisplayName)
                             Image(systemName: "chevron.down").font(.system(size: 9))
                         }
                         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -406,7 +439,7 @@ struct StoryWorldCreateView: View {
                 HStack {
                     Text(KizunaCopy.text(japanese: "関係性", english: "Relationship")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Picker("", selection: $vm.draft.relationshipGenre) {
-                        ForEach(RelationshipGenre.allCases) { g in Text(g.displayName).tag(g) }
+                        ForEach(RelationshipGenre.allCases) { g in Text(g.localizedDisplayName).tag(g) }
                     }.labelsHidden().pickerStyle(.menu)
                 }
 
@@ -416,7 +449,7 @@ struct StoryWorldCreateView: View {
                         "",
                         selection: Binding(
                             get: { vm.draft.resolvedCastMode },
-                            set: { vm.draft.castMode = $0 }
+                            set: { vm.setCastMode($0) }
                         )
                     ) {
                         ForEach(StoryCastMode.allCases) { mode in
@@ -621,15 +654,15 @@ struct StoryWorldCreateView: View {
             HStack {
                 characterAvatar(profile, size: 34)
                 Image(systemName: member.roleInStory.iconName).foregroundStyle(.tint)
-                Text(profile.displayName.isEmpty ? profile.name : profile.displayName)
+                Text(profile.visibleName)
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Menu {
                     ForEach(CastRole.allCases, id: \.self) { r in
-                        Button(r.displayName) { vm.setRole(r, for: member.characterId) }
+                        Button(r.localizedDisplayName) { vm.setRole(r, for: member.characterId) }
                     }
                 } label: {
-                    Text(member.roleInStory.displayName).font(.system(size: 10, weight: .semibold))
+                    Text(member.roleInStory.localizedDisplayName).font(.system(size: 10, weight: .semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentColor.opacity(0.12)))
                         .foregroundStyle(Color.accentColor)
@@ -655,12 +688,12 @@ struct StoryWorldCreateView: View {
 
                 Menu {
                     ForEach(IntroductionTiming.allCases, id: \.self) { timing in
-                        Button(timing.displayName) {
+                        Button(timing.localizedDisplayName) {
                             vm.setIntroductionTiming(timing, for: member.characterId)
                         }
                     }
                 } label: {
-                    Label(member.introductionTiming.displayName, systemImage: "clock")
+                    Label(member.introductionTiming.localizedDisplayName, systemImage: "clock")
                         .font(.system(size: 10, weight: .semibold))
                 }
                 .menuStyle(.borderlessButton)
@@ -732,7 +765,7 @@ struct StoryWorldCreateView: View {
                     set: { vm.updateRelationship(from: pair.from.characterId, to: pair.to.characterId, type: $0) }
                 )) {
                     ForEach(RelationshipType.allCases, id: \.self) { type in
-                        Text(type.displayName).tag(type)
+                        Text(type.localizedDisplayName).tag(type)
                     }
                 }
                 .labelsHidden()
@@ -851,8 +884,18 @@ struct StoryWorldCreateView: View {
     }
 
     private func addTag() {
-        let t = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, !vm.draft.tags.contains(t) else { return }
+        let t = newTag
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+            .joined(separator: " ")
+        let key = t.localizedLowercase
+        guard !t.isEmpty,
+              !vm.draft.tags.contains(where: {
+                  $0.split(whereSeparator: { $0.isWhitespace })
+                      .map(String.init)
+                      .joined(separator: " ")
+                      .localizedLowercase == key
+              }) else { return }
         vm.draft.tags.append(t)
         newTag = ""
     }
@@ -905,9 +948,9 @@ private struct CharacterPickerForStory: View {
                         ForEach(filtered) { c in
                             Button { onPick(c) } label: {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(c.displayName.isEmpty ? c.name : c.displayName)
+                                    Text(c.visibleName)
                                         .font(.system(size: 13, weight: .semibold))
-                                    Text(c.category.displayName + " ・ " + c.relationshipGenre.displayName)
+                                    Text(c.category.localizedDisplayName + KizunaCopy.text(japanese: " ・ ", english: " · ") + c.relationshipGenre.localizedDisplayName)
                                         .font(.system(size: 10)).foregroundStyle(.secondary)
                                     if !c.shortDescription.isEmpty {
                                         Text(c.shortDescription).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(2)
@@ -938,10 +981,10 @@ private struct StoryRelationshipPair: Identifiable {
     }
 
     var fromName: String {
-        fromProfile.displayName.isEmpty ? fromProfile.name : fromProfile.displayName
+        fromProfile.visibleName
     }
 
     var toName: String {
-        toProfile.displayName.isEmpty ? toProfile.name : toProfile.displayName
+        toProfile.visibleName
     }
 }

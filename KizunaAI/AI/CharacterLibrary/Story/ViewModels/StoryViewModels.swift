@@ -83,7 +83,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         isBootstrapping = false
         // 一時的なI/O／Bundle失敗を「初期化済み」として固定しない。
         // エラー表示を残したまま、次回表示時に自動再試行できるようにする。
-        didBootstrap = error == nil
+        didBootstrap = error == nil && loadError == nil
     }
 
     func reload() async {
@@ -306,26 +306,23 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         }
     }
 
-    func delete(id: UUID) async {
+    func delete(id: UUID) async throws {
         guard let world = worlds.first(where: { $0.id == id }), world.isSystemProtected != true else { return }
-        do {
-            // 一覧画面からの削除も詳細画面と同じく関連データを掃除する。
-            let sessions = try await sessionRepo.fetchSessions(storyWorldId: id)
-            for session in sessions {
-                try await sessionRepo.deleteSession(id: session.id)
-            }
-            let lorebookEntries = try await lorebookRepo.fetchAllEntries(storyWorldId: id)
-            for entry in lorebookEntries {
-                try await lorebookRepo.deleteEntry(id: entry.id)
-            }
-            try await castRepo.deleteAllCast(storyWorldId: id)
-            try await sceneRepo.deleteAllScenes(storyWorldId: id)
-            try await storyMemoryRepo.deleteAllMemories(storyWorldId: id)
-            try await worldRepo.deleteWorld(id: id)
-            await reload()
-        } catch {
-            NSLog("[StoryLibraryVM] delete failed: %@", String(describing: error))
+        // 一覧画面からの削除も詳細画面と同じく関連データを掃除する。
+        // エラーはUIへ返し、世界だけ閉じて孤児データを隠すことを防ぐ。
+        let sessions = try await sessionRepo.fetchSessions(storyWorldId: id)
+        for session in sessions {
+            try await sessionRepo.deleteSession(id: session.id)
         }
+        let lorebookEntries = try await lorebookRepo.fetchAllEntries(storyWorldId: id)
+        for entry in lorebookEntries {
+            try await lorebookRepo.deleteEntry(id: entry.id)
+        }
+        try await castRepo.deleteAllCast(storyWorldId: id)
+        try await sceneRepo.deleteAllScenes(storyWorldId: id)
+        try await storyMemoryRepo.deleteAllMemories(storyWorldId: id)
+        try await worldRepo.deleteWorld(id: id)
+        await reload()
     }
 
     var filtered: [StoryWorld] {
@@ -337,6 +334,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                 let displayed = w.localizedForCurrentLanguage
                 return displayed.title.lowercased().contains(needle)
                     || displayed.shortDescription.lowercased().contains(needle)
+                    || displayed.worldSetting.lowercased().contains(needle)
                     || displayed.tags.contains(where: { $0.lowercased().contains(needle) })
             }
         }
@@ -350,12 +348,24 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     }
 
     private func recommendationScore(_ world: StoryWorld, for preference: KizunaStoryPreference) -> Int {
+        let displayed = world.localizedForCurrentLanguage
         let searchableParts = [
+            displayed.title,
+            displayed.shortDescription,
+            displayed.worldSetting,
+            displayed.openingScene,
+            displayed.storyGoal,
+            displayed.mood,
+            displayed.tags.joined(separator: " "),
+            world.genre.rawValue,
+            world.genre.localizedDisplayName,
+            world.genre.group.localizedDisplayName,
+            world.relationshipGenre.localizedDisplayName,
+            // 未翻訳の旧データではlocalizedForCurrentLanguageが原文を返すが、
+            // 保存側に残るタグも併用して旧キーワードとの互換性を保つ。
             world.title,
             world.shortDescription,
             world.worldSetting,
-            world.genre.rawValue,
-            world.genre.group.rawValue,
             world.tags.joined(separator: " ")
         ]
         let searchable = searchableParts.joined(separator: " ").lowercased()
@@ -376,7 +386,9 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     }
 
     func coverCharacter(for world: StoryWorld) -> CharacterProfile? {
+        let storyCharacterIDs = Set(world.characterIds)
         if let mainCharacterId = world.mainCharacterId,
+           storyCharacterIDs.contains(mainCharacterId),
            let character = charactersById[mainCharacterId] {
             return character
         }
@@ -394,10 +406,17 @@ final class StoryWorldCreateViewModel: ObservableObject {
     // StoryWorld内で使うLorebook。キャラ欄ではなく物語編集画面から管理する。
     @Published private(set) var lorebookDrafts: [StoryLorebookEntry] = []
     @Published private(set) var availableCharacters: [CharacterProfile] = []
+    @Published private(set) var isReadyToSave = false
+    @Published private(set) var isSaving = false
+    @Published private(set) var loadError: String?
     @Published var saveError: String? = nil
     @Published var generationBrief: String = ""
     @Published private(set) var isGeneratingTemplate: Bool = false
     @Published private(set) var generationStatus: String? = nil
+
+    /// 雛形生成中にだけ作ったキャラ。保存ボタンが成功するまでRepositoryへ
+    /// 書き込まず、再生成/キャンセルでライブラリーへ孤児を残さない。
+    private var pendingGeneratedCharacters: [UUID: CharacterProfile] = [:]
 
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
@@ -411,7 +430,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
             self.draft = existing
             self.sceneDraft = StoryScene(
                 storyWorldId: existing.id,
-                title: existing.title + " - 第 1 場面",
+                title: Self.defaultSceneTitle(for: existing.title),
                 mood: existing.mood,
                 sceneGoal: existing.storyGoal,
                 summary: existing.openingScene
@@ -428,19 +447,33 @@ final class StoryWorldCreateViewModel: ObservableObject {
     }
 
     func load() async {
+        isReadyToSave = false
+        loadError = nil
         do {
             self.availableCharacters = try await characterRepo.fetchCharacters()
-            self.castDrafts = (try? await castRepo.fetchCast(storyWorldId: draft.id)) ?? []
-            self.lorebookDrafts = (try? await lorebookRepo.fetchEntries(storyWorldId: draft.id)) ?? []
-            if let firstScene = ((try? await sceneRepo.fetchScenes(storyWorldId: draft.id)) ?? []).first {
+            self.castDrafts = try await castRepo.fetchCast(storyWorldId: draft.id)
+            self.lorebookDrafts = try await lorebookRepo.fetchEntries(storyWorldId: draft.id)
+            let scenes = try await sceneRepo.fetchScenes(storyWorldId: draft.id)
+            if let firstScene = scenes.first {
                 self.sceneDraft = firstScene
             } else if sceneDraft.title.isEmpty {
-                sceneDraft.title = draft.title.isEmpty ? "第 1 場面" : draft.title + " - 第 1 場面"
+                sceneDraft.title = Self.defaultSceneTitle(for: draft.title)
                 sceneDraft.mood = draft.mood
                 sceneDraft.sceneGoal = draft.storyGoal
                 sceneDraft.summary = draft.openingScene
             }
+            if !castDrafts.isEmpty {
+                // 旧データを編集で開いた場合も、形式と初期シーン選択を
+                // 同じ正規化規則へ通し、画面と保存値のずれを残さない。
+                setCastMode(draft.resolvedCastMode)
+            }
+            isReadyToSave = true
         } catch {
+            loadError = String(describing: error)
+            saveError = KizunaCopy.text(
+                japanese: "保存データを完全に読み込めませんでした。内容を空のまま保存できないため、再読み込みしてください。",
+                english: "The saved story data could not be loaded completely. Reload before saving so existing cast and lorebook data are not erased."
+            )
             NSLog("[StoryWorldCreateVM] load failed: %@", String(describing: error))
         }
     }
@@ -461,6 +494,9 @@ final class StoryWorldCreateViewModel: ObservableObject {
         castDrafts.append(cast)
         if !draft.characterIds.contains(profile.id) { draft.characterIds.append(profile.id) }
         if draft.mainCharacterId == nil { draft.mainCharacterId = profile.id }
+        if sceneDraft.activeCharacterIds.isEmpty {
+            sceneDraft.activeCharacterIds = [profile.id]
+        }
     }
 
     // Lorebookカードを1件追加する。キーワードは空白・読点区切りで受け取る。
@@ -487,6 +523,13 @@ final class StoryWorldCreateViewModel: ObservableObject {
     }
 
     func generateTemplateWith31BThinking() async {
+        guard !isSaving else {
+            saveError = KizunaCopy.text(
+                japanese: "保存中は雛形を再生成できません。保存が終わってから試してください。",
+                english: "The template cannot be regenerated while the story is being saved. Try again afterward."
+            )
+            return
+        }
         let brief = generationBrief.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !brief.isEmpty else {
             saveError = KizunaCopy.text(
@@ -513,8 +556,8 @@ final class StoryWorldCreateViewModel: ObservableObject {
         defer { isGeneratingTemplate = false }
 
         let systemPrompt = Self.storyTemplateSystemPrompt + "\n\n" + (KizunaCopy.language == .english
-            ? "All human-readable string values in the JSON (title, descriptions, settings, scenes, character text, tags, and rules) must be written in English. Keep enum values exactly as specified."
-            : "JSON内のタイトル、説明、設定、シーン、キャラクター本文、タグ、ルールは日本語で書いてください。enum値はschemaの表記をそのまま使ってください。")
+            ? "All human-readable string values in the JSON (title, descriptions, settings, scenes, character text, tags, and rules) must be written in English. Keep enum values exactly as specified. If the request asks for multiple characters, set castMode to ensemble, set characterCount to the number of generated characters, and include every requested character in characters."
+            : "JSON内のタイトル、説明、設定、シーン、キャラクター本文、タグ、ルールは日本語で書いてください。enum値はschemaの表記をそのまま使ってください。複数キャラの指定がある場合はcastModeをensembleにし、characterCountを生成キャラ数に合わせ、指定したキャラをcharactersへすべて含めてください。")
         let reply: String
         do {
             reply = try await StoryGemma31BAPIService.shared.generate(
@@ -524,13 +567,20 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 maxOutputTokens: 8192
             )
         } catch {
-            saveError = error.localizedDescription
+            NSLog("[StoryWorldCreateVM] template generation failed: %@", error.localizedDescription)
+            saveError = KizunaCopy.text(
+                japanese: "雛形の生成に失敗しました。API設定と入力内容を確認して、もう一度試してください。",
+                english: "The template could not be generated. Check the API settings and your idea, then try again."
+            )
             generationStatus = nil
             return
         }
 
         guard let data = Self.extractJSONObjectData(from: reply) else {
-            saveError = "雛形の生成に失敗しました。JSONとして読める出力がありません。"
+            saveError = KizunaCopy.text(
+                japanese: "雛形の生成に失敗しました。JSONとして読める出力がありません。",
+                english: "The template could not be generated because the response did not contain readable JSON."
+            )
             generationStatus = nil
             return
         }
@@ -538,10 +588,36 @@ final class StoryWorldCreateViewModel: ObservableObject {
         do {
             let template = try JSONDecoder().decode(GeneratedStoryTemplate.self, from: data)
             try await applyGeneratedTemplate(template)
-            generationStatus = "雛形をフォームへ反映しました。"
+            generationStatus = KizunaCopy.text(
+                japanese: "雛形をフォームへ反映しました。",
+                english: "The template was applied to the form."
+            )
         } catch {
-            saveError = "雛形の読み込みに失敗しました: \(error.localizedDescription)"
+            NSLog("[StoryWorldCreateVM] template decode/apply failed: %@", error.localizedDescription)
+            saveError = KizunaCopy.text(
+                japanese: "雛形の読み込みに失敗しました。生成内容を確認して、もう一度試してください。",
+                english: "The template could not be loaded. Check the generated content and try again."
+            )
             generationStatus = nil
+        }
+    }
+
+    /// 作成画面を閉じる/雛形を再生成する時に、未保存の生成キャラを破棄する。
+    func discardPendingGeneratedCharacters() async {
+        let pendingIDs = Set(pendingGeneratedCharacters.keys)
+        guard !pendingIDs.isEmpty else { return }
+        pendingGeneratedCharacters.removeAll()
+        castDrafts.removeAll { pendingIDs.contains($0.characterId) }
+        draft.characterIds.removeAll { pendingIDs.contains($0) }
+        sceneDraft.activeCharacterIds.removeAll { pendingIDs.contains($0) }
+        if let mainID = draft.mainCharacterId, pendingIDs.contains(mainID) {
+            draft.mainCharacterId = castDrafts.first?.characterId
+        }
+        availableCharacters.removeAll { pendingIDs.contains($0.id) }
+        // 旧バージョンで同じViewModelがすでに保存していた場合も掃除する。
+        // 新しい経路では未保存なので、存在しないIDの削除は安全なno-op。
+        for id in pendingIDs {
+            try? await characterRepo.deleteCharacter(id: id)
         }
     }
 
@@ -555,13 +631,45 @@ final class StoryWorldCreateViewModel: ObservableObject {
         draft.characterIds.removeAll { $0 == characterID }
         sceneDraft.activeCharacterIds.removeAll { $0 == characterID }
         if draft.mainCharacterId == characterID {
-            draft.mainCharacterId = castDrafts.first?.characterId
+            // 主役を削除した場合は、残ったキャストの先頭を主役へ昇格する。
+            // IDだけ差し替えると表示上は準主役のまま、セッションだけが主役として
+            // 扱う不整合が起きるため、CastRoleとmainCharacterIdを同時に更新する。
+            if let replacement = castDrafts.first {
+                draft.mainCharacterId = replacement.characterId
+                for index in castDrafts.indices {
+                    castDrafts[index].roleInStory = castDrafts[index].characterId == replacement.characterId
+                        ? .main
+                        : (castDrafts[index].roleInStory == .main ? .secondary : castDrafts[index].roleInStory)
+                }
+            } else {
+                draft.mainCharacterId = nil
+            }
         }
     }
 
     func setRole(_ role: CastRole, for characterID: UUID) {
         guard let idx = castDrafts.firstIndex(where: { $0.characterId == characterID }) else { return }
-        castDrafts[idx].roleInStory = role
+        if role == .main {
+            // 主役は1人に固定し、Worldの参照先も同じ操作で更新する。
+            for index in castDrafts.indices where index != idx {
+                if castDrafts[index].roleInStory == .main {
+                    castDrafts[index].roleInStory = .secondary
+                }
+            }
+            draft.mainCharacterId = characterID
+        } else if draft.mainCharacterId == characterID {
+            // 現在の主役を別役へ下げる場合は、残りのキャストから決定的に昇格。
+            let replacement = castDrafts.enumerated().first { index, member in
+                index != idx && member.characterId != characterID
+            }?.element.characterId
+            draft.mainCharacterId = replacement
+            if let replacement {
+                for index in castDrafts.indices where castDrafts[index].characterId == replacement {
+                    castDrafts[index].roleInStory = .main
+                }
+            }
+        }
+        castDrafts[idx].roleInStory = role == .main ? .main : role
     }
 
     func setImportance(_ value: Double, for characterID: UUID) {
@@ -590,7 +698,32 @@ final class StoryWorldCreateViewModel: ObservableObject {
                   sceneDraft.activeCharacterIds.count < StoryConstants.maxActiveCharacters else { return }
             sceneDraft.activeCharacterIds.append(characterID)
         } else {
+            // 開始シーンには少なくとも1人を残す。最後のトグルを外したまま
+            // 保存時に先頭キャラへ黙って補完する挙動を防ぎ、画面状態と保存値を一致させる。
+            guard sceneDraft.activeCharacterIds.count > 1 else { return }
             sceneDraft.activeCharacterIds.removeAll { $0 == characterID }
+        }
+    }
+
+    /// Story形式の変更と初期シーンの参加者を同じ操作で正規化する。
+    /// 形式Pickerがdraft.castModeだけを書き換えると、ensembleで選んだ複数人が
+    /// soloへ切り替えた後も画面に残り、保存時のprefixで黙って失われていた。
+    func setCastMode(_ mode: StoryCastMode) {
+        draft.castMode = mode
+        let castIDs = castDrafts.map(\.characterId)
+        let validActiveIDs = sceneDraft.activeCharacterIds.filter { castIDs.contains($0) }
+
+        switch mode {
+        case .solo:
+            let preferredID = draft.mainCharacterId.flatMap { castIDs.contains($0) ? $0 : nil }
+                ?? validActiveIDs.first
+                ?? castIDs.first
+            sceneDraft.activeCharacterIds = preferredID.map { [$0] } ?? []
+        case .ensemble:
+            sceneDraft.activeCharacterIds = Array(validActiveIDs.prefix(StoryConstants.maxActiveCharacters))
+            if sceneDraft.activeCharacterIds.isEmpty, let firstID = castIDs.first {
+                sceneDraft.activeCharacterIds = [firstID]
+            }
         }
     }
 
@@ -625,18 +758,56 @@ final class StoryWorldCreateViewModel: ObservableObject {
     }
 
     func save() async -> StoryWorld? {
+        guard !isSaving else { return nil }
+        isSaving = true
+        defer { isSaving = false }
         saveError = nil
-        guard !draft.title.trimmingCharacters(in: .whitespaces).isEmpty else {
-            saveError = "タイトルを入力してください。"
+        guard isReadyToSave else {
+            saveError = KizunaCopy.text(
+                japanese: "保存データの読み込みが終わるまで保存できません。",
+                english: "Saving is disabled until the saved data finishes loading."
+            )
             return nil
         }
+        guard !draft.title.trimmingCharacters(in: .whitespaces).isEmpty else {
+            saveError = KizunaCopy.text(
+                japanese: "タイトルを入力してください。",
+                english: "Enter a title before saving."
+            )
+            return nil
+        }
+        guard !castDrafts.isEmpty else {
+            saveError = KizunaCopy.text(
+                japanese: "少なくとも1人のキャラクターを追加してください。",
+                english: "Add at least one character before saving this story."
+            )
+            return nil
+        }
+        guard !sceneDraft.activeCharacterIds.isEmpty else {
+            saveError = KizunaCopy.text(
+                japanese: "初期シーンに出すキャラクターを1人以上選択してください。",
+                english: "Select at least one character for the opening scene."
+            )
+            return nil
+        }
+        var didSaveWorld = false
         do {
+            // 生成キャラは世界保存の直前に確定する。雛形を反映しただけでは
+            // CharacterRepositoryへ書かず、キャンセル/再生成で孤児を残さない。
+            for profile in pendingGeneratedCharacters.values {
+                try await characterRepo.saveCharacter(profile)
+            }
             // World 保存
-            var world = draft
+            var world = draft.normalizedForPersistence
+            // Keep the editor in sync with the persisted invariant so a
+            // duplicate does not reappear when the same draft is shown again.
+            draft.tags = world.tags
+            draft.safetyRules = world.safetyRules
             world.updatedAt = Date()
             try await worldRepo.saveWorld(world)
+            didSaveWorld = true
             // Cast 保存
-            try? await castRepo.deleteAllCast(storyWorldId: world.id)
+            try await castRepo.deleteAllCast(storyWorldId: world.id)
             for member in castDrafts {
                 var m = member
                 m.storyWorldId = world.id
@@ -645,9 +816,9 @@ final class StoryWorldCreateViewModel: ObservableObject {
             // LorebookもWorld単位で置き換え、削除されたカードを残さない。
             // 無効化済みエントリも編集保存時に置き換える。enabled のみ取得すると
             // UIから見えない古いカードが story_lorebook.json に残り続ける。
-            let existingLorebook = (try? await lorebookRepo.fetchAllEntries(storyWorldId: world.id)) ?? []
+            let existingLorebook = try await lorebookRepo.fetchAllEntries(storyWorldId: world.id)
             for entry in existingLorebook {
-                try? await lorebookRepo.deleteEntry(id: entry.id)
+                try await lorebookRepo.deleteEntry(id: entry.id)
             }
             for entry in lorebookDrafts {
                 var value = entry
@@ -655,11 +826,11 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 try await lorebookRepo.saveEntry(value)
             }
             // Opening Scene を 1 件 seed / update
-            let existingScenes = (try? await sceneRepo.fetchScenes(storyWorldId: world.id)) ?? []
+            let existingScenes = try await sceneRepo.fetchScenes(storyWorldId: world.id)
             var opening = sceneDraft
             opening.storyWorldId = world.id
             if opening.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                opening.title = world.title + " - 第 1 場面"
+                opening.title = Self.defaultSceneTitle(for: world.title)
             }
             if opening.mood.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 opening.mood = world.mood
@@ -684,14 +855,36 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 opening.updatedAt = Date()
                 try await sceneRepo.saveScene(opening)
             }
+            pendingGeneratedCharacters.removeAll()
             return world
         } catch {
-            saveError = "保存に失敗しました: " + String(describing: error)
+            NSLog("[StoryWorldCreateVM] save failed: %@", error.localizedDescription)
+            // Worldを書けていない場合は、この画面だけが作ったキャラを戻す。
+            // Worldまで確定済みなら、関連Castを保持したまま次回保存で再開できる。
+            // ここでpendingをdiscardすると、保存済みWorldのcharacterIdsだけが
+            // 残る参照切れになる。部分保存後は生成Profileを保全し、次回保存で
+            // Cast/Lorebook/Sceneを再試行できる状態にする。
+            if !didSaveWorld {
+                await discardPendingGeneratedCharacters()
+            } else {
+                pendingGeneratedCharacters.removeAll()
+            }
+            saveError = KizunaCopy.text(
+                japanese: "保存に失敗しました。入力内容と保存先を確認して、もう一度試してください。",
+                english: "The story could not be saved. Check the content and storage, then try again."
+            )
             return nil
         }
     }
 
+    private static func defaultSceneTitle(for storyTitle: String) -> String {
+        let suffix = KizunaCopy.text(japanese: "第 1 場面", english: "Scene 1")
+        let trimmedTitle = storyTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedTitle.isEmpty ? suffix : "\(trimmedTitle) - \(suffix)"
+    }
+
     private func applyGeneratedTemplate(_ template: GeneratedStoryTemplate) async throws {
+        await discardPendingGeneratedCharacters()
         let story = template.story
         draft.title = story.title
         draft.shortDescription = story.shortDescription
@@ -704,6 +897,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         draft.storyGoal = story.storyGoal
         draft.mood = story.mood
         draft.safetyRules = template.generationRules
+        draft = draft.normalizedForPersistence
 
         let scene = template.initialScene
         sceneDraft.title = scene.title
@@ -720,12 +914,37 @@ final class StoryWorldCreateViewModel: ObservableObject {
         draft.mainCharacterId = nil
 
         // 指定がなければ、ユーザーと主役NPC1人だけの単体物語にする。
-        // 「群像」「複数人」などを明示した時だけ補助キャラも取り込む。
-        let wantsEnsemble = generationBrief.localizedCaseInsensitiveContains("群像")
+        // 明示されたcastMode/characterCount、生成配列、入力文の順で
+        // 複数キャラの意図を確認し、生成結果を先頭1人へ黙って縮めない。
+        let brief = generationBrief.localizedLowercase
+        let templateMode = template.castMode?.trimmingCharacters(in: .whitespacesAndNewlines).localizedLowercase
+        let templateRequestsEnsemble = ["ensemble", "multiple", "multi", "group", "team", "cast"]
+            .contains { templateMode?.contains($0) == true }
+        let generatedCharacterCount = template.characters.count
+        let declaredCharacterCount = template.characterCount ?? 0
+        let generatedMultipleCharacters = generatedCharacterCount > 1 || declaredCharacterCount > 1
+        // 構造化されたcastMode/characterCountと生成配列を最優先する。モデルが
+        // castModeをsoloのまま返しても複数キャラを生成した場合は、先頭だけを
+        // 残して黙って捨てず、ユーザーの生成結果をensembleとして保持する。
+        let briefRequestsEnsemble = brief.contains("群像")
             || generationBrief.localizedCaseInsensitiveContains("複数人")
             || generationBrief.localizedCaseInsensitiveContains("複数")
             || generationBrief.localizedCaseInsensitiveContains("チーム")
             || generationBrief.localizedCaseInsensitiveContains("仲間たち")
+            || brief.contains("ensemble")
+            || brief.contains("ensemble cast")
+            || brief.contains("multiple characters")
+            || brief.contains("multiple character")
+            || brief.contains("several characters")
+            || brief.contains("many characters")
+            || brief.contains("multi-character")
+            || brief.contains("multiple people")
+            || brief.contains("group")
+            || brief.contains("team")
+            || brief.contains("friends")
+            || brief.contains("companions")
+        // 入力文の複数指定は、モデルがcastMode=soloを誤って返しても優先する。
+        let wantsEnsemble = generatedMultipleCharacters || templateRequestsEnsemble || briefRequestsEnsemble
         draft.castMode = wantsEnsemble ? .ensemble : .solo
         let generatedCharacters = template.characters.prefix(wantsEnsemble ? 4 : 1)
         for generated in generatedCharacters {
@@ -748,8 +967,11 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 visibility: .private,
                 safetyRating: .general
             )
-            try await characterRepo.saveCharacter(profile)
+            // 保存は世界全体のSaveが成功する直前まで遅延する。
+            // ここで即時保存すると、雛形の再生成/キャンセルだけでキャラが
+            // キャラクターライブラリーへ残ってしまう。
             addCharacter(profile)
+            pendingGeneratedCharacters[profile.id] = profile
             setRole(Self.castRole(from: generated.storyRole), for: profile.id)
             setIntroductionTiming(generated.activeInInitialScene ? .opening : Self.introductionTiming(from: generated.introductionTiming), for: profile.id)
             setImportance(generated.importance, for: profile.id)
@@ -757,14 +979,20 @@ final class StoryWorldCreateViewModel: ObservableObject {
             setActiveInOpeningScene(generated.activeInInitialScene, for: profile.id)
         }
 
-        var charactersByName: [String: UUID] = [:]
+        var charactersByName: [String: [UUID]] = [:]
         for character in availableCharacters {
-            charactersByName[character.displayName] = character.id
-            charactersByName[character.name] = character.id
+            charactersByName[character.visibleName, default: []].append(character.id)
+            charactersByName[character.name, default: []].append(character.id)
         }
         for relationship in template.relationships {
-            guard let fromID = charactersByName[relationship.from],
-                  let toID = charactersByName[relationship.to] else { continue }
+            guard let fromIDs = charactersByName[relationship.from], fromIDs.count == 1,
+                  let toIDs = charactersByName[relationship.to], toIDs.count == 1 else {
+                // 同名キャラを辞書の最後/最初へ暗黙に結びつけない。テンプレート側で
+                // displayNameを一意にするか、作成後にユーザーが関係を設定する。
+                continue
+            }
+            let fromID = fromIDs[0]
+            let toID = toIDs[0]
             updateRelationship(
                 from: fromID,
                 to: toID,
@@ -838,6 +1066,8 @@ final class StoryWorldCreateViewModel: ObservableObject {
           "tension": 0.2
         }
       ],
+      "castMode": "solo | ensemble",
+      "characterCount": 1,
       "generationRules": [
         "最初の行は必ず「ナレーション: 本文」",
         "場面が自然なら1ターンで複数キャラが話してよい",
@@ -982,6 +1212,9 @@ private struct GeneratedStoryTemplate: Decodable {
     var characters: [Character]
     var relationships: [Relationship]
     var generationRules: [String]
+    /// Gemma4が英語で返す構造化ヒント。旧プロンプトには存在しないため任意。
+    var castMode: String?
+    var characterCount: Int?
 }
 
 // MARK: - Detail
@@ -995,6 +1228,11 @@ final class StoryWorldDetailViewModel: ObservableObject {
     // この物語だけに属する思い出。全体メモリーとは分けて表示・取得する。
     @Published private(set) var storyMemories: [StoryMemory] = []
     @Published private(set) var characterIndex: [UUID: CharacterProfile] = [:]
+    @Published private(set) var castLoadFailed = false
+    @Published private(set) var sceneLoadFailed = false
+    @Published private(set) var sessionLoadFailed = false
+    @Published private(set) var sessionSaveFailed = false
+    @Published private(set) var characterLoadFailed = false
 
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
@@ -1009,12 +1247,40 @@ final class StoryWorldDetailViewModel: ObservableObject {
     }
 
     func reload() async {
-        async let castFetch = (try? await castRepo.fetchCast(storyWorldId: world.id)) ?? []
-        async let scenesFetch = (try? await sceneRepo.fetchScenes(storyWorldId: world.id)) ?? []
-        async let sessionsFetch = (try? await sessionRepo.fetchSessions(storyWorldId: world.id)) ?? []
-        async let memoriesFetch = (try? await storyMemoryRepo.fetchMemories(storyWorldId: world.id)) ?? []
-        async let charsFetch = (try? await characterRepo.fetchCharacters()) ?? []
-        let (cast, scenes, sessions, memories, chars) = await (castFetch, scenesFetch, sessionsFetch, memoriesFetch, charsFetch)
+        // キャストの読込失敗を空配列として扱うと、reconciledCastが「全員削除」と
+        // 判断し、保存済みの関係設定まで上書きしてしまう。キャストだけは失敗時に
+        // 既存の表示を保持して、明示的な再試行を待つ。
+        let cast: [CastMember]
+        do {
+            cast = try await castRepo.fetchCast(storyWorldId: world.id)
+            castLoadFailed = false
+        } catch {
+            castLoadFailed = true
+            NSLog("[StoryWorldDetailVM] cast load failed: %@", error.localizedDescription)
+            return
+        }
+        let scenes: [StoryScene]
+        let sessions: [StorySession]
+        let memories: [StoryMemory]
+        let chars: [CharacterProfile]
+        do {
+            async let scenesFetch = sceneRepo.fetchScenes(storyWorldId: world.id)
+            async let sessionsFetch = sessionRepo.fetchSessions(storyWorldId: world.id)
+            async let memoriesFetch = storyMemoryRepo.fetchMemories(storyWorldId: world.id)
+            async let charsFetch = characterRepo.fetchCharacters()
+            (scenes, sessions, memories, chars) = try await (scenesFetch, sessionsFetch, memoriesFetch, charsFetch)
+            sceneLoadFailed = false
+            sessionLoadFailed = false
+            characterLoadFailed = false
+        } catch {
+            // 読込失敗を空配列へ変換すると、新規セッション作成やキャスト修復が
+            // 既存データを上書きする。スナップショット全体を保持して再試行する。
+            NSLog("[StoryWorldDetailVM] snapshot load failed: %@", error.localizedDescription)
+            sceneLoadFailed = true
+            sessionLoadFailed = true
+            characterLoadFailed = true
+            return
+        }
         let repairedCast = reconciledCast(cast, for: world, existingScenes: scenes)
         if Set(cast.map(\.characterId)) != Set(repairedCast.map(\.characterId)) || cast.count != repairedCast.count {
             // 部分的に欠けたキャストや、削除済みキャラの孤児参照を一度だけ整理する。
@@ -1033,6 +1299,8 @@ final class StoryWorldDetailViewModel: ObservableObject {
 
     @discardableResult
     func createOrResumeSession(preferredSessionID: UUID? = nil) async -> (StorySession, StoryScene)? {
+        guard !sceneLoadFailed, !sessionLoadFailed, !characterLoadFailed else { return nil }
+        sessionSaveFailed = false
         if let preferredSessionID,
            let session = sessions.first(where: { $0.id == preferredSessionID }),
            let sceneId = session.currentSceneId,
@@ -1062,7 +1330,13 @@ final class StoryWorldDetailViewModel: ObservableObject {
             if repaired.lastSceneSummary?.isEmpty != false {
                 repaired.lastSceneSummary = firstScene.summary.isEmpty ? world.openingScene : firstScene.summary
             }
-            try? await sessionRepo.saveSession(repaired)
+            do {
+                try await sessionRepo.saveSession(repaired)
+            } catch {
+                sessionSaveFailed = true
+                NSLog("[StoryWorldDetailVM] repaired session save failed: %@", error.localizedDescription)
+                return nil
+            }
             await reload()
             return (repaired, firstScene)
         }
@@ -1081,7 +1355,13 @@ final class StoryWorldDetailViewModel: ObservableObject {
         if !world.openingScene.isEmpty {
             session.messages.append(StoryMessage(author: .narrator, text: world.openingScene))
         }
-        try? await sessionRepo.saveSession(session)
+        do {
+            try await sessionRepo.saveSession(session)
+        } catch {
+            sessionSaveFailed = true
+            NSLog("[StoryWorldDetailVM] new session save failed: %@", error.localizedDescription)
+            return nil
+        }
         await reload()
         return (session, firstScene)
     }
@@ -1157,6 +1437,7 @@ final class StorySessionViewModel: ObservableObject {
     @Published private(set) var world: StoryWorld
     @Published private(set) var cast: [CastMember] = []
     @Published private(set) var characterIndex: [UUID: CharacterProfile] = [:]
+    @Published private(set) var bootstrapError: String?
     /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
     @Published var restSuggestion: StoryRestSuggestion?
     @Published var generationModel: StoryGenerationModel {
@@ -1216,13 +1497,23 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     func bootstrap() async {
-        async let castFetch = (try? await castRepo.fetchCast(storyWorldId: world.id)) ?? []
-        async let charsFetch = (try? await characterRepo.fetchCharacters()) ?? []
-        let (cast, chars) = await (castFetch, charsFetch)
-        self.cast = cast
-        self.characterIndex = chars.reduce(into: [:]) { result, character in
-            guard result[character.id] == nil else { return }
-            result[character.id] = character
+        do {
+            async let castFetch = castRepo.fetchCast(storyWorldId: world.id)
+            async let charsFetch = characterRepo.fetchCharacters()
+            let (cast, chars) = try await (castFetch, charsFetch)
+            self.cast = cast
+            self.characterIndex = chars.reduce(into: [:]) { result, character in
+                guard result[character.id] == nil else { return }
+                result[character.id] = character
+            }
+            bootstrapError = nil
+        } catch {
+            bootstrapError = KizunaCopy.text(
+                japanese: "キャラクター情報を読み込めませんでした。再試行してください。",
+                english: "The story characters could not be loaded. Try again."
+            )
+            NSLog("[StorySessionVM] bootstrap failed: %@", error.localizedDescription)
+            return
         }
         consumePendingDebugRestSuggestionRequest()
         consumePendingDebugSafetyConcernRequest()
@@ -1274,7 +1565,7 @@ final class StorySessionViewModel: ObservableObject {
             guard let self, self.restSuggestion == nil else { return }
             UserDefaults.standard.removeObject(forKey: KizunaDebugOptions.restSuggestionRequestKey)
             let character = self.lastSpeakingCharacter() ?? self.activeCharacters.first
-            let characterName = character.map { $0.displayName.isEmpty ? $0.name : $0.displayName } ?? "相手"
+            let characterName = character?.visibleName ?? "相手"
             self.restSuggestion = StoryRestSuggestion(
                 text: "【DEBUG】休憩提案カードの表示テストです。",
                 characterID: self.characterID(for: character),
@@ -1396,6 +1687,21 @@ final class StorySessionViewModel: ObservableObject {
         return enqueueSend(userMessage.text, existingUserMessageID: targetUserMessageID)
     }
 
+    /// 永続化されていない一時ランタイム通知を再試行する。保存済みの
+    /// userMessageIDが現在のセッションにあれば同じターンを再利用し、初回入力の
+    /// 保存自体に失敗していた場合は本文を新しいユーザー発話として送る。
+    @discardableResult
+    func retryRuntimeNotice(_ notice: StoryRuntimeNotice) -> Bool {
+        service.dismissRuntimeNotice()
+        let hasPersistedUserTurn = session.messages.contains { message in
+            message.id == notice.userMessageID && message.author.isUser
+        }
+        return enqueueSend(
+            notice.userText,
+            existingUserMessageID: hasPersistedUserTurn ? notice.userMessageID : nil
+        )
+    }
+
     /// Resolves a system card to its persisted user turn. The metadata path is
     /// stable across restarts; the positional fallback handles legacy records.
     private func retryTargetUserMessageID(for systemMessageID: UUID) -> UUID? {
@@ -1462,7 +1768,7 @@ final class StorySessionViewModel: ObservableObject {
         defer { isGeneratingRestSuggestion = false }
 
         let character = lastSpeakingCharacter() ?? activeCharacters.first
-        let characterName = character.map { $0.displayName.isEmpty ? $0.name : $0.displayName } ?? "相手"
+        let characterName = character?.visibleName ?? "相手"
         guard let generatedText = await service.generateRestSuggestion(
             character: character,
             world: world,
@@ -1501,7 +1807,7 @@ final class StorySessionViewModel: ObservableObject {
 
         guard let character = lastSpeakingCharacter() ?? activeCharacters.first,
               let characterID = characterID(for: character) else { return }
-        let name = character.displayName.isEmpty ? character.name : character.displayName
+        let name = character.visibleName
         Task { [weak self] in
             guard let self else { return }
             await self.service.addRestAcknowledgement(

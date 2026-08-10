@@ -33,6 +33,22 @@ enum PersonaTone: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .casual: english = "Casual"
+        case .polite: english = "Polite"
+        case .sweet: english = "Sweet"
+        case .cool: english = "Cool"
+        case .cheerful: english = "Cheerful"
+        case .calm: english = "Calm"
+        }
+        return KizunaCopy.text(
+            japanese: displayName,
+            english: english
+        )
+    }
+
     var promptHint: String {
         switch self {
         case .casual: return "タメ口で、距離が近く自然な会話。"
@@ -42,6 +58,23 @@ enum PersonaTone: String, Codable, CaseIterable, Identifiable {
         case .cheerful: return "元気で明るく、相手を励ます語り口。"
         case .calm: return "穏やかでゆっくり、相手を安心させる語り口。"
         }
+    }
+
+    /// system prompt用の指示。表示言語に合わせるが、保存されるenum rawValueは変更しない。
+    var localizedPromptHint: String {
+        let english: String
+        switch self {
+        case .casual: english = "Use a casual, natural tone with a sense of closeness."
+        case .polite: english = "Use gentle, respectful language."
+        case .sweet: english = "Speak warmly and sweetly, with a little extra affection."
+        case .cool: english = "Keep replies short and composed, without unnecessary decoration."
+        case .cheerful: english = "Be bright and encouraging."
+        case .calm: english = "Speak calmly and gently so the user feels at ease."
+        }
+        return KizunaCopy.text(
+            japanese: promptHint,
+            english: english
+        )
     }
 }
 
@@ -69,6 +102,23 @@ enum PersonaRelation: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .partner: english = "Partner"
+        case .friend: english = "Friend"
+        case .senior: english = "Senior"
+        case .junior: english = "Junior"
+        case .mentor: english = "Mentor"
+        case .sibling: english = "Sibling"
+        case .stranger: english = "New acquaintance"
+        }
+        return KizunaCopy.text(
+            japanese: displayName,
+            english: english
+        )
+    }
+
     var promptHint: String {
         switch self {
         case .partner: return "ユーザーとは恋人同士の関係。安心感を大事にする"
@@ -79,6 +129,23 @@ enum PersonaRelation: String, Codable, CaseIterable, Identifiable {
         case .sibling: return "ユーザーとは兄弟姉妹。気を遣わない近さ。"
         case .stranger: return "出会ったばかり。少し距離感がある自然な会話。"
         }
+    }
+
+    var localizedPromptHint: String {
+        let english: String
+        switch self {
+        case .partner: english = "You and the user are partners. Prioritize trust and reassurance."
+        case .friend: english = "You and the user are close friends. Keep the conversation casual and equal."
+        case .senior: english = "You are the user's senior, with a little more experience and composure."
+        case .junior: english = "You are the user's junior, sincere and respectful."
+        case .mentor: english = "You are the user's teacher or mentor. Encourage learning without lecturing."
+        case .sibling: english = "You and the user are siblings, comfortable enough to speak frankly."
+        case .stranger: english = "You have only just met. Keep a natural, slightly distant tone."
+        }
+        return KizunaCopy.text(
+            japanese: promptHint,
+            english: english
+        )
     }
 }
 
@@ -116,22 +183,45 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedName.isEmpty {
             if let age, age > 0 {
-                lines.append("あなたの名前は「\(trimmedName)」、年齢は\(age)歳の設定です。")
+                lines.append(KizunaCopy.text(
+                    japanese: "あなたの名前は「\(trimmedName)」、年齢は\(age)歳の設定です。",
+                    english: "Your name is \"\(trimmedName)\" and you are \(age) years old."
+                ))
             } else {
-                lines.append("あなたの名前は「\(trimmedName)」です。")
+                lines.append(KizunaCopy.text(
+                    japanese: "あなたの名前は「\(trimmedName)」です。",
+                    english: "Your name is \"\(trimmedName)\"."
+                ))
             }
         }
-        lines.append(relation.promptHint)
-        lines.append(tone.promptHint)
+        lines.append(relation.localizedPromptHint)
+        lines.append(tone.localizedPromptHint)
         let trimmedPersonality = personality.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedPersonality.isEmpty {
-            lines.append("性格: \(trimmedPersonality)")
+            lines.append(KizunaCopy.text(japanese: "性格: ", english: "Personality: ") + trimmedPersonality)
         }
         let trimmedExtra = freeFormAddendum.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedExtra.isEmpty {
-            lines.append("追加設定: \(trimmedExtra)")
+            lines.append(KizunaCopy.text(japanese: "追加設定: ", english: "Additional notes: ") + trimmedExtra)
         }
         return lines.joined(separator: " ")
+    }
+
+    /// プリセットの選択状態を判定するための内容比較。
+    ///
+    /// `PersonaPreset.profile` は呼び出すたびに新しい UUID を持つ値を返すため、
+    /// `PersonaProfile` の `Hashable`/`==` をそのまま使うと、同じプリセットを
+    /// 選択していても ID の違いで不一致になります。一方、名前だけの比較では
+    /// 名前を編集したカスタムプロフィールや、同名の保存データを誤って
+    /// プリセット扱いしてしまいます。設定画面では編集可能な全フィールドだけを
+    /// 比較し、ID は意図的に無視します。
+    func matchesEditableContent(of other: PersonaProfile) -> Bool {
+        name == other.name
+            && age == other.age
+            && personality == other.personality
+            && tone == other.tone
+            && relation == other.relation
+            && freeFormAddendum == other.freeFormAddendum
     }
 }
 
@@ -180,6 +270,32 @@ enum PersonaPreset: String, CaseIterable, Identifiable {
         case .akari: return "アカリ (創作・穏やか)"
         case .shion: return "シオン (夜都・交渉役)"
         case .nana: return "ナナ (アイドル・舞台裏)"
+        }
+    }
+
+    /// UI表示専用。preset rawValueと保存されるPersonaProfileは変えない。
+    var localizedDisplayName: String {
+        guard KizunaCopy.language == .english else { return displayName }
+        switch self {
+        case .aoi: return "Aoi (Partner · Calm)"
+        case .haru: return "Haru (Friend · Cheerful)"
+        case .yui: return "Yui (Partner · Sweet)"
+        case .kai: return "Kai (Partner · Cool)"
+        case .ren: return "Ren (Senior · Mature)"
+        case .mentor: return "Teacher (Mentor)"
+        case .bestie: return "Best friend (Casual)"
+        case .sena: return "Sena (Student council · Tsun)"
+        case .minato: return "Minato (Childhood friend · Rival)"
+        case .mio: return "Mio (Café · Senior)"
+        case .ray: return "Ray (Detective · Sarcastic)"
+        case .lily: return "Lily (Healing · Healer)"
+        case .emma: return "Emma (Witch · Curious)"
+        case .noa: return "Noa (Sci-fi · Quiet)"
+        case .sakura: return "Sakura (President · Serious)"
+        case .toma: return "Toma (Bad friend · Lively)"
+        case .akari: return "Akari (Creative · Gentle)"
+        case .shion: return "Shion (Night city · Negotiator)"
+        case .nana: return "Nana (Idol · Behind the scenes)"
         }
     }
 

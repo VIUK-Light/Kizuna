@@ -41,6 +41,7 @@ struct CharacterDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showReport = false
     @State private var showDeleteConfirm = false
+    @State private var deleteError: String?
 
     init(
         character: CharacterProfile,
@@ -80,17 +81,35 @@ struct CharacterDetailView: View {
             ReportCharacterView(character: character)
                 .viukAdaptiveSheetSizing(minWidth: 420, minHeight: 460)
         }
-        .alert("このキャラを削除しますか?", isPresented: $showDeleteConfirm) {
-            Button("キャンセル", role: .cancel) {}
-            Button("削除", role: .destructive) {
+        .alert(KizunaCopy.text(japanese: "このキャラを削除しますか?", english: "Delete this character?"), isPresented: $showDeleteConfirm) {
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
+            Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
                 Task {
-                    await vm.delete()
-                    onDelete?()
-                    dismiss()
+                    do {
+                        try await vm.delete()
+                        onDelete?()
+                        dismiss()
+                    } catch {
+                        deleteError = KizunaCopy.text(
+                            japanese: "キャラを削除できませんでした。関連データは変更していません。\n\(error.localizedDescription)",
+                            english: "The character could not be deleted. Related data was not changed.\n\(error.localizedDescription)"
+                        )
+                    }
                 }
             }
         } message: {
-            Text("メモリーも一緒に削除されます。元には戻せません。")
+            Text(KizunaCopy.text(
+                japanese: "メモリーも一緒に削除されます。元には戻せません。",
+                english: "This also deletes the character's memories. This cannot be undone."
+            ))
+        }
+        .alert(KizunaCopy.text(japanese: "削除に失敗しました", english: "Deletion failed"), isPresented: Binding(
+            get: { deleteError != nil },
+            set: { if !$0 { deleteError = nil } }
+        )) {
+            Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) { deleteError = nil }
+        } message: {
+            Text(deleteError ?? "")
         }
     }
 
@@ -98,11 +117,12 @@ struct CharacterDetailView: View {
 
     private var header: some View {
         HStack {
-            Button("閉じる") { dismiss() }
+            Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
             Spacer()
-            Text("キャラ詳細").font(.system(size: 14, weight: .semibold))
+            Text(KizunaCopy.text(japanese: "キャラ詳細", english: "Character details"))
+                .font(.system(size: 14, weight: .semibold))
             Spacer()
             Color.clear.frame(width: 48, height: 1)
         }
@@ -117,7 +137,7 @@ struct CharacterDetailView: View {
         HStack(alignment: .top, spacing: 14) {
             avatar(for: character, size: 64)
             VStack(alignment: .leading, spacing: 6) {
-                Text(character.displayName.isEmpty ? character.name : character.displayName)
+                Text(character.visibleName)
                     .font(.system(size: 18, weight: .bold))
                 Text(character.category.localizedDisplayName + " ・ " + character.relationshipGenre.localizedDisplayName)
                     .font(.system(size: 12))
@@ -145,12 +165,12 @@ struct CharacterDetailView: View {
                     badge(character.visibility.localizedDisplayName, icon: character.visibility.iconName, color: .gray)
                 }
                 if !character.scenario.isEmpty {
-                    Text("シナリオ: " + character.scenario)
+                    Text(KizunaCopy.text(japanese: "シナリオ: ", english: "Scenario: ") + character.scenario)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
                 if !character.firstMessage.isEmpty {
-                    Text("初回: " + character.firstMessage)
+                    Text(KizunaCopy.text(japanese: "初回: ", english: "First message: ") + character.firstMessage)
                         .font(.system(size: 12))
                         .italic()
                         .foregroundStyle(.secondary)
@@ -164,25 +184,25 @@ struct CharacterDetailView: View {
 
     private func lorebookSection(_ lb: CharacterLorebook) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("ロアブック")
+            sectionTitle(KizunaCopy.text(japanese: "ロアブック", english: "Lorebook"))
             VStack(alignment: .leading, spacing: 8) {
                 if !lb.worldSetting.isEmpty {
-                    keyValue("世界観", lb.worldSetting)
+                    keyValue(KizunaCopy.text(japanese: "世界観", english: "World setting"), lb.worldSetting)
                 }
                 if !lb.importantPeople.isEmpty {
-                    keyValue("人物", lb.importantPeople.joined(separator: ", "))
+                    keyValue(KizunaCopy.text(japanese: "人物", english: "People"), lb.importantPeople.joined(separator: ", "))
                 }
                 if !lb.importantPlaces.isEmpty {
-                    keyValue("場所", lb.importantPlaces.joined(separator: ", "))
+                    keyValue(KizunaCopy.text(japanese: "場所", english: "Places"), lb.importantPlaces.joined(separator: ", "))
                 }
                 if !lb.importantEvents.isEmpty {
-                    keyValue("出来事", lb.importantEvents.joined(separator: ", "))
+                    keyValue(KizunaCopy.text(japanese: "出来事", english: "Events"), lb.importantEvents.joined(separator: ", "))
                 }
                 if !lb.worldRules.isEmpty {
-                    keyValueList("世界のルール", lb.worldRules)
+                    keyValueList(KizunaCopy.text(japanese: "世界のルール", english: "World rules"), lb.worldRules)
                 }
                 if !lb.forbiddenBreaks.isEmpty {
-                    keyValueList("壊さない約束", lb.forbiddenBreaks)
+                    keyValueList(KizunaCopy.text(japanese: "壊さない約束", english: "Boundaries"), lb.forbiddenBreaks)
                 }
             }
             .padding(12)
@@ -196,8 +216,14 @@ struct CharacterDetailView: View {
 
     private var memoriesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("全体メモリー (\(vm.memories.count))")
-            Text("このキャラに紐づき、物語をまたいで使われる思い出")
+            sectionTitle(KizunaCopy.text(
+                japanese: "全体メモリー (\(vm.memories.count))",
+                english: "Shared memories (\(vm.memories.count))"
+            ))
+            Text(KizunaCopy.text(
+                japanese: "このキャラに紐づき、物語をまたいで使われる思い出",
+                english: "Memories linked to this character and used across stories"
+            ))
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
@@ -209,14 +235,17 @@ struct CharacterDetailView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(m.text)
                                 .font(.system(size: 12))
-                            Text(m.category.displayName + " ・ 重要度 \(String(format: "%.2f", m.importance))")
+                            Text(m.category.localizedDisplayName + KizunaCopy.text(japanese: " ・ 重要度 ", english: " · Importance ") + String(format: "%.2f", m.importance))
                                 .font(.system(size: 10))
                                 .foregroundStyle(.tertiary)
                         }
                     }
                 }
                 if vm.memories.count > 8 {
-                    Text("ほか \(vm.memories.count - 8) 件")
+                    Text(KizunaCopy.text(
+                        japanese: "ほか \(vm.memories.count - 8) 件",
+                        english: "and \(vm.memories.count - 8) more"
+                    ))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -232,10 +261,13 @@ struct CharacterDetailView: View {
 
     private var rulesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("ルール")
+            sectionTitle(KizunaCopy.text(japanese: "ルール", english: "Rules"))
             VStack(alignment: .leading, spacing: 4) {
                 if !character.rules.isEmpty {
-                    ForEach(character.rules, id: \.self) { r in
+                    // 同じルールを複数回登録した旧データでは、文字列をIDにすると
+                    // SwiftUIのForEachが同一IDを持つ。表示順のインデックスを
+                    // 一時的なUI IDにして、重複ルールも安全に表示する。
+                    ForEach(Array(character.rules.enumerated()), id: \.offset) { _, r in
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: "circle.fill")
                                 .font(.system(size: 6))
@@ -244,7 +276,7 @@ struct CharacterDetailView: View {
                         }
                     }
                 }
-                ForEach(character.resolvedSafetyRules, id: \.self) { r in
+                ForEach(Array(character.resolvedSafetyRules.enumerated()), id: \.offset) { _, r in
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "checkmark.shield.fill")
                             .font(.system(size: 10))
@@ -263,26 +295,36 @@ struct CharacterDetailView: View {
     // MARK: - Actions
 
     private var actionsBar: some View {
+        ViewThatFits(in: .horizontal) {
+            fullActionsBar
+            compactActionsBar
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.thinMaterial)
+    }
+
+    private var fullActionsBar: some View {
         HStack(spacing: 8) {
             Button {
                 onEdit?(character)
-            } label: { Label("編集", systemImage: "pencil") }
+            } label: { Label(KizunaCopy.text(japanese: "編集", english: "Edit"), systemImage: "pencil") }
                 .buttonStyle(.bordered)
 
             if character.isSystemProtected != true {
                 Button(role: .destructive) {
                     showDeleteConfirm = true
-                } label: { Label("削除", systemImage: "trash") }
+                } label: { Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash") }
                     .buttonStyle(.bordered)
             } else {
-                Label("標準", systemImage: "lock.fill")
+                Label(KizunaCopy.text(japanese: "標準", english: "Built-in"), systemImage: "lock.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
 
             Button {
                 showReport = true
-            } label: { Label("通報", systemImage: "flag") }
+            } label: { Label(KizunaCopy.text(japanese: "通報", english: "Report"), systemImage: "flag") }
                 .buttonStyle(.bordered)
 
             Spacer()
@@ -290,14 +332,49 @@ struct CharacterDetailView: View {
             Button {
                 onStartChat?(character)
             } label: {
-                Label("絆チャットを始める", systemImage: "bubble.left.and.bubble.right.fill")
+                Label(KizunaCopy.text(japanese: "絆チャットを始める", english: "Start kizuna chat"), systemImage: "bubble.left.and.bubble.right.fill")
                     .font(.system(size: 13, weight: .semibold))
             }
             .buttonStyle(.borderedProminent)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.thinMaterial)
+    }
+
+    private var compactActionsBar: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Button {
+                    onEdit?(character)
+                } label: {
+                    Label(KizunaCopy.text(japanese: "編集", english: "Edit"), systemImage: "pencil")
+                }
+                if character.isSystemProtected != true {
+                    Button(role: .destructive) {
+                        showDeleteConfirm = true
+                    } label: {
+                        Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
+                    }
+                }
+                Button {
+                    showReport = true
+                } label: {
+                    Label(KizunaCopy.text(japanese: "通報", english: "Report"), systemImage: "flag")
+                }
+            } label: {
+                Label(KizunaCopy.text(japanese: "その他", english: "More"), systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.bordered)
+
+            Spacer(minLength: 0)
+
+            Button {
+                onStartChat?(character)
+            } label: {
+                Label(KizunaCopy.text(japanese: "絆チャット", english: "Kizuna chat"), systemImage: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .buttonStyle(.borderedProminent)
+        }
     }
 
     // MARK: - Reusable
@@ -364,7 +441,7 @@ struct CharacterDetailView: View {
                     .clipShape(Circle())
             )
         }
-        let name = c.displayName.isEmpty ? c.name : c.displayName
+        let name = c.visibleName
         var sum = 0
         for s in name.unicodeScalars { sum &+= Int(s.value) }
         let hue = Double(sum % 360) / 360.0

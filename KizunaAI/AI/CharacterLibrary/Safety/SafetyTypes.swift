@@ -244,13 +244,41 @@ struct SafetySupportResource: Identifiable, Equatable, Hashable {
     let detail: String
     let actionTitle: String?
     let urlString: String?
+    /// 英語UI用の表示値。保存データは日本語のままでも、表示時に言語を切り替えられる。
+    let englishTitle: String?
+    let englishDetail: String?
+    let englishActionTitle: String?
 
-    init(title: String, detail: String, actionTitle: String? = nil, urlString: String? = nil) {
+    init(
+        title: String,
+        detail: String,
+        actionTitle: String? = nil,
+        urlString: String? = nil,
+        englishTitle: String? = nil,
+        englishDetail: String? = nil,
+        englishActionTitle: String? = nil
+    ) {
         self.id = title
         self.title = title
         self.detail = detail
         self.actionTitle = actionTitle
         self.urlString = urlString
+        self.englishTitle = englishTitle
+        self.englishDetail = englishDetail
+        self.englishActionTitle = englishActionTitle
+    }
+
+    var localizedTitle: String {
+        KizunaCopy.text(japanese: title, english: englishTitle ?? title)
+    }
+
+    var localizedDetail: String {
+        KizunaCopy.text(japanese: detail, english: englishDetail ?? detail)
+    }
+
+    var localizedActionTitle: String? {
+        guard let actionTitle else { return nil }
+        return KizunaCopy.text(japanese: actionTitle, english: englishActionTitle ?? actionTitle)
     }
 }
 
@@ -263,6 +291,8 @@ struct SafetyConcern: Identifiable, Equatable, Hashable {
     let title: String
     let message: String
     let resources: [SafetySupportResource]
+    let englishTitle: String?
+    let englishMessage: String?
 
     init(
         id: UUID = UUID(),
@@ -271,7 +301,9 @@ struct SafetyConcern: Identifiable, Equatable, Hashable {
         confidence: Double,
         title: String = "悩みがありますか？",
         message: String,
-        resources: [SafetySupportResource]
+        resources: [SafetySupportResource],
+        englishTitle: String? = nil,
+        englishMessage: String? = nil
     ) {
         self.id = id
         self.category = category
@@ -280,6 +312,31 @@ struct SafetyConcern: Identifiable, Equatable, Hashable {
         self.title = title
         self.message = message
         self.resources = resources
+        self.englishTitle = englishTitle
+        self.englishMessage = englishMessage
+    }
+
+    var localizedTitle: String {
+        KizunaCopy.text(japanese: title, english: englishTitle ?? "Would you like support?")
+    }
+
+    var localizedMessage: String {
+        KizunaCopy.text(japanese: message, english: englishMessage ?? Self.defaultEnglishMessage(for: category))
+    }
+
+    private static func defaultEnglishMessage(for category: SafetyConcernCategory) -> String {
+        switch category {
+        case .selfHarm:
+            return "If you may hurt yourself, you do not have to handle it alone. Consider contacting someone you trust or a professional support service."
+        case .violenceOrAbuse:
+            return "If your safety may be at risk, move to a safer place and contact someone you trust or a local support service."
+        case .medicalUrgency:
+            return "If this may be a medical emergency, contact local emergency services or a healthcare provider instead of waiting for an AI reply."
+        case .emotionalDistress:
+            return "If you are struggling, you can talk here and also consider reaching out to someone you trust or a professional support service."
+        case .generalSafety:
+            return "If your safety may be at risk, consider contacting someone you trust or a local support service."
+        }
     }
 
     /// DEBUGビルドで相談サポートUIを確認するためのサンプル。
@@ -291,31 +348,110 @@ struct SafetyConcern: Identifiable, Equatable, Hashable {
         resources: SafetyConcern.defaultResources
     )
 
-    /// 日本語UIの初期相談先。将来は地域・言語設定から差し替える。
-    static let defaultResources: [SafetySupportResource] = [
+    /// Localeの地域ヒントに合わせた相談先。GPSや正確な居場所は取得せず、
+    /// 日本以外では日本の電話番号を表示しない。地域不明時も一般的な緊急案内
+    /// と国際的な窓口検索だけを提示する。
+    static var defaultResources: [SafetySupportResource] {
+        switch Locale.current.region?.identifier.uppercased() {
+        case "JP":
+            return [
+                SafetySupportResource(
+                    title: "こころの健康相談統一ダイヤル",
+                    detail: "0570-064-556。地域の公的なこころの相談窓口につながります。受付時間は地域により異なります。",
+                    actionTitle: "電話する",
+                    urlString: "tel://0570064556",
+                    englishTitle: "Mental Health Support Dial",
+                    englishDetail: "0570-064-556 connects you with a public mental-health support service in Japan. Hours vary by region.",
+                    englishActionTitle: "Call"
+                ),
+                SafetySupportResource(
+                    title: "よりそいホットライン",
+                    detail: "0120-279-338。話を聴いてほしい時の相談先です。",
+                    actionTitle: "電話する",
+                    urlString: "tel://0120279338",
+                    englishTitle: "Yorisoi Hotline",
+                    englishDetail: "0120-279-338 is a listening and support hotline in Japan.",
+                    englishActionTitle: "Call"
+                ),
+                SafetySupportResource(
+                    title: "緊急時（日本）",
+                    detail: "今すぐ危険がある場合は、110（警察）または119（救急）を利用してください。",
+                    englishTitle: "Emergency services (Japan)",
+                    englishDetail: "If there is immediate danger in Japan, call 110 for police or 119 for an ambulance."
+                ),
+                SafetySupportResource(
+                    title: "まもろうよ こころ",
+                    detail: "電話・SNS・チャットなど、地域や状況に合う相談先を探せます。",
+                    actionTitle: "相談先を見る",
+                    urlString: "https://www.mhlw.go.jp/mamorouyokokoro/",
+                    englishTitle: "Mamoru yo Kokoro",
+                    englishDetail: "Find phone, social-media, and chat support options available in Japan.",
+                    englishActionTitle: "View resources"
+                )
+            ]
+        case "US":
+            return [
+                SafetySupportResource(
+                    title: "988 自殺・危機支援ライン",
+                    detail: "米国では988へ電話またはSMSを送ると、無料で秘密が守られる危機支援につながります。",
+                    actionTitle: "988へ電話する",
+                    urlString: "tel://988",
+                    englishTitle: "988 Suicide & Crisis Lifeline",
+                    englishDetail: "Call or text 988 for free, confidential crisis support in the United States.",
+                    englishActionTitle: "Call 988"
+                ),
+                SafetySupportResource(
+                    title: "緊急時（米国）",
+                    detail: "今すぐ危険がある場合は911へ連絡してください。",
+                    englishTitle: "Emergency services (United States)",
+                    englishDetail: "If there is immediate danger, call 911."
+                ),
+                internationalResource
+            ]
+        case "GB":
+            return [
+                SafetySupportResource(
+                    title: "緊急時（英国）",
+                    detail: "今すぐ危険がある場合は999へ連絡してください。",
+                    englishTitle: "Emergency services (United Kingdom)",
+                    englishDetail: "If there is immediate danger in the United Kingdom, call 999."
+                ),
+                internationalResource
+            ]
+        case "CA":
+            return [
+                SafetySupportResource(
+                    title: "緊急時（カナダ）",
+                    detail: "今すぐ危険がある場合は911へ連絡してください。",
+                    englishTitle: "Emergency services (Canada)",
+                    englishDetail: "If there is immediate danger in Canada, call 911."
+                ),
+                internationalResource
+            ]
+        case "AU":
+            return [
+                SafetySupportResource(
+                    title: "緊急時（オーストラリア）",
+                    detail: "今すぐ危険がある場合は000へ連絡してください。",
+                    englishTitle: "Emergency services (Australia)",
+                    englishDetail: "If there is immediate danger in Australia, call 000."
+                ),
+                internationalResource
+            ]
+        default:
+            return [internationalResource]
+        }
+    }
+
+    private static var internationalResource: SafetySupportResource {
         SafetySupportResource(
-            title: "こころの健康相談統一ダイヤル",
-            detail: "0570-064-556。地域の公的なこころの相談窓口につながります。受付時間は地域により異なります。",
-            actionTitle: "電話する",
-            urlString: "tel://0570064556"
-        ),
-        SafetySupportResource(
-            title: "よりそいホットライン",
-            detail: "0120-279-338。話を聴いてほしい時の相談先です。",
-            actionTitle: "電話する",
-            urlString: "tel://0120279338"
-        ),
-        SafetySupportResource(
-            title: "緊急時（日本）",
-            detail: "今すぐ危険がある場合は、110（警察）または119（救急）を利用してください。",
-            actionTitle: nil,
-            urlString: nil
-        ),
-        SafetySupportResource(
-            title: "まもろうよ こころ",
-            detail: "電話・SNS・チャットなど、地域や状況に合う相談先を探せます。",
-            actionTitle: "相談先を見る",
-            urlString: "https://www.mhlw.go.jp/mamorouyokokoro/"
+            title: "地域の緊急窓口",
+            detail: "今すぐ危険がある場合は、現在地の緊急番号または地域の医療・相談窓口に連絡してください。",
+            actionTitle: "相談先を探す",
+            urlString: "https://findahelpline.com/",
+            englishTitle: "Local emergency services",
+            englishDetail: "If there is immediate danger, contact the emergency number or healthcare/support service for your current location. You can also search local services.",
+            englishActionTitle: "Find local support"
         )
-    ]
+    }
 }

@@ -36,6 +36,26 @@ struct CharacterProfile: Codable, Identifiable, Equatable, Hashable {
     var createdAt: Date
     var updatedAt: Date
 
+    /// The name shown in Story and chat surfaces. Older JSON files can still
+    /// contain an empty (or whitespace-only) displayName, so every UI can use
+    /// this one fallback instead of duplicating slightly different checks.
+    var visibleName: String {
+        let display = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !display.isEmpty { return display }
+        return name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Normalizes user-edited/imported data immediately before persistence.
+    /// Keeping this at the model boundary also protects custom repository
+    /// implementations used by tests and previews.
+    var normalizedForPersistence: CharacterProfile {
+        var normalized = self
+        normalized.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let display = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        normalized.displayName = display.isEmpty ? normalized.name : display
+        return normalized
+    }
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -61,8 +81,10 @@ struct CharacterProfile: Codable, Identifiable, Equatable, Hashable {
         updatedAt: Date = Date()
     ) {
         self.id = id
-        self.name = name
-        self.displayName = displayName.isEmpty ? name : displayName
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.name = normalizedName
+        self.displayName = normalizedDisplayName.isEmpty ? normalizedName : normalizedDisplayName
         self.shortDescription = shortDescription
         self.avatarImageData = avatarImageData
         self.imageKey = imageKey
