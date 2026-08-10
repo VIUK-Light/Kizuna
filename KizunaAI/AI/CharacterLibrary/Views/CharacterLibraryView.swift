@@ -37,6 +37,8 @@ struct CharacterLibraryView: View {
     @State private var editing: CharacterProfile? = nil
     @State private var selected: CharacterProfile? = nil
     @State private var showTemplatePicker = false
+    @State private var pendingDeletion: CharacterProfile?
+    @State private var deletionError: String?
     @Environment(\.dismiss) private var dismiss
 
     /// チャット開始時に呼ばれる (PersonaChatView 側で受け取って sheet を閉じ、スレッド作成)。
@@ -120,6 +122,40 @@ struct CharacterLibraryView: View {
                 }
             )
             .viukAdaptiveSheetSizing(minWidth: 480, minHeight: 560)
+        }
+        .alert(item: $pendingDeletion) { character in
+            Alert(
+                title: Text(KizunaCopy.text(
+                    japanese: "「\(character.visibleName)」を削除しますか？",
+                    english: "Delete \"\(character.visibleName)\"?"
+                )),
+                message: Text(KizunaCopy.text(
+                    japanese: "メモリーも一緒に削除されます。元には戻せません。",
+                    english: "This also deletes the character's memories. This cannot be undone."
+                )),
+                primaryButton: .destructive(Text(KizunaCopy.text(japanese: "削除", english: "Delete"))) {
+                    Task {
+                        await vm.delete(id: character.id)
+                        if let message = vm.deleteErrorMessage {
+                            deletionError = message
+                        }
+                    }
+                },
+                secondaryButton: .cancel(Text(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")))
+            )
+        }
+        .alert(
+            KizunaCopy.text(japanese: "削除に失敗しました", english: "Deletion failed"),
+            isPresented: Binding(
+                get: { deletionError != nil },
+                set: { if !$0 { deletionError = nil } }
+            )
+        ) {
+            Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) {
+                deletionError = nil
+            }
+        } message: {
+            Text(deletionError ?? "")
         }
     }
 
@@ -208,15 +244,13 @@ struct CharacterLibraryView: View {
                         icon: "square.grid.2x2",
                         selection: vm.groupFilter?.localizedDisplayName
                     ) {
-                        Menu {
-                            Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.groupFilter = nil; vm.categoryFilter = nil }
-                            Divider()
-                            ForEach(CategoryGroup.allCases) { g in
-                                Button(action: { vm.groupFilter = g; vm.categoryFilter = nil }) {
-                                    Label(g.localizedDisplayName, systemImage: g.iconName)
-                                }
+                        Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.groupFilter = nil; vm.categoryFilter = nil }
+                        Divider()
+                        ForEach(CategoryGroup.allCases) { g in
+                            Button(action: { vm.groupFilter = g; vm.categoryFilter = nil }) {
+                                Label(g.localizedDisplayName, systemImage: g.iconName)
                             }
-                        } label: { EmptyView() }
+                        }
                     }
 
                     if let group = vm.groupFilter {
@@ -224,15 +258,13 @@ struct CharacterLibraryView: View {
                         pickerChip(
                             label: KizunaCopy.text(japanese: "カテゴリー", english: "Category"),
                             icon: "tag",
-                        selection: vm.categoryFilter?.localizedDisplayName
+                            selection: vm.categoryFilter?.localizedDisplayName
                         ) {
-                            Menu {
-                                Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.categoryFilter = nil }
-                                Divider()
-                                ForEach(cats) { c in
-                                    Button(c.localizedDisplayName) { vm.categoryFilter = c }
-                                }
-                            } label: { EmptyView() }
+                            Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.categoryFilter = nil }
+                            Divider()
+                            ForEach(cats) { c in
+                                Button(c.localizedDisplayName) { vm.categoryFilter = c }
+                            }
                         }
                     }
 
@@ -241,13 +273,11 @@ struct CharacterLibraryView: View {
                         icon: "heart.text.square",
                         selection: vm.genreFilter?.localizedDisplayName
                     ) {
-                        Menu {
-                            Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.genreFilter = nil }
-                            Divider()
-                            ForEach(RelationshipGenre.allCases) { g in
-                                Button(g.localizedDisplayName) { vm.genreFilter = g }
-                            }
-                        } label: { EmptyView() }
+                        Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.genreFilter = nil }
+                        Divider()
+                        ForEach(RelationshipGenre.allCases) { g in
+                            Button(g.localizedDisplayName) { vm.genreFilter = g }
+                        }
                     }
 
                     if !vm.availableTags.isEmpty {
@@ -256,13 +286,11 @@ struct CharacterLibraryView: View {
                             icon: "number",
                             selection: vm.tagFilter
                         ) {
-                            Menu {
-                                Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.tagFilter = nil }
-                                Divider()
-                                ForEach(vm.availableTags, id: \.self) { t in
-                                    Button(t) { vm.tagFilter = t }
-                                }
-                            } label: { EmptyView() }
+                            Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.tagFilter = nil }
+                            Divider()
+                            ForEach(vm.availableTags, id: \.self) { t in
+                                Button(t) { vm.tagFilter = t }
+                            }
                         }
                     }
 
@@ -296,7 +324,9 @@ struct CharacterLibraryView: View {
         selection: String?,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        ZStack {
+        Menu {
+            content()
+        } label: {
             HStack(spacing: 5) {
                 Image(systemName: icon)
                     .font(.system(size: 10, weight: .semibold))
@@ -312,9 +342,12 @@ struct CharacterLibraryView: View {
                 Capsule().fill(selection == nil ? Color.primary.opacity(0.06) : Color.accentColor.opacity(0.18))
             )
             .foregroundStyle(selection == nil ? .primary : Color.accentColor)
-            content()
-                .opacity(0.001) // メニュー本体を被せる
         }
+        .buttonStyle(.plain)
+        .contentShape(Capsule())
+        .accessibilityLabel(
+            KizunaCopy.text(japanese: "\(label)のフィルター", english: "Filter by \(label)")
+        )
     }
 
     // MARK: - Content
@@ -494,10 +527,12 @@ struct CharacterLibraryView: View {
             Button { editing = c } label: {
                 Label(KizunaCopy.text(japanese: "編集", english: "Edit"), systemImage: "pencil")
             }
-            Button(role: .destructive) {
-                Task { await vm.delete(id: c.id) }
-            } label: {
-                Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
+            if c.isSystemProtected != true {
+                Button(role: .destructive) {
+                    pendingDeletion = c
+                } label: {
+                    Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
+                }
             }
         }
     }

@@ -373,7 +373,8 @@ private struct StoryGenerationModelPill: View {
             case .savedOnly:
                 return storyCopy("モデル保存済み・自動確認待ち", "Model saved · check pending")
             case .recentFailure:
-                return localModelManager.runtimeDiagnosticSummary ?? storyCopy("ローカル自動確認失敗", "Automatic local check failed")
+                return localModelManager.localizedRuntimeDiagnosticSummary
+                    ?? storyCopy("ローカル自動確認失敗", "Automatic local check failed")
             case .modelMissing:
                 return storyCopy("ローカル未導入", "Local model not installed")
             }
@@ -791,12 +792,13 @@ private struct StorySessionChatBody: View {
                     "The iori model is saved, but its on-device check has not finished. Wait for the check or choose an available model from the model menu."
                 )
             case .recentFailure:
-                // runtimeDiagnosticSummary may come from a Japanese native
-                // runtime log. Do not leak that raw diagnostic into an
-                // English alert; the details sheet can still show it.
-                unavailableModelMessage = KizunaCopy.language == .english
-                    ? "iori could not start on this device. Check the model details or choose an available model."
-                    : localModelManager.runtimeDiagnosticSummary ?? "iori を端末内で起動できませんでした。モデル詳細で状態を確認するか、利用可能なモデルを選択してください。"
+                // Native runtime diagnostics are localized by the model manager;
+                // do not leak a Japanese error into an English story alert.
+                unavailableModelMessage = localModelManager.localizedRuntimeDiagnosticSummary
+                    ?? storyCopy(
+                        "iori を端末内で起動できませんでした。モデル詳細で状態を確認するか、利用可能なモデルを選択してください。",
+                        "iori could not start on this device. Check the model details or choose an available model."
+                    )
             case .modelMissing:
                 unavailableModelMessage = storyCopy(
                     "iori のモデルが端末にありません。設定でモデルを保存するか、モデルメニューから利用可能なモデルを選択してください。",

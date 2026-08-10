@@ -13,6 +13,7 @@ struct KizunaSettingsView: View {
     @State private var saveMessage: String?
     @State private var saveMessageIsError = false
     @State private var showDeleteAlert = false
+    @State private var showClearProfileAlert = false
     @State private var showResetLaunchAlert = false
     @State private var isShowingProfile = false
     @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
@@ -67,7 +68,7 @@ struct KizunaSettingsView: View {
                     }
                     if profileStore.profile.hasUsefulContent {
                         Button(KizunaCopy.text(japanese: "プロフィールを消去", english: "Clear profile"), role: .destructive) {
-                            profileStore.reset()
+                            showClearProfileAlert = true
                         }
                     }
                     Text(KizunaCopy.text(
@@ -111,7 +112,7 @@ struct KizunaSettingsView: View {
                             ForEach(standardModelOptions) { option in
                                 VStack(alignment: .leading) {
                                     Text(option.title)
-                                    Text(option.detail)
+                                    Text(localizedModelDetail(option))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -121,7 +122,7 @@ struct KizunaSettingsView: View {
                         if let selectedOption = standardModelOptions.first(where: {
                             $0.url == selectedStandardModelURL
                         }) {
-                            Text(selectedOption.detail)
+                            Text(localizedModelDetail(selectedOption))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -165,11 +166,11 @@ struct KizunaSettingsView: View {
                         ProgressView()
                     }
 
-                    Text(modelManager.statusMessage)
+                    Text(modelManager.localizedStatusMessage)
                         .font(.caption)
                         .foregroundStyle(modelManager.lastErrorMessage == nil ? Color.secondary : Color.red)
 
-                    if let error = modelManager.supplementalLastErrorMessage {
+                    if let error = modelManager.localizedSupplementalLastErrorMessage {
                         Text(error)
                             .font(.caption)
                             .foregroundStyle(.red)
@@ -249,12 +250,12 @@ struct KizunaSettingsView: View {
                 }
 
                 Section {
-                    Button(KizunaCopy.text(japanese: "初回起動画面をもう一度表示", english: "Show the welcome screen again")) {
+                    Button(KizunaCopy.text(japanese: "初期設定を今すぐ開く", english: "Open welcome setup now")) {
                         showResetLaunchAlert = true
                     }
                     Text(KizunaCopy.text(
-                        japanese: "次回の起動時だけ、ストーリー開始とプロフィール設定の案内を表示します。",
-                        english: "The welcome screen will appear once at the next launch."
+                        japanese: "設定を閉じると、ストーリー開始とプロフィール設定の案内へ移動します。",
+                        english: "After settings closes, kizuna opens the welcome setup for stories and your profile."
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -309,17 +310,35 @@ struct KizunaSettingsView: View {
             Text(KizunaCopy.text(japanese: "この操作は取り消せません。", english: "This action cannot be undone."))
         }
         .alert(
-            KizunaCopy.text(japanese: "初回起動画面を表示しますか？", english: "Show the welcome screen again?"),
-            isPresented: $showResetLaunchAlert
+            KizunaCopy.text(japanese: "プロフィールを消去しますか？", english: "Clear your profile?"),
+            isPresented: $showClearProfileAlert
         ) {
-            Button(KizunaCopy.text(japanese: "表示する", english: "Show")) {
-                UserDefaults.standard.set(false, forKey: "kizuna.launch.completed")
+            Button(KizunaCopy.text(japanese: "消去", english: "Clear"), role: .destructive) {
+                profileStore.reset()
             }
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
             Text(KizunaCopy.text(
-                japanese: "保存済みのプロフィールやモデル設定は変更しません。",
-                english: "Your profile and model settings will not be changed."
+                japanese: "名前・メモ・アバター・会話と物語の好みが消えます。この操作は取り消せません。",
+                english: "Your name, note, avatar, and conversation/story preferences will be removed. This cannot be undone."
+            ))
+        }
+        .alert(
+            KizunaCopy.text(japanese: "初期設定を今すぐ開きますか？", english: "Open the welcome setup now?"),
+            isPresented: $showResetLaunchAlert
+        ) {
+            Button(KizunaCopy.text(japanese: "開く", english: "Open")) {
+                UserDefaults.standard.set(false, forKey: "kizuna.launch.completed")
+                // KizunaMigrationGateView observes this AppStorage value. Close this
+                // sheet so the immediate transition is visible instead of appearing
+                // to take effect only after the next process launch.
+                dismiss()
+            }
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(KizunaCopy.text(
+                japanese: "保存済みのプロフィールやモデル設定は変更しません。設定を閉じたあと初期設定へ移動します。",
+                english: "Your saved profile and model settings will stay unchanged. The setup opens after this sheet closes."
             ))
         }
         .sheet(isPresented: $isShowingProfile) {
@@ -361,6 +380,28 @@ struct KizunaSettingsView: View {
 
     private var standardModelOptions: [LocalAssistantModelProfile.DownloadOption] {
         LocalAssistantModelProfile.standardDownloadOptions
+    }
+
+    private func localizedModelDetail(_ option: LocalAssistantModelProfile.DownloadOption) -> String {
+        if option.url.contains("gemma-4-E2B-it-litert-lm") {
+            return KizunaCopy.text(
+                japanese: "スマホ向けLiteRT-LM形式。保存後、端末内で自動確認してから利用できます",
+                english: "LiteRT-LM format for phones. The app checks it on-device before use."
+            )
+        }
+        if option.url.contains("VIUK-Story-v2.5-GGUF") {
+            return KizunaCopy.text(
+                japanese: "Hugging FaceのVIUK標準モデル",
+                english: "VIUK standard model from Hugging Face"
+            )
+        }
+        if option.url.contains("gemma-3n") {
+            return KizunaCopy.text(
+                japanese: "互換用のGemma 3n 4bit GGUF",
+                english: "Compatible Gemma 3n 4-bit GGUF model"
+            )
+        }
+        return option.detail
     }
 
     private var selectedStandardModelRequiresToken: Bool {

@@ -39,6 +39,8 @@ final class CharacterLibraryViewModel: ObservableObject {
     /// テンプレートを読み込めない状態。空のテンプレート一覧とは区別する。
     @Published private(set) var templateLoadError: String?
     @Published private(set) var didLoadTemplates: Bool = false
+    /// 一覧からの削除失敗を成功扱いにせず、確認画面の後でUIへ通知する。
+    @Published private(set) var deleteErrorMessage: String?
 
     private let characterRepo: CharacterRepository
     private let templateRepo: TemplateRepository
@@ -120,11 +122,25 @@ final class CharacterLibraryViewModel: ObservableObject {
     }
 
     func delete(id: UUID) async {
+        deleteErrorMessage = nil
         do {
             // 一覧のスナップショットではなく最新保存値で保護状態を確認する。
             // 標準化処理と削除タップが競合しても、メモリーだけを消さない。
             let latest = try await characterRepo.fetchCharacters().first(where: { $0.id == id })
-            guard latest?.isSystemProtected != true else { return }
+            guard let latest else {
+                deleteErrorMessage = KizunaCopy.text(
+                    japanese: "キャラクターが見つかりません。一覧を更新してから再試行してください。",
+                    english: "The character could not be found. Refresh the library and try again."
+                )
+                return
+            }
+            guard latest.isSystemProtected != true else {
+                deleteErrorMessage = KizunaCopy.text(
+                    japanese: "標準キャラクターは削除できません。",
+                    english: "Standard characters cannot be deleted."
+                )
+                return
+            }
             // 物語本文は残すが、今後のシーン/キャストで削除済みIDを使わない。
             try await StoryCharacterReferenceCleaner.remove(characterID: id)
             // 一覧のコンテキストメニューから削除した場合も、詳細画面と同じく
@@ -135,6 +151,16 @@ final class CharacterLibraryViewModel: ObservableObject {
             await reload()
         } catch {
             NSLog("[CharacterLibraryVM] delete failed: %@", String(describing: error))
+            let message = KizunaCopy.text(
+                japanese: "キャラクターの削除を完了できませんでした。関連データの状態を確認して再試行してください。",
+                english: "Character deletion did not complete. Check the related data and try again."
+            )
+            // NSErrorの詳細は日本語のまま返ることがあり、英語UIへそのまま
+            // 混ぜると診断文が読みにくくなる。詳細はログに残し、画面には
+            // 言語を揃えた安全なメッセージだけを表示する。
+            deleteErrorMessage = KizunaCopy.language == .japanese
+                ? "\(message)\n\(error.localizedDescription)"
+                : message
         }
     }
 
