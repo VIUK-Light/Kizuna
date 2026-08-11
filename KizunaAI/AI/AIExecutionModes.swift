@@ -34,6 +34,20 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// UI-only label. Keep `displayName` Japanese-compatible because it is
+    /// also used by legacy prompt/logging paths; presentation code should use
+    /// this property when the in-app language can be English.
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .fast: english = "Fast"
+        case .thinking: english = "Thinking"
+        case .deepThinking: english = "High accuracy"
+        case .persona: english = "Kizuna"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
+
     var shortDisplayName: String {
         switch self {
         case .fast: return "Fast"
@@ -41,6 +55,17 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
         case .deepThinking: return "精度"
         case .persona: return "kizuna"
         }
+    }
+
+    var localizedShortDisplayName: String {
+        let english: String
+        switch self {
+        case .fast: english = "Fast"
+        case .thinking: english = "Think"
+        case .deepThinking: english = "Accuracy"
+        case .persona: english = "Kizuna"
+        }
+        return KizunaCopy.text(japanese: shortDisplayName, english: english)
     }
 
     var iconName: String {
@@ -65,6 +90,21 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    var localizedDetailText: String {
+        let english: String
+        switch self {
+        case .fast:
+            english = "Replies quickly; suited to casual chat and short questions."
+        case .thinking:
+            english = "Uses Gemma Thinking to organize an answer more carefully; suited to ordinary research."
+        case .deepThinking:
+            english = "Uses more Gemma 4 reasoning to make comparisons and complex decisions more consistent."
+        case .persona:
+            english = "Talks with Kizuna characters while remembering their relationships, personality, voice, and distance."
+        }
+        return KizunaCopy.text(japanese: detailText, english: english)
+    }
+
     var recommendedUseText: String {
         switch self {
         case .fast:
@@ -76,6 +116,21 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
         case .persona:
             return "向いている用途: 絆キャラとの会話、寄り添ってほしい時、ロールプレイ"
         }
+    }
+
+    var localizedRecommendedUseText: String {
+        let english: String
+        switch self {
+        case .fast:
+            english = "Best for: casual chat, quick checks, and fast answers"
+        case .thinking:
+            english = "Best for: checking specifications, light comparisons, and answers that need a little thought"
+        case .deepThinking:
+            english = "Best for: complex comparisons, design discussions, and longer reasoning"
+        case .persona:
+            english = "Best for: talking with Kizuna characters, emotional support, and role-play"
+        }
+        return KizunaCopy.text(japanese: recommendedUseText, english: english)
     }
 }
 
@@ -93,6 +148,16 @@ enum ResearchMode: String, Codable, CaseIterable, Identifiable {
         case .deep: return "Deep Research"
         }
     }
+
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .off: english = "Search off"
+        case .on: english = "Search"
+        case .deep: english = "Deep Research"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
 }
 
 enum ThinkingLevel: String, Codable, CaseIterable, Identifiable {
@@ -106,6 +171,11 @@ enum ThinkingLevel: String, Codable, CaseIterable, Identifiable {
         case .standard: return "標準"
         case .extended: return "拡張"
         }
+    }
+
+    var localizedDisplayName: String {
+        let english = self == .standard ? "Standard" : "Extended"
+        return KizunaCopy.text(japanese: displayName, english: english)
     }
 }
 
@@ -131,6 +201,19 @@ enum SupportModel: String, Codable, CaseIterable, Identifiable {
         case .localGemma3Mini: return "Gemma 3 270M"
         }
     }
+
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .none:
+            english = "None"
+        case .geminiLite, .geminiFlash, .localGemma3Mini:
+            // Legacy Gemini raw values are intentionally presented as the
+            // current local compatibility slot without changing persistence.
+            english = "Gemma 3 270M"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
 }
 
 enum SupportAgentRole: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -153,6 +236,16 @@ enum SupportAgentRole: String, Codable, CaseIterable, Identifiable, Sendable {
         case .architect:
             return "構成設計"
         }
+    }
+
+    var localizedLabel: String {
+        let english: String
+        switch self {
+        case .planner: english = "Issue framing"
+        case .auditor: english = "Evidence audit"
+        case .architect: english = "Architecture design"
+        }
+        return KizunaCopy.text(japanese: japaneseLabel, english: english)
     }
 }
 
@@ -178,6 +271,18 @@ enum GemmaSafetyProfile: String, Codable, CaseIterable, Identifiable {
         case .custom:
             return "カスタム"
         }
+    }
+
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .auto: english = "Auto"
+        case .strict: english = "Strict"
+        case .balanced: english = "Balanced"
+        case .relaxed: english = "Relaxed"
+        case .custom: english = "Custom"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
     }
 
     var detailText: String {
@@ -209,6 +314,23 @@ enum GemmaSafetyProfile: String, Codable, CaseIterable, Identifiable {
             return "カテゴリ別の安全しきい値を優先しつつ、危険・違法・年齢不適切な方向へ寄せないでください。"
         }
     }
+
+    var localizedDetailText: String {
+        let english: String
+        switch self {
+        case .auto:
+            english = "Use Gemma's standard guardrails, with optional per-category overrides."
+        case .strict:
+            english = "Be cautious with uncertain content and prioritize verification and evidence."
+        case .balanced:
+            english = "Balance safety with natural conversation."
+        case .relaxed:
+            english = "Favor natural replies while still avoiding clear danger."
+        case .custom:
+            english = "Use the thresholds set for each category."
+        }
+        return KizunaCopy.text(japanese: detailText, english: english)
+    }
 }
 
 enum GemmaSafetyCategory: String, Codable, CaseIterable, Identifiable {
@@ -232,6 +354,17 @@ enum GemmaSafetyCategory: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .dangerousContent: english = "Dangerous content"
+        case .harassment: english = "Harassment"
+        case .hate: english = "Hate"
+        case .sexuallyExplicit: english = "Sexual content"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
+
     var detailText: String {
         switch self {
         case .dangerousContent:
@@ -243,6 +376,21 @@ enum GemmaSafetyCategory: String, Codable, CaseIterable, Identifiable {
         case .sexuallyExplicit:
             return "露骨な性的内容や年齢不適切な表現をどこまで抑えるかです。"
         }
+    }
+
+    var localizedDetailText: String {
+        let english: String
+        switch self {
+        case .dangerousContent:
+            english = "How strongly to limit self-harm, illegal, or dangerous instructions."
+        case .harassment:
+            english = "How strongly to limit insults, bullying, and aggressive language."
+        case .hate:
+            english = "How strongly to limit language that promotes discrimination or exclusion."
+        case .sexuallyExplicit:
+            english = "How strongly to limit explicit sexual or age-inappropriate content."
+        }
+        return KizunaCopy.text(japanese: detailText, english: english)
     }
 }
 
@@ -262,6 +410,16 @@ enum GemmaSafetyThreshold: String, Codable, CaseIterable, Identifiable {
         case .strict:
             return "厳格"
         }
+    }
+
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .off: english = "Off"
+        case .standard: english = "Standard"
+        case .strict: english = "Strict"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
     }
 
     func instruction(for category: GemmaSafetyCategory) -> String {
@@ -316,6 +474,21 @@ enum SpeculativeDecodingMode: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    var localizedDisplayName: String {
+        let english: String
+        switch self {
+        case .off: english = "Off"
+        case .auto: english = "Automatic"
+        case .ngramCache: english = "n-gram (cache)"
+        case .ngramSimple: english = "n-gram (simple)"
+        case .ngramMapK: english = "n-gram (map-k)"
+        case .ngramMapK4V: english = "n-gram (map-k4v)"
+        case .ngramMod: english = "n-gram (modular)"
+        case .mtp: english = "MTP (official Gemma 4)"
+        }
+        return KizunaCopy.text(japanese: displayName, english: english)
+    }
+
     var detailText: String {
         switch self {
         case .off:
@@ -335,6 +508,29 @@ enum SpeculativeDecodingMode: String, Codable, CaseIterable, Identifiable {
         case .mtp:
             return "Google 公式の Multi-Token Prediction。最大 3 倍高速化。Gemma 4 + 対応 llama-server ビルドが必要。未対応の場合は自動的に n-gram にフォールバックします。"
         }
+    }
+
+    var localizedDetailText: String {
+        let english: String
+        switch self {
+        case .off:
+            english = "Disable speculative decoding for maximum stability."
+        case .auto:
+            english = "Recommended. Choose the best supported mode automatically from the bundled server and model."
+        case .ngramCache:
+            english = "Classic n-gram cache with broad compatibility and a light speed-up."
+        case .ngramSimple:
+            english = "Simple n-gram prediction."
+        case .ngramMapK:
+            english = "Prediction using ngram-map-k."
+        case .ngramMapK4V:
+            english = "A newer n-gram variant that can speed up chat by 10–30%."
+        case .ngramMod:
+            english = "Modular n-gram; experimental."
+        case .mtp:
+            english = "Google's official Multi-Token Prediction. Requires Gemma 4 and a compatible llama-server build; falls back to n-gram when unavailable."
+        }
+        return KizunaCopy.text(japanese: detailText, english: english)
     }
 
     /// 対応する `--spec-type` 引数 (`auto` / `mtp` 自動検出用は別ロジック)。
@@ -660,6 +856,26 @@ struct AIExecutionConfig: Codable {
             return researchMode == .deep ? "高精度 + Deep Research" : "高精度 + Search"
         case .persona:
             return "恋愛"
+        }
+    }
+
+    /// UI-only configuration label. Keep `displayName` unchanged for legacy
+    /// diagnostics and prompt-adjacent code paths.
+    var localizedDisplayName: String {
+        switch reasoningMode {
+        case .fast:
+            switch researchMode {
+            case .off?, nil: return "Fast"
+            case .on?: return "Fast + Search"
+            case .deep?: return "Fast + Deep Research"
+            }
+        case .thinking:
+            let base = thinkingLevel == .extended ? "Thinking (Extended)" : "Thinking"
+            return researchMode == .deep ? base + " + Deep Research" : base + " + Search"
+        case .deepThinking:
+            return researchMode == .deep ? "High accuracy + Deep Research" : "High accuracy + Search"
+        case .persona:
+            return "Kizuna"
         }
     }
 }

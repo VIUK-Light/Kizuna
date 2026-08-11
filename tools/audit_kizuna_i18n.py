@@ -49,6 +49,34 @@ def xcstring_audit() -> dict[str, Any]:
     }
 
 
+def presentation_audit() -> dict[str, Any]:
+    """Check that legacy AI metadata has a presentation-only English path.
+
+    The Japanese properties in these files are still consumed by prompt and
+    persistence-adjacent code. This audit therefore checks for the explicit
+    UI accessors rather than treating Japanese source text as a finding by
+    itself.
+    """
+    execution_source = read_text("KizunaAI/AI/AIExecutionModes.swift")
+    tool_source = read_text("KizunaAI/AI/AIToolCatalog.swift")
+    copy_source = read_text("KizunaAI/App/KizunaCopy.swift")
+    required_execution_accessors = (
+        "localizedDisplayName",
+        "localizedShortDisplayName",
+        "localizedDetailText",
+        "localizedRecommendedUseText",
+    )
+    missing_execution_accessors = [
+        accessor for accessor in required_execution_accessors
+        if accessor not in execution_source
+    ]
+    return {
+        "missing_execution_ui_accessors": missing_execution_accessors,
+        "tool_catalog_has_localized_label": "localizedDisplayName(forToolNamed" in tool_source,
+        "english_brand_is_kizuna": 'english: "Kizuna"' in copy_source,
+    }
+
+
 def seed_stories() -> list[dict[str, Any]]:
     stories: list[dict[str, Any]] = []
     for name in ("SeedStoryPacks.json", "SeedStoryPacksExpansion.json"):
@@ -162,6 +190,7 @@ def main() -> int:
     report = {
         "scope": "source-only; no device model execution",
         "xcstrings": xcstring_audit(),
+        "presentation": presentation_audit(),
         "direct_ui": direct_ui_audit(),
         "story_detail": story_audit(),
         "litert": litert_audit(),
@@ -172,6 +201,9 @@ def main() -> int:
         has_open_findings = any(
             (
                 report["xcstrings"]["missing_english_keys"],
+                report["presentation"]["missing_execution_ui_accessors"],
+                not report["presentation"]["tool_catalog_has_localized_label"],
+                not report["presentation"]["english_brand_is_kizuna"],
                 report["direct_ui"]["character_create_raw_ui_lines"],
                 report["story_detail"]["initial_scenes_left_untranslated_by_current_fallback"],
                 not report["story_detail"]["story_world_localization_has_safety_rules"],
