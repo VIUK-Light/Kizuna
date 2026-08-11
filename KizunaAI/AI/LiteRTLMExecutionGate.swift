@@ -16,7 +16,7 @@ actor LiteRTLMExecutionGate {
         guard !Task.isCancelled else { return false }
 
         let waiterID = UUID()
-        return await withTaskCancellationHandler(operation: {
+        let acquired = await withTaskCancellationHandler(operation: {
             await withCheckedContinuation { continuation in
                 if Task.isCancelled {
                     continuation.resume(returning: false)
@@ -31,6 +31,17 @@ actor LiteRTLMExecutionGate {
         }, onCancel: {
             Task { await self.cancelWaiter(id: waiterID) }
         })
+
+        guard acquired else { return false }
+        guard !Task.isCancelled else {
+            // `onCancel` schedules waiter removal asynchronously. If release
+            // won the race and resumed this continuation first, pass the slot
+            // to the next waiter instead of reporting ownership to a cancelled
+            // caller.
+            release()
+            return false
+        }
+        return true
     }
 
     /// Releases the current holder. The slot remains locked when ownership is

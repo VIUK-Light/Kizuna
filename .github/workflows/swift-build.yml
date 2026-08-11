@@ -54,6 +54,9 @@ jobs:
       - name: Run LiteRT-LM execution-gate regression tests
         run: |
           xcrun swiftc \
+            -swift-version 5 \
+            -default-isolation MainActor \
+            -enable-upcoming-feature ApproachableConcurrency \
             KizunaAI/AI/LiteRTLMExecutionGate.swift \
             scripts/test_litertlm_execution_gate.swift \
             -o "$RUNNER_TEMP/litertlm-execution-gate-tests"

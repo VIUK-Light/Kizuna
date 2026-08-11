@@ -55,26 +55,20 @@ struct LiteRTLMExecutionGateTests {
 
             let waiter = Task { () -> Bool in
                 let acquired = await gate.acquire()
-                guard acquired else { return false }
-                guard !Task.isCancelled else {
+                if acquired {
                     await gate.release()
-                    return false
                 }
-
-                // `generateAsync` performs the same cancellation check before
-                // any Engine initialization, token probe, or sendMessage call.
-                await gate.release()
-                return true
+                return acquired
             }
             await waitUntil(gate, hasWaitingCount: 1)
 
             waiter.cancel()
             await gate.release()
 
-            let wouldStartNativeWork = await waiter.value
+            let cancelledWaiterAcquired = await waiter.value
             precondition(
-                !wouldStartNativeWork,
-                "A cancelled waiter must not start native work after a release race"
+                !cancelledWaiterAcquired,
+                "A cancelled waiter must not receive the released slot"
             )
 
             let reacquired = await gate.acquire()
@@ -87,11 +81,12 @@ struct LiteRTLMExecutionGateTests {
         _ gate: LiteRTLMExecutionGate,
         hasWaitingCount expectedCount: Int
     ) async {
-        for _ in 0..<200 {
+        for _ in 0..<2_000 {
             if await gate.waitingCount() == expectedCount {
                 return
             }
             await Task.yield()
+            try? await Task.sleep(nanoseconds: 1_000_000)
         }
         fatalError("Timed out waiting for LiteRT-LM execution-gate test setup")
     }
