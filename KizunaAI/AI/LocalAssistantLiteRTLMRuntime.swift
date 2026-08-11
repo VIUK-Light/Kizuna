@@ -96,66 +96,54 @@ private struct LiteRTLMEngineConfiguration: Equatable, Sendable {
     let maxNumTokens: Int
 }
 
-private actor LiteRTLMExecutionGate {
-    private var isLocked = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func acquire() async {
-        guard !isLocked else {
-            await withCheckedContinuation { continuation in
-                waiters.append(continuation)
-            }
-            return
-        }
-        isLocked = true
-    }
-
-    func release() {
-        guard !waiters.isEmpty else {
-            isLocked = false
-            return
-        }
-        waiters.removeFirst().resume()
-    }
-}
-
 /// `Conversation.sendMessage` はネイティブ推論中も戻らないため、SwiftのTask cancel
 /// だけでは停止しない。現在のConversationを保持してSDKのcancelを直接呼ぶ。
 private actor LiteRTLMActiveConversation {
     private var conversation: Conversation?
     private var generationID: UUID?
-    // Cancellation can arrive while Engine is still loading or while the
-    // conversation is being created.  Keep that request until the matching
-    // conversation is registered instead of silently dropping it.
-    private var pendingCancellationGenerationID: UUID?
-    private var pendingUnscopedCancellation = false
-    // Native cancellation is reported as a LiteRT-LM invalid-response error,
-    // not as Swift CancellationError. Keep the request long enough for the
-    // sendMessage caller to classify that result without invalidating the
-    // reusable engine.
-    private var cancellationRequestedGenerationID: UUID?
+    // Keep cancellation requests by generation rather than silently dropping
+    // a request just because another generation currently owns Conversation.
+    // This includes work still waiting for the execution gate.
+    private var inFlightGenerationIDs: Set<UUID> = []
+    private var cancellationRequests: Set<UUID> = []
+    private var completedGenerationIDs: [UUID] = []
+    private var isUnscopedGenerationInFlight = false
     private var unscopedCancellationRequested = false
+    private let completedGenerationHistoryLimit = 64
+
+    func begin(generationID: UUID?) {
+        guard let generationID else {
+            isUnscopedGenerationInFlight = true
+            return
+        }
+        inFlightGenerationIDs.insert(generationID)
+        completedGenerationIDs.removeAll { $0 == generationID }
+    }
+
+    func finish(generationID: UUID?) {
+        guard let generationID else {
+            isUnscopedGenerationInFlight = false
+            unscopedCancellationRequested = false
+            return
+        }
+
+        inFlightGenerationIDs.remove(generationID)
+        cancellationRequests.remove(generationID)
+        guard !completedGenerationIDs.contains(generationID) else { return }
+        completedGenerationIDs.append(generationID)
+        if completedGenerationIDs.count > completedGenerationHistoryLimit {
+            completedGenerationIDs.removeFirst(
+                completedGenerationIDs.count - completedGenerationHistoryLimit
+            )
+        }
+    }
 
     func set(_ conversation: Conversation, generationID: UUID?) async {
         self.conversation = conversation
         self.generationID = generationID
 
-        let shouldCancel = pendingUnscopedCancellation
-            || (pendingCancellationGenerationID != nil
-                && pendingCancellationGenerationID == generationID)
-        if pendingUnscopedCancellation {
-            pendingUnscopedCancellation = false
-            unscopedCancellationRequested = true
-        }
-        if pendingCancellationGenerationID == generationID {
-            pendingCancellationGenerationID = nil
-            cancellationRequestedGenerationID = generationID
-        } else if cancellationRequestedGenerationID != nil,
-                  cancellationRequestedGenerationID != generationID {
-            // A scoped cancellation that arrived after its conversation was
-            // cleared must not leak into a later turn.
-            cancellationRequestedGenerationID = nil
-        }
+        let shouldCancel = unscopedCancellationRequested
+            || generationID.map { cancellationRequests.contains($0) } == true
         if shouldCancel {
             try? await conversation.cancel()
         }
@@ -171,33 +159,41 @@ private actor LiteRTLMActiveConversation {
     /// A supplied generation only cancels its own conversation. Nil is used by
     /// app lifecycle cancellation and intentionally cancels any active turn.
     func cancel(generationID requestedGenerationID: UUID? = nil) async {
-        guard let activeConversation = conversation else {
-            if let requestedGenerationID {
-                pendingCancellationGenerationID = requestedGenerationID
-            } else {
-                pendingUnscopedCancellation = true
-            }
-            return
-        }
-        if let requestedGenerationID,
-           generationID != requestedGenerationID {
-            return
-        }
         if let requestedGenerationID {
-            cancellationRequestedGenerationID = requestedGenerationID
-        } else {
-            unscopedCancellationRequested = true
+            // A cancellation task can be scheduled after the matching Swift
+            // task has already returned. Remember recent completions so that
+            // a stale request cannot be retained for a UUID that will never
+            // run again.
+            guard !completedGenerationIDs.contains(requestedGenerationID) else {
+                return
+            }
+            cancellationRequests.insert(requestedGenerationID)
+            guard generationID == requestedGenerationID,
+                  let activeConversation = conversation else {
+                return
+            }
+            try? await activeConversation.cancel()
+            return
         }
-        try? await activeConversation.cancel()
+
+        for generationID in inFlightGenerationIDs {
+            cancellationRequests.insert(generationID)
+        }
+        guard isUnscopedGenerationInFlight || conversation != nil else {
+            return
+        }
+        unscopedCancellationRequested = true
+        if let activeConversation = conversation {
+            try? await activeConversation.cancel()
+        }
     }
 
     func consumeCancellation(for requestedGenerationID: UUID?) -> Bool {
-        let matches = unscopedCancellationRequested
-            || (cancellationRequestedGenerationID != nil
-                && cancellationRequestedGenerationID == requestedGenerationID)
-        guard matches else { return false }
+        if let requestedGenerationID {
+            return cancellationRequests.remove(requestedGenerationID) != nil
+        }
+        guard unscopedCancellationRequested else { return false }
         unscopedCancellationRequested = false
-        cancellationRequestedGenerationID = nil
         return true
     }
 }
@@ -415,6 +411,11 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         timeoutSeconds: TimeInterval = 180
     ) async -> VIUKEmbeddedRuntimeResult {
         if let reason = preflightFailureReason(forModelPath: request.modelPath) {
+#if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
+#if canImport(LiteRTLM)
+            await activeConversation.finish(generationID: request.generationID)
+#endif
+#endif
             return VIUKEmbeddedRuntimeResult(success: false, text: nil, errorMessage: reason)
         }
 
@@ -424,9 +425,26 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         // timeout cannot safely cancel the C++ load, and starting another Engine
         // while it is still loading was one source of phone-side pressure.
         _ = timeoutSeconds
-        await executionGate.acquire()
+        await activeConversation.begin(generationID: request.generationID)
+        if await shouldStop(request) {
+            await activeConversation.finish(generationID: request.generationID)
+            return cancelledGenerationResult()
+        }
+
+        let acquired = await executionGate.acquire()
+        guard acquired else {
+            await activeConversation.finish(generationID: request.generationID)
+            return cancelledGenerationResult()
+        }
+        if await shouldStop(request) {
+            await executionGate.release()
+            await activeConversation.finish(generationID: request.generationID)
+            return cancelledGenerationResult()
+        }
+
         let result = await runLiteRTLMAttempt(request)
         await executionGate.release()
+        await activeConversation.finish(generationID: request.generationID)
         return result
 #else
         return VIUKEmbeddedRuntimeResult(success: false, text: nil, errorMessage: "LiteRT-LM runtime はこのビルドに含まれていません。")
@@ -466,7 +484,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
 #if canImport(LiteRTLM)
         Task { await activeConversation.cancel() }
         Task(priority: .utility) {
-            await executionGate.acquire()
+            guard await executionGate.acquire() else { return }
             await engineStore.release()
             await executionGate.release()
         }
@@ -476,9 +494,29 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
 
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
 #if canImport(LiteRTLM)
+    nonisolated private func cancelledGenerationResult() -> VIUKEmbeddedRuntimeResult {
+        VIUKEmbeddedRuntimeResult(
+            success: false,
+            text: nil,
+            errorMessage: "LiteRT-LM generation was cancelled."
+        )
+    }
+
+    /// Reads the Swift task flag and consumes a generation-scoped request that
+    /// may have arrived while another turn owned the native Conversation.
+    nonisolated private func shouldStop(_ request: LocalAssistantLiteRTLMRequest) async -> Bool {
+        if Task.isCancelled {
+            return true
+        }
+        return await activeConversation.consumeCancellation(for: request.generationID)
+    }
+
     nonisolated private func runLiteRTLMAttempt(
         _ request: LocalAssistantLiteRTLMRequest
     ) async -> VIUKEmbeddedRuntimeResult {
+        if await shouldStop(request) {
+            return cancelledGenerationResult()
+        }
         let modelKey = modelCacheKey(for: request.modelPath)
         let defaultContextTokenLimit = request.isRuntimeCheck
             ? Tuning.runtimeCheckContextTokenLimit
@@ -486,6 +524,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         let requestedContextTokenLimit = defaultContextTokenLimit
         var contextTokenLimit = await engineStore.reportedContextLimit(for: modelKey)
             ?? requestedContextTokenLimit
+        if await shouldStop(request) {
+            return cancelledGenerationResult()
+        }
         var configuration = engineConfiguration(
             for: request.modelPath,
             isRuntimeCheck: request.isRuntimeCheck,
@@ -497,6 +538,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         // limit, rebuild the engine once with the model-reported value instead
         // of retrying the same oversized request.
         for attempt in 0..<2 {
+            if await shouldStop(request) {
+                return cancelledGenerationResult()
+            }
             do {
                 return try await runLiteRTLMSingleAttempt(
                     request,
@@ -505,6 +549,15 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     requestedContextTokenLimit: requestedContextTokenLimit
                 )
             } catch {
+                let cancellationRequested = await shouldStop(request)
+                let nativeCancellationReported = error.localizedDescription.range(
+                    of: "CANCELLED",
+                    options: .caseInsensitive
+                ) != nil
+                if cancellationRequested
+                    || (nativeCancellationReported && request.generationID != nil) {
+                    return cancelledGenerationResult()
+                }
                 if attempt == 0,
                    let reportedLimit = LocalAssistantLiteRTLMContextLimit
                     .reportedMaximumTokenCount(from: error.localizedDescription),
@@ -529,21 +582,6 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     continue
                 }
 
-                let cancellationRequested = await activeConversation.consumeCancellation(
-                    for: request.generationID
-                )
-                let nativeCancellationReported = error.localizedDescription.range(
-                    of: "CANCELLED",
-                    options: .caseInsensitive
-                ) != nil
-                if cancellationRequested
-                    || (nativeCancellationReported && request.generationID != nil) {
-                    return VIUKEmbeddedRuntimeResult(
-                        success: false,
-                        text: nil,
-                        errorMessage: "LiteRT-LM generation was cancelled."
-                    )
-                }
                 if let budgetError = error as? LiteRTLMTokenBudgetError {
                     return VIUKEmbeddedRuntimeResult(
                         success: false,
@@ -574,6 +612,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         contextTokenLimit: Int,
         requestedContextTokenLimit: Int
     ) async throws -> VIUKEmbeddedRuntimeResult {
+        if await shouldStop(request) {
+            return cancelledGenerationResult()
+        }
         var sizedRequest = runtimeSizedRequest(request)
         let modelName = URL(fileURLWithPath: sizedRequest.modelPath).lastPathComponent
         let promptBytes = sizedRequest.prompt.lengthOfBytes(using: .utf8)
@@ -594,11 +635,17 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             sizedRequest.maxTokens
         )
         let engine = try await engineStore.engine(for: configuration)
+        if await shouldStop(request) {
+            return cancelledGenerationResult()
+        }
         sizedRequest = try await fitRequestToTokenBudget(
             sizedRequest,
             engine: engine,
             contextTokenLimit: contextTokenLimit
         )
+        if await shouldStop(request) {
+            return cancelledGenerationResult()
+        }
         let sampler = try SamplerConfig(
             topK: max(sizedRequest.topK, 1),
             topP: max(0, min(sizedRequest.topP, 1)),
@@ -628,6 +675,10 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             )
         )
         await activeConversation.set(conversation, generationID: sizedRequest.generationID)
+        if await shouldStop(request) {
+            await activeConversation.clear(conversation)
+            return cancelledGenerationResult()
+        }
         NSLog("[KizunaLiteRTLM] conversation ready; sending message")
         let response: Message
         do {
@@ -636,16 +687,10 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             await activeConversation.clear(conversation)
             throw error
         }
-        let cancellationRequested = await activeConversation.consumeCancellation(
-            for: sizedRequest.generationID
-        )
+        let cancellationRequested = await shouldStop(request)
         await activeConversation.clear(conversation)
         if cancellationRequested {
-            return VIUKEmbeddedRuntimeResult(
-                success: false,
-                text: nil,
-                errorMessage: "LiteRT-LM generation was cancelled."
-            )
+            return cancelledGenerationResult()
         }
         let cleaned = response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasMeaningfulText = hasMeaningfulResponseText(cleaned)

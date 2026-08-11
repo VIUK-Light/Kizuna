@@ -33,6 +33,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO
 
+      - name: Run LiteRT-LM execution-gate regression tests
+        run: |
+          xcrun swiftc \
+            KizunaAI/AI/LiteRTLMExecutionGate.swift \
+            scripts/test_litertlm_execution_gate.swift \
+            -o "$RUNNER_TEMP/litertlm-execution-gate-tests"
+          "$RUNNER_TEMP/litertlm-execution-gate-tests"
+
   gemma-script-tests:
     name: Gemma Script Tests
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
