@@ -26,7 +26,6 @@ struct KizunaUserProfileView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    profileHeader
                     profileCard(
                         title: KizunaCopy.text(japanese: "名前と画像", english: "Name and photo"),
                         icon: "person.crop.circle"
@@ -65,37 +64,6 @@ struct KizunaUserProfileView: View {
                 }
             }
         }
-    }
-
-    private var profileHeader: some View {
-        HStack(spacing: 14) {
-            KizunaAvatarView(
-                symbol: draft.avatarSymbol,
-                imageData: draft.avatarImageData,
-                size: 72
-            )
-
-            Text(draft.visibleName.isEmpty
-                 ? KizunaCopy.text(japanese: "名前未設定", english: "No name yet")
-                 : draft.visibleName)
-                .font(.system(size: 21, weight: .bold, design: .rounded))
-                .lineLimit(2)
-
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color.accentColor.opacity(0.16),
-                    Color.indigo.opacity(0.10),
-                    Color.primary.opacity(0.035)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-        )
     }
 
     private func profileCard<Content: View>(
