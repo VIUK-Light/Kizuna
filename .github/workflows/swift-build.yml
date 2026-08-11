@@ -52,13 +52,24 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO
 
       - name: Run LiteRT-LM execution-gate regression tests
+        shell: bash
         run: |
           # GitHub's macos-15 image can lag the Swift toolchain used by the
           # Xcode project. Use the complete target-equivalent concurrency
           # settings whenever the compiler supports them; the test driver is
           # explicitly @MainActor for older runners below.
           swift_settings=(-swift-version 5)
-          if xcrun swiftc -help 2>&1 | grep -q -- '-default-isolation'; then
+          swiftc_help="$(xcrun swiftc -help 2>&1)"
+          if [[ "$swiftc_help" == *"-default-isolation"* ]]; then
+            # Do not silently fall back if a compiler claims this setting but
+            # rejects the complete target-equivalent configuration.
+            xcrun swiftc \
+              -swift-version 5 \
+              -default-isolation MainActor \
+              -enable-upcoming-feature ApproachableConcurrency \
+              -typecheck \
+              KizunaAI/AI/LiteRTLMExecutionGate.swift \
+              scripts/test_litertlm_execution_gate.swift
             swift_settings+=(
               -default-isolation MainActor
               -enable-upcoming-feature ApproachableConcurrency
