@@ -43,7 +43,11 @@ struct KizunaSettingsView: View {
 
                 Section {
                     HStack(spacing: 10) {
-                        KizunaAvatarView(symbol: profileStore.profile.avatarSymbol, size: 42)
+                        KizunaAvatarView(
+                            symbol: profileStore.profile.avatarSymbol,
+                            imageData: profileStore.profile.avatarImageData,
+                            size: 42
+                        )
                         VStack(alignment: .leading, spacing: 2) {
                             Text(profileStore.profile.visibleName.isEmpty
                                  ? KizunaCopy.text(japanese: "未設定", english: "Not set")
@@ -55,11 +59,6 @@ struct KizunaSettingsView: View {
                             )
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            if profileStore.profile.hasUsefulContent {
-                                Text(profileStore.profile.storyPreference.displayName)
-                                    .font(.caption2)
-                                    .foregroundStyle(.tint)
-                            }
                         }
                         Spacer()
                         Button(KizunaCopy.text(japanese: "編集", english: "Edit")) {
@@ -71,12 +70,6 @@ struct KizunaSettingsView: View {
                             showClearProfileAlert = true
                         }
                     }
-                    Text(KizunaCopy.text(
-                        japanese: "プロフィールは端末内の設定として保存されます。生成時は会話に必要な範囲だけ、選択中のモデル（NAGIを含む）へ渡されます。",
-                        english: "Your profile is stored in this app. Only relevant fields are included in the selected model request, including NAGI."
-                    ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 } header: {
                     Text(KizunaCopy.text(japanese: "プロフィール", english: "Profile"))
                 }
@@ -254,8 +247,8 @@ struct KizunaSettingsView: View {
                         showResetLaunchAlert = true
                     }
                     Text(KizunaCopy.text(
-                        japanese: "設定を閉じると、ストーリー開始とプロフィール設定の案内へ移動します。",
-                        english: "After settings closes, kizuna opens the welcome setup for stories and your profile."
+                        japanese: "設定を閉じると、プロフィール設定へ移動します。",
+                        english: "After settings closes, kizuna opens profile setup."
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -319,8 +312,8 @@ struct KizunaSettingsView: View {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
             Text(KizunaCopy.text(
-                japanese: "名前・メモ・アバター・会話と物語の好みが消えます。この操作は取り消せません。",
-                english: "Your name, note, avatar, and conversation/story preferences will be removed. This cannot be undone."
+                japanese: "名前とプロフィール画像が消えます。この操作は取り消せません。",
+                english: "Your name and profile photo will be removed. This cannot be undone."
             ))
         }
         .alert(

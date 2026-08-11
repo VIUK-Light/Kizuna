@@ -1,9 +1,19 @@
+import Foundation
+import ImageIO
 import SwiftUI
+import PhotosUI
+
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// プロフィールで使える、文字絵文字に頼らないアバターの選択肢。
 /// 保存値は文字列のままにして、旧バージョンの絵文字も読み出せるようにする。
 enum KizunaAvatarCatalog {
     static let defaultID = "person.crop.circle.fill"
+    static let customImageID = "custom.profile.image"
 
     static let options: [KizunaAvatarOption] = [
         KizunaAvatarOption(id: defaultID, japaneseTitle: "ベーシック", englishTitle: "Basic"),
@@ -32,9 +42,70 @@ struct KizunaAvatarOption: Identifiable, Hashable {
     }
 }
 
+enum KizunaAvatarImage {
+    private static let maximumPixelSize = 512
+
+    static func image(from data: Data?) -> Image? {
+        guard let data else { return nil }
+
+        #if canImport(UIKit)
+        guard let image = UIImage(data: data) else { return nil }
+        return Image(uiImage: image)
+        #elseif canImport(AppKit)
+        guard let image = NSImage(data: data) else { return nil }
+        return Image(nsImage: image)
+        #else
+        return nil
+        #endif
+    }
+
+    /// Store a small, normalized JPEG instead of the original camera asset.
+    /// This keeps the profile in UserDefaults bounded while retaining enough
+    /// resolution for the circular avatar surfaces.
+    static func normalizedData(from data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+                  source,
+                  0,
+                  [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceCreateThumbnailWithTransform: true,
+                      kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize
+                  ] as CFDictionary
+              ) else {
+            return nil
+        }
+
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            "public.jpeg" as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+
+        CGImageDestinationAddImage(
+            destination,
+            thumbnail,
+            [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary
+        )
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
+    }
+}
+
 struct KizunaAvatarView: View {
     let symbol: String
+    let imageData: Data?
     var size: CGFloat = 72
+
+    init(symbol: String, imageData: Data? = nil, size: CGFloat = 72) {
+        self.symbol = symbol
+        self.imageData = imageData
+        self.size = size
+    }
 
     private var optionIndex: Int {
         KizunaAvatarCatalog.options.firstIndex { $0.id == symbol } ?? 0
@@ -65,7 +136,13 @@ struct KizunaAvatarView: View {
                     )
                 )
 
-            if KizunaAvatarCatalog.option(for: symbol) != nil {
+            if let image = KizunaAvatarImage.image(from: imageData) {
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else if KizunaAvatarCatalog.option(for: symbol) != nil {
                 Image(systemName: symbol)
                     .font(.system(size: size * 0.42, weight: .semibold))
                     .foregroundStyle(.white)
@@ -82,7 +159,9 @@ struct KizunaAvatarView: View {
         }
         .shadow(color: gradientColors[0].opacity(0.22), radius: size * 0.12, y: size * 0.06)
         .accessibilityLabel(
-            KizunaAvatarCatalog.option(for: symbol)?.title
+            imageData != nil
+                ? KizunaCopy.text(japanese: "プロフィール画像", english: "Profile photo")
+                : KizunaAvatarCatalog.option(for: symbol)?.title
                 ?? KizunaCopy.text(japanese: "プロフィールアイコン", english: "Profile icon")
         )
     }
@@ -90,39 +169,115 @@ struct KizunaAvatarView: View {
 
 struct KizunaAvatarPicker: View {
     @Binding var selection: String
+    @Binding var imageData: Data?
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var isLoadingPhoto = false
+    @State private var photoError: String?
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 10)], spacing: 10) {
-            ForEach(KizunaAvatarCatalog.options) { option in
-                Button {
-                    selection = option.id
-                } label: {
-                    VStack(spacing: 7) {
-                        KizunaAvatarView(symbol: option.id, size: 48)
-                        Text(option.title)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(selection == option.id ? Color.accentColor : .secondary)
-                            .lineLimit(1)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                PhotosPicker(selection: $selectedPhoto, matching: .images, photoLibrary: .shared()) {
+                    HStack(spacing: 9) {
+                        KizunaAvatarView(symbol: selection, imageData: imageData, size: 48)
+                        Text(KizunaCopy.text(
+                            japanese: imageData == nil ? "自分の画像を選ぶ" : "画像を変更",
+                            english: imageData == nil ? "Choose your photo" : "Change photo"
+                        ))
+                            .font(.system(size: 12, weight: .semibold))
                     }
-                    .frame(maxWidth: .infinity, minHeight: 76)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(selection == option.id
-                                  ? Color.accentColor.opacity(0.13)
-                                  : Color.primary.opacity(0.045))
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(
-                                selection == option.id ? Color.accentColor : Color.primary.opacity(0.08),
-                                lineWidth: selection == option.id ? 1.5 : 1
-                            )
-                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.10), in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .accessibilityAddTraits(selection == option.id ? .isSelected : [])
+                .disabled(isLoadingPhoto)
+
+                if imageData != nil {
+                    Button(KizunaCopy.text(japanese: "画像を削除", english: "Remove photo")) {
+                        imageData = nil
+                        selection = KizunaAvatarCatalog.defaultID
+                        selectedPhoto = nil
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if isLoadingPhoto {
+                ProgressView(KizunaCopy.text(japanese: "画像を読み込み中…", english: "Loading photo…"))
+                    .font(.caption)
+            }
+            if let photoError {
+                Text(photoError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 10)], spacing: 10) {
+                ForEach(KizunaAvatarCatalog.options) { option in
+                    Button {
+                        selection = option.id
+                        imageData = nil
+                        photoError = nil
+                    } label: {
+                        VStack(spacing: 7) {
+                            KizunaAvatarView(symbol: option.id, size: 48)
+                            Text(option.title)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(selection == option.id && imageData == nil ? Color.accentColor : .secondary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 76)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(selection == option.id && imageData == nil
+                                      ? Color.accentColor.opacity(0.13)
+                                      : Color.primary.opacity(0.045))
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(
+                                    selection == option.id && imageData == nil ? Color.accentColor : Color.primary.opacity(0.08),
+                                    lineWidth: selection == option.id && imageData == nil ? 1.5 : 1
+                                )
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selection == option.id && imageData == nil ? .isSelected : [])
+                }
+            }
+        }
+        .onChange(of: selectedPhoto) { _, item in
+            guard let item else { return }
+            isLoadingPhoto = true
+            photoError = nil
+
+            Task { @MainActor in
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self),
+                          let normalizedData = KizunaAvatarImage.normalizedData(from: data) else {
+                        throw KizunaAvatarError.invalidImage
+                    }
+                    imageData = normalizedData
+                    selection = KizunaAvatarCatalog.customImageID
+                    isLoadingPhoto = false
+                    selectedPhoto = nil
+                } catch {
+                    isLoadingPhoto = false
+                    selectedPhoto = nil
+                    photoError = KizunaCopy.text(
+                        japanese: "画像を読み込めませんでした。",
+                        english: "The photo could not be loaded."
+                    )
+                }
             }
         }
     }
+}
+
+private enum KizunaAvatarError: Error {
+    case invalidImage
 }
