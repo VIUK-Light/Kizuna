@@ -135,28 +135,31 @@ struct StoryWorldDetailView: View {
     }
 
     /// StoryScene predates the presentation-localization catalog and therefore
-    /// has no language-specific payload of its own.  Standard worlds do have
-    /// an English opening-scene translation, so use it for the opening scene
-    /// when the stored scene still mirrors the Japanese world opening.  This
-    /// keeps the detail screen from mixing an English world card with a raw
-    /// Japanese opening while leaving user-authored/custom scenes untouched.
+    /// has no language-specific payload of its own. Standard worlds keep one
+    /// durable seed scene as their first scene; localize that stable identity
+    /// at the display boundary rather than comparing editable Japanese prose.
+    /// User-authored worlds and later/unknown scenes always retain their own
+    /// saved text.
     private func displayedScene(_ scene: StoryScene) -> StoryScene {
         guard KizunaCopy.language == .english,
+              world.isSystemProtected == true,
+              let initialSceneID = vm.scenes.first?.id,
+              scene.id == initialSceneID,
               let localization = StoryEnglishCatalog.localization(for: world),
               let translatedOpening = localization.openingScene?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !translatedOpening.isEmpty,
-              (scene.summary.trimmingCharacters(in: .whitespacesAndNewlines) == world.openingScene.trimmingCharacters(in: .whitespacesAndNewlines)
-                || (scene.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && scene.id == vm.scenes.first?.id))
+              !translatedOpening.isEmpty
         else {
             return scene
         }
 
         var copy = scene
-        copy.title = "Opening scene"
-        copy.location = "Story setting"
+        copy.title = KizunaCopy.text(japanese: "オープニング", english: "Opening scene")
+        copy.location = KizunaCopy.text(japanese: "物語の舞台", english: "Story setting")
         copy.timeOfDay = ""
-        copy.mood = localization.mood ?? displayedWorld.mood
-        copy.sceneGoal = localization.storyGoal ?? displayedWorld.storyGoal
+        let localizedMood = localization.mood?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        copy.mood = localizedMood.isEmpty ? displayedWorld.mood : localizedMood
+        let localizedGoal = localization.storyGoal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        copy.sceneGoal = localizedGoal.isEmpty ? displayedWorld.storyGoal : localizedGoal
         copy.conflict = nil
         copy.summary = translatedOpening
         return copy
@@ -910,11 +913,11 @@ private struct StoryDetailCharacterSpotlight: View {
                             .foregroundStyle(.white)
                             .padding(18)
                         }
-                    info("口調", character.speakingStyle)
-                    info("性格", character.personality)
-                    info("ユーザーとの関係", character.relationshipToUser)
-                    info("背景", character.background)
-                    info("初回の一言", character.firstMessage)
+                    info(KizunaCopy.text(japanese: "口調", english: "Speaking style"), character.speakingStyle)
+                    info(KizunaCopy.text(japanese: "性格", english: "Personality"), character.personality)
+                    info(KizunaCopy.text(japanese: "ユーザーとの関係", english: "Relationship with you"), character.relationshipToUser)
+                    info(KizunaCopy.text(japanese: "背景", english: "Background"), character.background)
+                    info(KizunaCopy.text(japanese: "初回の一言", english: "First message"), character.firstMessage)
                 }
                 .padding(18)
             }

@@ -96,15 +96,25 @@ def story_audit() -> dict[str, Any]:
         re.findall(r'^\s*"([^"]+)":\s*StoryWorldLocalization', detailed_section, flags=re.MULTILINE)
     )
 
-    unchanged_initial_scenes = 0
-    for item in stories:
-        scene = item["initialScene"]
-        world = item["story"]
-        summary = scene.get("summary", "").strip()
-        opening = world.get("openingScene", "").strip()
-        # Keep this condition aligned with StoryWorldDetailView.displayedScene.
-        if summary != opening and summary:
-            unchanged_initial_scenes += 1
+    stable_initial_scene_presentation = all(
+        fragment in detail_source
+        for fragment in (
+            "world.isSystemProtected == true",
+            "let initialSceneID = vm.scenes.first?.id",
+            "scene.id == initialSceneID",
+            "StoryEnglishCatalog.localization(for: world)",
+        )
+    )
+    initial_scene_titles_missing_presentation = [
+        item["story"]["title"]
+        for item in stories
+        if item["story"]["title"] not in catalog_titles
+    ]
+    initial_scenes_left_untranslated = (
+        len(initial_scene_titles_missing_presentation)
+        if stable_initial_scene_presentation
+        else len(stories)
+    )
 
     characters = [character for item in stories for character in item["characters"]]
     direct_spotlight_labels = line_numbers(
@@ -119,7 +129,9 @@ def story_audit() -> dict[str, Any]:
         "seed_titles_without_detailed_translation": len(
             [item for item in stories if item["story"]["title"] not in detailed_titles]
         ),
-        "initial_scenes_left_untranslated_by_current_fallback": unchanged_initial_scenes,
+        "initial_scene_presentation_uses_stable_identity": stable_initial_scene_presentation,
+        "initial_scene_titles_missing_presentation": initial_scene_titles_missing_presentation,
+        "initial_scenes_left_untranslated_by_current_fallback": initial_scenes_left_untranslated,
         "seed_character_count": len(characters),
         "seed_characters_with_story_relationship_text": sum(
             bool(character.get("storyRelationshipToUser", "").strip()) for character in characters
@@ -178,6 +190,23 @@ def litert_audit() -> dict[str, Any]:
     }
 
 
+def has_open_findings(report: dict[str, Any]) -> bool:
+    """Return whether strict source-level localization checks found a regression."""
+    return any(
+        (
+            report["xcstrings"]["missing_english_keys"],
+            report["presentation"]["missing_execution_ui_accessors"],
+            not report["presentation"]["tool_catalog_has_localized_label"],
+            not report["presentation"]["english_brand_is_kizuna"],
+            report["direct_ui"]["character_create_raw_ui_lines"],
+            report["story_detail"]["initial_scenes_left_untranslated_by_current_fallback"],
+            report["story_detail"]["raw_japanese_spotlight_label_lines"],
+            not report["story_detail"]["story_world_localization_has_safety_rules"],
+            report["litert"]["runtime_uses_unchecked_sendable"],
+        )
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -198,19 +227,7 @@ def main() -> int:
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
 
     if args.strict:
-        has_open_findings = any(
-            (
-                report["xcstrings"]["missing_english_keys"],
-                report["presentation"]["missing_execution_ui_accessors"],
-                not report["presentation"]["tool_catalog_has_localized_label"],
-                not report["presentation"]["english_brand_is_kizuna"],
-                report["direct_ui"]["character_create_raw_ui_lines"],
-                report["story_detail"]["initial_scenes_left_untranslated_by_current_fallback"],
-                not report["story_detail"]["story_world_localization_has_safety_rules"],
-                report["litert"]["runtime_uses_unchecked_sendable"],
-            )
-        )
-        return 1 if has_open_findings else 0
+        return 1 if has_open_findings(report) else 0
     return 0
 
 
