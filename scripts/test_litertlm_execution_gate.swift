@@ -1,6 +1,7 @@
 import Foundation
 
 @main
+@MainActor
 struct LiteRTLMExecutionGateTests {
     static func main() async {
         await cancelledWaiterDoesNotAcquireAfterRelease()
