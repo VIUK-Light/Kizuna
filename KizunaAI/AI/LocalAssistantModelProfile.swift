@@ -25,6 +25,23 @@ enum LocalAssistantModelProfile {
         var id: String { kind.rawValue }
     }
 
+    /// 標準リンクの配布物は、URLだけでなくサイズとSHA-256も固定する。
+    /// リダイレクト先の一時URLではなく、ユーザーが選択したHugging Faceの
+    /// resolve URLを照合するため、クエリとfragmentは比較対象から外す。
+    struct TrustedArtifact: Hashable, Sendable {
+        let sourceURL: String
+        let fileName: String
+        let byteCount: Int64
+        let sha256: String
+
+        nonisolated init(sourceURL: String, fileName: String, byteCount: Int64, sha256: String) {
+            self.sourceURL = sourceURL
+            self.fileName = fileName
+            self.byteCount = byteCount
+            self.sha256 = sha256
+        }
+    }
+
     struct RuntimePreset {
         let contextSize: Int
         let batchSize: Int
@@ -94,8 +111,8 @@ enum LocalAssistantModelProfile {
     ]
     private static let defaultModelFileName = "viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf"
     private static let defaultStorageFolderName = "Gemma4E4B4bit"
-    // HF掲載のQ4_K_M（約3.42GB）を進捗表示と完成判定の目安にする。
-    private static let defaultExpectedModelSizeBytes: Int64 = 3_420_000_000
+    // HF掲載のQ4_K_Mの正確なバイト数。進捗表示だけでなく最終検証にも使う。
+    private static let defaultExpectedModelSizeBytes: Int64 = 3_416_118_624
     #endif
 
     static let internalModelName = defaultInternalModelName
@@ -115,6 +132,50 @@ enum LocalAssistantModelProfile {
     static let legacyFolderNames = ["Gemma4E2B4bit", "Gemma4E4B4bit", "Gemma3nE4B4bit", "VIUKAItiny", "VIUK AI tiny"]
     static let expectedModelSizeBytes: Int64 = defaultExpectedModelSizeBytes
     nonisolated static let minimumAcceptedModelSizeBytes: Int64 = 50 * 1024 * 1024
+
+    nonisolated private static let trustedArtifacts: [TrustedArtifact] = [
+        TrustedArtifact(
+            sourceURL: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+            fileName: "gemma-4-E2B-it.litertlm",
+            byteCount: 2_588_147_712,
+            sha256: "181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c"
+        ),
+        TrustedArtifact(
+            sourceURL: "https://huggingface.co/Shirokuma-VIUK/VIUK-Story-v2.5-GGUF/resolve/main/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf",
+            fileName: "viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf",
+            byteCount: 3_416_118_624,
+            sha256: "eafe6431810b2a2a17f6c4b0be338364440707e10ff6648d07665e10875039a5"
+        ),
+        TrustedArtifact(
+            sourceURL: "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-UD-Q4_K_XL.gguf",
+            fileName: "gemma-3n-E4B-it-UD-Q4_K_XL.gguf",
+            byteCount: 5_385_042_048,
+            sha256: "49f8ac599ea6b01e7421ffb584f92f89583224ad5b490d7870e3b4fd503e50eb"
+        )
+    ]
+
+    nonisolated static func trustedArtifact(for sourceURL: String) -> TrustedArtifact? {
+        guard let normalized = canonicalDownloadURL(sourceURL) else { return nil }
+        return trustedArtifacts.first {
+            canonicalDownloadURL($0.sourceURL) == normalized
+        }
+    }
+
+    nonisolated private static func canonicalDownloadURL(_ rawURL: String) -> String? {
+        guard var components = URLComponents(string: rawURL),
+              components.scheme?.lowercased() == "https",
+              let host = components.host?.lowercased(),
+              !host.isEmpty else {
+            return nil
+        }
+        components.scheme = "https"
+        components.host = host
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.url?.absoluteString
+    }
 
     private static let physicalMemoryBytes = ProcessInfo.processInfo.physicalMemory
     private static let prefersAggressiveGPUOffload = physicalMemoryBytes >= 15 * 1024 * 1024 * 1024
