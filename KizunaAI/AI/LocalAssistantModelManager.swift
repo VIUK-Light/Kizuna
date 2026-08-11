@@ -1572,13 +1572,15 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private func isValidModelFile(at url: URL, expectedBytes: Int64? = nil) -> Bool {
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
         do {
+            let trustedArtifact = trustedArtifactForStoredModel(at: url)
             try validateModelArtifact(
                 at: url,
                 fileName: url.lastPathComponent,
                 expectedBytes: expectedBytes,
-                trustedArtifact: trustedArtifactForStoredModel(at: url),
+                trustedArtifact: trustedArtifact,
                 requireExactByteCount: false,
-                validateLiteRTLMMetadata: false
+                validateLiteRTLMMetadata: false,
+                validationDepth: trustedArtifact == nil ? .strict : .quick
             )
             return true
         } catch {
@@ -1601,7 +1603,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         expectedBytes: Int64?,
         trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?,
         requireExactByteCount: Bool,
-        validateLiteRTLMMetadata: Bool
+        validateLiteRTLMMetadata: Bool,
+        validationDepth: LocalAssistantModelArtifactValidator.ValidationDepth
     ) throws {
         if let trustedArtifact, fileName != trustedArtifact.fileName {
             throw LocalAssistantModelArtifactValidator.ValidationError.unexpectedFileName
@@ -1612,9 +1615,15 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             at: url,
             fileName: fileName,
             expectedByteCount: verificationSize,
-            expectedSHA256: trustedArtifact?.sha256,
+            // Complete candidates are SHA-256 verified on a utility queue
+            // before replacement. Routine discovery never hashes every
+            // 2.6–5.3 GB model on the main queue. Standard artifacts already
+            // tied to a completed state use a fast header check; unknown files
+            // still receive strict structural parsing before they are adopted.
+            expectedSHA256: nil,
             minimumByteCount: LocalAssistantModelProfile.minimumAcceptedModelSizeBytes,
-            requireExactByteCount: requireExactByteCount
+            requireExactByteCount: requireExactByteCount,
+            validationDepth: validationDepth
         )
 
         if URL(fileURLWithPath: fileName).pathExtension.lowercased() == "litertlm",
@@ -1818,6 +1827,17 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
         if message.contains("HTTP") {
             return "配布元がエラーを返しました"
+        }
+        if message.contains("SHA-256")
+            || message.contains("GGUF")
+            || message.contains("GGML")
+            || message.contains("LiteRT-LM")
+            || message.contains("サイズ")
+            || message.contains("小さすぎ") {
+            return "ダウンロードしたモデルの整合性または形式を確認できませんでした。既存モデルは変更していません"
+        }
+        if message.contains("既存モデルは置き換えません") || message.contains("既存モデルは保持") {
+            return "新しいモデルを受け入れなかったため、既存モデルを保持しました"
         }
         return message
     }
