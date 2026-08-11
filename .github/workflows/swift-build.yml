@@ -33,6 +33,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO
 
+      - name: Run persona response sanitizer regression tests
+        run: |
+          xcrun swiftc \
+            "KizunaAI/AI/PersonaResponseSanitizer.swift" \
+            "scripts/test_persona_response_sanitizer.swift" \
+            -o "$RUNNER_TEMP/persona-response-sanitizer-tests"
+          "$RUNNER_TEMP/persona-response-sanitizer-tests"
+
   gemma-script-tests:
     name: Gemma Script Tests
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
