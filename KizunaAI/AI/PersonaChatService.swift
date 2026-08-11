@@ -30,7 +30,16 @@ final class PersonaChatService: ObservableObject {
     @Published private(set) var lastErrorThreadID: UUID?
 
     private var generationTask: Task<Void, Never>?
+    private var streamSanitizationTask: Task<Void, Never>?
+    /// A later runtime preview always supersedes a prior cumulative preview.
+    /// This prevents a slow background sanitizer result from overwriting the
+    /// newest text after it returns to the main actor.
+    private var streamPreviewRevision = 0
     private var lastVisibleText: String = ""
+    /// The runtime may finish before the latest background sanitizer returns.
+    /// Retain the raw cumulative preview so finalization can still sanitize the
+    /// full response synchronously instead of dropping the final update.
+    private var latestRawStreamingText: String?
     private var activeGenerationID: UUID?
     private var activeThreadID: UUID?
     private var lastRequestThreadID: UUID?
@@ -67,7 +76,9 @@ final class PersonaChatService: ObservableObject {
         phase = .thinking
         streamingResponse = ""
         lastErrorThreadID = nil
+        invalidatePendingStreamSanitization()
         lastVisibleText = ""
+        latestRawStreamingText = nil
         lastRequestThreadID = thread.id
         lastRequestText = trimmed
         let generationID = UUID()
@@ -215,6 +226,7 @@ final class PersonaChatService: ObservableObject {
                 PersonaChatStore.shared.finalizePersist()
                 self.streamingResponse = polite
                 self.phase = .idle
+                self.invalidatePendingStreamSanitization()
                 self.activeGenerationID = nil
                 self.activeThreadID = nil
                 self.activeGenerationThreadID = nil
@@ -293,7 +305,7 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
 
         // ── 6) 出力 safety ──
-        let rawFinalText = reply?.isEmpty == false ? reply! : streamingResponse
+        let rawFinalText = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
         guard var finalText = meaningfulResponse(rawFinalText) else {
             await MainActor.run {
                 self.failGeneration(
@@ -329,6 +341,7 @@ final class PersonaChatService: ObservableObject {
             PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: finalText)
             PersonaChatStore.shared.finalizePersist()
             self.phase = .idle
+            self.invalidatePendingStreamSanitization()
             self.activeGenerationID = nil
             self.activeThreadID = nil
             self.activeGenerationThreadID = nil
@@ -348,9 +361,11 @@ final class PersonaChatService: ObservableObject {
     func cancel() {
         generationTask?.cancel()
         generationTask = nil
+        invalidatePendingStreamSanitization()
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: activeGenerationID)
         if let threadID = activeThreadID {
-            let partial = streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+            let partial = (latestRawStreamingText ?? streamingResponse)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if let meaningful = meaningfulResponse(partial) {
                 PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: meaningful)
                 PersonaChatStore.shared.finalizePersist()
@@ -393,20 +408,45 @@ final class PersonaChatService: ObservableObject {
     private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, threadID: UUID, generationID: UUID) {
         guard activeGenerationID == generationID else { return }
         guard case let .visiblePreview(text) = update else { return }
-        let stripped = sanitize(text)
-        if stripped.count < lastVisibleText.count {
-            // リセット系の更新が来た場合は最新値で上書き
-            lastVisibleText = stripped
-        } else {
-            lastVisibleText = stripped
+
+        latestRawStreamingText = text
+        streamPreviewRevision &+= 1
+        let revision = streamPreviewRevision
+        streamSanitizationTask?.cancel()
+        streamSanitizationTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let sanitized = PersonaResponseSanitizer.sanitize(text)
+            guard !Task.isCancelled else { return }
+            await self?.applySanitizedStreamPreview(
+                sanitized,
+                threadID: threadID,
+                generationID: generationID,
+                revision: revision
+            )
         }
-        streamingResponse = stripped
-        PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: stripped)
+    }
+
+    private func applySanitizedStreamPreview(
+        _ text: String,
+        threadID: UUID,
+        generationID: UUID,
+        revision: Int
+    ) {
+        guard activeGenerationID == generationID,
+              streamPreviewRevision == revision else { return }
+        lastVisibleText = text
+        streamingResponse = text
+        PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: text)
+    }
+
+    private func invalidatePendingStreamSanitization() {
+        streamPreviewRevision &+= 1
+        streamSanitizationTask?.cancel()
+        streamSanitizationTask = nil
     }
 
     private func finalize(reply: String?, threadID: UUID, generationID: UUID) {
         guard activeGenerationID == generationID else { return }
-        let final = reply?.isEmpty == false ? reply! : streamingResponse
+        let final = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
         guard let cleaned = meaningfulResponse(final) else {
             failGeneration(
                 threadID: threadID,
@@ -422,6 +462,7 @@ final class PersonaChatService: ObservableObject {
         PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: cleaned)
         PersonaChatStore.shared.finalizePersist()
         phase = .idle
+        invalidatePendingStreamSanitization()
         activeGenerationID = nil
         activeThreadID = nil
         activeGenerationThreadID = nil
@@ -438,11 +479,14 @@ final class PersonaChatService: ObservableObject {
                 self.generationTask?.cancel()
                 self.generationTask = nil
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
-                if let partial = self.meaningfulResponse(self.streamingResponse) {
+                if let partial = self.meaningfulResponse(
+                    self.latestRawStreamingText ?? self.streamingResponse
+                ) {
                     PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: partial)
                     PersonaChatStore.shared.finalizePersist()
                     self.streamingResponse = partial
                     self.phase = .idle
+                    self.invalidatePendingStreamSanitization()
                     self.activeGenerationID = nil
                     self.activeThreadID = nil
                     self.activeGenerationThreadID = nil
@@ -532,6 +576,7 @@ final class PersonaChatService: ObservableObject {
         PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
         streamingResponse = ""
         phase = .error(message)
+        invalidatePendingStreamSanitization()
         activeGenerationID = nil
         activeThreadID = nil
         activeGenerationThreadID = nil

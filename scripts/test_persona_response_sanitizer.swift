@@ -55,6 +55,16 @@ struct PersonaResponseSanitizerTests {
                 "    let user_id = 42\n    print(user_id)"
             ),
             (
+                "fenced code retains a protocol-looking literal",
+                "```text\n<end_of_turn>\n```\nVisible answer",
+                "```text\n<end_of_turn>\n```\nVisible answer"
+            ),
+            (
+                "indented code retains a leading thought-tag literal",
+                "    <think>example only</think>\nVisible answer",
+                "    <think>example only</think>\nVisible answer"
+            ),
+            (
                 "standalone protocol lines are removed",
                 "<end_of_turn>\nVisible answer\n<|channel|>",
                 "Visible answer"

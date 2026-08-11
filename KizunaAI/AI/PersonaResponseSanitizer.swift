@@ -9,17 +9,17 @@ import Foundation
 /// instructions, and ordinary language must remain lossless because the result
 /// is persisted in the conversation history.
 enum PersonaResponseSanitizer {
-    private static let leadingGemmaThoughtPattern =
+    nonisolated private static let leadingGemmaThoughtPattern =
         #"(?is)^\s*<\|?channel\|?>\s*thought\b[\s\S]*?<\|?channel\|?>\s*"#
-    private static let leadingUnclosedGemmaThoughtPattern =
+    nonisolated private static let leadingUnclosedGemmaThoughtPattern =
         #"(?is)^\s*<\|?channel\|?>\s*thought\b[\s\S]*$"#
 
-    private static let reasoningTagNames = ["think", "reasoning", "reflect", "thought"]
+    nonisolated private static let reasoningTagNames = ["think", "reasoning", "reflect", "thought"]
 
     /// These tokens are emitted by model templates and have no visible-text
     /// meaning when they occupy a complete line. Do not strip them from an
     /// inline code example or a normal sentence.
-    private static let standaloneProtocolTokens: Set<String> = [
+    nonisolated private static let standaloneProtocolTokens: Set<String> = [
         "<|channel|>", "<channel|>", "<|channel>", "<channel>",
         "<|message|>", "<message|>", "<|message>", "<message>",
         "<|start_of_turn|>", "<start_of_turn|>", "<|start|>",
@@ -27,25 +27,53 @@ enum PersonaResponseSanitizer {
         "<start_of_turn>user", "<end_of_turn>"
     ]
 
-    static func sanitize(_ text: String) -> String {
+    nonisolated static func sanitize(_ text: String) -> String {
         // A template token can precede a leading thought payload. Remove such
         // complete-line tokens first, otherwise the thought tag no longer
         // begins at the protocol boundary and its contents would leak.
         let withoutStandaloneProtocolTokens = removingStandaloneProtocolLines(from: text)
+        // An indented or fenced Markdown code block can legitimately begin
+        // with a protocol-looking literal. It is user-visible code, not model
+        // reasoning, so preserve it before applying leading-payload patterns.
+        guard !startsWithMarkdownCodeBlock(withoutStandaloneProtocolTokens) else {
+            return withoutStandaloneProtocolTokens
+        }
         let withoutLeadingReasoning = removingLeadingReasoningPayloads(
             from: withoutStandaloneProtocolTokens
         )
         return removingStandaloneProtocolLines(from: withoutLeadingReasoning)
     }
 
-    private static func removingStandaloneProtocolLines(from text: String) -> String {
-        text
-            .components(separatedBy: .newlines)
-            .filter { !isStandaloneProtocolToken($0) }
-            .joined(separator: "\n")
+    nonisolated private static func removingStandaloneProtocolLines(from text: String) -> String {
+        var activeFence: (marker: Character, length: Int)?
+        var retainedLines: [String] = []
+
+        for line in text.components(separatedBy: .newlines) {
+            if let fence = activeFence {
+                retainedLines.append(line)
+                if let candidate = fencedCodeDelimiter(in: line),
+                   candidate.marker == fence.marker,
+                   candidate.length >= fence.length {
+                    activeFence = nil
+                }
+                continue
+            }
+
+            if let openingFence = fencedCodeDelimiter(in: line) {
+                retainedLines.append(line)
+                activeFence = openingFence
+                continue
+            }
+
+            if isIndentedMarkdownCodeLine(line) || !isStandaloneProtocolToken(line) {
+                retainedLines.append(line)
+            }
+        }
+
+        return retainedLines.joined(separator: "\n")
     }
 
-    private static func removingLeadingReasoningPayloads(from text: String) -> String {
+    nonisolated private static func removingLeadingReasoningPayloads(from text: String) -> String {
         var value = text
 
         while true {
@@ -101,7 +129,29 @@ enum PersonaResponseSanitizer {
         }
     }
 
-    private static func isStandaloneProtocolToken(_ line: String) -> Bool {
+    nonisolated private static func startsWithMarkdownCodeBlock(_ text: String) -> Bool {
+        for line in text.components(separatedBy: .newlines) {
+            guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            return isIndentedMarkdownCodeLine(line) || fencedCodeDelimiter(in: line) != nil
+        }
+        return false
+    }
+
+    nonisolated private static func isIndentedMarkdownCodeLine(_ line: String) -> Bool {
+        line.hasPrefix("    ") || line.hasPrefix("\t")
+    }
+
+    nonisolated private static func fencedCodeDelimiter(
+        in line: String
+    ) -> (marker: Character, length: Int)? {
+        let content = line.drop(while: { $0 == " " || $0 == "\t" })
+        guard let marker = content.first, marker == "`" || marker == "~" else { return nil }
+        let length = content.prefix(while: { $0 == marker }).count
+        guard length >= 3 else { return nil }
+        return (marker, length)
+    }
+
+    nonisolated private static func isStandaloneProtocolToken(_ line: String) -> Bool {
         let normalized = line
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
