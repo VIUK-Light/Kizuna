@@ -18,7 +18,7 @@ import CLiteRTLM
 
 /// Data struct to hold benchmark information. Note that this is an experimental API and may change
 /// in the future.
-public struct BenchmarkInfo {
+public struct BenchmarkInfo: Sendable {
   /// The time in seconds to initialize the engine and the conversation.
   public let initTimeInSecond: Double
 
@@ -83,5 +83,5 @@ public func benchmark(
 
   let conversation = try await engine.createConversation()
   _ = try await conversation.sendMessage(Message(prompt))
-  return try conversation.getBenchmarkInfo()
+  return try await conversation.getBenchmarkInfo()
 }
