@@ -122,10 +122,28 @@ private actor LiteRTLMExecutionGate {
 private actor LiteRTLMActiveConversation {
     private var conversation: Conversation?
     private var generationID: UUID?
+    // Cancellation can arrive while Engine is still loading or while the
+    // conversation is being created.  Keep that request until the matching
+    // conversation is registered instead of silently dropping it.
+    private var pendingCancellationGenerationID: UUID?
+    private var pendingUnscopedCancellation = false
 
-    func set(_ conversation: Conversation, generationID: UUID?) {
+    func set(_ conversation: Conversation, generationID: UUID?) async {
         self.conversation = conversation
         self.generationID = generationID
+
+        let shouldCancel = pendingUnscopedCancellation
+            || (pendingCancellationGenerationID != nil
+                && pendingCancellationGenerationID == generationID)
+        if pendingUnscopedCancellation {
+            pendingUnscopedCancellation = false
+        }
+        if pendingCancellationGenerationID == generationID {
+            pendingCancellationGenerationID = nil
+        }
+        if shouldCancel {
+            try? await conversation.cancel()
+        }
     }
 
     func clear(_ conversation: Conversation) {
@@ -138,13 +156,19 @@ private actor LiteRTLMActiveConversation {
     /// A supplied generation only cancels its own conversation. Nil is used by
     /// app lifecycle cancellation and intentionally cancels any active turn.
     func cancel(generationID requestedGenerationID: UUID? = nil) async {
-        let activeConversation = conversation
-        let activeGenerationID = generationID
-        if let requestedGenerationID,
-           activeGenerationID != requestedGenerationID {
+        guard let activeConversation = conversation else {
+            if let requestedGenerationID {
+                pendingCancellationGenerationID = requestedGenerationID
+            } else {
+                pendingUnscopedCancellation = true
+            }
             return
         }
-        try? await activeConversation?.cancel()
+        if let requestedGenerationID,
+           generationID != requestedGenerationID {
+            return
+        }
+        try? await activeConversation.cancel()
     }
 }
 

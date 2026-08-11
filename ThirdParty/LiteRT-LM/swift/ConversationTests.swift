@@ -138,26 +138,35 @@ class ConversationTests: XCTestCase {
     XCTAssertTrue(isAlive)
 
     let message = Message("Hello")
-    var accumulatedText = ""
-    var chunkCount = 0
-    var didReceiveError: Error?
+    var didReceiveError: LiteRTLMError?
 
     let stream = await conversation.sendMessageStream(message)
-
-    try await conversation.cancel()
-
-    do {
-      for try await chunk in stream {
-        chunkCount += 1
-        accumulatedText += chunk.toString
+    let consumer = Task { () -> (error: LiteRTLMError?, chunkCount: Int, text: String) in
+      var accumulatedText = ""
+      var chunkCount = 0
+      do {
+        for try await chunk in stream {
+          chunkCount += 1
+          accumulatedText += chunk.toString
+        }
+        return (nil, chunkCount, accumulatedText)
+      } catch {
+        let streamError = (error as? LiteRTLMError)
+          ?? LiteRTLMError.conversation(.invalidResponse(error.localizedDescription))
+        return (streamError, chunkCount, accumulatedText)
       }
-      XCTFail("Stream should have thrown an error.")
-    } catch {
-      didReceiveError = error
     }
 
+    // Let the consumer attach to the stream before requesting native
+    // cancellation.  sendMessageStream installs the callback synchronously,
+    // but the AsyncThrowingStream consumer itself starts on its own task.
+    await Task.yield()
+    try await conversation.cancel()
+    let result = await consumer.value
+    didReceiveError = result.error
+
     XCTAssertNotNil(didReceiveError, "Stream should throw an error when cancelled.")
-    if let error = didReceiveError as? LiteRTLMError,
+    if let error = didReceiveError,
       case .conversation(let conversationError) = error,
       case .invalidResponse(let details) = conversationError
     {
@@ -196,10 +205,12 @@ class ConversationTests: XCTestCase {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
     let isAlive = await conversation.isAlive
     XCTAssertTrue(isAlive)
-    XCTAssertEqual(try await conversation.getTokenCount(), 0)
+    let initialTokenCount = try await conversation.getTokenCount()
+    XCTAssertEqual(initialTokenCount, 0)
 
     let _ = try await conversation.sendMessage(Message("How are you"))
-    XCTAssertEqual(try await conversation.getTokenCount(), 10)
+    let finalTokenCount = try await conversation.getTokenCount()
+    XCTAssertEqual(finalTokenCount, 10)
   }
 
   func testSendMessageWithExtraContextReturnsMessage() async throws {
