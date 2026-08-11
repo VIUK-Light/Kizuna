@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// プロフィールと、日常的に触るアプリ設定をまとめたマイページ。
-/// Story画面と同じ情報密度にせず、プロフィール・物語の入口・環境設定の順に整理する。
+/// 必要なプロフィールと環境設定だけを置く。
 @MainActor
 struct KizunaMyPageView: View {
     @ObservedObject private var profileStore = KizunaUserProfileStore.shared
@@ -16,9 +16,7 @@ struct KizunaMyPageView: View {
             VStack(alignment: .leading, spacing: 22) {
                 pageHeader
                 profileHero
-                storyPreferenceCard
                 settingsGrid
-                privacyCard
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 28)
@@ -44,8 +42,8 @@ struct KizunaMyPageView: View {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
             Text(KizunaCopy.text(
-                japanese: "保存済みのプロフィールやモデル設定は変更されません。現在の画面から初期設定へ移動します。",
-                english: "Your profile and model settings will not be changed. The current screen will move to welcome setup."
+                japanese: "プロフィール設定を開きます。",
+                english: "Open profile setup."
             ))
         }
         .onAppear {
@@ -62,18 +60,20 @@ struct KizunaMyPageView: View {
             Text(KizunaCopy.text(japanese: "マイページ", english: "My page"))
                 .font(.system(size: 32, weight: .heavy, design: .rounded))
             Text(KizunaCopy.text(
-                japanese: "あなたの設定を、必要なものだけここに。",
-                english: "Your essentials, in one calm place."
+                japanese: "必要な設定だけ。",
+                english: "Only the essentials."
             ))
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
         }
     }
 
     private var profileHero: some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .center, spacing: 18) {
-                KizunaAvatarView(symbol: profileStore.profile.avatarSymbol, size: 88)
+                KizunaAvatarView(
+                    symbol: profileStore.profile.avatarSymbol,
+                    imageData: profileStore.profile.avatarImageData,
+                    size: 88
+                )
                 profileSummary
                 Spacer(minLength: 16)
                 profileEditButton
@@ -81,7 +81,11 @@ struct KizunaMyPageView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .center, spacing: 18) {
-                    KizunaAvatarView(symbol: profileStore.profile.avatarSymbol, size: 76)
+                    KizunaAvatarView(
+                        symbol: profileStore.profile.avatarSymbol,
+                        imageData: profileStore.profile.avatarImageData,
+                        size: 76
+                    )
                     profileSummary
                 }
                 profileEditButton
@@ -120,12 +124,6 @@ struct KizunaMyPageView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            if !profileStore.profile.about.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(profileStore.profile.about)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -142,38 +140,6 @@ struct KizunaMyPageView: View {
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
-    }
-
-    private var storyPreferenceCard: some View {
-        surface {
-            HStack(spacing: 16) {
-                iconBadge(profileStore.profile.storyPreference.iconName, color: .orange)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(KizunaCopy.text(japanese: "物語の入口", english: "Story atmosphere"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(profileStore.profile.storyPreference.displayName)
-                        .font(.system(size: 19, weight: .bold, design: .rounded))
-                    Text(profileStore.profile.storyPreference.detail)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer(minLength: 0)
-
-                Button {
-                    isShowingProfileEditor = true
-                } label: {
-                    Label(
-                        KizunaCopy.text(japanese: "変更", english: "Change"),
-                        systemImage: "arrow.up.right"
-                    )
-                    .font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.bordered)
-            }
-        }
     }
 
     private var settingsGrid: some View {
@@ -241,10 +207,10 @@ struct KizunaMyPageView: View {
         settingsCard(
             title: KizunaCopy.text(japanese: "初期設定", english: "Welcome setup"),
             subtitle: KizunaCopy.text(
-                japanese: "世界観とプロフィールを選び直します。",
-                english: "Choose your story atmosphere again."
+                japanese: "プロフィールを設定し直します。",
+                english: "Set up your profile again."
             ),
-            icon: "sparkles.rectangle.stack"
+            icon: "person.crop.circle"
         ) {
             Button {
                 isShowingResetLaunchAlert = true
@@ -256,29 +222,6 @@ struct KizunaMyPageView: View {
                 .font(.system(size: 12, weight: .semibold))
             }
             .buttonStyle(.bordered)
-        }
-    }
-
-    private var privacyCard: some View {
-        HStack(alignment: .top, spacing: 12) {
-            iconBadge("lock.shield.fill", color: .green)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(KizunaCopy.text(japanese: "端末内で管理", english: "Stored on this device"))
-                    .font(.system(size: 13, weight: .bold))
-                Text(KizunaCopy.text(
-                    japanese: "プロフィールは端末内に保存されます。入力した情報は、会話に必要な範囲だけ選択中のモデルへ渡されます。",
-                    english: "Your profile stays on this device. Only relevant fields are included in model requests."
-                ))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(16)
-        .background(Color.green.opacity(0.075), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.green.opacity(0.16), lineWidth: 1)
         }
     }
 

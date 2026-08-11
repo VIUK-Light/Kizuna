@@ -409,51 +409,9 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                     || displayed.tags.contains(where: { $0.lowercased().contains(needle) })
             }
         }
-        let preference = KizunaUserProfileStore.shared.profile.storyPreference
-        return result.sorted {
-            let lhsScore = recommendationScore($0, for: preference)
-            let rhsScore = recommendationScore($1, for: preference)
-            if lhsScore != rhsScore { return lhsScore > rhsScore }
-            return $0.updatedAt > $1.updatedAt
-        }
-    }
-
-    private func recommendationScore(_ world: StoryWorld, for preference: KizunaStoryPreference) -> Int {
-        let displayed = world.localizedForCurrentLanguage
-        let searchableParts = [
-            displayed.title,
-            displayed.shortDescription,
-            displayed.worldSetting,
-            displayed.openingScene,
-            displayed.storyGoal,
-            displayed.mood,
-            displayed.tags.joined(separator: " "),
-            world.genre.rawValue,
-            world.genre.localizedDisplayName,
-            world.genre.group.localizedDisplayName,
-            world.relationshipGenre.localizedDisplayName,
-            // 未翻訳の旧データではlocalizedForCurrentLanguageが原文を返すが、
-            // 保存側に残るタグも併用して旧キーワードとの互換性を保つ。
-            world.title,
-            world.shortDescription,
-            world.worldSetting,
-            world.tags.joined(separator: " ")
-        ]
-        let searchable = searchableParts.joined(separator: " ").lowercased()
-        let keywords: [String]
-        switch preference {
-        case .everyday:
-            keywords = ["日常", "青春", "喫茶", "学校", "学園", "slice", "school", "daily"]
-        case .mystery:
-            keywords = ["謎", "ミステリー", "秘密", "探偵", "推理", "mystery", "detective", "secret"]
-        case .fantasy:
-            keywords = ["幻想", "魔法", "冒険", "異世界", "ファンタジー", "fantasy", "magic", "adventure"]
-        case .future:
-            keywords = ["未来", "宇宙", "AI", "ロボット", "SF", "sci", "space", "android"]
-        }
-        return keywords.reduce(into: 0) { score, keyword in
-            if searchable.contains(keyword.lowercased()) { score += 1 }
-        }
+        // 物語の好みはプロフィール入力から外したため、存在しない
+        // preferenceを使った推薦で並び順を変えず、更新日時だけで安定表示する。
+        return result.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     func coverCharacter(for world: StoryWorld) -> CharacterProfile? {
