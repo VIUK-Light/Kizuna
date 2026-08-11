@@ -21,6 +21,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Run model artifact validator tests
+        run: |
+          xcrun swiftc \
+            KizunaAI/AI/LocalAssistantModelArtifactValidator.swift \
+            scripts/test_model_artifact_validator.swift \
+            -o "$RUNNER_TEMP/model-artifact-validator-tests"
+          "$RUNNER_TEMP/model-artifact-validator-tests"
+
+      - name: Run model replacement tests
+        run: |
+          xcrun swiftc \
+            KizunaAI/AI/LocalAssistantModelReplacement.swift \
+            scripts/test_model_replacement.swift \
+            -o "$RUNNER_TEMP/model-replacement-tests"
+          "$RUNNER_TEMP/model-replacement-tests"
+
       - name: Build KizunaAI
         run: |
           xcodebuild build \
