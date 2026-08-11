@@ -51,7 +51,10 @@ enum PersonaResponseSanitizer {
         for line in text.components(separatedBy: .newlines) {
             if let fence = activeFence {
                 retainedLines.append(line)
-                if let candidate = fencedCodeDelimiter(in: line),
+                if let candidate = fencedCodeDelimiter(
+                    in: line,
+                    requiresBlankSuffix: true
+                ),
                    candidate.marker == fence.marker,
                    candidate.length >= fence.length {
                     activeFence = nil
@@ -142,12 +145,25 @@ enum PersonaResponseSanitizer {
     }
 
     nonisolated private static func fencedCodeDelimiter(
-        in line: String
+        in line: String,
+        requiresBlankSuffix: Bool = false
     ) -> (marker: Character, length: Int)? {
-        let content = line.drop(while: { $0 == " " || $0 == "\t" })
+        // CommonMark permits at most three leading spaces before a fenced
+        // delimiter. Four spaces (or a tab) make this an indented code line,
+        // whose contents must never change the active fenced-code state.
+        let indentation = line.prefix(while: { $0 == " " || $0 == "\t" })
+        guard !indentation.contains("\t"), indentation.count <= 3 else { return nil }
+        let content = line.dropFirst(indentation.count)
         guard let marker = content.first, marker == "`" || marker == "~" else { return nil }
         let length = content.prefix(while: { $0 == marker }).count
         guard length >= 3 else { return nil }
+        if requiresBlankSuffix {
+            // An opening-style info string such as ```swift is literal code
+            // while inside a fence, not a closing delimiter.
+            guard content.dropFirst(length).allSatisfy({ $0 == " " || $0 == "\t" }) else {
+                return nil
+            }
+        }
         return (marker, length)
     }
 

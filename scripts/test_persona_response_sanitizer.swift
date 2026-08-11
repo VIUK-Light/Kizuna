@@ -60,6 +60,16 @@ struct PersonaResponseSanitizerTests {
                 "```text\n<end_of_turn>\n```\nVisible answer"
             ),
             (
+                "fenced code ignores an indented backtick literal when closing",
+                "```text\n    ```\n<end_of_turn>\n```\nVisible answer",
+                "```text\n    ```\n<end_of_turn>\n```\nVisible answer"
+            ),
+            (
+                "fenced code ignores an opening-style fence while closing",
+                "```text\n```swift\n<end_of_turn>\n```\nVisible answer",
+                "```text\n```swift\n<end_of_turn>\n```\nVisible answer"
+            ),
+            (
                 "indented code retains a leading thought-tag literal",
                 "    <think>example only</think>\nVisible answer",
                 "    <think>example only</think>\nVisible answer"

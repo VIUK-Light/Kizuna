@@ -413,7 +413,14 @@ final class PersonaChatService: ObservableObject {
         streamPreviewRevision &+= 1
         let revision = streamPreviewRevision
         streamSanitizationTask?.cancel()
-        streamSanitizationTask = Task.detached(priority: .userInitiated) { [weak self] in
+        streamSanitizationTask = Task.detached(priority: .utility) { [weak self] in
+            // Structured previews are cumulative and can arrive faster than a
+            // full sanitization pass. Give a newer update 32 ms to supersede
+            // this one, then check cancellation again before scanning text.
+            // Task.sleep only throws when this task is cancelled.
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(nanoseconds: 32_000_000)
+            guard !Task.isCancelled else { return }
             let sanitized = PersonaResponseSanitizer.sanitize(text)
             guard !Task.isCancelled else { return }
             await self?.applySanitizedStreamPreview(
