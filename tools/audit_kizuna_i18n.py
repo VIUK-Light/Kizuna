@@ -190,6 +190,23 @@ def litert_audit() -> dict[str, Any]:
     }
 
 
+def has_open_findings(report: dict[str, Any]) -> bool:
+    """Return whether strict source-level localization checks found a regression."""
+    return any(
+        (
+            report["xcstrings"]["missing_english_keys"],
+            report["presentation"]["missing_execution_ui_accessors"],
+            not report["presentation"]["tool_catalog_has_localized_label"],
+            not report["presentation"]["english_brand_is_kizuna"],
+            report["direct_ui"]["character_create_raw_ui_lines"],
+            report["story_detail"]["initial_scenes_left_untranslated_by_current_fallback"],
+            report["story_detail"]["raw_japanese_spotlight_label_lines"],
+            not report["story_detail"]["story_world_localization_has_safety_rules"],
+            report["litert"]["runtime_uses_unchecked_sendable"],
+        )
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -210,19 +227,7 @@ def main() -> int:
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
 
     if args.strict:
-        has_open_findings = any(
-            (
-                report["xcstrings"]["missing_english_keys"],
-                report["presentation"]["missing_execution_ui_accessors"],
-                not report["presentation"]["tool_catalog_has_localized_label"],
-                not report["presentation"]["english_brand_is_kizuna"],
-                report["direct_ui"]["character_create_raw_ui_lines"],
-                report["story_detail"]["initial_scenes_left_untranslated_by_current_fallback"],
-                not report["story_detail"]["story_world_localization_has_safety_rules"],
-                report["litert"]["runtime_uses_unchecked_sendable"],
-            )
-        )
-        return 1 if has_open_findings else 0
+        return 1 if has_open_findings(report) else 0
     return 0
 
 
