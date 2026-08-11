@@ -119,41 +119,56 @@ private actor LiteRTLMExecutionGate {
 
 /// `Conversation.sendMessage` はネイティブ推論中も戻らないため、SwiftのTask cancel
 /// だけでは停止しない。現在のConversationを保持してSDKのcancelを直接呼ぶ。
-private final class LiteRTLMActiveConversation: @unchecked Sendable {
-    private let lock = NSLock()
+private actor LiteRTLMActiveConversation {
     private var conversation: Conversation?
     private var generationID: UUID?
+    // Cancellation can arrive while Engine is still loading or while the
+    // conversation is being created.  Keep that request until the matching
+    // conversation is registered instead of silently dropping it.
+    private var pendingCancellationGenerationID: UUID?
+    private var pendingUnscopedCancellation = false
 
-    @MainActor
-    func set(_ conversation: Conversation, generationID: UUID?) {
-        lock.lock()
+    func set(_ conversation: Conversation, generationID: UUID?) async {
         self.conversation = conversation
         self.generationID = generationID
-        lock.unlock()
+
+        let shouldCancel = pendingUnscopedCancellation
+            || (pendingCancellationGenerationID != nil
+                && pendingCancellationGenerationID == generationID)
+        if pendingUnscopedCancellation {
+            pendingUnscopedCancellation = false
+        }
+        if pendingCancellationGenerationID == generationID {
+            pendingCancellationGenerationID = nil
+        }
+        if shouldCancel {
+            try? await conversation.cancel()
+        }
     }
 
-    @MainActor
     func clear(_ conversation: Conversation) {
-        lock.lock()
         if self.conversation === conversation {
             self.conversation = nil
             self.generationID = nil
         }
-        lock.unlock()
     }
 
     /// A supplied generation only cancels its own conversation. Nil is used by
     /// app lifecycle cancellation and intentionally cancels any active turn.
-    func cancel(generationID requestedGenerationID: UUID? = nil) {
-        lock.lock()
-        let activeConversation = conversation
-        let activeGenerationID = generationID
-        lock.unlock()
-        if let requestedGenerationID,
-           activeGenerationID != requestedGenerationID {
+    func cancel(generationID requestedGenerationID: UUID? = nil) async {
+        guard let activeConversation = conversation else {
+            if let requestedGenerationID {
+                pendingCancellationGenerationID = requestedGenerationID
+            } else {
+                pendingUnscopedCancellation = true
+            }
             return
         }
-        try? activeConversation?.cancel()
+        if let requestedGenerationID,
+           generationID != requestedGenerationID {
+            return
+        }
+        try? await activeConversation.cancel()
     }
 }
 
@@ -383,10 +398,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated func cancelActiveGeneration(generationID: UUID? = nil) {
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
 #if canImport(LiteRTLM)
-        // 遅延した MainActor Task にすると、A のキャンセル要求が実行される前に
-        // B の Conversation が登録され、Bまでキャンセルする競合が起きる。
-        // Conversation は内部ロックで保護しているため、ここで同じ世代を即時停止する。
-        activeConversation.cancel(generationID: generationID)
+        // Conversationとgeneration IDを同じactorで管理する。呼び出し側は
+        // 同一actorへ順番にenqueueされるため、Aの取消しがBの登録と競合しない。
+        Task { await activeConversation.cancel(generationID: generationID) }
 #endif
 #endif
     }
@@ -396,7 +410,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated func releaseResourcesForBackground() {
 #if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
 #if canImport(LiteRTLM)
-        activeConversation.cancel()
+        Task { await activeConversation.cancel() }
         Task(priority: .utility) {
             await executionGate.acquire()
             await engineStore.release()

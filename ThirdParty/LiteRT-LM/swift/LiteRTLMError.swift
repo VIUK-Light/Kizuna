@@ -15,7 +15,7 @@
 import Foundation
 
 /// Errors thrown by the LiteRT-LM Swift API.
-public enum LiteRTLMError: Error, LocalizedError, Equatable {
+public enum LiteRTLMError: Error, LocalizedError, Equatable, Sendable {
   case engine(EngineError)
   case conversation(ConversationError)
   case config(ConfigError)
@@ -33,7 +33,7 @@ public enum LiteRTLMError: Error, LocalizedError, Equatable {
   }
 
   /// Specific errors related to the `Engine`.
-  public enum EngineError: Error, LocalizedError, Equatable {
+  public enum EngineError: Error, LocalizedError, Equatable, Sendable {
     case alreadyInitialized
     case failedToCreateSettings
     case failedToCreateEngine
@@ -78,7 +78,7 @@ public enum LiteRTLMError: Error, LocalizedError, Equatable {
   }
 
   /// Specific errors related to `Conversation`.
-  public enum ConversationError: Error, LocalizedError, Equatable {
+  public enum ConversationError: Error, LocalizedError, Equatable, Sendable {
     case notAlive
     case failedToSerializeMessage
     case invalidResponse(String)
@@ -116,7 +116,7 @@ public enum LiteRTLMError: Error, LocalizedError, Equatable {
     }
   }
 
-  public enum ConfigError: Error, LocalizedError, Equatable {
+  public enum ConfigError: Error, LocalizedError, Equatable, Sendable {
     case invalidMaxNumTokens
     case invalidMaxNumImages(count: Int)
     case invalidTopK
@@ -143,7 +143,7 @@ public enum LiteRTLMError: Error, LocalizedError, Equatable {
   }
 
   /// Specific errors related to tools.
-  public enum ToolError: Error, LocalizedError, Equatable {
+  public enum ToolError: Error, LocalizedError, Equatable, Sendable {
     case notFound(name: String)
 
     public var errorDescription: String? {
@@ -155,7 +155,7 @@ public enum LiteRTLMError: Error, LocalizedError, Equatable {
   }
 
   /// Specific errors related to messages.
-  public enum MessageError: Error, LocalizedError, Equatable {
+  public enum MessageError: Error, LocalizedError, Equatable, Sendable {
     case failedToConvertToJson
     case invalidContent
 

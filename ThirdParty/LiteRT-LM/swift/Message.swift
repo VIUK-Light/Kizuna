@@ -16,7 +16,7 @@ import Foundation
 import OSLog
 
 /// The role of the message in a conversation.
-public enum Role: String {
+public enum Role: String, Sendable {
   case system
   case user
   case model
@@ -31,7 +31,7 @@ public enum Role: String {
 /// let imageContent = Content.imageData(imageData)
 /// let audioContent = Content.audioFile(path: "/path/to/audio.wav")
 /// ```
-public enum Content {
+public enum Content: Sendable {
   /// Text.
   case text(String)
   /// Image provided as raw bytes.
@@ -70,7 +70,7 @@ public enum Content {
 /// let multiContentMessage = Message(of: someText, someImageContent)
 /// let multiContentMessageFromArray = Message(contents: [someText, someImageContent])
 /// ```
-public struct Message {
+public struct Message: Sendable {
 
   private let logger = Logger(
     subsystem: "com.google.odml.litertlm.swift",
@@ -160,7 +160,7 @@ public struct Message {
 /// ```swift
 /// let contents = Contents(contents: [.text("Hello")])
 /// ```
-public struct Contents: RandomAccessCollection {
+public struct Contents: RandomAccessCollection, Sendable {
   public typealias Element = Content
   public typealias Index = Int
 

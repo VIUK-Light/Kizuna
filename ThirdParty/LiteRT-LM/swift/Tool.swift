@@ -15,7 +15,7 @@
 import Foundation
 
 /// A protocol that defines what types can be used as parameters in a LiteRT-LM tool.
-public protocol ToolParameterValue: Codable {
+public protocol ToolParameterValue: Codable, Sendable {
   /// Returns the JSON schema representation for this type.
   static func getJsonSchema() -> [String: Any]
 }
@@ -82,7 +82,7 @@ protocol ToolParamProtocol {
 /// var topic: String?
 /// ```
 @propertyWrapper
-public struct ToolParam<Value: ToolParameterValue>: Decodable, ToolParamProtocol {
+public struct ToolParam<Value: ToolParameterValue>: Decodable, ToolParamProtocol, Sendable {
 
   /// Holds the actual value of the parameter.
   private var storage: Value?
@@ -208,7 +208,7 @@ public struct ToolParam<Value: ToolParameterValue>: Decodable, ToolParamProtocol
 ///  A protocol a struct/class must conform to be used as a tool by the LiteRT-LM model.
 ///
 ///  - SeeAlso: `ToolParam` for defining parameters of the tool.
-public protocol Tool: Decodable {
+public protocol Tool: Decodable, Sendable {
   /// The unique name of the tool.
   static var name: String { get }
   /// A description of what the tool does.

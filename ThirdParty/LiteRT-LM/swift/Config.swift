@@ -17,7 +17,7 @@ import Foundation
 /// The backend to use for the LiteRT-LM engine.
 ///
 /// Swift version of the C++'s `litert::lm::Backend`.
-public enum Backend: Equatable {
+public enum Backend: Equatable, Sendable {
   /// CPU LiteRT backend.
   case cpu(threadCount: Int? = nil)
   /// GPU LiteRT backend.
@@ -40,7 +40,7 @@ public enum Backend: Equatable {
 }
 
 /// Configuration for the LiteRT-LM engine.
-public struct EngineConfig {
+public struct EngineConfig: Sendable {
   /// The file path to the LiteRT-LM model.
   public let modelPath: String
   /// The backend to use for the engine.
@@ -112,7 +112,7 @@ public struct EngineConfig {
 }
 
 /// Configuration for the sampling process.
-public struct SamplerConfig {
+public struct SamplerConfig: Sendable {
 
   /// The number of most likely tokens (top logits) to consider at each step of sampling.
   public let topK: Int
@@ -157,7 +157,7 @@ public struct SamplerConfig {
 }
 
 /// Configuration fo the LiteRT-LM `Conversation`.
-public struct ConversationConfig {
+public struct ConversationConfig: Sendable {
   // The system message to be used in the conversation.
   public let systemMessage: Message?
 

@@ -18,12 +18,19 @@ import CLiteRTLM
 
 typealias CConversationHandle = OpaquePointer
 
-private let logger = Logger(
-  subsystem: "com.google.odml.litertlm.swift",
+private let streamLogger = Logger(
+  subsystem: "com.google.ai.edge.litertlm.swift",
   category: "Conversation"
 )
 
 private let recurringToolCallLimit = 25
+
+private struct StreamCallbackEvent: Sendable {
+  let responseString: String?
+  let isFinal: Bool
+  let errorMessage: String?
+  let userDataAddress: UInt
+}
 
 /// Represents a conversation with the LiteRT-LM model.
 ///
@@ -33,17 +40,23 @@ private let recurringToolCallLimit = 25
 /// let conversation = try await engine.createConversation()
 ///
 /// // Send a message and get the response.
-/// let response = try conversation.sendMessage(Message("Hello world"))
+/// let response = try await conversation.sendMessage(Message("Hello world"))
 ///
 /// // Send a message async with response chunks as AsyncThrowingStream.
-/// for try await chunk in conversation.sendMessageStream(Message("Hello world")) {
+/// for try await chunk in await conversation.sendMessageStream(Message("Hello world")) {
 ///   print(chunk.text)
 /// }
 /// ```
 ///
-/// This class facilitates interaction with the LiteRT-LM model by handling message sending
+/// This actor facilitates interaction with the LiteRT-LM model by handling message sending
 /// and response reception.
-public class Conversation {
+/// Owns a single native conversation handle and serializes every operation on
+/// that handle.  The C API is stateful (send, stream and cancel all mutate the
+/// same session), so exposing it as an ordinary class allowed callers from
+/// different tasks to race.  Making the owner an actor gives Swift 6 a real
+/// isolation boundary instead of relying on an `@unchecked Sendable` wrapper
+/// in each application.
+public actor Conversation {
   private let logger = Logger(
     subsystem: "com.google.ai.edge.litertlm.swift",
     category: "Conversation"
@@ -75,16 +88,27 @@ public class Conversation {
   /// - Returns: The model's response message.
   /// - Throws: A `LiteRTLMError` if sending the message fails or the model
   ///   returns an invalid response.
-  public func sendMessage(_ message: Message, extraContext: [String: Any]? = nil) async throws
-    -> Message
-  {
+  public nonisolated func sendMessage(
+    _ message: Message, extraContext: [String: Any]? = nil
+  ) async throws -> Message {
+    // `[String: Any]` is intentionally kept in the source-compatible public
+    // API, but it must not cross an actor boundary. Serialize it before
+    // entering the owner actor so the native handle only receives Sendable
+    // values.
+    let extraContextJSON = try Self.serializeExtraContext(extraContext)
+    return try await sendMessageOnActor(message, extraContextJSON: extraContextJSON)
+  }
+
+  private func sendMessageOnActor(
+    _ message: Message, extraContextJSON: String?
+  ) async throws -> Message {
     let handle = try checkIsAlive()
 
     var currentMessageJson: [String: Any] = message.toJson
 
     for _ in 0..<recurringToolCallLimit {
       let (responseJson, responseString) = try attemptSendMessage(
-        handle: handle, messageJson: currentMessageJson, extraContext: extraContext)
+        handle: handle, messageJson: currentMessageJson, extraContextJSON: extraContextJSON)
 
       guard let toolCalls = responseJson["tool_calls"] as? [[String: Any]] else {
         if responseJson["content"] != nil || responseJson["channels"] != nil {
@@ -99,7 +123,7 @@ public class Conversation {
   }
 
   private func attemptSendMessage(
-    handle: CConversationHandle, messageJson: [String: Any], extraContext: [String: Any]?
+    handle: CConversationHandle, messageJson: [String: Any], extraContextJSON: String?
   ) throws
     -> (responseJson: [String: Any], responseString: String)
   {
@@ -108,12 +132,6 @@ public class Conversation {
       throw LiteRTLMError.conversation(.failedToSerializeMessage)
     }
 
-    var extraContextString: String? = nil
-    if let extraContext = extraContext, !extraContext.isEmpty,
-      let extraData = try? JSONSerialization.data(withJSONObject: extraContext)
-    {
-      extraContextString = String(data: extraData, encoding: .utf8)
-    }
     let optionalArgs = litert_lm_conversation_optional_args_create()
     if let visualTokenBudget = ExperimentalFlags.visualTokenBudget {
       litert_lm_conversation_optional_args_set_visual_token_budget(
@@ -123,7 +141,7 @@ public class Conversation {
 
     guard
       let responsePtr = litert_lm_conversation_send_message(
-        handle, messageString, extraContextString, optionalArgs)
+        handle, messageString, extraContextJSON, optionalArgs)
     else {
       throw LiteRTLMError.conversation(.invalidResponse("Native sendMessage returned null."))
 
@@ -188,9 +206,29 @@ public class Conversation {
   /// - Parameter message: The message to send.
   /// - Parameter extraContext: The extra context to send to the model.
   /// - Returns: An async throwing stream of `Message` chunks.
+  /// Starts a stream while the actor is holding the conversation boundary.
+  /// Installing the native callback before returning prevents a caller's
+  /// immediate `cancel()` from racing ahead of stream setup.
   public func sendMessageStream(
     _ message: Message, extraContext: [String: Any]? = nil
   ) -> AsyncThrowingStream<Message, Error> {
+    let extraContextJSON: String?
+    do {
+      // Do not turn a malformed context into an apparently valid request.
+      // The stream must surface serialization failures to its consumer.
+      extraContextJSON = try Self.serializeExtraContext(extraContext)
+    } catch let error as LiteRTLMError {
+      return AsyncThrowingStream { continuation in
+        continuation.finish(throwing: error)
+      }
+    } catch {
+      let streamError = LiteRTLMError.conversation(
+        .invalidResponse("Failed to serialize extra context: \(error.localizedDescription)"))
+      return AsyncThrowingStream { continuation in
+        continuation.finish(throwing: streamError)
+      }
+    }
+
     return AsyncThrowingStream { continuation in
       do {
         let handle = try self.checkIsAlive()
@@ -198,8 +236,26 @@ public class Conversation {
         let context = StreamContext(
           continuation: continuation, conversation: self)
 
-        try self.sendToStream(
-          handle: handle, messageJson: messageJson, extraContext: extraContext, context: context)
+        // Consumer cancellation must reach the native conversation.  The
+        // callback context is actor-owned, so the termination hook is safe to
+        // install before the first native callback can arrive.
+        continuation.onTermination = { @Sendable [weak context] _ in
+          Task { await context?.cancelIfActive() }
+        }
+
+        do {
+          try self.sendToStream(
+            handle: handle, messageJson: messageJson, extraContextJSON: extraContextJSON,
+            context: context)
+        } catch let error as LiteRTLMError {
+          continuation.finish(throwing: error)
+          Task { await context.finishWithoutNativeRetain(throwing: error) }
+        } catch {
+          let streamError = LiteRTLMError.conversation(
+            .invalidResponse("Failed to start stream: \(error.localizedDescription)"))
+          continuation.finish(throwing: streamError)
+          Task { await context.finishWithoutNativeRetain(throwing: streamError) }
+        }
       } catch {
         continuation.finish(throwing: error)
       }
@@ -222,19 +278,12 @@ public class Conversation {
   func sendToStream(
     handle: CConversationHandle,
     messageJson: [String: Any],
-    extraContext: [String: Any]? = nil,
+    extraContextJSON: String? = nil,
     context: StreamContext
   ) throws {
     let messageData = try JSONSerialization.data(withJSONObject: messageJson)
     guard let messageString = String(data: messageData, encoding: .utf8) else {
       throw LiteRTLMError.conversation(.failedToSerializeMessage)
-    }
-
-    var extraContextString: String? = nil
-    if let extraContext = extraContext, !extraContext.isEmpty,
-      let extraData = try? JSONSerialization.data(withJSONObject: extraContext)
-    {
-      extraContextString = String(data: extraData, encoding: .utf8)
     }
 
     let optionalArgs = litert_lm_conversation_optional_args_create()
@@ -249,7 +298,7 @@ public class Conversation {
     let status = litert_lm_conversation_send_message_stream(
       handle,
       messageString,
-      extraContextString,
+      extraContextJSON,
       optionalArgs,
       streamCallback,
       contextPtr
@@ -259,6 +308,42 @@ public class Conversation {
       Unmanaged<StreamContext>.fromOpaque(contextPtr).release()
       throw LiteRTLMError.conversation(.failedToStartStream(status: Int(status)))
     }
+  }
+
+  /// Handles a completed stream turn that contains tool calls.  The callback
+  /// actor passes only JSON strings across this boundary; decoding and tool
+  /// execution stay inside the Conversation actor where the native handle and
+  /// the ToolManager are isolated.
+  fileprivate func continueStreamAfterToolCallResponses(
+    _ responseStrings: [String],
+    context: StreamContext
+  ) async throws {
+    var toolCalls: [[String: Any]] = []
+    for responseString in responseStrings {
+      guard let data = responseString.data(using: .utf8),
+        let jsonObject = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let responseToolCalls = jsonObject["tool_calls"] as? [[String: Any]
+        ]
+      else {
+        throw LiteRTLMError.conversation(.invalidJson("Invalid tool call response JSON"))
+      }
+      toolCalls.append(contentsOf: responseToolCalls)
+    }
+
+    let toolResponseJson = try await handleToolCalls(toolCalls)
+    let handle = try checkIsAlive()
+    try sendToStream(handle: handle, messageJson: toolResponseJson, context: context)
+  }
+
+  private nonisolated static func serializeExtraContext(
+    _ extraContext: [String: Any]?
+  ) throws -> String? {
+    guard let extraContext, !extraContext.isEmpty else { return nil }
+    let data = try JSONSerialization.data(withJSONObject: extraContext)
+    guard let string = String(data: data, encoding: .utf8) else {
+      throw LiteRTLMError.conversation(.failedToSerializeMessage)
+    }
+    return string
   }
 
   /// Cancels the ongoing asynchronous inference process.
@@ -400,18 +485,169 @@ public class Conversation {
   }
 
   /// Context object to bridge the C callback to the Swift AsyncThrowingStream.
-  class StreamContext {
+  /// Serializes callback delivery and owns the continuation for one native
+  /// stream.  Native callbacks may arrive on arbitrary threads; routing each
+  /// event through this actor prevents concurrent mutation of pending tool
+  /// calls and guarantees that the retained context is released exactly once.
+  actor StreamContext {
     let continuation: AsyncThrowingStream<Message, Error>.Continuation
     let conversation: Conversation
+    private let callbackContinuation: AsyncStream<StreamCallbackEvent>.Continuation
+    private var callbackConsumer: Task<Void, Never>?
+    private var isFinished = false
     var toolCallCount: Int = 0
-    var pendingToolCalls: [[String: Any]] = []
+    // Keep callback payloads as JSON strings while they are in this actor.
+    // `[String: Any]` is not Sendable and must be decoded only after control
+    // returns to the owning Conversation actor.
+    var pendingToolCallResponses: [String] = []
 
     init(
       continuation: AsyncThrowingStream<Message, Error>.Continuation,
       conversation: Conversation
     ) {
+      let callbackStream = AsyncStream<StreamCallbackEvent>.makeStream()
       self.continuation = continuation
       self.conversation = conversation
+      self.callbackContinuation = callbackStream.continuation
+      self.callbackConsumer = nil
+      self.callbackConsumer = Task { [weak self] in
+        for await event in callbackStream.stream {
+          await self?.receive(
+            responseString: event.responseString,
+            isFinal: event.isFinal,
+            errorMessage: event.errorMessage,
+            userDataAddress: event.userDataAddress
+          )
+        }
+      }
+    }
+
+    /// Called directly from the C callback. AsyncStream's continuation is
+    /// thread-safe and keeps callback order; a single consumer task then
+    /// invokes `receive` on this actor.
+    nonisolated func enqueue(
+      responseString: String?,
+      isFinal: Bool,
+      errorMessage: String?,
+      userDataAddress: UInt
+    ) {
+      callbackContinuation.yield(
+        StreamCallbackEvent(
+          responseString: responseString,
+          isFinal: isFinal,
+          errorMessage: errorMessage,
+          userDataAddress: userDataAddress
+        )
+      )
+    }
+
+    private func receive(
+      responseString: String?,
+      isFinal: Bool,
+      errorMessage: String?,
+      userDataAddress: UInt
+    ) async {
+      guard !isFinished else { return }
+
+      if let errorMessage {
+        let error = LiteRTLMError.conversation(.invalidResponse(errorMessage))
+        finish(throwing: error, userDataAddress: userDataAddress)
+        return
+      }
+
+      if let responseString {
+        do {
+          guard let responseData = responseString.data(using: .utf8),
+            let jsonObject = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
+          else {
+            throw LiteRTLMError.conversation(.invalidJson("Invalid JSON chunk"))
+          }
+
+          if jsonObject["tool_calls"] is [[String: Any]] {
+            pendingToolCallResponses.append(responseString)
+          }
+
+          if jsonObject["content"] != nil || jsonObject["channels"] != nil {
+            let message = try Conversation.jsonToMessage(responseString)
+            continuation.yield(message)
+          }
+        } catch {
+          streamLogger.error("Failed to parse response JSON: \(error.localizedDescription)")
+          let streamError = (error as? LiteRTLMError)
+            ?? LiteRTLMError.conversation(.invalidResponse(error.localizedDescription))
+          finish(throwing: streamError, userDataAddress: userDataAddress)
+          return
+        }
+      }
+
+      guard isFinal else { return }
+
+      if !pendingToolCallResponses.isEmpty {
+        if toolCallCount >= recurringToolCallLimit {
+          finish(
+            throwing: LiteRTLMError.conversation(
+              .recurringToolCallLimitExceeded(limit: recurringToolCallLimit)),
+            userDataAddress: userDataAddress
+          )
+          return
+        }
+
+        toolCallCount += 1
+        let toolCallResponses = pendingToolCallResponses
+        pendingToolCallResponses = []
+
+        do {
+          try await conversation.continueStreamAfterToolCallResponses(
+            toolCallResponses,
+            context: self
+          )
+        } catch {
+          let streamError = (error as? LiteRTLMError)
+            ?? LiteRTLMError.conversation(.invalidResponse(error.localizedDescription))
+          finish(throwing: streamError, userDataAddress: userDataAddress)
+          return
+        }
+        // The next native call retains the context again. Release the retain
+        // belonging to the callback that just finished.
+        release(userDataAddress)
+      } else {
+        finish(userDataAddress: userDataAddress)
+      }
+    }
+
+    /// Finishes a stream whose native call failed before a callback retained
+    /// the context. This path intentionally does not release userData.
+    func finishWithoutNativeRetain(throwing error: LiteRTLMError) {
+      guard !isFinished else { return }
+      isFinished = true
+      callbackContinuation.finish()
+      callbackConsumer?.cancel()
+      continuation.finish(throwing: error)
+    }
+
+    /// Cancels only an active native stream. Normal completion marks the
+    /// context finished first, so onTermination cannot cancel a later reuse.
+    func cancelIfActive() async {
+      guard !isFinished else { return }
+      try? await conversation.cancel()
+    }
+
+    private func finish(throwing error: LiteRTLMError? = nil, userDataAddress: UInt) {
+      guard !isFinished else { return }
+      isFinished = true
+      callbackContinuation.finish()
+      callbackConsumer?.cancel()
+      if let error {
+        continuation.finish(throwing: error)
+      } else {
+        continuation.finish()
+      }
+      release(userDataAddress)
+    }
+
+    private func release(_ userDataAddress: UInt) {
+      guard let userData = UnsafeMutableRawPointer(bitPattern: userDataAddress) else { return }
+      Unmanaged<StreamContext>.fromOpaque(userData).release()
     }
   }
 }
@@ -426,73 +662,17 @@ private func streamCallback(
   guard let userData = userData else { return }
 
   let context = Unmanaged<Conversation.StreamContext>.fromOpaque(userData).takeUnretainedValue()
+  let responseString = responseJson.map { String(cString: $0) }
+  let errorString = errorMessage.map { String(cString: $0) }
+  let userDataAddress = UInt(bitPattern: userData)
 
-  if let errorMessage = errorMessage {
-    let errorString = String(cString: errorMessage)
-    let error = LiteRTLMError.conversation(.invalidResponse(errorString))
-    context.continuation.finish(throwing: error)
-
-    Unmanaged<Conversation.StreamContext>.fromOpaque(userData).release()
-    return
-  }
-
-  if let responseJson = responseJson {
-    let responseString = String(cString: responseJson)
-    do {
-      guard let responseData = responseString.data(using: .utf8),
-        let jsonObject = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
-      else {
-        throw LiteRTLMError.conversation(.invalidJson("Invalid JSON chunk"))
-      }
-
-      if let toolCalls = jsonObject["tool_calls"] as? [[String: Any]] {
-        context.pendingToolCalls.append(contentsOf: toolCalls)
-      }
-
-      if jsonObject["content"] != nil || jsonObject["channels"] != nil {
-        let message = try Conversation.jsonToMessage(responseString)
-        context.continuation.yield(message)
-      }
-    } catch {
-      logger.error("Failed to parse response JSON: \(error.localizedDescription)")
-      context.continuation.finish(throwing: error)
-      Unmanaged<Conversation.StreamContext>.fromOpaque(userData).release()
-      return
-    }
-  }
-
-  if isFinal {
-    if !context.pendingToolCalls.isEmpty {
-      if context.toolCallCount >= recurringToolCallLimit {
-        context.continuation.finish(
-          throwing: LiteRTLMError.conversation(
-            .recurringToolCallLimitExceeded(limit: recurringToolCallLimit)))
-        Unmanaged<Conversation.StreamContext>.fromOpaque(userData).release()
-        return
-      }
-
-      context.toolCallCount += 1
-      let toolCalls = context.pendingToolCalls
-      context.pendingToolCalls = []
-
-      Task {
-        do {
-          let toolResponseJson = try await context.conversation.handleToolCalls(toolCalls)
-          try context.conversation.sendToStream(
-            handle: context.conversation.checkIsAlive(),
-            messageJson: toolResponseJson,
-            context: context
-          )
-        } catch {
-          context.continuation.finish(throwing: error)
-        }
-        // Release the reference for the current (finished) call.
-        // The new call from sendToStream created its own retained reference.
-        Unmanaged<Conversation.StreamContext>.fromOpaque(userData).release()
-      }
-    } else {
-      context.continuation.finish()
-      Unmanaged<Conversation.StreamContext>.fromOpaque(userData).release()
-    }
-  }
+  // The native callback is not actor-isolated. Convert its C pointers to
+  // owned Swift strings before enqueuing; StreamContext's single consumer
+  // serializes delivery and releases the retained context after the event.
+  context.enqueue(
+    responseString: responseString,
+    isFinal: isFinal,
+    errorMessage: errorString,
+    userDataAddress: userDataAddress
+  )
 }

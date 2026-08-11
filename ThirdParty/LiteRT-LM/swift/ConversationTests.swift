@@ -47,7 +47,8 @@ class ConversationTests: XCTestCase {
       systemMessage: Message("You are a helpful assistant."))
 
     let conversation = try await self.engine.createConversation(with: config)
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
   }
 
   func testConversationConfigSystemMessageSerialization() throws {
@@ -77,7 +78,8 @@ class ConversationTests: XCTestCase {
 
   func testCreateConversationWithoutSystemMessageAndSamplerConfig() async throws {
     let conversation = try await self.engine.createConversation()
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
   }
 
   func testCreateConversationWithSamplerConfigAndSystemMessage() async throws {
@@ -85,19 +87,22 @@ class ConversationTests: XCTestCase {
       systemMessage: Message("You are a helpful assistant."),
       samplerConfig: try SamplerConfig(topK: 10, topP: 0.5, temperature: 0.5, seed: 123))
     let conversation = try await self.engine.createConversation(with: config)
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
   }
 
   func testCreateConversationWithSamplerConfigWithoutSystemMessage() async throws {
     let config = ConversationConfig(
       samplerConfig: try SamplerConfig(topK: 10, topP: 0.5, temperature: 0.5, seed: 123))
     let conversation = try await self.engine.createConversation(with: config)
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
   }
 
   func testSendMessageReturnsMessage() async throws {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
 
     let response = try await conversation.sendMessage(Message("Hello"))
     XCTAssertEqual(response.contents.count, 1)
@@ -111,13 +116,14 @@ class ConversationTests: XCTestCase {
 
   func testSendMessageStream() async throws {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
 
     let message = Message("How are you")
     var accumulatedText = ""
     var chunkCount = 0
 
-    for try await chunk in conversation.sendMessageStream(message) {
+    for try await chunk in await conversation.sendMessageStream(message) {
       chunkCount += 1
       accumulatedText += chunk.toString
     }
@@ -128,29 +134,39 @@ class ConversationTests: XCTestCase {
 
   func testSendMessageStreamAndCancel() async throws {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
 
     let message = Message("Hello")
-    var accumulatedText = ""
-    var chunkCount = 0
-    var didReceiveError: Error?
+    var didReceiveError: LiteRTLMError?
 
-    let stream = conversation.sendMessageStream(message)
-
-    try conversation.cancel()
-
-    do {
-      for try await chunk in stream {
-        chunkCount += 1
-        accumulatedText += chunk.toString
+    let stream = await conversation.sendMessageStream(message)
+    let consumer = Task { () -> (error: LiteRTLMError?, chunkCount: Int, text: String) in
+      var accumulatedText = ""
+      var chunkCount = 0
+      do {
+        for try await chunk in stream {
+          chunkCount += 1
+          accumulatedText += chunk.toString
+        }
+        return (nil, chunkCount, accumulatedText)
+      } catch {
+        let streamError = (error as? LiteRTLMError)
+          ?? LiteRTLMError.conversation(.invalidResponse(error.localizedDescription))
+        return (streamError, chunkCount, accumulatedText)
       }
-      XCTFail("Stream should have thrown an error.")
-    } catch {
-      didReceiveError = error
     }
 
+    // Let the consumer attach to the stream before requesting native
+    // cancellation.  sendMessageStream installs the callback synchronously,
+    // but the AsyncThrowingStream consumer itself starts on its own task.
+    await Task.yield()
+    try await conversation.cancel()
+    let result = await consumer.value
+    didReceiveError = result.error
+
     XCTAssertNotNil(didReceiveError, "Stream should throw an error when cancelled.")
-    if let error = didReceiveError as? LiteRTLMError,
+    if let error = didReceiveError,
       case .conversation(let conversationError) = error,
       case .invalidResponse(let details) = conversationError
     {
@@ -166,35 +182,41 @@ class ConversationTests: XCTestCase {
 
   func testBenchmarkInfoOnEmptyConversation() async throws {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
 
     // No messages are sent in the conversation, so all the benchmark values should be 0.
-    let benchmarkInfo = try conversation.getBenchmarkInfo()
+    let benchmarkInfo = try await conversation.getBenchmarkInfo()
     XCTAssertEqual(benchmarkInfo.lastPrefillTokenCount, 0)
     XCTAssertEqual(benchmarkInfo.lastDecodeTokenCount, 0)
   }
 
   func testBenchmarkInfoOnNonEmptyConversation() async throws {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
     let _ = try await conversation.sendMessage(Message("Hello World"))
-    let benchmarkInfo = try conversation.getBenchmarkInfo()
+    let benchmarkInfo = try await conversation.getBenchmarkInfo()
     XCTAssertGreaterThan(benchmarkInfo.lastPrefillTokenCount, 0)
     XCTAssertGreaterThan(benchmarkInfo.lastDecodeTokenCount, 0)
   }
 
   func testConversationGetTokenCountSucceeds() async throws {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
-    XCTAssertTrue(conversation.isAlive)
-    XCTAssertEqual(try conversation.getTokenCount(), 0)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
+    let initialTokenCount = try await conversation.getTokenCount()
+    XCTAssertEqual(initialTokenCount, 0)
 
     let _ = try await conversation.sendMessage(Message("How are you"))
-    XCTAssertEqual(try conversation.getTokenCount(), 10)
+    let finalTokenCount = try await conversation.getTokenCount()
+    XCTAssertEqual(finalTokenCount, 10)
   }
 
   func testSendMessageWithExtraContextReturnsMessage() async throws {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
 
     let extraContext: [String: Any] = ["key": "value"]
     let response = try await conversation.sendMessage(
@@ -211,14 +233,15 @@ class ConversationTests: XCTestCase {
 
   func testSendMessageStreamWithExtraContext() async throws {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
 
     let message = Message("How are you")
     let extraContext: [String: Any] = ["key": "value"]
     var accumulatedText = ""
     var chunkCount = 0
 
-    for try await chunk in conversation.sendMessageStream(message, extraContext: extraContext) {
+    for try await chunk in await conversation.sendMessageStream(message, extraContext: extraContext) {
       chunkCount += 1
       accumulatedText += chunk.toString
     }
@@ -236,7 +259,8 @@ class ConversationTests: XCTestCase {
     )
 
     let conversation = try await self.engine.createConversation(with: config)
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
 
     let response = try await conversation.sendMessage(Message("How are you?"))
     XCTAssertFalse(response.contents.isEmpty)
@@ -288,14 +312,16 @@ class ConversationTests: XCTestCase {
     )
 
     let conversation = try await self.engine.createConversation(with: config)
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
   }
 
   func testRenderMessageIntoString() async throws {
     let conversation = try await self.engine.createConversation(with: ConversationConfig())
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
 
-    let rendered = try conversation.renderMessageIntoString(Message("Hello world", role: .user))
+    let rendered = try await conversation.renderMessageIntoString(Message("Hello world", role: .user))
     XCTAssertFalse(rendered.isEmpty)
     XCTAssertTrue(rendered.contains("Hello world"))
   }
@@ -305,9 +331,10 @@ class ConversationTests: XCTestCase {
       initialMessages: [Message("You are a helpful assistant", role: .system)]
     )
     let conversation = try await self.engine.createConversation(with: config)
-    XCTAssertTrue(conversation.isAlive)
+    let isAlive = await conversation.isAlive
+    XCTAssertTrue(isAlive)
 
-    let rendered = try conversation.renderPrefaceIntoString()
+    let rendered = try await conversation.renderPrefaceIntoString()
     XCTAssertFalse(rendered.isEmpty)
     XCTAssertTrue(rendered.contains("You are a helpful assistant"))
   }
