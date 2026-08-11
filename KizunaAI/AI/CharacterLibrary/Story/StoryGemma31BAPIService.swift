@@ -65,17 +65,9 @@ final class StoryGemma31BAPIService {
         guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
             throw StoryGemma31BAPIError.missingAPIKey
         }
-        let prompt = """
-        <Thinking>
-        \(systemPrompt)
-
-        ---
-        USER_INPUT:
-        \(userPrompt)
-        """
-
         let body = try makeRequestBody(
-            prompt: prompt,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
             temperature: temperature,
             maxOutputTokens: maxOutputTokens,
             thinkingLevel: "high"
@@ -87,7 +79,7 @@ final class StoryGemma31BAPIService {
             modelNames: [primaryModelName] + fallbackModelNames
         )
 
-        let decoded = try decoder.decode(GenerateContentResponse.self, from: data)
+        let decoded = try decoder.decode(StoryGemma31BGenerateContentResponse.self, from: data)
         if let text = visibleText(from: decoded), !text.isEmpty {
             return text
         }
@@ -99,7 +91,8 @@ final class StoryGemma31BAPIService {
         // 未対応の medium を送らず、minimalで本文の余白を確保する。
         // 空本文の時だけ一度実行するため、通常ターンの待ち時間やAPI使用量は増やさない。
         let fallbackBody = try makeRequestBody(
-            prompt: prompt,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
             temperature: temperature,
             maxOutputTokens: max(maxOutputTokens, 1_536),
             thinkingLevel: "minimal"
@@ -109,7 +102,7 @@ final class StoryGemma31BAPIService {
             body: fallbackBody,
             modelNames: [primaryModelName] + fallbackModelNames
         )
-        let fallbackResponse = try decoder.decode(GenerateContentResponse.self, from: fallbackData)
+        let fallbackResponse = try decoder.decode(StoryGemma31BGenerateContentResponse.self, from: fallbackData)
         if let text = visibleText(from: fallbackResponse), !text.isEmpty {
             return text
         }
@@ -118,36 +111,29 @@ final class StoryGemma31BAPIService {
     }
 
     private func makeRequestBody(
-        prompt: String,
+        systemPrompt: String,
+        userPrompt: String,
         temperature: Double,
         maxOutputTokens: Int,
         thinkingLevel: String
     ) throws -> Data {
-        try encoder.encode(GenerateContentRequest(
-            contents: [
-                Content(role: "user", parts: [Part(text: prompt)])
-            ],
-            generationConfig: GenerationConfig(
-                temperature: temperature,
-                topP: 0.92,
-                maxOutputTokens: maxOutputTokens,
-                // Gemma 4 APIではThinkingを常に有効化する。minimal は空本文時だけの復旧用。
-                thinkingConfig: ThinkingConfig(thinkingLevel: thinkingLevel)
-            )
+        // The API has a native systemInstruction field. Putting the system
+        // prompt and a literal <Thinking> marker into user content makes the
+        // request ambiguous and spends output/input budget on prompt plumbing.
+        try encoder.encode(StoryGemma31BGenerateContentRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            temperature: temperature,
+            maxOutputTokens: maxOutputTokens,
+            thinkingLevel: thinkingLevel
         ))
     }
 
-    private func visibleText(from response: GenerateContentResponse) -> String? {
-        response.candidates?
-            .flatMap { $0.content?.parts ?? [] }
-            // 思考過程は会話本文・次ターンの履歴へ保存しない。
-            .filter { $0.thought != true }
-            .compactMap(\.text)
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    private func visibleText(from response: StoryGemma31BGenerateContentResponse) -> String? {
+        StoryGemma31BResponseParser.visibleText(from: response)
     }
 
-    private func logEmptyResponse(_ response: GenerateContentResponse) {
+    private func logEmptyResponse(_ response: StoryGemma31BGenerateContentResponse) {
         let candidates = response.candidates ?? []
         let parts = candidates.flatMap { $0.content?.parts ?? [] }
         let thoughtParts = parts.filter { $0.thought == true }.count
@@ -225,56 +211,4 @@ final class StoryGemma31BAPIService {
         throw StoryGemma31BAPIError.httpStatus(statusCode, String(data: data, encoding: .utf8) ?? "")
     }
 
-    private struct GenerateContentRequest: Encodable {
-        let contents: [Content]
-        let generationConfig: GenerationConfig
-    }
-
-    private struct Content: Codable {
-        let role: String?
-        let parts: [Part]
-    }
-
-    private struct Part: Codable {
-        let text: String?
-        let thought: Bool?
-
-        init(text: String?, thought: Bool? = nil) {
-            self.text = text
-            self.thought = thought
-        }
-    }
-
-    private struct GenerationConfig: Encodable {
-        let temperature: Double
-        let topP: Double
-        let maxOutputTokens: Int
-        let thinkingConfig: ThinkingConfig
-    }
-
-    private struct ThinkingConfig: Encodable {
-        let thinkingLevel: String
-    }
-
-    private struct GenerateContentResponse: Decodable {
-        let candidates: [Candidate]?
-        let promptFeedback: PromptFeedback?
-        let usageMetadata: UsageMetadata?
-    }
-
-    private struct Candidate: Decodable {
-        let index: Int?
-        let content: Content?
-        let finishReason: String?
-    }
-
-    private struct PromptFeedback: Decodable {
-        let blockReason: String?
-    }
-
-    private struct UsageMetadata: Decodable {
-        let promptTokenCount: Int?
-        let candidatesTokenCount: Int?
-        let thoughtsTokenCount: Int?
-    }
 }
