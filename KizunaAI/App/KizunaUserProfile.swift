@@ -64,7 +64,8 @@ struct KizunaUserProfile: Codable, Equatable {
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? ""
         nickname = try container.decodeIfPresent(String.self, forKey: .nickname) ?? ""
         avatarSymbol = try container.decodeIfPresent(String.self, forKey: .avatarSymbol) ?? KizunaAvatarCatalog.defaultID
-        avatarImageData = try container.decodeIfPresent(Data.self, forKey: .avatarImageData)
+        let storedImageData = try container.decodeIfPresent(Data.self, forKey: .avatarImageData)
+        avatarImageData = KizunaAvatarImage.normalizedStoredData(from: storedImageData)
         conversationPreference = try container.decodeIfPresent(KizunaConversationPreference.self, forKey: .conversationPreference) ?? .balanced
     }
 
@@ -123,6 +124,7 @@ final class KizunaUserProfileStore: ObservableObject {
         var normalized = value
         normalized.displayName = String(normalized.displayName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
         normalized.nickname = String(normalized.nickname.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        normalized.avatarImageData = KizunaAvatarImage.normalizedStoredData(from: normalized.avatarImageData)
         profile = normalized
         persist()
         primeBridge()

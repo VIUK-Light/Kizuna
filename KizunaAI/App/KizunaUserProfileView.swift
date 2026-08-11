@@ -6,6 +6,7 @@ struct KizunaUserProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store: KizunaUserProfileStore
     @State private var draft: KizunaUserProfile
+    @State private var isLoadingPhoto = false
 
     init(store: KizunaUserProfileStore) {
         self.store = store
@@ -26,9 +27,11 @@ struct KizunaUserProfileView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    profileCard(
+                    KizunaProfileCard(
                         title: KizunaCopy.text(japanese: "名前と画像", english: "Name and photo"),
-                        icon: "person.crop.circle"
+                        icon: "person.crop.circle",
+                        spacing: 12,
+                        showsBorder: false
                     ) {
                         TextField(
                             KizunaCopy.text(japanese: "呼ばれたい名前（任意）", english: "Name or nickname (optional)"),
@@ -38,7 +41,8 @@ struct KizunaUserProfileView: View {
 
                         KizunaAvatarPicker(
                             selection: $draft.avatarSymbol,
-                            imageData: $draft.avatarImageData
+                            imageData: $draft.avatarImageData,
+                            isLoadingPhoto: $isLoadingPhoto
                         )
                     }
                 }
@@ -61,17 +65,36 @@ struct KizunaUserProfileView: View {
                         dismiss()
                     }
                     .fontWeight(.semibold)
+                    .disabled(isLoadingPhoto)
                 }
             }
         }
     }
+}
 
-    private func profileCard<Content: View>(
+struct KizunaProfileCard<Content: View>: View {
+    let title: String
+    let icon: String
+    let spacing: CGFloat
+    let showsBorder: Bool
+    private let content: () -> Content
+
+    init(
         title: String,
         icon: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        spacing: CGFloat = 12,
+        showsBorder: Bool = true,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.icon = icon
+        self.spacing = spacing
+        self.showsBorder = showsBorder
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: spacing) {
             HStack(spacing: 9) {
                 Image(systemName: icon)
                     .font(.system(size: 15, weight: .bold))
@@ -88,5 +111,11 @@ struct KizunaUserProfileView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.primary.opacity(0.045))
         )
+        .overlay {
+            if showsBorder {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+        }
     }
 }

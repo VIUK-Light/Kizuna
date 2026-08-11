@@ -44,6 +44,10 @@ struct KizunaAvatarOption: Identifiable, Hashable {
 
 enum KizunaAvatarImage {
     private static let maximumPixelSize = 512
+    /// 写真ライブラリの原本をImageIOへ渡す前に、入力サイズを制限する。
+    static let maximumInputByteCount = 40 * 1024 * 1024
+    /// UserDefaultsへ保存するプロフィール画像の上限。
+    static let maximumStoredByteCount = 2 * 1024 * 1024
 
     static func image(from data: Data?) -> Image? {
         guard let data else { return nil }
@@ -63,6 +67,7 @@ enum KizunaAvatarImage {
     /// This keeps the profile in UserDefaults bounded while retaining enough
     /// resolution for the circular avatar surfaces.
     static func normalizedData(from data: Data) -> Data? {
+        guard data.count <= maximumInputByteCount else { return nil }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let thumbnail = CGImageSourceCreateThumbnailAtIndex(
                   source,
@@ -70,6 +75,7 @@ enum KizunaAvatarImage {
                   [
                       kCGImageSourceCreateThumbnailFromImageAlways: true,
                       kCGImageSourceCreateThumbnailWithTransform: true,
+                      kCGImageSourceShouldCacheImmediately: false,
                       kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize
                   ] as CFDictionary
               ) else {
@@ -92,7 +98,15 @@ enum KizunaAvatarImage {
             [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary
         )
         guard CGImageDestinationFinalize(destination) else { return nil }
-        return output as Data
+        let normalized = output as Data
+        guard normalized.count <= maximumStoredByteCount else { return nil }
+        return normalized
+    }
+
+    /// Normalize both newly selected and legacy stored data before persistence.
+    static func normalizedStoredData(from data: Data?) -> Data? {
+        guard let data else { return nil }
+        return normalizedData(from: data)
     }
 }
 
@@ -100,6 +114,8 @@ struct KizunaAvatarView: View {
     let symbol: String
     let imageData: Data?
     var size: CGFloat = 72
+    @State private var decodedImage: Image?
+    @State private var decodedImageData: Data?
 
     init(symbol: String, imageData: Data? = nil, size: CGFloat = 72) {
         self.symbol = symbol
@@ -125,6 +141,22 @@ struct KizunaAvatarView: View {
         return palettes[optionIndex % palettes.count]
     }
 
+    private var hasCurrentDecodedImage: Bool {
+        imageData != nil && decodedImageData == imageData && decodedImage != nil
+    }
+
+    private var accessibilityText: String {
+        if hasCurrentDecodedImage {
+            return KizunaCopy.text(japanese: "プロフィール画像", english: "Profile photo")
+        }
+        if symbol == KizunaAvatarCatalog.customImageID {
+            return KizunaAvatarCatalog.option(for: KizunaAvatarCatalog.defaultID)?.title
+                ?? KizunaCopy.text(japanese: "プロフィールアイコン", english: "Profile icon")
+        }
+        return KizunaAvatarCatalog.option(for: symbol)?.title
+            ?? KizunaCopy.text(japanese: "プロフィールアイコン", english: "Profile icon")
+    }
+
     var body: some View {
         ZStack {
             Circle()
@@ -136,12 +168,16 @@ struct KizunaAvatarView: View {
                     )
                 )
 
-            if let image = KizunaAvatarImage.image(from: imageData) {
+            if hasCurrentDecodedImage, let image = decodedImage {
                 image
                     .resizable()
                     .scaledToFill()
                     .frame(width: size, height: size)
                     .clipShape(Circle())
+            } else if symbol == KizunaAvatarCatalog.customImageID {
+                Image(systemName: KizunaAvatarCatalog.defaultID)
+                    .font(.system(size: size * 0.42, weight: .semibold))
+                    .foregroundStyle(.white)
             } else if KizunaAvatarCatalog.option(for: symbol) != nil {
                 Image(systemName: symbol)
                     .font(.system(size: size * 0.42, weight: .semibold))
@@ -158,21 +194,31 @@ struct KizunaAvatarView: View {
                 .strokeBorder(.white.opacity(0.28), lineWidth: max(1, size * 0.018))
         }
         .shadow(color: gradientColors[0].opacity(0.22), radius: size * 0.12, y: size * 0.06)
-        .accessibilityLabel(
-            imageData != nil
-                ? KizunaCopy.text(japanese: "プロフィール画像", english: "Profile photo")
-                : KizunaAvatarCatalog.option(for: symbol)?.title
-                ?? KizunaCopy.text(japanese: "プロフィールアイコン", english: "Profile icon")
-        )
+        .accessibilityLabel(accessibilityText)
+        .task(id: imageData) {
+            let nextData = imageData
+            decodedImageData = nextData
+            decodedImage = KizunaAvatarImage.image(from: nextData)
+        }
     }
 }
 
 struct KizunaAvatarPicker: View {
     @Binding var selection: String
     @Binding var imageData: Data?
+    @Binding var isLoadingPhoto: Bool
     @State private var selectedPhoto: PhotosPickerItem?
-    @State private var isLoadingPhoto = false
     @State private var photoError: String?
+
+    init(
+        selection: Binding<String>,
+        imageData: Binding<Data?>,
+        isLoadingPhoto: Binding<Bool> = .constant(false)
+    ) {
+        _selection = selection
+        _imageData = imageData
+        _isLoadingPhoto = isLoadingPhoto
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -202,6 +248,7 @@ struct KizunaAvatarPicker: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .buttonStyle(.plain)
+                    .disabled(isLoadingPhoto)
                 }
             }
 
@@ -247,6 +294,7 @@ struct KizunaAvatarPicker: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(selection == option.id && imageData == nil ? .isSelected : [])
+                    .disabled(isLoadingPhoto)
                 }
             }
         }
@@ -255,23 +303,32 @@ struct KizunaAvatarPicker: View {
             isLoadingPhoto = true
             photoError = nil
 
-            Task { @MainActor in
+            Task {
                 do {
-                    guard let data = try await item.loadTransferable(type: Data.self),
-                          let normalizedData = KizunaAvatarImage.normalizedData(from: data) else {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
                         throw KizunaAvatarError.invalidImage
                     }
-                    imageData = normalizedData
-                    selection = KizunaAvatarCatalog.customImageID
-                    isLoadingPhoto = false
-                    selectedPhoto = nil
+                    let normalizedData = await Task.detached(priority: .userInitiated) {
+                        KizunaAvatarImage.normalizedData(from: data)
+                    }.value
+                    guard let normalizedData else {
+                        throw KizunaAvatarError.invalidImage
+                    }
+                    await MainActor.run {
+                        imageData = normalizedData
+                        selection = KizunaAvatarCatalog.customImageID
+                        isLoadingPhoto = false
+                        selectedPhoto = nil
+                    }
                 } catch {
-                    isLoadingPhoto = false
-                    selectedPhoto = nil
-                    photoError = KizunaCopy.text(
-                        japanese: "画像を読み込めませんでした。",
-                        english: "The photo could not be loaded."
-                    )
+                    await MainActor.run {
+                        isLoadingPhoto = false
+                        selectedPhoto = nil
+                        photoError = KizunaCopy.text(
+                            japanese: "画像を読み込めませんでした。",
+                            english: "The photo could not be loaded."
+                        )
+                    }
                 }
             }
         }

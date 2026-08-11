@@ -312,8 +312,8 @@ struct KizunaSettingsView: View {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
             Text(KizunaCopy.text(
-                japanese: "名前とプロフィール画像が消えます。この操作は取り消せません。",
-                english: "Your name and profile photo will be removed. This cannot be undone."
+                japanese: "名前、プロフィール画像、標準アバターの選択、会話設定が消去されます。この操作は取り消せません。",
+                english: "Your name, profile photo, standard avatar selection, and conversation preference will be reset. This cannot be undone."
             ))
         }
         .alert(

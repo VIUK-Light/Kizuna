@@ -4,6 +4,7 @@ import SwiftUI
 struct KizunaLaunchView: View {
     @ObservedObject private var profileStore = KizunaUserProfileStore.shared
     @State private var draft: KizunaUserProfile
+    @State private var isLoadingPhoto = false
 
     var onFinished: () -> Void
 
@@ -33,9 +34,10 @@ struct KizunaLaunchView: View {
     }
 
     private var profileCard: some View {
-        setupCard(
+        KizunaProfileCard(
             title: KizunaCopy.text(japanese: "あなたのプロフィール", english: "Your profile"),
-            icon: "person.crop.circle"
+            icon: "person.crop.circle",
+            spacing: 14
         ) {
             TextField(
                 KizunaCopy.text(japanese: "呼ばれたい名前（任意）", english: "Name or nickname (optional)"),
@@ -51,7 +53,8 @@ struct KizunaLaunchView: View {
 
             KizunaAvatarPicker(
                 selection: $draft.avatarSymbol,
-                imageData: $draft.avatarImageData
+                imageData: $draft.avatarImageData,
+                isLoadingPhoto: $isLoadingPhoto
             )
         }
     }
@@ -75,38 +78,11 @@ struct KizunaLaunchView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .disabled(isLoadingPhoto)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 13)
         .background(.thinMaterial)
     }
 
-    private func setupCard<Content: View>(
-        title: String,
-        icon: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 9) {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.accentColor.opacity(0.12)))
-                Text(title)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-            }
-
-            content()
-        }
-        .padding(15)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.primary.opacity(0.045))
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
-    }
 }
