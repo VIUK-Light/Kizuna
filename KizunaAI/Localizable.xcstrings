@@ -121,7 +121,14 @@
       }
     },
     "%@ / 2" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ / 2"
+          }
+        }
+      }
     },
     "%@ 人" : {
       "localizations" : {
@@ -378,6 +385,12 @@
     "Kizuna" : {
       "extractionState" : "manual",
       "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kizuna"
+          }
+        },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
@@ -457,7 +470,14 @@
       }
     },
     "Lorebook・キャラ同士の関係・タグ（必要なときだけ）" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lorebook, character relationships, and tags (optional)"
+          }
+        }
+      }
     },
     "NAGI（Gemma4 31B API）" : {
       "localizations" : {
@@ -500,7 +520,14 @@
       }
     },
     "VIUK 絆 / PROFILE" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VIUK Kizuna / PROFILE"
+          }
+        }
+      }
     },
     "アクセストークン（必要な場合）" : {
       "localizations" : {
@@ -3855,7 +3882,14 @@
       }
     },
     "詳細設定" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Advanced settings"
+          }
+        }
+      }
     },
     "責任あるAIアプリケーションと倫理" : {
       "localizations" : {

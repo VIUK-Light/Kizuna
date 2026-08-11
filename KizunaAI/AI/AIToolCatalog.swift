@@ -147,6 +147,31 @@ enum AIToolCatalog {
         }
     }
 
+    /// UI-only tool label. Tool summaries and argument descriptions above are
+    /// deliberately kept in Japanese because they are serialized into the
+    /// model's function-calling prompt; UI code should use this accessor when
+    /// the in-app language is English.
+    static func localizedDisplayName(forToolNamed toolName: String) -> String {
+        let english: String
+        switch toolName {
+        case "conversation_search":
+            english = "Conversation search"
+        case "external_search":
+            english = "Web search"
+        case "python_exec":
+            english = "Python"
+        case "table_builder":
+            english = "Table builder"
+        case "current_time":
+            english = "Current time"
+        case "calculator":
+            english = "Calculator"
+        default:
+            english = toolName
+        }
+        return KizunaCopy.text(japanese: displayName(forToolNamed: toolName), english: english)
+    }
+
     static func summary(forToolNamed toolName: String) -> String {
         definition(named: toolName)?.summary ?? toolName
     }
