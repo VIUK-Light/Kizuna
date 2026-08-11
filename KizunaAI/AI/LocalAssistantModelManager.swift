@@ -277,6 +277,12 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     // 同じモデルで refreshEnvironment() が連続しても、重いモデル初期化を重ねない。
     private var automaticRuntimeCheckTask: Task<Void, Never>?
     private var automaticRuntimeCheckModelKey: String?
+    /// Strict parsing is needed before adopting an unknown file, but repeatedly
+    /// scanning its full metadata and tensor directory during environment
+    /// refreshes would block the main actor. Entries are tied to the same
+    /// path/size/modification identity used by runtime checks, plus validation
+    /// inputs that can change the result.
+    private var modelArtifactValidationCache: [String: Bool] = [:]
     private var installedModelSnapshotBeforeDownload: LocalAssistantInstalledModelSnapshot?
     private var pendingModelCandidate: LocalAssistantPendingModelCandidate?
     private var candidateRuntimeValidationTask: Task<Void, Never>?
@@ -901,6 +907,31 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         return "\(modelURL.standardizedFileURL.path)|\(size)|\(modified)"
     }
 
+    private func modelArtifactValidationCacheKey(
+        for modelURL: URL,
+        expectedBytes: Int64?,
+        trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?
+    ) -> String {
+        let expected = expectedBytes.map { String($0) } ?? "unknown"
+        let artifactIdentity = trustedArtifact.map {
+            "\($0.fileName)|\($0.byteCount)|\($0.sha256)"
+        } ?? "untrusted"
+        let depth = trustedArtifact == nil ? "strict" : "quick"
+        return "\(automaticRuntimeCheckKey(for: modelURL))|\(expected)|\(artifactIdentity)|\(depth)"
+    }
+
+    private func rememberModelArtifactValidation(_ result: Bool, for cacheKey: String) {
+        if modelArtifactValidationCache[cacheKey] == nil,
+           modelArtifactValidationCache.count >= 64 {
+            modelArtifactValidationCache.removeAll(keepingCapacity: true)
+        }
+        modelArtifactValidationCache[cacheKey] = result
+    }
+
+    private func invalidateModelArtifactValidationCache() {
+        modelArtifactValidationCache.removeAll(keepingCapacity: true)
+    }
+
     func startDownload() {
         guard !isDownloading, !isValidatingDownloadedCandidate else { return }
         NSLog(
@@ -1115,6 +1146,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return
         }
 
+        invalidateModelArtifactValidationCache()
         isDownloading = true
         downloadedBytes = 0
         expectedBytes = persistedDownloadState?.expectedBytes ?? 0
@@ -1571,8 +1603,18 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func isValidModelFile(at url: URL, expectedBytes: Int64? = nil) -> Bool {
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        let trustedArtifact = trustedArtifactForStoredModel(at: url)
+        let cacheKey = modelArtifactValidationCacheKey(
+            for: url,
+            expectedBytes: expectedBytes,
+            trustedArtifact: trustedArtifact
+        )
+        if let cached = modelArtifactValidationCache[cacheKey] {
+            return cached
+        }
+
+        let isValid: Bool
         do {
-            let trustedArtifact = trustedArtifactForStoredModel(at: url)
             try validateModelArtifact(
                 at: url,
                 fileName: url.lastPathComponent,
@@ -1582,10 +1624,12 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 validateLiteRTLMMetadata: false,
                 validationDepth: trustedArtifact == nil ? .strict : .quick
             )
-            return true
+            isValid = true
         } catch {
-            return false
+            isValid = false
         }
+        rememberModelArtifactValidation(isValid, for: cacheKey)
+        return isValid
     }
 
     private func trustedArtifactForStoredModel(at url: URL) -> LocalAssistantModelProfile.TrustedArtifact? {
@@ -2140,6 +2184,17 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             resolvedInstalledModelURL = destinationURL
             downloadedBytes = savedSize
             expectedBytes = max(candidate.expectedBytes, savedSize)
+            invalidateModelArtifactValidationCache()
+            let trustedArtifact = LocalAssistantModelProfile.trustedArtifact(for: candidate.sourceURL)
+            let validationCacheKey = modelArtifactValidationCacheKey(
+                for: destinationURL,
+                expectedBytes: expectedBytesForCompletedModel(at: destinationURL),
+                trustedArtifact: trustedArtifact
+            )
+            // The candidate passed strict background validation before this
+            // replacement, so the first post-install refresh need not parse it
+            // again on the main actor.
+            rememberModelArtifactValidation(true, for: validationCacheKey)
             activeDownloadBaseBytes = 0
             resetDownloadProgressMetrics()
             lastErrorMessage = nil

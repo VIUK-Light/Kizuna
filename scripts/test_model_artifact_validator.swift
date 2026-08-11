@@ -19,6 +19,21 @@ struct LocalAssistantModelArtifactValidatorTests {
             requireExactByteCount: true
         )
 
+        try LocalAssistantModelArtifactValidator.validate(
+            at: validGGUF,
+            fileName: "valid.gguf",
+            requireExactByteCount: false,
+            validationDepth: .quick
+        )
+
+        let hyphenatedArchitectureGGUF = directory.appendingPathComponent("hyphenated-architecture.gguf")
+        try makeGGUFModel(architecture: "command-r").write(to: hyphenatedArchitectureGGUF)
+        try LocalAssistantModelArtifactValidator.validate(
+            at: hyphenatedArchitectureGGUF,
+            fileName: "hyphenated-architecture.gguf",
+            requireExactByteCount: false
+        )
+
         try expectFailure("GGUF with a wrong digest") {
             try LocalAssistantModelArtifactValidator.validate(
                 at: validGGUF,
@@ -46,6 +61,38 @@ struct LocalAssistantModelArtifactValidatorTests {
                 fileName: "large-corrupt.gguf",
                 minimumByteCount: 50 * 1024 * 1024,
                 requireExactByteCount: false
+            )
+        }
+
+        try expectFailure("quick validation rejects arbitrary GGUF data") {
+            try LocalAssistantModelArtifactValidator.validate(
+                at: largeCorruptGGUF,
+                fileName: "large-corrupt.gguf",
+                minimumByteCount: 50 * 1024 * 1024,
+                requireExactByteCount: false,
+                validationDepth: .quick
+            )
+        }
+
+        let unsupportedVersionGGUF = directory.appendingPathComponent("unsupported-version.gguf")
+        try makeGGUFHeader(version: 1, tensorCount: 1, metadataCount: 1).write(to: unsupportedVersionGGUF)
+        try expectFailure("quick validation rejects an unsupported GGUF version") {
+            try LocalAssistantModelArtifactValidator.validate(
+                at: unsupportedVersionGGUF,
+                fileName: "unsupported-version.gguf",
+                requireExactByteCount: false,
+                validationDepth: .quick
+            )
+        }
+
+        let excessiveCountsGGUF = directory.appendingPathComponent("excessive-counts.gguf")
+        try makeGGUFHeader(version: 3, tensorCount: .max, metadataCount: .max).write(to: excessiveCountsGGUF)
+        try expectFailure("quick validation rejects excessive GGUF entry counts") {
+            try LocalAssistantModelArtifactValidator.validate(
+                at: excessiveCountsGGUF,
+                fileName: "excessive-counts.gguf",
+                requireExactByteCount: false,
+                validationDepth: .quick
             )
         }
 
@@ -91,14 +138,11 @@ struct LocalAssistantModelArtifactValidatorTests {
         print("Model artifact validator tests passed")
     }
 
-    private static func makeGGUFModel() -> Data {
-        var data = Data("GGUF".utf8)
-        appendLittleEndian(UInt32(3), to: &data)
-        appendLittleEndian(UInt64(1), to: &data)
-        appendLittleEndian(UInt64(1), to: &data)
+    private static func makeGGUFModel(architecture: String = "llama") -> Data {
+        var data = makeGGUFHeader(version: 3, tensorCount: 1, metadataCount: 1)
         appendGGUFString("general.architecture", to: &data)
         appendLittleEndian(UInt32(8), to: &data) // GGUF string
-        appendGGUFString("llama", to: &data)
+        appendGGUFString(architecture, to: &data)
 
         appendGGUFString("weight", to: &data)
         appendLittleEndian(UInt32(1), to: &data)
@@ -107,6 +151,18 @@ struct LocalAssistantModelArtifactValidatorTests {
         appendLittleEndian(UInt64(0), to: &data)
         appendZeroPadding(to: &data, alignment: 32)
         data.append(Data(repeating: 0, count: 32 * 4))
+        return data
+    }
+
+    private static func makeGGUFHeader(
+        version: UInt32,
+        tensorCount: UInt64,
+        metadataCount: UInt64
+    ) -> Data {
+        var data = Data("GGUF".utf8)
+        appendLittleEndian(version, to: &data)
+        appendLittleEndian(tensorCount, to: &data)
+        appendLittleEndian(metadataCount, to: &data)
         return data
     }
 

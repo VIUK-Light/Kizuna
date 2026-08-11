@@ -701,7 +701,7 @@ enum LocalAssistantModelArtifactValidator {
     nonisolated private static func isValidGGUFArchitecture(_ architecture: String) -> Bool {
         guard !architecture.isEmpty else { return false }
         return architecture.utf8.allSatisfy { byte in
-            (97...122).contains(byte) || (48...57).contains(byte)
+            (97...122).contains(byte) || (48...57).contains(byte) || byte == 45
         }
     }
 }
