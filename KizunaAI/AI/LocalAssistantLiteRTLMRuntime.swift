@@ -6,6 +6,7 @@
   accelerator before its framework packaging has been proven on the device.
 */
 import Foundation
+import CryptoKit
 
 #if os(iOS) && !targetEnvironment(simulator)
 #if USE_LITERTLM
@@ -296,6 +297,10 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         // これはコンテキスト全体の上限ではなく、会話1ターンの安全な入力目標。
         nonisolated static let safeInputTokenTarget = 960
         nonisolated static let minimumInputTokenTarget = 128
+        // Engine.tokenCount measures raw text, while Conversation applies the
+        // model's chat template to the system/history/user messages. Reserve
+        // a conservative template budget for those rendered markers.
+        nonisolated static let conversationTemplateTokenReserve = 256
         // Separate this cache from the earlier 512-token experiment so the
         // next launch compiles the official 2,048-token configuration fresh.
         nonisolated static let runtimeCacheVersion = "v0.14.0-cpu-baseline-1"
@@ -478,8 +483,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         let defaultContextTokenLimit = request.isRuntimeCheck
             ? Tuning.runtimeCheckContextTokenLimit
             : Tuning.contextTokenLimit
+        let requestedContextTokenLimit = defaultContextTokenLimit
         var contextTokenLimit = await engineStore.reportedContextLimit(for: modelKey)
-            ?? defaultContextTokenLimit
+            ?? requestedContextTokenLimit
         var configuration = engineConfiguration(
             for: request.modelPath,
             isRuntimeCheck: request.isRuntimeCheck,
@@ -495,7 +501,8 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                 return try await runLiteRTLMSingleAttempt(
                     request,
                     configuration: configuration,
-                    contextTokenLimit: contextTokenLimit
+                    contextTokenLimit: contextTokenLimit,
+                    requestedContextTokenLimit: requestedContextTokenLimit
                 )
             } catch {
                 if attempt == 0,
@@ -564,7 +571,8 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated private func runLiteRTLMSingleAttempt(
         _ request: LocalAssistantLiteRTLMRequest,
         configuration: LiteRTLMEngineConfiguration,
-        contextTokenLimit: Int
+        contextTokenLimit: Int,
+        requestedContextTokenLimit: Int
     ) async throws -> VIUKEmbeddedRuntimeResult {
         var sizedRequest = runtimeSizedRequest(request)
         let modelName = URL(fileURLWithPath: sizedRequest.modelPath).lastPathComponent
@@ -575,8 +583,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         }
         let inputBytes = promptBytes + systemBytes + historyBytes
         NSLog(
-            "[KizunaLiteRTLM] starting native CPU turn (model=%@, requestedContext=%ld, input=%ld bytes, prompt=%ld, system=%ld, history=%ld, output<=%ld)",
+            "[KizunaLiteRTLM] starting native CPU turn (model=%@, requestedContext=%ld, appliedContext=%ld, input=%ld bytes, prompt=%ld, system=%ld, history=%ld, output<=%ld)",
             modelName,
+            requestedContextTokenLimit,
             contextTokenLimit,
             inputBytes,
             promptBytes,
@@ -696,12 +705,17 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .joined(separator: "-")
-        return "\(safeName.isEmpty ? "model" : safeName)-\(size)-\(Int(modifiedAt))"
+        let normalizedPath = modelURL.standardizedFileURL.path
+        let pathDigest = SHA256.hash(data: Data(normalizedPath.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "\(safeName.isEmpty ? "model" : safeName)-\(size)-\(Int(modifiedAt))-\(pathDigest)"
     }
 
     /// LiteRT-LMの内部tokenizerで、system・履歴・今回の入力を実測する。
     /// 日本語ではUTF-8バイト数とtoken数の比率がモデルにより変わるため、
     /// 固定byte上限だけでは「1937 >= 1280」のような実機エラーを防げない。
+    /// Conversationのモデル固有テンプレート分は、保守的な予約枠を別に残す。
     nonisolated private func fitRequestToTokenBudget(
         _ request: LocalAssistantLiteRTLMRequest,
         engine: Engine,
@@ -709,12 +723,14 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     ) async throws -> LocalAssistantLiteRTLMRequest {
         var candidate = request
         let safetyMargin = 32
+        let templateReserve = Tuning.conversationTemplateTokenReserve
         let minimumOutputTokenCount = candidate.isRuntimeCheck
             ? 1
             : Tuning.minimumOutputTokens
         let maximumInputCapacity = contextTokenLimit
             - minimumOutputTokenCount
             - safetyMargin
+            - templateReserve
         guard maximumInputCapacity >= Tuning.minimumInputTokenTarget else {
             throw LiteRTLMTokenBudgetError.unableToFit(
                 actual: maximumInputCapacity,
@@ -726,6 +742,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         let maximumOutputTokenCount = contextTokenLimit
             - Tuning.minimumInputTokenTarget
             - safetyMargin
+            - templateReserve
         guard maximumOutputTokenCount >= minimumOutputTokenCount else {
             throw LiteRTLMTokenBudgetError.unableToFit(
                 actual: maximumOutputTokenCount,
@@ -759,7 +776,10 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         }
         let target = min(
             Tuning.safeInputTokenTarget,
-            contextTokenLimit - candidate.maxTokens - safetyMargin
+            contextTokenLimit
+                - candidate.maxTokens
+                - safetyMargin
+                - templateReserve
         )
         guard target >= Tuning.minimumInputTokenTarget else {
             throw LiteRTLMTokenBudgetError.unableToFit(
