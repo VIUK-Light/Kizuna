@@ -46,20 +46,6 @@ struct VIUKKizunaWorkspaceView: View {
         }
     }
 
-    private var myPageButton: some View {
-        Button {
-            selectedSection = .myPage
-        } label: {
-            Image(systemName: "person.crop.circle.fill")
-                .font(.system(size: 15, weight: .bold))
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Color.primary.opacity(0.08)))
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.primary)
-        .accessibilityLabel(KizunaCopy.text(japanese: "マイページ", english: "My page"))
-    }
-
     private func openDebugStory() {
         guard activeStoryWorld == nil else { return }
         pendingStoryOpenTask?.cancel()
@@ -103,7 +89,6 @@ struct VIUKKizunaWorkspaceView: View {
                     }
                 }
             }
-            myPageButton
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

@@ -92,6 +92,9 @@ struct PersonaChatView: View {
                             toThread: thread.id
                         )
                     }
+                    if horizontalSizeClass == .compact {
+                        compactShowsChat = true
+                    }
                     showLibrary = false
                 }
             )
@@ -193,6 +196,11 @@ struct PersonaChatView: View {
                 } label: {
                     Label(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"), systemImage: "sparkles.rectangle.stack.fill")
                 }
+                Button {
+                    showLibrary = true
+                } label: {
+                    Label(KizunaCopy.text(japanese: "キャラライブラリー", english: "Character library"), systemImage: "person.2.fill")
+                }
                 Divider()
                 Button {
                     showConfig = true
@@ -247,6 +255,11 @@ struct PersonaChatView: View {
                     showWorldLibrary = true
                 } label: {
                     Label(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"), systemImage: "sparkles.rectangle.stack.fill")
+                }
+                Button {
+                    showLibrary = true
+                } label: {
+                    Label(KizunaCopy.text(japanese: "キャラライブラリー", english: "Character library"), systemImage: "person.2.fill")
                 }
                 Divider()
                 Button {
