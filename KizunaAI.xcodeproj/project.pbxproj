@@ -55,6 +55,7 @@
 		869DABD7EBE6CAFDFFA95FB5 /* StoryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FD99FDA49A1F31E9B0AF2D9 /* StoryModels.swift */; };
 		8ACC310A4D09D3D8E9EF939E /* CharacterCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F28EE3BFF85529E58029ECD5 /* CharacterCategory.swift */; };
 		8AFDA9C31775F30993E618BB /* StoryGemma31BAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A67380B9E9B6A3F03A59ED67 /* StoryGemma31BAPIService.swift */; };
+		E6E40C6F135E4D49B3867938 /* StoryGemma31BResponseParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FC4B954262B4153AC8CCBA0 /* StoryGemma31BResponseParser.swift */; };
 		8C633EAE45E94C4520E03651 /* LocalAssistantModelProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */; };
 		8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */ = {isa = PBXBuildFile; fileRef = E98EDDBA3B31E35BEC97A9F6 /* SmallModelClassifying.swift */; };
 		8FDCB3669503DEDD95786DA0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */; };
@@ -163,6 +164,7 @@
 		9EEA37DA62CCCFB218D48C7C /* SeedStoryPacks.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = SeedStoryPacks.json; sourceTree = "<group>"; };
 		9F18390C24128911008211F7 /* KizunaAI.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = KizunaAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A67380B9E9B6A3F03A59ED67 /* StoryGemma31BAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryGemma31BAPIService.swift; sourceTree = "<group>"; };
+		1FC4B954262B4153AC8CCBA0 /* StoryGemma31BResponseParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryGemma31BResponseParser.swift; sourceTree = "<group>"; };
 		A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryWorldCreateView.swift; sourceTree = "<group>"; };
 		AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantModelProfile.swift; sourceTree = "<group>"; };
 		C40196698BCD7CAB2D603972 /* KizunaLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaLanguage.swift; sourceTree = "<group>"; };
@@ -334,6 +336,7 @@
 			isa = PBXGroup;
 			children = (
 				A67380B9E9B6A3F03A59ED67 /* StoryGemma31BAPIService.swift */,
+				1FC4B954262B4153AC8CCBA0 /* StoryGemma31BResponseParser.swift */,
 				69642812D805EA2FF6BFE60E /* StorySessionService.swift */,
 				82FAFC6915202038C60A537B /* Models */,
 				32662BA7701871F4D47E9E6C /* Prompt */,
@@ -696,6 +699,7 @@
 				8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */,
 				95168A37B2B238D2C0275B1C /* StoryCoverView.swift in Sources */,
 				8AFDA9C31775F30993E618BB /* StoryGemma31BAPIService.swift in Sources */,
+				E6E40C6F135E4D49B3867938 /* StoryGemma31BResponseParser.swift in Sources */,
 				56BA4549A1AF6BB5C5DCF65D /* StoryLocalization.swift in Sources */,
 				869DABD7EBE6CAFDFFA95FB5 /* StoryModels.swift in Sources */,
 				ACA8C2D8482815C911AF1FEB /* StoryPromptBuilder.swift in Sources */,
