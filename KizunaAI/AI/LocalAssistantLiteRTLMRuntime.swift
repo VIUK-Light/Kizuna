@@ -217,6 +217,17 @@ private actor LiteRTLMEngineStore {
 #endif
 #endif
 
+private enum LiteRTLMTokenBudgetError: LocalizedError {
+    case unableToFit(actual: Int, target: Int, context: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unableToFit(actual, target, context):
+            return "LiteRT-LM input could not fit the requested context budget (input=\(actual), target=\(target), context=\(context))."
+        }
+    }
+}
+
 final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     static let shared = LocalAssistantLiteRTLMRuntime()
 
@@ -425,87 +436,156 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated private func runLiteRTLMAttempt(
         _ request: LocalAssistantLiteRTLMRequest
     ) async -> VIUKEmbeddedRuntimeResult {
-        let initialSizedRequest = runtimeSizedRequest(request)
-        let configuration = engineConfiguration(
-            for: initialSizedRequest.modelPath,
-            isRuntimeCheck: initialSizedRequest.isRuntimeCheck
+        var contextTokenLimit = engineConfiguration(
+            for: request.modelPath,
+            isRuntimeCheck: request.isRuntimeCheck
+        ).maxNumTokens
+        var configuration = engineConfiguration(
+            for: request.modelPath,
+            isRuntimeCheck: request.isRuntimeCheck,
+            contextTokenLimitOverride: contextTokenLimit
         )
 
-        do {
-            var sizedRequest = initialSizedRequest
-            let modelName = URL(fileURLWithPath: sizedRequest.modelPath).lastPathComponent
-            let promptBytes = sizedRequest.prompt.lengthOfBytes(using: .utf8)
-            let systemBytes = sizedRequest.systemPrompt?.lengthOfBytes(using: .utf8) ?? 0
-            let historyBytes = sizedRequest.initialMessages.reduce(0) {
-                $0 + $1.text.lengthOfBytes(using: .utf8)
-            }
-            let inputBytes = promptBytes + systemBytes + historyBytes
-            NSLog("[KizunaLiteRTLM] starting native CPU turn (model=%@, input=%ld bytes, prompt=%ld, system=%ld, history=%ld, output<=%ld)", modelName, inputBytes, promptBytes, systemBytes, historyBytes, sizedRequest.maxTokens)
-            let engine = try await engineStore.engine(for: configuration)
-            sizedRequest = try await fitRequestToTokenBudget(
-                sizedRequest,
-                engine: engine,
-                contextTokenLimit: configuration.maxNumTokens
-            )
-            let sampler = try SamplerConfig(
-                topK: max(sizedRequest.topK, 1),
-                topP: max(0, min(sizedRequest.topP, 1)),
-                temperature: max(sizedRequest.temperature, 0),
-                seed: Int(sizedRequest.seed)
-            )
-            let initialMessages = sizedRequest.initialMessages.map { message -> Message in
-                switch message.role {
-                case .user:
-                    return Message(message.text, role: .user)
-                case .model:
-                    return Message(message.text, role: .model)
-                }
-            }
-            NSLog("[KizunaLiteRTLM] creating conversation (system=%ld bytes, historyMessages=%ld)", systemBytes, initialMessages.count)
-            let conversation = try await engine.createConversation(
-                with: ConversationConfig(
-                    systemMessage: sizedRequest.systemPrompt.map { Message($0, role: .system) },
-                    initialMessages: initialMessages,
-                    samplerConfig: sampler,
-                    maxOutputTokens: sizedRequest.maxTokens
-                )
-            )
-            await activeConversation.set(conversation, generationID: sizedRequest.generationID)
-            NSLog("[KizunaLiteRTLM] conversation ready; sending message")
-            let response: Message
+        // A compiled model can reject a prompt with a smaller limit than the
+        // app requested in EngineConfig. If the native error exposes that
+        // limit, rebuild the engine once with the model-reported value instead
+        // of retrying the same oversized request.
+        for attempt in 0..<2 {
             do {
-                response = try await conversation.sendMessage(Message(sizedRequest.prompt))
+                return try await runLiteRTLMSingleAttempt(
+                    request,
+                    configuration: configuration,
+                    contextTokenLimit: contextTokenLimit
+                )
             } catch {
-                await activeConversation.clear(conversation)
-                throw error
+                if attempt == 0,
+                   let reportedLimit = LocalAssistantLiteRTLMContextLimit
+                    .reportedMaximumTokenCount(from: error.localizedDescription),
+                   reportedLimit >= 256,
+                   reportedLimit < contextTokenLimit {
+                    NSLog(
+                        "[KizunaLiteRTLM] model reported context limit=%d; app requested=%d; retrying with reported limit",
+                        reportedLimit,
+                        contextTokenLimit
+                    )
+                    await engineStore.invalidate(configuration: configuration)
+                    contextTokenLimit = reportedLimit
+                    configuration = engineConfiguration(
+                        for: request.modelPath,
+                        isRuntimeCheck: request.isRuntimeCheck,
+                        contextTokenLimitOverride: contextTokenLimit
+                    )
+                    continue
+                }
+
+                NSLog("[KizunaLiteRTLM] native CPU turn failed: %@", error.localizedDescription)
+                await engineStore.invalidate(configuration: configuration)
+                return VIUKEmbeddedRuntimeResult(
+                    success: false,
+                    text: nil,
+                    errorMessage: "LiteRT-LM runtime error: \(error.localizedDescription)"
+                )
             }
-            await activeConversation.clear(conversation)
-            let cleaned = response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
-            let hasMeaningfulText = hasMeaningfulResponseText(cleaned)
-            // 本文や個人情報はログへ出さない。LiteRT-LM側で停止理由を取得できないため、
-            // その事実を明示しつつ、後段の StorySession が保存IDと照合できる長さだけ記録する。
-            NSLog("[KizunaLiteRTLM] native CPU turn finished (empty=%@, meaningful=%@, chars=%ld, stopReason=unavailable)", cleaned.isEmpty ? "true" : "false", hasMeaningfulText ? "true" : "false", cleaned.count)
-            return VIUKEmbeddedRuntimeResult(
-                success: hasMeaningfulText,
-                text: hasMeaningfulText ? cleaned : nil,
-                errorMessage: cleaned.isEmpty
-                    ? "LiteRT-LM runtime の応答が空でした。"
-                    : "LiteRT-LM runtime が記号だけの応答を返しました。"
-            )
-        } catch {
-            NSLog("[KizunaLiteRTLM] native CPU turn failed: %@", error.localizedDescription)
-            await engineStore.invalidate(configuration: configuration)
-            return VIUKEmbeddedRuntimeResult(
-                success: false,
-                text: nil,
-                errorMessage: "LiteRT-LM runtime error: \(error.localizedDescription)"
-            )
         }
+
+        return VIUKEmbeddedRuntimeResult(
+            success: false,
+            text: nil,
+            errorMessage: "LiteRT-LM runtime could not determine a safe context budget."
+        )
+    }
+
+    nonisolated private func runLiteRTLMSingleAttempt(
+        _ request: LocalAssistantLiteRTLMRequest,
+        configuration: LiteRTLMEngineConfiguration,
+        contextTokenLimit: Int
+    ) async throws -> VIUKEmbeddedRuntimeResult {
+        var sizedRequest = runtimeSizedRequest(request)
+        let modelName = URL(fileURLWithPath: sizedRequest.modelPath).lastPathComponent
+        let promptBytes = sizedRequest.prompt.lengthOfBytes(using: .utf8)
+        let systemBytes = sizedRequest.systemPrompt?.lengthOfBytes(using: .utf8) ?? 0
+        let historyBytes = sizedRequest.initialMessages.reduce(0) {
+            $0 + $1.text.lengthOfBytes(using: .utf8)
+        }
+        let inputBytes = promptBytes + systemBytes + historyBytes
+        NSLog(
+            "[KizunaLiteRTLM] starting native CPU turn (model=%@, requestedContext=%ld, input=%ld bytes, prompt=%ld, system=%ld, history=%ld, output<=%ld)",
+            modelName,
+            contextTokenLimit,
+            inputBytes,
+            promptBytes,
+            systemBytes,
+            historyBytes,
+            sizedRequest.maxTokens
+        )
+        let engine = try await engineStore.engine(for: configuration)
+        sizedRequest = try await fitRequestToTokenBudget(
+            sizedRequest,
+            engine: engine,
+            contextTokenLimit: contextTokenLimit
+        )
+        let sampler = try SamplerConfig(
+            topK: max(sizedRequest.topK, 1),
+            topP: max(0, min(sizedRequest.topP, 1)),
+            temperature: max(sizedRequest.temperature, 0),
+            seed: Int(sizedRequest.seed)
+        )
+        let initialMessages = sizedRequest.initialMessages.map { message -> Message in
+            switch message.role {
+            case .user:
+                return Message(message.text, role: .user)
+            case .model:
+                return Message(message.text, role: .model)
+            }
+        }
+        NSLog(
+            "[KizunaLiteRTLM] creating conversation (context=%ld, system=%ld bytes, historyMessages=%ld)",
+            contextTokenLimit,
+            systemBytes,
+            initialMessages.count
+        )
+        let conversation = try await engine.createConversation(
+            with: ConversationConfig(
+                systemMessage: sizedRequest.systemPrompt.map { Message($0, role: .system) },
+                initialMessages: initialMessages,
+                samplerConfig: sampler,
+                maxOutputTokens: sizedRequest.maxTokens
+            )
+        )
+        await activeConversation.set(conversation, generationID: sizedRequest.generationID)
+        NSLog("[KizunaLiteRTLM] conversation ready; sending message")
+        let response: Message
+        do {
+            response = try await conversation.sendMessage(Message(sizedRequest.prompt))
+        } catch {
+            await activeConversation.clear(conversation)
+            throw error
+        }
+        await activeConversation.clear(conversation)
+        let cleaned = response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasMeaningfulText = hasMeaningfulResponseText(cleaned)
+        // 本文や個人情報はログへ出さない。LiteRT-LM側で停止理由を取得できないため、
+        // その事実を明示しつつ、後段の StorySession が保存IDと照合できる長さだけ記録する。
+        NSLog(
+            "[KizunaLiteRTLM] native CPU turn finished (context=%ld, empty=%@, meaningful=%@, chars=%ld, stopReason=unavailable)",
+            contextTokenLimit,
+            cleaned.isEmpty ? "true" : "false",
+            hasMeaningfulText ? "true" : "false",
+            cleaned.count
+        )
+        return VIUKEmbeddedRuntimeResult(
+            success: hasMeaningfulText,
+            text: hasMeaningfulText ? cleaned : nil,
+            errorMessage: cleaned.isEmpty
+                ? "LiteRT-LM runtime の応答が空でした。"
+                : "LiteRT-LM runtime が記号だけの応答を返しました。"
+        )
     }
 
     nonisolated private func engineConfiguration(
         for modelPath: String,
-        isRuntimeCheck: Bool
+        isRuntimeCheck: Bool,
+        contextTokenLimitOverride: Int? = nil
     ) -> LiteRTLMEngineConfiguration {
         let modelURL = URL(fileURLWithPath: modelPath)
         let attributes = (try? FileManager.default.attributesOfItem(atPath: modelPath)) ?? [:]
@@ -516,9 +596,9 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .joined(separator: "-")
-        let contextTokenLimit = isRuntimeCheck
+        let contextTokenLimit = contextTokenLimitOverride ?? (isRuntimeCheck
             ? Tuning.runtimeCheckContextTokenLimit
-            : Tuning.contextTokenLimit
+            : Tuning.contextTokenLimit)
         let modelIdentity = "\(safeName.isEmpty ? "model" : safeName)-\(size)-\(Int(modifiedAt))-ctx\(contextTokenLimit)"
         let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
@@ -596,10 +676,18 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             )
         }
 
-        // 8回圧縮してもモデルのtokenizerが目標を超える場合は、送信前に
-        // その事実をログへ残す。Conversation作成を無理に成功扱いにはしない。
+        // 8回圧縮してもモデルのtokenizerが目標を超える場合は送信しない。
+        // これを返してしまうと、モデル側の実コンテキスト上限に対して
+        // 「安全側に計算したつもり」の入力を再び送ってしまう。
         let finalCount = try await engine.tokenCount(for: tokenProbeText(for: candidate))
         NSLog("[KizunaLiteRTLM] token budget probe reached final input=%d target<=%d", finalCount, target)
+        guard finalCount <= target else {
+            throw LiteRTLMTokenBudgetError.unableToFit(
+                actual: finalCount,
+                target: target,
+                context: contextTokenLimit
+            )
+        }
         return candidate
     }
 
