@@ -90,6 +90,7 @@ struct LocalAssistantLiteRTLMRequest {
 private struct LiteRTLMEngineConfiguration: Equatable, Sendable {
     let modelPath: String
     let cacheDirectory: String
+    let modelKey: String
     let modelIdentity: String
     let maxNumTokens: Int
 }
@@ -127,6 +128,12 @@ private actor LiteRTLMActiveConversation {
     // conversation is registered instead of silently dropping it.
     private var pendingCancellationGenerationID: UUID?
     private var pendingUnscopedCancellation = false
+    // Native cancellation is reported as a LiteRT-LM invalid-response error,
+    // not as Swift CancellationError. Keep the request long enough for the
+    // sendMessage caller to classify that result without invalidating the
+    // reusable engine.
+    private var cancellationRequestedGenerationID: UUID?
+    private var unscopedCancellationRequested = false
 
     func set(_ conversation: Conversation, generationID: UUID?) async {
         self.conversation = conversation
@@ -137,9 +144,16 @@ private actor LiteRTLMActiveConversation {
                 && pendingCancellationGenerationID == generationID)
         if pendingUnscopedCancellation {
             pendingUnscopedCancellation = false
+            unscopedCancellationRequested = true
         }
         if pendingCancellationGenerationID == generationID {
             pendingCancellationGenerationID = nil
+            cancellationRequestedGenerationID = generationID
+        } else if cancellationRequestedGenerationID != nil,
+                  cancellationRequestedGenerationID != generationID {
+            // A scoped cancellation that arrived after its conversation was
+            // cleared must not leak into a later turn.
+            cancellationRequestedGenerationID = nil
         }
         if shouldCancel {
             try? await conversation.cancel()
@@ -168,13 +182,37 @@ private actor LiteRTLMActiveConversation {
            generationID != requestedGenerationID {
             return
         }
+        if let requestedGenerationID {
+            cancellationRequestedGenerationID = requestedGenerationID
+        } else {
+            unscopedCancellationRequested = true
+        }
         try? await activeConversation.cancel()
+    }
+
+    func consumeCancellation(for requestedGenerationID: UUID?) -> Bool {
+        let matches = unscopedCancellationRequested
+            || (cancellationRequestedGenerationID != nil
+                && cancellationRequestedGenerationID == requestedGenerationID)
+        guard matches else { return false }
+        unscopedCancellationRequested = false
+        cancellationRequestedGenerationID = nil
+        return true
     }
 }
 
 private actor LiteRTLMEngineStore {
     private var engine: Engine?
     private var loadedConfiguration: LiteRTLMEngineConfiguration?
+    private var reportedContextLimits: [String: Int] = [:]
+
+    func reportedContextLimit(for modelKey: String) -> Int? {
+        reportedContextLimits[modelKey]
+    }
+
+    func rememberReportedContextLimit(_ limit: Int, for modelKey: String) {
+        reportedContextLimits[modelKey] = min(reportedContextLimits[modelKey] ?? limit, limit)
+    }
 
     func engine(for configuration: LiteRTLMEngineConfiguration) async throws -> Engine {
         if let engine, loadedConfiguration == configuration {
@@ -436,10 +474,12 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
     nonisolated private func runLiteRTLMAttempt(
         _ request: LocalAssistantLiteRTLMRequest
     ) async -> VIUKEmbeddedRuntimeResult {
-        var contextTokenLimit = engineConfiguration(
-            for: request.modelPath,
-            isRuntimeCheck: request.isRuntimeCheck
-        ).maxNumTokens
+        let modelKey = modelCacheKey(for: request.modelPath)
+        let defaultContextTokenLimit = request.isRuntimeCheck
+            ? Tuning.runtimeCheckContextTokenLimit
+            : Tuning.contextTokenLimit
+        var contextTokenLimit = await engineStore.reportedContextLimit(for: modelKey)
+            ?? defaultContextTokenLimit
         var configuration = engineConfiguration(
             for: request.modelPath,
             isRuntimeCheck: request.isRuntimeCheck,
@@ -468,6 +508,10 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                         reportedLimit,
                         contextTokenLimit
                     )
+                    await engineStore.rememberReportedContextLimit(
+                        reportedLimit,
+                        for: configuration.modelKey
+                    )
                     await engineStore.invalidate(configuration: configuration)
                     contextTokenLimit = reportedLimit
                     configuration = engineConfiguration(
@@ -478,6 +522,28 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     continue
                 }
 
+                let cancellationRequested = await activeConversation.consumeCancellation(
+                    for: request.generationID
+                )
+                let nativeCancellationReported = error.localizedDescription.range(
+                    of: "CANCELLED",
+                    options: .caseInsensitive
+                ) != nil
+                if cancellationRequested
+                    || (nativeCancellationReported && request.generationID != nil) {
+                    return VIUKEmbeddedRuntimeResult(
+                        success: false,
+                        text: nil,
+                        errorMessage: "LiteRT-LM generation was cancelled."
+                    )
+                }
+                if let budgetError = error as? LiteRTLMTokenBudgetError {
+                    return VIUKEmbeddedRuntimeResult(
+                        success: false,
+                        text: nil,
+                        errorMessage: budgetError.localizedDescription
+                    )
+                }
                 NSLog("[KizunaLiteRTLM] native CPU turn failed: %@", error.localizedDescription)
                 await engineStore.invalidate(configuration: configuration)
                 return VIUKEmbeddedRuntimeResult(
@@ -561,7 +627,17 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             await activeConversation.clear(conversation)
             throw error
         }
+        let cancellationRequested = await activeConversation.consumeCancellation(
+            for: sizedRequest.generationID
+        )
         await activeConversation.clear(conversation)
+        if cancellationRequested {
+            return VIUKEmbeddedRuntimeResult(
+                success: false,
+                text: nil,
+                errorMessage: "LiteRT-LM generation was cancelled."
+            )
+        }
         let cleaned = response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasMeaningfulText = hasMeaningfulResponseText(cleaned)
         // 本文や個人情報はログへ出さない。LiteRT-LM側で停止理由を取得できないため、
@@ -587,19 +663,11 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         isRuntimeCheck: Bool,
         contextTokenLimitOverride: Int? = nil
     ) -> LiteRTLMEngineConfiguration {
-        let modelURL = URL(fileURLWithPath: modelPath)
-        let attributes = (try? FileManager.default.attributesOfItem(atPath: modelPath)) ?? [:]
-        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
-        let modifiedAt = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let fileName = modelURL.deletingPathExtension().lastPathComponent
-        let safeName = fileName
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-            .joined(separator: "-")
+        let modelKey = modelCacheKey(for: modelPath)
         let contextTokenLimit = contextTokenLimitOverride ?? (isRuntimeCheck
             ? Tuning.runtimeCheckContextTokenLimit
             : Tuning.contextTokenLimit)
-        let modelIdentity = "\(safeName.isEmpty ? "model" : safeName)-\(size)-\(Int(modifiedAt))-ctx\(contextTokenLimit)"
+        let modelIdentity = "\(modelKey)-ctx\(contextTokenLimit)"
         let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let cacheDirectory = cachesDirectory
@@ -612,9 +680,23 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         return LiteRTLMEngineConfiguration(
             modelPath: modelPath,
             cacheDirectory: cacheDirectory.path,
+            modelKey: modelKey,
             modelIdentity: modelIdentity,
             maxNumTokens: contextTokenLimit
         )
+    }
+
+    nonisolated private func modelCacheKey(for modelPath: String) -> String {
+        let modelURL = URL(fileURLWithPath: modelPath)
+        let attributes = (try? FileManager.default.attributesOfItem(atPath: modelPath)) ?? [:]
+        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+        let modifiedAt = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let fileName = modelURL.deletingPathExtension().lastPathComponent
+        let safeName = fileName
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+        return "\(safeName.isEmpty ? "model" : safeName)-\(size)-\(Int(modifiedAt))"
     }
 
     /// LiteRT-LMの内部tokenizerで、system・履歴・今回の入力を実測する。
@@ -626,10 +708,66 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         contextTokenLimit: Int
     ) async throws -> LocalAssistantLiteRTLMRequest {
         var candidate = request
+        let safetyMargin = 32
+        let minimumOutputTokenCount = candidate.isRuntimeCheck
+            ? 1
+            : Tuning.minimumOutputTokens
+        let maximumInputCapacity = contextTokenLimit
+            - minimumOutputTokenCount
+            - safetyMargin
+        guard maximumInputCapacity >= Tuning.minimumInputTokenTarget else {
+            throw LiteRTLMTokenBudgetError.unableToFit(
+                actual: maximumInputCapacity,
+                target: Tuning.minimumInputTokenTarget,
+                context: contextTokenLimit
+            )
+        }
+
+        let maximumOutputTokenCount = contextTokenLimit
+            - Tuning.minimumInputTokenTarget
+            - safetyMargin
+        guard maximumOutputTokenCount >= minimumOutputTokenCount else {
+            throw LiteRTLMTokenBudgetError.unableToFit(
+                actual: maximumOutputTokenCount,
+                target: minimumOutputTokenCount,
+                context: contextTokenLimit
+            )
+        }
+        let adjustedOutputTokenCount = min(candidate.maxTokens, maximumOutputTokenCount)
+        guard adjustedOutputTokenCount >= minimumOutputTokenCount else {
+            throw LiteRTLMTokenBudgetError.unableToFit(
+                actual: adjustedOutputTokenCount,
+                target: minimumOutputTokenCount,
+                context: contextTokenLimit
+            )
+        }
+        if adjustedOutputTokenCount != candidate.maxTokens {
+            candidate = LocalAssistantLiteRTLMRequest(
+                prompt: candidate.prompt,
+                systemPrompt: candidate.systemPrompt,
+                modelPath: candidate.modelPath,
+                maxTokens: adjustedOutputTokenCount,
+                temperature: candidate.temperature,
+                topP: candidate.topP,
+                topK: candidate.topK,
+                seed: candidate.seed,
+                initialMessages: candidate.initialMessages,
+                isRuntimeCheck: candidate.isRuntimeCheck,
+                preferGPU: candidate.preferGPU,
+                generationID: candidate.generationID
+            )
+        }
         let target = min(
             Tuning.safeInputTokenTarget,
-            max(Tuning.minimumInputTokenTarget, contextTokenLimit - candidate.maxTokens - 32)
+            contextTokenLimit - candidate.maxTokens - safetyMargin
         )
+        guard target >= Tuning.minimumInputTokenTarget else {
+            throw LiteRTLMTokenBudgetError.unableToFit(
+                actual: target,
+                target: Tuning.minimumInputTokenTarget,
+                context: contextTokenLimit
+            )
+        }
 
         for attempt in 0..<8 {
             let tokenCount = try await engine.tokenCount(for: tokenProbeText(for: candidate))

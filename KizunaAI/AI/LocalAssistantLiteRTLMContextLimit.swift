@@ -11,6 +11,7 @@ enum LocalAssistantLiteRTLMContextLimit {
     static func reportedMaximumTokenCount(from message: String) -> Int? {
         let patterns = [
             #"maximum number of tokens allowed:\s*\d+\s*>=\s*(\d+)"#,
+            #"maximum number of tokens allowed:\s*\d+\s*>\s*(\d+)"#,
             #"maximum number of tokens allowed[^0-9]*(\d+)"#
         ]
 
