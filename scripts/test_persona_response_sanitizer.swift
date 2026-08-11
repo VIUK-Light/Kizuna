@@ -30,6 +30,11 @@ struct PersonaResponseSanitizerTests {
                 "Visible answer"
             ),
             (
+                "protocol line before a thought tag does not expose reasoning",
+                "<start_of_turn>model\n<think>internal reasoning</think>Visible answer",
+                "Visible answer"
+            ),
+            (
                 "unclosed Gemma thought channel is not exposed",
                 "<|channel>thought\ninternal reasoning",
                 ""
@@ -43,6 +48,11 @@ struct PersonaResponseSanitizerTests {
                 "inline markup example remains visible",
                 "Use <think> as an XML-like literal in this example.",
                 "Use <think> as an XML-like literal in this example."
+            ),
+            (
+                "Markdown code indentation remains visible",
+                "    let user_id = 42\n    print(user_id)",
+                "    let user_id = 42\n    print(user_id)"
             ),
             (
                 "standalone protocol lines are removed",

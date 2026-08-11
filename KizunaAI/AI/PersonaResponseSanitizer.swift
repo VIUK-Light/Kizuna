@@ -28,14 +28,21 @@ enum PersonaResponseSanitizer {
     ]
 
     static func sanitize(_ text: String) -> String {
-        let withoutLeadingReasoning = removingLeadingReasoningPayloads(from: text)
-        let visibleLines = withoutLeadingReasoning
+        // A template token can precede a leading thought payload. Remove such
+        // complete-line tokens first, otherwise the thought tag no longer
+        // begins at the protocol boundary and its contents would leak.
+        let withoutStandaloneProtocolTokens = removingStandaloneProtocolLines(from: text)
+        let withoutLeadingReasoning = removingLeadingReasoningPayloads(
+            from: withoutStandaloneProtocolTokens
+        )
+        return removingStandaloneProtocolLines(from: withoutLeadingReasoning)
+    }
+
+    private static func removingStandaloneProtocolLines(from text: String) -> String {
+        text
             .components(separatedBy: .newlines)
             .filter { !isStandaloneProtocolToken($0) }
-
-        return visibleLines
             .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func removingLeadingReasoningPayloads(from text: String) -> String {

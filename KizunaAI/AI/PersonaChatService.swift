@@ -519,11 +519,12 @@ final class PersonaChatService: ObservableObject {
     }
 
     private func meaningfulResponse(_ text: String) -> String? {
-        let cleaned = sanitize(text).trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitized = sanitize(text)
+        let cleaned = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return nil }
         let placeholders: Set<String> = ["…", "・・・", "・・", "...", "..", "."]
         guard !placeholders.contains(cleaned) else { return nil }
-        return cleaned
+        return sanitized
     }
 
     private func failGeneration(threadID: UUID, generationID: UUID, message: String) {
