@@ -491,7 +491,9 @@ struct StoryWorldDetailView: View {
         let session = resumableSession
         let currentScene = session?.currentSceneId.flatMap { id in vm.scenes.first(where: { $0.id == id }) }
         let presentationScene = currentScene.map { displayedScene($0) }
-        let sceneTitle = presentationScene?.title
+        let sceneTitle = presentationScene.flatMap { scene in
+            scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : scene.title
+        }
             ?? KizunaCopy.text(japanese: "最初の場面", english: "Opening scene")
         return detailCard(title: KizunaCopy.text(japanese: "物語状態", english: "Story status"), icon: "location.north.line") {
             VStack(alignment: .leading, spacing: 8) {
@@ -502,7 +504,7 @@ struct StoryWorldDetailView: View {
                     systemImage: session == nil ? "play.circle" : "bookmark.fill"
                 )
                     .font(.system(size: 16, weight: .bold))
-                if session != nil, let updatedAt = session?.updatedAt {
+                if let updatedAt = session?.updatedAt {
                     Text(KizunaCopy.language == .english
                          ? "Last updated \(updatedAt, style: .relative)"
                          : "最終更新 \(updatedAt, style: .relative)")
@@ -757,7 +759,7 @@ struct StoryWorldDetailView: View {
             if vm.sessions.isEmpty {
                 emptyLine(KizunaCopy.text(japanese: "まだ会話セッションはありません。", english: "No conversation sessions yet."))
             } else {
-                VStack(alignment: .leading, spacing: 6) {
+                LazyVStack(alignment: .leading, spacing: 6) {
                     ForEach(vm.sessions) { session in
                         Button {
                             onResumeSession?(world, session.id)

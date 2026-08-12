@@ -29,13 +29,13 @@ struct StoryWorldLibraryView: View {
 
     @MainActor
     init(
-        viewModel: StoryWorldLibraryViewModel,
+        viewModel: @autoclosure @escaping () -> StoryWorldLibraryViewModel,
         showsDismissButton: Bool = true,
         onStartSession: ((StoryWorld) -> Void)? = nil,
         onResumeSession: ((StoryWorld, UUID) -> Void)? = nil,
         onStartNewSession: ((StoryWorld) -> Void)? = nil
     ) {
-        _vm = StateObject(wrappedValue: viewModel)
+        _vm = StateObject(wrappedValue: viewModel())
         self.showsDismissButton = showsDismissButton
         self.onStartSession = onStartSession
         self.onResumeSession = onResumeSession

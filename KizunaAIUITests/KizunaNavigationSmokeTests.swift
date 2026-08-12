@@ -9,6 +9,7 @@ final class KizunaNavigationSmokeTests: XCTestCase {
         app.launchArguments = [
             "-AppleLanguages", "(ja)",
             "-AppleLocale", "ja_JP",
+            "-kizuna.language", "ja",
             "-kizuna.launch.completed", "YES"
         ]
         app.launch()

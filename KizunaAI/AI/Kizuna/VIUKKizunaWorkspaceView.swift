@@ -17,6 +17,7 @@ struct VIUKKizunaWorkspaceView: View {
     /// Storyカードを連続タップした時、先に予約された古い遷移が後から
     /// sheetを開いて別Worldを表示しないよう、遷移Taskを一つに限定する。
     @State private var pendingStoryOpenTask: Task<Void, Never>?
+    @State private var pendingStoryRequestID: UUID?
 
     private var selectedSectionBinding: Binding<KizunaWorkspaceSection> {
         Binding(
@@ -105,16 +106,19 @@ struct VIUKKizunaWorkspaceView: View {
         .onDisappear {
             pendingStoryOpenTask?.cancel()
             pendingStoryOpenTask = nil
+            pendingStoryRequestID = nil
         }
     }
 
     private func openDebugStory() {
         guard activeStoryWorld == nil else { return }
         pendingStoryOpenTask?.cancel()
+        let requestID = UUID()
+        pendingStoryRequestID = requestID
         pendingStoryOpenTask = Task { @MainActor in
             // 設定シートのdismiss完了を待ってからStoryを表示する。
             try? await Task.sleep(nanoseconds: 450_000_000)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, pendingStoryRequestID == requestID else { return }
             guard activeStoryWorld == nil else { return }
             let repository = LocalJSONStoryWorldRepository()
             // ライブラリーの初期化がまだ終わっていない起動直後でも対象を取得できるようにする。
@@ -123,25 +127,31 @@ struct VIUKKizunaWorkspaceView: View {
                 worldRepo: repository
             )
             guard let world = (try? await repository.fetchWorlds())?.first else { return }
+            guard !Task.isCancelled, pendingStoryRequestID == requestID else { return }
             activeStorySessionID = nil
             activeStoryStartsNewSession = false
             activeStoryWorld = world
-            pendingStoryOpenTask = nil
+            if pendingStoryRequestID == requestID {
+                pendingStoryRequestID = nil
+                pendingStoryOpenTask = nil
+            }
         }
     }
 
     private func scheduleStoryOpen(world: StoryWorld, sessionID: UUID?, startsNewSession: Bool) {
         pendingStoryOpenTask?.cancel()
+        let requestID = UUID()
+        pendingStoryRequestID = requestID
         pendingStoryOpenTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled else {
-                pendingStoryOpenTask = nil
-                return
-            }
+            guard !Task.isCancelled, pendingStoryRequestID == requestID else { return }
             activeStorySessionID = sessionID
             activeStoryStartsNewSession = startsNewSession
             activeStoryWorld = world
-            pendingStoryOpenTask = nil
+            if pendingStoryRequestID == requestID {
+                pendingStoryRequestID = nil
+                pendingStoryOpenTask = nil
+            }
         }
     }
 

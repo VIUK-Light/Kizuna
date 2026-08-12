@@ -84,8 +84,21 @@ struct PersonaChatView: View {
         .sheet(isPresented: $showLibrary) {
             CharacterLibraryView(
                 onStartChat: { character in
-                    // ライブラリーから「絆チャット開始」が押されたら、
-                    // CharacterProfile を Persona 用の簡易プロファイルに変換し、新規スレッドを作る。
+                    // A library card resumes the latest non-empty thread for
+                    // this character before falling back to a draft/new thread.
+                    // This keeps the relationship continuous across entry points.
+                    if let existing = store.threads.first(where: {
+                        $0.characterID == character.id && !$0.messages.isEmpty
+                    }) {
+                        store.selectThread(id: existing.id)
+                        if horizontalSizeClass == .compact {
+                            compactShowsChat = true
+                        }
+                        showLibrary = false
+                        return
+                    }
+
+                    // CharacterProfile を Persona 用の簡易プロファイルに変換する。
                     let persona = PersonaProfile(
                         name: character.displayName.isEmpty ? character.name : character.displayName,
                         age: nil,
@@ -102,8 +115,8 @@ struct PersonaChatView: View {
                             .joined(separator: " / ")
                     )
                     let thread = store.createThread(with: persona, characterID: character.id)
-                    // 初回メッセージがあればアシスタント発として入れておく。
-                    if !character.firstMessage.isEmpty {
+                    // 初回メッセージは空の下書きへ一度だけ追加する。
+                    if thread.messages.isEmpty, !character.firstMessage.isEmpty {
                         store.appendMessage(
                             PersonaMessage(role: .assistant, text: character.firstMessage),
                             toThread: thread.id
