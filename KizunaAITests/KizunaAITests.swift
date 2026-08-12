@@ -504,9 +504,9 @@ final class KizunaAITests: XCTestCase {
             id: UUID(),
             storyWorldId: worldID,
             currentSceneId: validSceneID,
+            lastTurnProgress: "古い保存",
             persistenceRevision: 1,
             latestTurnCheckpoint: validCheckpoint,
-            lastTurnProgress: "古い保存",
             updatedAt: date
         )
         let validScene = StoryScene(
