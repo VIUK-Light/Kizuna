@@ -240,9 +240,16 @@ final class LocalJSONCastRepository: CastRepository {
 }
 
 final class LocalJSONStorySceneRepository: StorySceneRepository {
-    private let store = LocalJSONStore<StoryScene>(fileName: "story_scenes.json")
+    private let store: LocalJSONStore<StoryScene>
+    private let storageURL: URL
+
+    init(storageURL: URL = KizunaDataMigration.characterLibraryURL) {
+        self.storageURL = storageURL
+        self.store = LocalJSONStore<StoryScene>(fileName: "story_scenes.json", baseURL: storageURL)
+    }
+
     func fetchScenes(storyWorldId: UUID) async throws -> [StoryScene] {
-        try StoryTurnJournal.recoverIfNeeded()
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
         return try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.createdAt < $1.createdAt }
@@ -291,9 +298,16 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
 }
 
 final class LocalJSONStorySessionRepository: StorySessionRepository {
-    private let store = LocalJSONStore<StorySession>(fileName: "story_sessions.json")
+    private let store: LocalJSONStore<StorySession>
+    private let storageURL: URL
+
+    init(storageURL: URL = KizunaDataMigration.characterLibraryURL) {
+        self.storageURL = storageURL
+        self.store = LocalJSONStore<StorySession>(fileName: "story_sessions.json", baseURL: storageURL)
+    }
+
     func fetchSessions(storyWorldId: UUID) async throws -> [StorySession] {
-        try StoryTurnJournal.recoverIfNeeded()
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
         let sessions = try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.updatedAt > $1.updatedAt }
@@ -330,11 +344,12 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         return repairedSessions
     }
     func saveSession(_ session: StorySession) async throws {
-        try StoryTurnJournal.recoverIfNeeded()
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
         try LocalJSONStoreTransaction.withSharedLock {
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
-                fileName: "story_sessions.json"
+                fileName: "story_sessions.json",
+                baseURL: storageURL
             )
             if let index = sessions.firstIndex(where: { $0.id == session.id }) {
                 let current = sessions[index]
@@ -345,6 +360,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                     )
                 }
                 var next = StorySessionMessageRepair.repaired(session)
+                // The checkpoint is owned by the persistence boundary, not by
+                // an auxiliary caller's possibly older snapshot. Preserve the
+                // current turn state so narration/rest saves cannot erase a
+                // pending or committed checkpoint.
+                next.latestTurnCheckpoint = current.latestTurnCheckpoint
                 next.persistenceRevision = current.effectivePersistenceRevision + 1
                 next.updatedAt = Date()
                 sessions[index] = next
@@ -354,7 +374,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 next.updatedAt = Date()
                 sessions.append(next)
             }
-            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
         }
     }
 
@@ -364,11 +384,12 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         turnID: UUID,
         attempt: Int
     ) async throws -> StorySession {
-        try StoryTurnJournal.recoverIfNeeded()
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
         return try LocalJSONStoreTransaction.withSharedLock {
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
-                fileName: "story_sessions.json"
+                fileName: "story_sessions.json",
+                baseURL: storageURL
             )
             guard let index = sessions.firstIndex(where: { $0.id == session.id }) else {
                 throw StoryTurnPersistenceError.sessionNotFound
@@ -406,7 +427,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                     retried.persistenceRevision = actualRevision + 1
                     retried.updatedAt = now
                     sessions[index] = retried
-                    try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
+                    try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
                     return retried
                 }
                 if checkpoint.status == .committed && checkpoint.turnID == turnID {
@@ -443,7 +464,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             next.persistenceRevision = actualRevision + 1
             next.updatedAt = now
             sessions[index] = next
-            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
             return next
         }
     }
@@ -454,15 +475,17 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         turnID: UUID,
         assistantMessageIDs: [UUID]
     ) async throws -> StorySession {
-        try StoryTurnJournal.recoverIfNeeded()
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
         return try LocalJSONStoreTransaction.withSharedLock {
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
-                fileName: "story_sessions.json"
+                fileName: "story_sessions.json",
+                baseURL: storageURL
             )
             var scenes = try LocalJSONStoreTransaction.load(
                 StoryScene.self,
-                fileName: "story_scenes.json"
+                fileName: "story_scenes.json",
+                baseURL: storageURL
             )
             guard let sessionIndex = sessions.firstIndex(where: { $0.id == session.id }) else {
                 throw StoryTurnPersistenceError.sessionNotFound
@@ -539,14 +562,15 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             // ジャーナルを先に置いてから2つのスナップショットを更新する。
             // 途中終了時は次回のfetchで両方を再適用する。
             try StoryTurnJournal.prepareUnlocked(
-                StoryTurnJournalEntry(turnID: turnID, session: committed, scene: committedScene)
+                StoryTurnJournalEntry(turnID: turnID, session: committed, scene: committedScene),
+                baseURL: storageURL
             )
             sessions[sessionIndex] = committed
             scenes[sceneIndex] = committedScene
-            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
-            try LocalJSONStoreTransaction.save(scenes, fileName: "story_scenes.json")
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
+            try LocalJSONStoreTransaction.save(scenes, fileName: "story_scenes.json", baseURL: storageURL)
             do {
-                try StoryTurnJournal.removeUnlocked(turnID: turnID)
+                try StoryTurnJournal.removeUnlocked(turnID: turnID, baseURL: storageURL)
             } catch {
                 // Session/Sceneが確定した後のjournal削除失敗は、ターン自体の
                 // 失敗ではない。次回recoveryで同じ確定snapshotを再適用する。
@@ -568,11 +592,12 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         failureCode: String?
     ) async throws {
         guard status != .pending && status != .committed else { return }
-        try StoryTurnJournal.recoverIfNeeded()
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
         try LocalJSONStoreTransaction.withSharedLock {
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
-                fileName: "story_sessions.json"
+                fileName: "story_sessions.json",
+                baseURL: storageURL
             )
             guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
                 throw StoryTurnPersistenceError.sessionNotFound
@@ -597,16 +622,17 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             current.persistenceRevision = current.effectivePersistenceRevision + 1
             current.updatedAt = checkpoint.updatedAt
             sessions[index] = current
-            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
         }
     }
 
     func recoverInterruptedTurns(storyWorldId: UUID) async throws {
-        try StoryTurnJournal.recoverIfNeeded()
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
         try LocalJSONStoreTransaction.withSharedLock {
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
-                fileName: "story_sessions.json"
+                fileName: "story_sessions.json",
+                baseURL: storageURL
             )
             var changed = false
             for index in sessions.indices where sessions[index].storyWorldId == storyWorldId {
@@ -625,7 +651,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 changed = true
             }
             if changed {
-                try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
+                try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
             }
         }
     }

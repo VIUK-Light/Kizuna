@@ -36,8 +36,12 @@ enum LocalJSONStoreTransaction {
         try LocalJSONStoreFileLock.shared.withLock(body)
     }
 
-    static func load<T: Codable>(_ type: T.Type, fileName: String) throws -> [T] {
-        let url = KizunaDataMigration.characterLibraryURL.appendingPathComponent(fileName)
+    static func load<T: Codable>(
+        _ type: T.Type,
+        fileName: String,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws -> [T] {
+        let url = baseURL.appendingPathComponent(fileName)
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
         do {
             let data = try Data(contentsOf: url)
@@ -51,8 +55,12 @@ enum LocalJSONStoreTransaction {
         }
     }
 
-    static func save<T: Codable>(_ items: [T], fileName: String) throws {
-        let base = KizunaDataMigration.characterLibraryURL
+    static func save<T: Codable>(
+        _ items: [T],
+        fileName: String,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
+        let base = baseURL
         let url = base.appendingPathComponent(fileName)
         do {
             try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -70,8 +78,11 @@ enum LocalJSONStoreTransaction {
 
     /// 壊れた補助ファイルを上書きせずに同じ保存先へ退避する。
     /// 呼び出し側は退避後に新しい空ファイルを作るか、失敗を利用者へ返す。
-    static func backup(fileName: String) throws -> URL {
-        let base = KizunaDataMigration.characterLibraryURL
+    static func backup(
+        fileName: String,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws -> URL {
+        let base = baseURL
         let sourceURL = base.appendingPathComponent(fileName)
         let backupName = "\(sourceURL.deletingPathExtension().lastPathComponent).corrupt-\(UUID().uuidString).json"
         let backupURL = base.appendingPathComponent(backupName)
@@ -94,10 +105,10 @@ actor LocalJSONStore<T: Codable> {
     private let decoder: JSONDecoder
     private let fm = FileManager.default
 
-    init(fileName: String) {
+    init(fileName: String, baseURL: URL = KizunaDataMigration.characterLibraryURL) {
         self.fileName = fileName
 
-        let base = KizunaDataMigration.characterLibraryURL
+        let base = baseURL
         self.fileURL = base.appendingPathComponent(fileName)
 
         let enc = JSONEncoder()

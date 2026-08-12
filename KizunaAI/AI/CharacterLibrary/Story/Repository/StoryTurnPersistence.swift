@@ -99,22 +99,26 @@ struct StoryTurnJournalEntry: Codable, Equatable {
 enum StoryTurnJournal {
     private static let fileName = "story_turn_journal.json"
 
-    static func recoverIfNeeded() throws {
+    static func recoverIfNeeded(
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
         try LocalJSONStoreTransaction.withSharedLock {
             let entries: [StoryTurnJournalEntry]
             do {
                 entries = try LocalJSONStoreTransaction.load(
                     StoryTurnJournalEntry.self,
-                    fileName: fileName
+                    fileName: fileName,
+                    baseURL: baseURL
                 )
             } catch {
                 // 壊れたjournalを残したままにすると、全てのStory read/writeが
                 // 同じdecode errorで停止する。元ファイルを退避してから空journalへ
                 // 戻し、部分コミットの調査材料を失わないようにする。
-                let backupURL = try LocalJSONStoreTransaction.backup(fileName: fileName)
+                let backupURL = try LocalJSONStoreTransaction.backup(fileName: fileName, baseURL: baseURL)
                 try LocalJSONStoreTransaction.save(
                     [StoryTurnJournalEntry](),
-                    fileName: fileName
+                    fileName: fileName,
+                    baseURL: baseURL
                 )
                 NSLog(
                     "[StoryTurnJournal] quarantined corrupt journal=%@ reason=%@",
@@ -134,10 +138,11 @@ enum StoryTurnJournal {
                 }
                 return true
             }) else {
-                let backupURL = try LocalJSONStoreTransaction.backup(fileName: fileName)
+                let backupURL = try LocalJSONStoreTransaction.backup(fileName: fileName, baseURL: baseURL)
                 try LocalJSONStoreTransaction.save(
                     [StoryTurnJournalEntry](),
-                    fileName: fileName
+                    fileName: fileName,
+                    baseURL: baseURL
                 )
                 NSLog(
                     "[StoryTurnJournal] quarantined semantically invalid journal=%@",
@@ -148,39 +153,41 @@ enum StoryTurnJournal {
 
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
-                fileName: "story_sessions.json"
+                fileName: "story_sessions.json",
+                baseURL: baseURL
             )
             var scenes = try LocalJSONStoreTransaction.load(
                 StoryScene.self,
-                fileName: "story_scenes.json"
+                fileName: "story_scenes.json",
+                baseURL: baseURL
             )
 
             for entry in entries {
-                if let sessionIndex = sessions.firstIndex(where: { $0.id == entry.session.id }) {
-                    let persisted = sessions[sessionIndex]
-                    if shouldApply(entry.session, over: persisted) {
-                        sessions[sessionIndex] = entry.session
-                    }
-                } else {
-                    // A missing record is normally the half-written side of the
-                    // commit. Recreate it from the journal snapshot.
-                    sessions.append(entry.session)
+                guard let sessionIndex = sessions.firstIndex(where: { $0.id == entry.session.id }),
+                      let sceneIndex = scenes.firstIndex(where: { $0.id == entry.scene.id }) else {
+                    // A missing record may have been intentionally deleted
+                    // after the commit. Do not resurrect it from a stale
+                    // journal; the next normal save will create a fresh entry.
+                    NSLog(
+                        "[StoryTurnJournal] skipped replay for missing record turn=%@",
+                        entry.turnID.uuidString
+                    )
+                    continue
                 }
-
-                if let sceneIndex = scenes.firstIndex(where: { $0.id == entry.scene.id }) {
-                    let persisted = scenes[sceneIndex]
-                    if shouldApply(entry.scene, over: persisted) {
-                        scenes[sceneIndex] = entry.scene
-                    }
-                } else {
-                    scenes.append(entry.scene)
+                let persistedSession = sessions[sessionIndex]
+                if shouldApply(entry.session, over: persistedSession) {
+                    sessions[sessionIndex] = entry.session
+                }
+                let persistedScene = scenes[sceneIndex]
+                if shouldApply(entry.scene, over: persistedScene) {
+                    scenes[sceneIndex] = entry.scene
                 }
             }
-            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
-            try LocalJSONStoreTransaction.save(scenes, fileName: "story_scenes.json")
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: baseURL)
+            try LocalJSONStoreTransaction.save(scenes, fileName: "story_scenes.json", baseURL: baseURL)
             // journalを空配列としてatomic writeする。削除ではなく空配列に
             // することで、次回の保存先初期化と同じ形式を保つ。
-            try LocalJSONStoreTransaction.save([StoryTurnJournalEntry](), fileName: fileName)
+            try LocalJSONStoreTransaction.save([StoryTurnJournalEntry](), fileName: fileName, baseURL: baseURL)
         }
     }
 
@@ -199,22 +206,30 @@ enum StoryTurnJournal {
 extension StoryTurnJournal {
     /// Repository実装だけがジャーナルの全体を扱うための短い書き込みAPI。
     /// 同じファイルロックの中から呼び出す前提で、二重ロックはしない。
-    static func prepareUnlocked(_ entry: StoryTurnJournalEntry) throws {
+    static func prepareUnlocked(
+        _ entry: StoryTurnJournalEntry,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
         var entries = try LocalJSONStoreTransaction.load(
             StoryTurnJournalEntry.self,
-            fileName: fileName
+            fileName: fileName,
+            baseURL: baseURL
         )
         entries.removeAll { $0.turnID == entry.turnID }
         entries.append(entry)
-        try LocalJSONStoreTransaction.save(entries, fileName: fileName)
+        try LocalJSONStoreTransaction.save(entries, fileName: fileName, baseURL: baseURL)
     }
 
-    static func removeUnlocked(turnID: UUID) throws {
+    static func removeUnlocked(
+        turnID: UUID,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
         var entries = try LocalJSONStoreTransaction.load(
             StoryTurnJournalEntry.self,
-            fileName: fileName
+            fileName: fileName,
+            baseURL: baseURL
         )
         entries.removeAll { $0.turnID == turnID }
-        try LocalJSONStoreTransaction.save(entries, fileName: fileName)
+        try LocalJSONStoreTransaction.save(entries, fileName: fileName, baseURL: baseURL)
     }
 }
