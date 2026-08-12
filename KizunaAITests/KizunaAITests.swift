@@ -117,21 +117,26 @@ final class KizunaAITests: XCTestCase {
             turnID: turnID,
             attempt: 1
         )
+        let retryMessage = StoryMessage(id: UUID(), author: .user, text: "同じターン")
         let second = try await repository.beginTurn(
-            session: first,
-            userMessage: userMessage,
+            session: session,
+            userMessage: retryMessage,
             turnID: turnID,
             attempt: 1
         )
 
-        XCTAssertEqual(first, second)
-        XCTAssertEqual(second.messages.filter { $0.id == userMessage.id }.count, 1)
+        XCTAssertEqual(first.latestTurnCheckpoint?.turnID, turnID)
+        XCTAssertEqual(second.latestTurnCheckpoint?.turnID, turnID)
+        XCTAssertEqual(second.latestTurnCheckpoint?.userMessageID, userMessage.id)
+        XCTAssertEqual(second.persistenceRevision, first.persistenceRevision)
+        XCTAssertEqual(second.messages.filter { $0.turnID == turnID }.count, 1)
         let persisted = try LocalJSONStoreTransaction.load(
             StorySession.self,
             fileName: "story_sessions.json",
             baseURL: storageURL
         )
-        XCTAssertEqual(persisted.first?.messages.filter { $0.id == userMessage.id }.count, 1)
+        XCTAssertEqual(persisted.first?.messages.filter { $0.turnID == turnID }.count, 1)
+        XCTAssertEqual(persisted.first?.messages.first?.id, userMessage.id)
     }
 
     func testStorySessionRepositoryCommitRejectsStalePersistenceRevision() async throws {
