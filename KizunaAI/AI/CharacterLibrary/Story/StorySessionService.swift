@@ -63,6 +63,33 @@ enum StoryRetryMetadata {
     }
 }
 
+/// Resolves whether output safety may reuse the generated text.
+///
+/// `requireEdit` is a hard rejection, not a rewrite hint. A missing or blank
+/// rewrite for `soften` must also reject the generated text; falling back to
+/// it would turn a failed safety transformation into a successful save.
+enum StoryOutputSafetyResolution: Equatable {
+    case keepGeneratedText
+    case useRewrittenText(String)
+    case rejectGeneratedText
+
+    nonisolated static func resolve(decision: SafetyDecision) -> Self {
+        switch decision.action {
+        case .allow, .warn:
+            return .keepGeneratedText
+        case .soften:
+            guard let rewritten = decision.rewrittenText?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !rewritten.isEmpty else {
+                return .rejectGeneratedText
+            }
+            return .useRewrittenText(rewritten)
+        case .block, .requireEdit:
+            return .rejectGeneratedText
+        }
+    }
+}
+
 /// 一時的なランタイム/保存失敗を会話履歴へ永続化せず表示する通知の再試行方法。
 /// 保存に失敗した補助操作も、直前のユーザーターンを誤って再送しないよう、
 /// 操作ごとの再試行を明示的に保持する。
@@ -1139,7 +1166,27 @@ final class StorySessionService: ObservableObject {
             }
             return
         case .soften, .requireEdit:
-            if let rewritten = outSafety.rewrittenText, !rewritten.isEmpty { rawFinal = rewritten }
+            guard case let .useRewrittenText(rewritten) = StoryOutputSafetyResolution.resolve(decision: outSafety) else {
+                let notice = outSafety.action == .requireEdit
+                    ? localizedNotice(
+                        "安全上の理由でこの応答は保存しませんでした。表現を変えてもう一度試してください。",
+                        "This response was not saved for safety reasons. Try a different way to continue."
+                    )
+                    : localizedNotice(
+                        "安全な書き換えを作れなかったため、元の応答は保存していません。もう一度試してください。",
+                        "A safe rewrite was unavailable, so the original response was not saved. Try again."
+                    )
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: notice,
+                    backend: generationModel == .e4b ? .local : .gemmaAPI,
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: usedBackendName + "・safety rewrite rejected"
+                )
+                return
+            }
+            rawFinal = rewritten
         case .warn, .allow:
             break
         }
