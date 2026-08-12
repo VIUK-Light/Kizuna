@@ -665,13 +665,15 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         }
     }
 
-    /// 重複Worldの移行専用。セッションの所属Worldだけを変更し、
-    /// 会話のcreatedAt/updatedAtを移行時刻で上書きしない。
-    /// 通常の編集経路（saveSession）はupdatedAtを更新するため、移行では使わない。
+    /// 重複Worldの移行専用。セッションの所属Worldを変更し、
+    /// 進行中turnの古いsnapshotが移行を巻き戻さないようrevisionを進める。
+    /// 会話本文のcreatedAtは変更せず、updatedAtだけを移行時刻へ更新する。
     func moveSession(id: UUID, toStoryWorldId: UUID) async throws {
         try await store.mutate { sessions in
             guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
             sessions[index].storyWorldId = toStoryWorldId
+            sessions[index].persistenceRevision = sessions[index].effectivePersistenceRevision + 1
+            sessions[index].updatedAt = Date()
         }
     }
 

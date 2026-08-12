@@ -139,6 +139,35 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persisted.first?.messages.first?.id, userMessage.id)
     }
 
+    func testStorySessionRepositoryMoveSessionAdvancesRevision() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let originalWorldID = UUID()
+        let movedWorldID = UUID()
+        let session = StorySession(
+            id: UUID(),
+            storyWorldId: originalWorldID,
+            persistenceRevision: 4,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        try await repository.moveSession(id: session.id, toStoryWorldId: movedWorldID)
+
+        let moved = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(moved?.storyWorldId, movedWorldID)
+        XCTAssertEqual(moved?.persistenceRevision, 5)
+        XCTAssertGreaterThan(moved?.updatedAt ?? .distantPast, session.updatedAt)
+    }
+
     func testStorySessionRepositoryCommitRejectsStalePersistenceRevision() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
