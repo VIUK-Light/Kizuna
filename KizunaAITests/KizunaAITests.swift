@@ -497,7 +497,7 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
-    func testStoryTurnJournalDoesNotResurrectDeletedSession() throws {
+    func testStoryTurnJournalRetainsMissingSessionUntilItReturns() throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
         let sceneID = UUID()
@@ -525,9 +525,19 @@ final class KizunaAITests: XCTestCase {
             updatedAt: date
         )
         let scene = StoryScene(id: sceneID, storyWorldId: worldID, updatedAt: date)
+        var persistedScene = scene
+        persistedScene.summary = "既存の場面"
+        persistedScene.updatedAt = date.addingTimeInterval(-10)
         try LocalJSONStoreTransaction.save(
-            [scene],
+            [persistedScene],
             fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        // ファイル自体の欠落ではなく、対象recordだけが存在しない状態を
+        // 作る。空配列を明示的に保存した上でjournalを保持できるか確認する。
+        try LocalJSONStoreTransaction.save(
+            [StorySession](),
+            fileName: "story_sessions.json",
             baseURL: storageURL
         )
         try LocalJSONStoreTransaction.save(
@@ -540,18 +550,56 @@ final class KizunaAITests: XCTestCase {
 
         XCTAssertTrue(
             try LocalJSONStoreTransaction.load(
-                StorySession.self,
-                fileName: "story_sessions.json",
-                baseURL: storageURL
-            ).isEmpty
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        ).isEmpty
         )
         XCTAssertEqual(
             try LocalJSONStoreTransaction.load(
                 StoryScene.self,
                 fileName: "story_scenes.json",
                 baseURL: storageURL
-            ).first?.id,
-            scene.id
+            ).first?.summary,
+            "既存の場面"
+        )
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).count,
+            1
+        )
+
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).first?.latestTurnCheckpoint?.status,
+            .committed
+        )
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryScene.self,
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            ).first?.summary,
+            scene.summary
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
         )
     }
 
@@ -667,6 +715,125 @@ final class KizunaAITests: XCTestCase {
                 baseURL: storageURL
             ).isEmpty
         )
+    }
+
+    func testStoryTurnJournalRecoversValidEntryWhenMalformedRecordIsMixed() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let date = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: date,
+                updatedAt: date
+            ),
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+        let persistedSession = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            lastTurnProgress: "古い保存",
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: date
+        )
+        let persistedScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "古い場面",
+            updatedAt: date
+        )
+        var journalSession = persistedSession
+        journalSession.persistenceRevision = 2
+        journalSession.lastTurnProgress = "壊れたentryがあっても復旧"
+        journalSession.updatedAt = date.addingTimeInterval(100)
+        var journalScene = persistedScene
+        journalScene.summary = "有効な場面"
+        journalScene.updatedAt = date.addingTimeInterval(100)
+
+        try LocalJSONStoreTransaction.save(
+            [persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let validEntry = StoryTurnJournalEntry(
+            turnID: turnID,
+            session: journalSession,
+            scene: journalScene
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var rawItems = try JSONSerialization.jsonObject(
+            with: encoder.encode([validEntry]),
+            options: [.fragmentsAllowed]
+        ) as! [Any]
+        rawItems.append(["turnID": "not-a-uuid"])
+        let journalData = try JSONSerialization.data(
+            withJSONObject: rawItems,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try journalData.write(
+            to: storageURL.appendingPathComponent("story_turn_journal.json"),
+            options: [.atomic]
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        let sessions = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        let scenes = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(sessions.first?.lastTurnProgress, "壊れたentryがあっても復旧")
+        XCTAssertEqual(scenes.first?.summary, "有効な場面")
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+        let backups = try FileManager.default.contentsOfDirectory(
+            at: storageURL,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix("story_turn_journal.corrupt-") }
+        XCTAssertEqual(backups.count, 1)
+    }
+
+    func testStoryTurnJournalDoesNotOverwriteUnreadableJournal() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let journalURL = storageURL.appendingPathComponent("story_turn_journal.json")
+        try FileManager.default.createDirectory(at: journalURL, withIntermediateDirectories: true)
+
+        XCTAssertThrowsError(try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL))
+
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journalURL.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+        let backups = try FileManager.default.contentsOfDirectory(
+            at: storageURL,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix("story_turn_journal.corrupt-") }
+        XCTAssertTrue(backups.isEmpty)
     }
 
     private func makeStoryPersistenceTestDirectory() throws -> URL {
