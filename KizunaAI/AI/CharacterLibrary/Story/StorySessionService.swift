@@ -498,6 +498,8 @@ final class StorySessionService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         var session = session
         var scene = scene
+        let sceneStorageActiveCharacterIds = scene.activeCharacterIds
+        scene.activeCharacterIds = session.resolvedActiveCharacterIds(fallback: scene)
         // Keep `world` raw for every repository write.  Prompt construction is
         // the presentation/generation boundary, so it may use the translated
         // copy without allowing that copy to leak into StorySession storage.
@@ -789,8 +791,15 @@ final class StorySessionService: ObservableObject {
         }
         var sceneWithSelectedCharacters = scene
         sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
+        session.activeCharacterIds = sceneWithSelectedCharacters.activeCharacterIds
         // 選択結果はターンのcommitまでメモリ上に保持する。生成失敗時に
         // activeCharacterIdsだけが先に保存される部分成功を作らない。
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
+        // 選択結果の適用前にも確認する。cancel()後の遅延結果を
+        // 次回のシーン選択へ持ち越さない。
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
@@ -1344,6 +1353,26 @@ final class StorySessionService: ObservableObject {
         }
         if newSummary != scene.summary {
             scene.summary = newSummary
+            var sceneForSummarySave = scene
+            // Sceneは初期値・表示用のミラーであり、現在キャストの正本ではない。
+            // ここでSession未保存の選定結果をSceneだけへ先に書かない。
+            sceneForSummarySave.activeCharacterIds = sceneStorageActiveCharacterIds
+            do {
+                try await sceneRepo.saveScene(sceneForSummarySave)
+            } catch {
+                latestRuntimeNotice = StoryRuntimeNotice(
+                    text: localizedNotice(
+                        "場面の要約を保存できませんでした。本文は保存済みですが、再読み込み前にもう一度試してください。",
+                        "The scene summary could not be saved. The reply was saved, but try again before reloading."
+                    ),
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: "scene summary save failed",
+                    backend: .persistence
+                )
+                NSLog("[StorySession] scene summary save failed: %@", error.localizedDescription)
+            }
+            guard isGenerationActive(generationID) else { return }
         }
         // 12) 進行状態は本文の完了を遅らせない。
         // 以前はここで同じローカルモデルへ進行JSONを追加生成していたため、
@@ -1358,6 +1387,9 @@ final class StorySessionService: ObservableObject {
         // path, while structured state is applied without a second LLM call.
         let structuredProgressUpdate = parseProgressUpdate(rawFinal)
         var deterministicState = session.storyState ?? StoryState()
+        // Scene values seed StoryState only when the session is first created.
+        // Once a turn has changed the canonical state, reapplying the static
+        // Scene fields here would make the world visibly jump backwards.
         let objective = session.currentObjective?.nonEmpty ?? scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty
         if let objective {
             deterministicState.activeGoals = Array(([objective] + deterministicState.activeGoals).filter { !$0.isEmpty }.reduce(into: [String]()) { result, value in

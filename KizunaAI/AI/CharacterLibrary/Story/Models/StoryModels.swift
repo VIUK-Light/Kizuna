@@ -1087,6 +1087,9 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
     var id: UUID
     var storyWorldId: UUID
     var currentSceneId: UUID?
+    /// 現在の会話で登場するキャストの正本。旧データではnilのまま読み込み、
+    /// 初回ターンだけSceneのactiveCharacterIdsをフォールバックとして使う。
+    var activeCharacterIds: [UUID]?
     var messages: [StoryMessage]
     var progressLabel: String?
     var currentObjective: String?
@@ -1113,6 +1116,7 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         id: UUID = UUID(),
         storyWorldId: UUID,
         currentSceneId: UUID? = nil,
+        activeCharacterIds: [UUID]? = nil,
         messages: [StoryMessage] = [],
         progressLabel: String? = nil,
         currentObjective: String? = nil,
@@ -1131,6 +1135,9 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         self.id = id
         self.storyWorldId = storyWorldId
         self.currentSceneId = currentSceneId
+        self.activeCharacterIds = activeCharacterIds.map {
+            Array($0.prefix(StoryConstants.maxActiveCharacters))
+        }
         self.messages = messages
         self.progressLabel = progressLabel
         self.currentObjective = currentObjective
@@ -1151,5 +1158,15 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
 extension StorySession {
     var effectivePersistenceRevision: UInt64 {
         persistenceRevision ?? 0
+    }
+
+    /// Sessionを正本にし、旧データだけSceneの初期キャストへフォールバックする。
+    /// 明示的な空配列は「現在キャストなし」という保存済みの値として扱う。
+    func resolvedActiveCharacterIds(
+        fallback scene: StoryScene,
+        maxCount: Int = StoryConstants.maxActiveCharacters
+    ) -> [UUID] {
+        let source = activeCharacterIds ?? scene.activeCharacterIds
+        return Array(source.prefix(max(0, maxCount)))
     }
 }
