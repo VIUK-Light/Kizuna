@@ -14,7 +14,7 @@ enum LocalJSONStoreError: Error {
     case decode(underlying: Error)
 }
 
-private final class LocalJSONStoreFileLock: @unchecked Sendable {
+final class LocalJSONStoreFileLock: @unchecked Sendable {
     nonisolated static let shared = LocalJSONStoreFileLock()
     private let lock = NSLock()
 
@@ -22,6 +22,50 @@ private final class LocalJSONStoreFileLock: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return try body()
+    }
+}
+
+/// 複数のJSONファイルへまたがる短いコミットで、通常のLocalJSONStoreと
+/// 同じプロセス内ロックを共有するための低レベルヘルパー。
+///
+/// ここでは読み込み・エンコード・atomic writeだけを行い、LLM生成や
+/// ネットワーク待ちをロック内で実行しない。Storyのターンジャーナルが
+/// session/sceneを一緒に確定するために使う。
+enum LocalJSONStoreTransaction {
+    static func withSharedLock<Result>(_ body: () throws -> Result) rethrows -> Result {
+        try LocalJSONStoreFileLock.shared.withLock(body)
+    }
+
+    static func load<T: Codable>(_ type: T.Type, fileName: String) throws -> [T] {
+        let url = KizunaDataMigration.characterLibraryURL.appendingPathComponent(fileName)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode([T].self, from: data)
+        } catch let decodingError as DecodingError {
+            throw LocalJSONStoreError.decode(underlying: decodingError)
+        } catch {
+            throw LocalJSONStoreError.ioFailure(underlying: error)
+        }
+    }
+
+    static func save<T: Codable>(_ items: [T], fileName: String) throws {
+        let base = KizunaDataMigration.characterLibraryURL
+        let url = base.appendingPathComponent(fileName)
+        do {
+            try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(items)
+            try data.write(to: url, options: [.atomic])
+        } catch let encodingError as EncodingError {
+            throw LocalJSONStoreError.encode(underlying: encodingError)
+        } catch {
+            throw LocalJSONStoreError.ioFailure(underlying: error)
+        }
     }
 }
 

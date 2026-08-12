@@ -987,6 +987,10 @@ struct StoryMessage: Codable, Identifiable, Equatable, Hashable {
     /// この発話を生成したターンのID。旧データではnilのまま読み込む。
     /// 同一生成内の重複修復にだけ使い、別ターンの正当な反復は保持する。
     var generationID: UUID?
+    /// このメッセージが属する永続ターン。旧データではnilのまま読み込む。
+    /// generationIDは実行ごとに変わるため、再試行・復旧の冪等キーには
+    /// turnIDを使う。
+    var turnID: UUID?
     /// system通知をどのバックエンドで再試行できるか。旧ストアには
     /// このキーがないため optional のまま後方互換にする。
     var retryBackend: StoryGenerationBackend?
@@ -997,6 +1001,7 @@ struct StoryMessage: Codable, Identifiable, Equatable, Hashable {
         text: String,
         createdAt: Date = Date(),
         generationID: UUID? = nil,
+        turnID: UUID? = nil,
         retryBackend: StoryGenerationBackend? = nil
     ) {
         self.id = id
@@ -1004,7 +1009,52 @@ struct StoryMessage: Codable, Identifiable, Equatable, Hashable {
         self.text = text
         self.createdAt = createdAt
         self.generationID = generationID
+        self.turnID = turnID
         self.retryBackend = retryBackend
+    }
+}
+
+/// Storyの1ユーザー入力を、生成・保存・再試行まで同じ単位で追跡する状態。
+/// Codableのraw valueは将来のリポジトリ差し替えでも安定させる。
+enum StoryTurnStatus: String, Codable, Hashable {
+    case pending
+    case committed
+    case failed
+    case cancelled
+    case interrupted
+}
+
+struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
+    var turnID: UUID
+    var userMessageID: UUID
+    var status: StoryTurnStatus
+    var attempt: Int
+    var baseRevision: UInt64
+    var assistantMessageIDs: [UUID]
+    var startedAt: Date
+    var updatedAt: Date
+    var failureCode: String?
+
+    init(
+        turnID: UUID,
+        userMessageID: UUID,
+        status: StoryTurnStatus = .pending,
+        attempt: Int = 1,
+        baseRevision: UInt64 = 0,
+        assistantMessageIDs: [UUID] = [],
+        startedAt: Date = Date(),
+        updatedAt: Date = Date(),
+        failureCode: String? = nil
+    ) {
+        self.turnID = turnID
+        self.userMessageID = userMessageID
+        self.status = status
+        self.attempt = max(1, attempt)
+        self.baseRevision = baseRevision
+        self.assistantMessageIDs = assistantMessageIDs
+        self.startedAt = startedAt
+        self.updatedAt = updatedAt
+        self.failureCode = failureCode
     }
 }
 
@@ -1028,6 +1078,11 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
     var lastSelectedModelName: String?
     /// 直近ターンで実際に使ったバックエンド、または未起動/失敗理由の短い状態。
     var lastUsedBackendName: String?
+    /// 保存成功ごとに単調増加する世代。旧データはnilを0として扱う。
+    var persistenceRevision: UInt64?
+    /// 生成中・直近ターンの復旧境界。本文とは別に保存して、再起動後に
+    /// pendingを放置したり、同じユーザー入力を二重追加したりしない。
+    var latestTurnCheckpoint: StoryTurnCheckpoint?
     var createdAt: Date
     var updatedAt: Date
 
@@ -1045,6 +1100,8 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         storyState: StoryState? = nil,
         lastSelectedModelName: String? = nil,
         lastUsedBackendName: String? = nil,
+        persistenceRevision: UInt64? = nil,
+        latestTurnCheckpoint: StoryTurnCheckpoint? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -1061,7 +1118,15 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         self.storyState = storyState
         self.lastSelectedModelName = lastSelectedModelName
         self.lastUsedBackendName = lastUsedBackendName
+        self.persistenceRevision = persistenceRevision
+        self.latestTurnCheckpoint = latestTurnCheckpoint
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+}
+
+extension StorySession {
+    var effectivePersistenceRevision: UInt64 {
+        persistenceRevision ?? 0
     }
 }
