@@ -845,4 +845,72 @@ final class KizunaAITests: XCTestCase {
         }
         return url
     }
+
+    @MainActor
+    func testPersonaStorePreservesCorruptRawBlobAcrossCRUDAndFinalize() {
+        let suiteName = "KizunaAITests.PersonaCorrupt.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let raw = Data([0x00, 0xFF, 0x10, 0x7B])
+        defaults.set(raw, forKey: "persona.threads.v1")
+        let store = PersonaChatStore(defaults: defaults)
+        let persona = PersonaProfile(
+            name: "Test",
+            personality: "quiet",
+            tone: .casual,
+            relation: .friend
+        )
+
+        XCTAssertTrue(store.isPersistenceRecoveryRequired)
+        store.finalizePersist()
+        _ = store.createThread(with: persona, characterID: UUID())
+        store.appendMessage(
+            PersonaMessage(role: .assistant, text: "hello"),
+            toThread: store.threads[0].id
+        )
+
+        XCTAssertEqual(defaults.data(forKey: "persona.threads.v1"), raw)
+    }
+
+    @MainActor
+    func testPersonaStoreTreatsNonDataRawValueAsCorruptAndAllowsExplicitRecovery() {
+        let suiteName = "KizunaAITests.PersonaWrongType.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("not-a-data-blob", forKey: "persona.threads.v1")
+        let store = PersonaChatStore(defaults: defaults)
+
+        XCTAssertTrue(store.isPersistenceRecoveryRequired)
+        XCTAssertEqual(defaults.string(forKey: "persona.threads.v1"), "not-a-data-blob")
+        XCTAssertTrue(store.discardCorruptPersistedThreads())
+        XCTAssertFalse(store.isPersistenceRecoveryRequired)
+        XCTAssertNotNil(defaults.object(forKey: "persona.threads.v1.corrupt-backup"))
+        XCTAssertEqual(defaults.data(forKey: "persona.threads.v1"), try? JSONEncoder().encode([PersonaThread]()))
+    }
+
+    @MainActor
+    func testPersonaStoreStillPersistsValidData() {
+        let suiteName = "KizunaAITests.PersonaValid.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let first = PersonaChatStore(defaults: defaults)
+        let persona = PersonaProfile(
+            name: "Saved",
+            personality: "warm",
+            tone: .casual,
+            relation: .friend
+        )
+        let thread = first.createThread(with: persona)
+        first.appendMessage(
+            PersonaMessage(role: .user, text: "keep this"),
+            toThread: thread.id
+        )
+
+        let second = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(second.threads.count, 1)
+        XCTAssertEqual(second.threads.first?.messages.first?.text, "keep this")
+    }
 }
