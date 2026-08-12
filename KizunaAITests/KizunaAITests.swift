@@ -1,6 +1,7 @@
 import XCTest
 @testable import KizunaAI
 
+@MainActor
 final class KizunaAITests: XCTestCase {
     func testPersonaResponseSanitizerPreservesVisibleText() {
         let input = "<think>private reasoning</think>Visible response"
@@ -199,6 +200,7 @@ final class KizunaAITests: XCTestCase {
         let pending = StoryTurnReducer.begin(
             turnID: turnID,
             userMessageID: UUID(),
+            attempt: 1,
             ownerID: nil,
             baseRevision: 1,
             startedAt: oldDate,
@@ -280,6 +282,7 @@ final class KizunaAITests: XCTestCase {
         let pending = StoryTurnReducer.begin(
             turnID: turnID,
             userMessageID: UUID(),
+            attempt: 1,
             ownerID: nil,
             baseRevision: 1,
             startedAt: date,
