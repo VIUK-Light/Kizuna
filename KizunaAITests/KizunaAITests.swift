@@ -271,6 +271,79 @@ final class KizunaAITests: XCTestCase {
         XCTAssertGreaterThan(moved?.updatedAt ?? .distantPast, session.updatedAt)
     }
 
+    func testStorySessionRepositoryRejectsCommitAfterWorldMoveAndPreservesMovedWorld() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let originalWorldID = UUID()
+        let movedWorldID = UUID()
+        let scene = StoryScene(
+            id: UUID(),
+            storyWorldId: originalWorldID,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let session = StorySession(
+            id: UUID(),
+            storyWorldId: originalWorldID,
+            currentSceneId: scene.id,
+            persistenceRevision: 4,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let turnID = UUID()
+        let pending = try await repository.beginTurn(
+            session: session,
+            userMessage: StoryMessage(author: .user, text: "移動前のターン"),
+            turnID: turnID,
+            attempt: 1
+        )
+        try await repository.moveSession(id: session.id, toStoryWorldId: movedWorldID)
+
+        do {
+            _ = try await repository.commitTurn(
+                session: pending,
+                scene: scene,
+                turnID: turnID,
+                assistantMessageIDs: []
+            )
+            XCTFail("a turn snapshot from before the world move must not commit")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(
+                error,
+                .revisionConflict(
+                    expected: pending.effectivePersistenceRevision,
+                    actual: pending.effectivePersistenceRevision + 1
+                )
+            )
+        }
+
+        try await repository.finishTurn(
+            sessionID: session.id,
+            turnID: turnID,
+            attempt: 1,
+            status: .failed,
+            failureCode: "world_moved"
+        )
+
+        let persisted = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.storyWorldId, movedWorldID)
+        XCTAssertEqual(persisted?.persistenceRevision, pending.effectivePersistenceRevision + 2)
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.status, .failed)
+    }
+
     func testStorySessionRepositoryCommitRejectsStalePersistenceRevision() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
