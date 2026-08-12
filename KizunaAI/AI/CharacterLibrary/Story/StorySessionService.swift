@@ -219,6 +219,25 @@ final class StorySessionService: ObservableObject {
         var storyState: StoryStatePatch?
     }
 
+    /// Scene/Worldの初期値を、既存Sessionの状態へ毎ターン再注入しない。
+    /// Sceneの目標はSession作成時だけseedされ、以後はSessionが正本になる。
+    static func deterministicStateForTurn(
+        existing state: StoryState?,
+        currentObjective: String?
+    ) -> StoryState {
+        var next = state ?? StoryState()
+        if let objective = currentObjective?.nonEmpty {
+            next.activeGoals = Array(([objective] + next.activeGoals)
+                .filter { !$0.isEmpty }
+                .reduce(into: [String]()) { result, value in
+                    if !result.contains(value) { result.append(value) }
+                }
+                .prefix(6))
+        }
+        next.updatedAt = Date()
+        return next
+    }
+
     /// 入口: ユーザー発話を送る。session/scene は呼び出し側で確定済み前提。
     /// `existingUserMessageID` が指定された場合は保存済みターンを再利用し、
     /// ユーザー発話を再 append せず生成だけを再実行する。
@@ -553,6 +572,9 @@ final class StorySessionService: ObservableObject {
             session.storyState,
             scene: scene
         )
+        if session.currentObjective?.nonEmpty == nil {
+            session.currentObjective = scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty
+        }
 
         // user メッセージとpending checkpointを1回の保存境界で確保する。
         // 再試行では既存の保存済み入力を再利用し、同じIDの発話を重複保存しない。
@@ -1478,18 +1500,10 @@ final class StorySessionService: ObservableObject {
         // same response, reuse it here. This is intentionally opportunistic:
         // ordinary dialogue does not decode and stays on the deterministic
         // path, while structured state is applied without a second LLM call.
-        var deterministicState = session.storyState ?? StoryState()
-        // Scene values seed StoryState only when the session is first created.
-        // Once a turn has changed the canonical state, reapplying the static
-        // Scene fields here would make the world visibly jump backwards.
-        let objective = session.currentObjective?.nonEmpty ?? scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty
-        if let objective {
-            deterministicState.activeGoals = Array(([objective] + deterministicState.activeGoals).filter { !$0.isEmpty }.reduce(into: [String]()) { result, value in
-                if !result.contains(value) { result.append(value) }
-            }.prefix(6))
-        }
-        deterministicState.updatedAt = Date()
-        session.storyState = deterministicState
+        session.storyState = Self.deterministicStateForTurn(
+            existing: session.storyState,
+            currentObjective: session.currentObjective
+        )
 
         let progressStatePatch = modelStatePatch ?? acceptedStructuredProgressUpdate?.storyState
         let progressUpdate = StoryProgressUpdate(
@@ -1497,9 +1511,7 @@ final class StorySessionService: ObservableObject {
                 ?? session.progressLabel.nonEmpty
                 ?? "第1章 きっかけ",
             currentObjective: acceptedStructuredProgressUpdate?.currentObjective.nonEmpty
-                ?? session.currentObjective.nonEmpty
-                ?? scene.sceneGoal.nonEmpty
-                ?? world.storyGoal.nonEmpty,
+                ?? session.currentObjective.nonEmpty,
             lastTurnProgress: acceptedStructuredProgressUpdate?.lastTurnProgress.nonEmpty
                 ?? synthesizeTurnProgress(from: newMessages),
             lastSceneSummary: acceptedStructuredProgressUpdate?.lastSceneSummary.nonEmpty
@@ -1516,8 +1528,6 @@ final class StorySessionService: ObservableObject {
             ?? "第1章 きっかけ"
         session.currentObjective = progressUpdate.currentObjective.nonEmpty
             ?? session.currentObjective.nonEmpty
-            ?? scene.sceneGoal.nonEmpty
-            ?? world.storyGoal.nonEmpty
         session.lastTurnProgress = progressUpdate.lastTurnProgress.nonEmpty
             ?? session.lastTurnProgress.nonEmpty
         session.lastSceneSummary = progressUpdate.lastSceneSummary.nonEmpty
