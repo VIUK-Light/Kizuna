@@ -855,7 +855,7 @@ final class StorySessionService: ObservableObject {
         // 参加していないキャラの記憶まで一括注入すると、同じ本文を持つ
         // 別キャラの経験が混ざるため、共通(nil)または今回のactive castだけに絞る。
         let contextualCharacterIDs = Set(activeCast.map(\.characterId))
-        let storyMemoryCandidates = ((try? await storyMemoryRepo.fetchMemories(
+        let scopedStoryMemoryCandidates = ((try? await storyMemoryRepo.fetchMemories(
             storyWorldId: world.id,
             storySessionId: session.id
         )) ?? [])
@@ -866,6 +866,14 @@ final class StorySessionService: ObservableObject {
                 return validCastCharacterIDs.contains(characterID)
                     && contextualCharacterIDs.contains(characterID)
             }
+        let activeSourceTurnIDs = Set(session.messages.compactMap(\.generationID))
+        let storyMemoryCandidates = scopedStoryMemoryCandidates.filter { memory in
+            // MemoryのSession IDだけでなく、出典ターンが現在の履歴に
+            // 残っていることも確認する。旧形式やUndo済みターン由来の
+            // 記録を次のプロンプトへ注入しない。
+            !memory.sourceTurnIds.isEmpty
+                && !memory.sourceTurnIds.isDisjoint(with: activeSourceTurnIDs)
+        }
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
@@ -1482,9 +1490,10 @@ final class StorySessionService: ObservableObject {
                         category: memory.category,
                         importance: memory.importance,
                         source: memory.source,
-                        storySessionId: session.id
+                        storySessionId: session.id,
+                        sourceTurnIds: [generationID]
                     )
-                    try? await storyMemoryRepo.saveMemory(storyMemory)
+                    guard await saveStoryMemory(storyMemory, generationID: generationID) else { return }
                     extractedStoryMemoryTexts.insert(memory.text)
                 }
             }
@@ -1500,16 +1509,16 @@ final class StorySessionService: ObservableObject {
                 await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
                 return
             }
-            try? await storyMemoryRepo.saveMemory(
-                StoryMemory(
-                    storyWorldId: world.id,
-                    text: progress,
-                    category: .event,
-                    importance: 0.6,
-                    source: .summary,
-                    storySessionId: session.id
-                )
+            let progressMemory = StoryMemory(
+                storyWorldId: world.id,
+                text: progress,
+                category: .event,
+                importance: 0.6,
+                source: .summary,
+                storySessionId: session.id,
+                sourceTurnIds: [generationID]
             )
+            guard await saveStoryMemory(progressMemory, generationID: generationID) else { return }
         }
 
         await MainActor.run {
@@ -1649,6 +1658,31 @@ final class StorySessionService: ObservableObject {
 
     private func isGenerationActive(_ generationID: UUID) -> Bool {
         !Task.isCancelled && activeGenerationID == generationID
+    }
+
+    /// A repository write may finish after cancellation because file I/O is
+    /// not itself cancellable. Remove only this turn's provenance afterward;
+    /// a memory merged with another valid turn keeps the other provenance.
+    @discardableResult
+    private func saveStoryMemory(_ memory: StoryMemory, generationID: UUID) async -> Bool {
+        guard isGenerationActive(generationID) else { return false }
+        do {
+            try await storyMemoryRepo.saveMemory(memory)
+        } catch {
+            NSLog("[StorySession] story memory save failed: %@", error.localizedDescription)
+            // Memory is auxiliary state. A failed write must not strand the
+            // already-committed conversation in an active generation state.
+            return true
+        }
+        guard isGenerationActive(generationID) else {
+            do {
+                try await storyMemoryRepo.removeSourceTurnIds([generationID])
+            } catch {
+                NSLog("[StorySession] cancelled story memory cleanup failed: %@", error.localizedDescription)
+            }
+            return false
+        }
+        return true
     }
 
     // 全体へ持ち越してよい情報だけを明示する。
