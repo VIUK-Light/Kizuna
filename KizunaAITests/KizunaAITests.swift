@@ -190,6 +190,156 @@ final class KizunaAITests: XCTestCase {
         }
     }
 
+    func testStorySessionRepositoryFinishTurnIgnoresStaleAttempt() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let turnID = UUID()
+        let date = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.begin(
+            turnID: turnID,
+            userMessageID: UUID(),
+            attempt: 1,
+            ownerID: StoryTurnOwner.currentID,
+            baseRevision: 0,
+            startedAt: date,
+            updatedAt: date
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: date
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        try await repository.finishTurn(
+            sessionID: sessionID,
+            turnID: turnID,
+            attempt: 2,
+            status: .cancelled,
+            failureCode: "stale_cleanup"
+        )
+
+        let persisted = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.status, .pending)
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.attempt, 1)
+        XCTAssertEqual(persisted?.persistenceRevision, 1)
+    }
+
+    func testStorySessionRepositoryRecoveryPreservesCurrentOwner() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let checkpoint = StoryTurnReducer.begin(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            attempt: 1,
+            ownerID: StoryTurnOwner.currentID,
+            baseRevision: 0,
+            startedAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        try await repository.recoverInterruptedTurns(storyWorldId: worldID)
+
+        let persisted = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.status, .pending)
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.ownerID, StoryTurnOwner.currentID)
+    }
+
+    func testStorySessionRepositoryCommitPreservesExternallyEditedScene() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let sessionID = UUID()
+        let turnID = UUID()
+        let generatedAt = Date(timeIntervalSince1970: 100)
+        let editedAt = Date(timeIntervalSince1970: 200)
+        let checkpoint = StoryTurnReducer.begin(
+            turnID: turnID,
+            userMessageID: UUID(),
+            attempt: 1,
+            ownerID: StoryTurnOwner.currentID,
+            baseRevision: 0,
+            startedAt: generatedAt,
+            updatedAt: generatedAt
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: generatedAt
+        )
+        let externallyEditedScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "ユーザーが編集した場面",
+            updatedAt: editedAt
+        )
+        let generatedScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "生成側の古い要約",
+            updatedAt: generatedAt
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [externallyEditedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let committed = try await repository.commitTurn(
+            session: session,
+            scene: generatedScene,
+            turnID: turnID,
+            assistantMessageIDs: []
+        )
+
+        let persistedScene = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(committed.latestTurnCheckpoint?.status, .committed)
+        XCTAssertEqual(persistedScene?.summary, "ユーザーが編集した場面")
+        XCTAssertEqual(persistedScene?.updatedAt, editedAt)
+    }
+
     func testStoryTurnJournalDoesNotOverwriteNewerPersistedRecords() throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
