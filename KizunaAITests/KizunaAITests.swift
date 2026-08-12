@@ -167,17 +167,17 @@ final class KizunaAITests: XCTestCase {
         let firstMerged = StoryMemory(
             storyWorldId: worldID,
             text: mergedText,
-            storySessionId: sessionID,
             importance: 0.2,
             createdAt: Date(timeIntervalSince1970: 100),
+            storySessionId: sessionID,
             sourceTurnIds: [firstSourceTurnID]
         )
         let secondMerged = StoryMemory(
             storyWorldId: worldID,
             text: mergedText,
-            storySessionId: sessionID,
             importance: 0.9,
             createdAt: Date(timeIntervalSince1970: 200),
+            storySessionId: sessionID,
             sourceTurnIds: [secondSourceTurnID]
         )
         try await repository.saveMemory(firstMerged)
