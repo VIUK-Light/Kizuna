@@ -85,6 +85,30 @@ enum SafetyAction: String, Codable, CaseIterable, Hashable {
     case requireEdit   // 修正必須 (保存させない / 出力させない)
 }
 
+/// Decide which output text is eligible to reach the Story persistence path.
+/// A rewrite is mandatory for `.soften`; `.requireEdit` never produces a
+/// persistable output, so the original model text can never fall through.
+enum StoryOutputSafetyPolicy {
+    static func persistableText(
+        action: SafetyAction,
+        original: String,
+        rewritten: String?
+    ) -> String? {
+        switch action {
+        case .block, .requireEdit:
+            return nil
+        case .soften:
+            guard let rewritten,
+                  !rewritten.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return rewritten
+        case .allow, .warn:
+            return original
+        }
+    }
+}
+
 /// 重要度。
 enum SafetySeverity: String, Codable, CaseIterable, Hashable {
     case info

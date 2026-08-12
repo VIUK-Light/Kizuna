@@ -1110,4 +1110,37 @@ final class KizunaAITests: XCTestCase {
             [firstID, secondID]
         )
     }
+
+    func testStoryOutputSafetyPolicyNeverFallsBackToBlockedText() {
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .requireEdit,
+                original: "unsafe original",
+                rewritten: nil
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: "   "
+            )
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: "safe rewrite"
+            ),
+            "safe rewrite"
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .warn,
+                original: "allowed with warning",
+                rewritten: nil
+            ),
+            "allowed with warning"
+        )
+    }
 }

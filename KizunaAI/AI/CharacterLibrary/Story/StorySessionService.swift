@@ -1259,13 +1259,28 @@ final class StorySessionService: ObservableObject {
                 safetyConcern: safetyConcern
             )
             return
-        case .soften, .requireEdit:
-            // Safety rewrite後の本文と、書き換え前本文から抽出したSTATE_UPDATEは
-            // 同じ意味を保証できない。元のPatchを破棄し、見えている本文だけを保存する。
-            modelStatePatch = nil
-            if let rewritten = outSafety.rewrittenText, !rewritten.isEmpty { rawFinal = rewritten }
-        case .warn, .allow:
-            break
+        default:
+            guard let persistableText = StoryOutputSafetyPolicy.persistableText(
+                action: outSafety.action,
+                original: rawFinal,
+                rewritten: outSafety.rewrittenText
+            ) else {
+                let notice = localizedNotice(
+                    "安全上の理由でこの応答は保存しませんでした。別の表現で続けてください。",
+                    "This response was not saved for safety reasons. Try a different way to continue."
+                )
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: notice,
+                    backend: generationModel == .e4b ? .local : .gemmaAPI,
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: usedBackendName + "・安全編集未完了",
+                    safetyConcern: safetyConcern
+                )
+                return
+            }
+            rawFinal = persistableText
         }
         rawFinal = sanitize(rawFinal)
         guard isMeaningfulStoryText(rawFinal) else {
