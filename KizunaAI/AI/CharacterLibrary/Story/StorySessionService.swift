@@ -148,6 +148,10 @@ final class StorySessionService: ObservableObject {
     /// cancel()/watchdogが開始したcheckpoint終了処理。次の送信は、
     /// pendingが確実にfailed/cancelledへ遷移してからbeginTurnする。
     private var pendingTurnFinishTask: Task<Void, Never>?
+    /// A newer cancellation may enqueue another cleanup while an older one is
+    /// still running. The token prevents the older waiter from clearing the
+    /// newer task reference.
+    private var pendingTurnFinishToken: UUID?
     private var lastVisibleText: String = ""
     private var activeGenerationID: UUID?
     /// 共有LiteRTランタイムを停止してよいのは、現在の生成がioriの時だけ。
@@ -424,7 +428,13 @@ final class StorySessionService: ObservableObject {
         generationTask?.cancel()
         generationTask = nil
         if let sessionID, let turnID, let attempt {
+            let previousCleanup = pendingTurnFinishTask
+            let cleanupToken = UUID()
+            pendingTurnFinishToken = cleanupToken
             pendingTurnFinishTask = Task { [weak self, sessionRepo] in
+                if let previousCleanup {
+                    await previousCleanup.value
+                }
                 do {
                     try await sessionRepo.finishTurn(
                         sessionID: sessionID,
@@ -439,7 +449,8 @@ final class StorySessionService: ObservableObject {
                     await MainActor.run {
                         // cancel() clears the active IDs immediately. Do not
                         // surface a stale cleanup failure over a newer send.
-                        guard self.activeGenerationID == nil else { return }
+                        guard self.activeGenerationID == nil,
+                              self.pendingTurnFinishToken == cleanupToken else { return }
                         self.latestRuntimeNotice = StoryRuntimeNotice(
                             text: self.localizedNotice(
                                 "キャンセル状態を保存できませんでした。保存先を確認してから同じ発言を再試行してください。",
@@ -483,10 +494,7 @@ final class StorySessionService: ObservableObject {
         turnID: UUID,
         attempt: Int
     ) async {
-        if let pendingTurnFinishTask {
-            await pendingTurnFinishTask.value
-            self.pendingTurnFinishTask = nil
-        }
+        await waitForPendingTurnFinish()
         guard isGenerationActive(generationID) else { return }
         var session = session
         var scene = scene
@@ -1596,10 +1604,7 @@ final class StorySessionService: ObservableObject {
         turnID: UUID,
         attempt: Int
     ) async {
-        if let pendingTurnFinishTask {
-            await pendingTurnFinishTask.value
-            self.pendingTurnFinishTask = nil
-        }
+        await waitForPendingTurnFinish()
         do {
             try await sessionRepo.finishTurn(
                 sessionID: sessionID,
@@ -1610,6 +1615,19 @@ final class StorySessionService: ObservableObject {
             )
         } catch {
             NSLog("[StorySession] cancellation cleanup failed: %@", error.localizedDescription)
+        }
+    }
+
+    /// Wait through a cleanup chain. If another cancel/timeout queued a newer
+    /// task while the awaited task was running, keep waiting instead of
+    /// starting a new turn or clearing the newer task reference.
+    private func waitForPendingTurnFinish() async {
+        while let pendingTask = pendingTurnFinishTask {
+            let token = pendingTurnFinishToken
+            await pendingTask.value
+            guard pendingTurnFinishToken == token else { continue }
+            pendingTurnFinishTask = nil
+            pendingTurnFinishToken = nil
         }
     }
 
@@ -1778,7 +1796,13 @@ final class StorySessionService: ObservableObject {
             let timedOutTurnID = self.activeTurnID
             let timedOutAttempt = self.activeTurnAttempt
             if let timedOutSessionID, let timedOutTurnID, let timedOutAttempt {
+                let previousCleanup = self.pendingTurnFinishTask
+                let cleanupToken = UUID()
+                self.pendingTurnFinishToken = cleanupToken
                 self.pendingTurnFinishTask = Task { [sessionRepo = self.sessionRepo] in
+                    if let previousCleanup {
+                        await previousCleanup.value
+                    }
                     do {
                         try await sessionRepo.finishTurn(
                             sessionID: timedOutSessionID,
