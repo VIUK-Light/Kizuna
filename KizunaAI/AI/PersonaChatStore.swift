@@ -90,7 +90,7 @@ final class PersonaChatStore: ObservableObject {
     /// 破損データを上書きすると、復旧可能な履歴まで失われるため、明示的な
     /// リセット/再保存が行われるまで現在のファイルを保持する。
     private var didFailToLoadPersistedThreads = false
-    @Published var activeThreadID: UUID? {
+    @Published private(set) var activeThreadID: UUID? {
         didSet {
             guard !didFailToLoadPersistedThreads else {
                 NSLog("[PersonaChatStore] skipped active thread write while recovery is required")
@@ -120,10 +120,6 @@ final class PersonaChatStore: ObservableObject {
         load()
         guard !didFailToLoadPersistedThreads else {
             NSLog("[PersonaChatStore] thread data was not decoded; preserving the source file")
-            if let saved = defaults.string(forKey: Key.activeThreadID),
-               let uuid = UUID(uuidString: saved) {
-                self.activeThreadID = uuid
-            }
             return
         }
         // 起動時に「空メッセージのスレッド」を 1 件残して残りを掃除する。
@@ -198,12 +194,23 @@ final class PersonaChatStore: ObservableObject {
         didFailToLoadPersistedThreads
     }
 
+    /// 破損した保存値を自動的に空状態で上書きしないための共通ガード。
+    /// 復旧操作以外の公開ミューテーションは、メモリ上の状態も変更しない。
+    private func canMutatePersistedState() -> Bool {
+        guard !didFailToLoadPersistedThreads else {
+            NSLog("[PersonaChatStore] skipped mutation while recovery is required")
+            return false
+        }
+        return true
+    }
+
     // MARK: - Thread CRUD
 
     /// 新しい会話スレッドを作る。ただし、既に「同じキャラ・空メッセージのスレッド」が
     /// 存在する場合はそれを再利用してアクティブ化する (空スレッドの量産防止)。
     @discardableResult
-    func createThread(with persona: PersonaProfile, characterID: UUID? = nil) -> PersonaThread {
+    func createThread(with persona: PersonaProfile, characterID: UUID? = nil) -> PersonaThread? {
+        guard canMutatePersistedState() else { return nil }
         if let existing = threads.first(where: {
             $0.characterID == characterID
                 && (characterID != nil || $0.personaSnapshot.id == persona.id)
@@ -236,12 +243,14 @@ final class PersonaChatStore: ObservableObject {
     }
 
     func selectThread(id: UUID) {
+        guard canMutatePersistedState() else { return }
         guard threads.contains(where: { $0.id == id }) else { return }
         activeThreadID = id
     }
 
     /// キャラ本体が削除されても、会話スナップショットは残して再開できるようにする。
     func detachCharacterReference(threadID: UUID) {
+        guard canMutatePersistedState() else { return }
         guard let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
         guard threads[index].characterID != nil else { return }
         threads[index].characterID = nil
@@ -253,6 +262,7 @@ final class PersonaChatStore: ObservableObject {
     /// 保存済みの `personaSnapshot` へ切り替える。会話本文はそのまま残し、
     /// 次回送信時に削除済みUUIDを再取得し続けないよう参照だけを切り離す。
     func detachCharacterReferences(for characterID: UUID) {
+        guard canMutatePersistedState() else { return }
         var didChange = false
         for index in threads.indices where threads[index].characterID == characterID {
             threads[index].characterID = nil
@@ -266,6 +276,7 @@ final class PersonaChatStore: ObservableObject {
     }
 
     func deleteThread(id: UUID) {
+        guard canMutatePersistedState() else { return }
         threads.removeAll { $0.id == id }
         if activeThreadID == id {
             activeThreadID = threads.first?.id
@@ -274,6 +285,7 @@ final class PersonaChatStore: ObservableObject {
     }
 
     func renameThread(id: UUID, title: String) {
+        guard canMutatePersistedState() else { return }
         guard let idx = threads.firstIndex(where: { $0.id == id }) else { return }
         threads[idx].title = title
         threads[idx].updatedAt = Date()
@@ -285,6 +297,7 @@ final class PersonaChatStore: ObservableObject {
     // MARK: - Messages
 
     func appendMessage(_ message: PersonaMessage, toThread threadID: UUID) {
+        guard canMutatePersistedState() else { return }
         guard let idx = threads.firstIndex(where: { $0.id == threadID }) else { return }
         threads[idx].messages.append(message)
         threads[idx].updatedAt = Date()
@@ -296,6 +309,7 @@ final class PersonaChatStore: ObservableObject {
 
     /// アシスタント応答のストリーミング途中で「最新メッセージのテキスト」を上書きする用。
     func updateLastAssistantMessage(in threadID: UUID, text: String) {
+        guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
         guard let lastIdx = threads[threadIdx].messages.lastIndex(where: { $0.role == .assistant }) else { return }
         threads[threadIdx].messages[lastIdx].text = text
@@ -306,6 +320,7 @@ final class PersonaChatStore: ObservableObject {
     /// 生成開始直後に作った空のアシスタント枠を、ユーザーが停止した時だけ取り除く。
     /// 部分応答がある場合は呼び出し側がその本文を保存するため、ここでは削除しない。
     func removePendingAssistantMessage(in threadID: UUID) {
+        guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
         guard let last = threads[threadIdx].messages.last,
               last.role == .assistant,
@@ -317,6 +332,7 @@ final class PersonaChatStore: ObservableObject {
 
     /// 失敗確定時に、ストリーミング途中の本文を履歴へ残さないための削除。
     func removeLastAssistantMessage(in threadID: UUID) {
+        guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
               threads[threadIdx].messages.last?.role == .assistant else { return }
         threads[threadIdx].messages.removeLast()
@@ -327,6 +343,7 @@ final class PersonaChatStore: ObservableObject {
     /// 失敗したターンを再送する前に、直前のユーザー発話だけを取り除く。
     /// アシスタント側の空枠は `removePendingAssistantMessage` で先に処理する。
     func removeLastUserMessage(in threadID: UUID, matching text: String? = nil) {
+        guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
               let last = threads[threadIdx].messages.last,
               last.role == .user else { return }
@@ -337,6 +354,7 @@ final class PersonaChatStore: ObservableObject {
     }
 
     func finalizePersist() {
+        guard canMutatePersistedState() else { return }
         persist()
     }
 

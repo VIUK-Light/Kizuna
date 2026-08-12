@@ -863,14 +863,21 @@ final class KizunaAITests: XCTestCase {
         )
 
         XCTAssertTrue(store.isPersistenceRecoveryRequired)
+        let threadsBeforeMutation = store.threads
+        let activeThreadBeforeMutation = store.activeThreadID
         store.finalizePersist()
         _ = store.createThread(with: persona, characterID: UUID())
         store.appendMessage(
             PersonaMessage(role: .assistant, text: "hello"),
-            toThread: store.threads[0].id
+            toThread: UUID()
         )
 
+        XCTAssertEqual(store.threads, threadsBeforeMutation)
+        XCTAssertEqual(store.activeThreadID, activeThreadBeforeMutation)
         XCTAssertEqual(defaults.data(forKey: "persona.threads.v1"), raw)
+
+        XCTAssertTrue(store.discardCorruptPersistedThreads())
+        XCTAssertEqual(defaults.data(forKey: "persona.threads.v1.corrupt-backup"), raw)
     }
 
     @MainActor
@@ -886,7 +893,7 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "persona.threads.v1"), "not-a-data-blob")
         XCTAssertTrue(store.discardCorruptPersistedThreads())
         XCTAssertFalse(store.isPersistenceRecoveryRequired)
-        XCTAssertNotNil(defaults.object(forKey: "persona.threads.v1.corrupt-backup"))
+        XCTAssertEqual(defaults.string(forKey: "persona.threads.v1.corrupt-backup"), "not-a-data-blob")
         XCTAssertEqual(defaults.data(forKey: "persona.threads.v1"), try? JSONEncoder().encode([PersonaThread]()))
     }
 
@@ -903,7 +910,10 @@ final class KizunaAITests: XCTestCase {
             tone: .casual,
             relation: .friend
         )
-        let thread = first.createThread(with: persona)
+        guard let thread = first.createThread(with: persona) else {
+            XCTFail("valid persistence should allow thread creation")
+            return
+        }
         first.appendMessage(
             PersonaMessage(role: .user, text: "keep this"),
             toThread: thread.id

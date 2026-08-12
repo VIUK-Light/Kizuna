@@ -114,8 +114,10 @@ struct PersonaChatView: View {
                             .filter { !$0.isEmpty }
                             .joined(separator: " / ")
                     )
-                    let thread = store.createThread(with: persona, characterID: character.id)
-                    // 初回メッセージは空の下書きへ一度だけ追加する。
+                    guard let thread = store.createThread(with: persona, characterID: character.id) else {
+                        return
+                    }
+                    // 初回メッセージがあればアシスタント発として入れておく。
                     if thread.messages.isEmpty, !character.firstMessage.isEmpty {
                         store.appendMessage(
                             PersonaMessage(role: .assistant, text: character.firstMessage),
