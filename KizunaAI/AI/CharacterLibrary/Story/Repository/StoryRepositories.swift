@@ -344,6 +344,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         return repairedSessions
     }
     func saveSession(_ session: StorySession) async throws {
+        let storageURL = self.storageURL
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
@@ -386,6 +387,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         turnID: UUID,
         attempt: Int
     ) async throws -> StorySession {
+        let storageURL = self.storageURL
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         return try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
@@ -488,6 +490,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         turnID: UUID,
         assistantMessageIDs: [UUID]
     ) async throws -> StorySession {
+        let storageURL = self.storageURL
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         return try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
@@ -607,6 +610,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         failureCode: String?
     ) async throws {
         guard status != .pending && status != .committed else { return }
+        let storageURL = self.storageURL
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
@@ -644,6 +648,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
     }
 
     func recoverInterruptedTurns(storyWorldId: UUID) async throws {
+        let storageURL = self.storageURL
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
