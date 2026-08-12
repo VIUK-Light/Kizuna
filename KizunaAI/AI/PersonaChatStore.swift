@@ -10,6 +10,22 @@
 import Foundation
 import Combine
 
+enum PersonaThreadOrdering {
+    /// Keep the store's published order consistent with the order used by the
+    /// conversation home: most recently active threads first.
+    static func mostRecentFirst(_ threads: [PersonaThread]) -> [PersonaThread] {
+        threads.sorted {
+            if $0.updatedAt != $1.updatedAt {
+                return $0.updatedAt > $1.updatedAt
+            }
+            if $0.createdAt != $1.createdAt {
+                return $0.createdAt > $1.createdAt
+            }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+}
+
 struct PersonaMessage: Codable, Hashable, Identifiable {
     enum Role: String, Codable { case user, assistant, narrator }
 
@@ -169,7 +185,7 @@ final class PersonaChatStore: ObservableObject {
         }
         do {
             let decoded = try JSONDecoder().decode([PersonaThread].self, from: data)
-            self.threads = decoded.sorted { $0.updatedAt > $1.updatedAt }
+            self.threads = PersonaThreadOrdering.mostRecentFirst(decoded)
         } catch {
             didFailToLoadPersistedThreads = true
             NSLog("[PersonaChatStore] failed to decode saved threads: %@", error.localizedDescription)
@@ -342,8 +358,7 @@ final class PersonaChatStore: ObservableObject {
         threads[idx].title = title
         threads[idx].updatedAt = Date()
         // ソートし直し
-        threads.sort { $0.updatedAt > $1.updatedAt }
-        persist()
+        persistAfterActivityUpdate()
     }
 
     // MARK: - Messages
@@ -369,6 +384,19 @@ final class PersonaChatStore: ObservableObject {
         // ストリーミング毎の persist は重いので、ここでは保存しない。最終 finalize 側で persist する。
     }
 
+    /// Commit the final assistant text and activity order as one MainActor
+    /// operation. Streaming updates use `updateLastAssistantMessage` so this
+    /// sort/persist work happens only once per completed turn.
+    @discardableResult
+    func finalizeLastAssistantMessage(in threadID: UUID, text: String) -> Bool {
+        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return false }
+        guard let lastIdx = threads[threadIdx].messages.lastIndex(where: { $0.role == .assistant }) else { return false }
+        threads[threadIdx].messages[lastIdx].text = text
+        threads[threadIdx].updatedAt = Date()
+        persistAfterActivityUpdate()
+        return true
+    }
+
     /// 生成開始直後に作った空のアシスタント枠を、ユーザーが停止した時だけ取り除く。
     /// 部分応答がある場合は呼び出し側がその本文を保存するため、ここでは削除しない。
     func removePendingAssistantMessage(in threadID: UUID) {
@@ -379,7 +407,7 @@ final class PersonaChatStore: ObservableObject {
               isPendingAssistantText(last.text) else { return }
         threads[threadIdx].messages.removeLast()
         threads[threadIdx].updatedAt = Date()
-        persist()
+        persistAfterActivityUpdate()
     }
 
     /// 失敗確定時に、ストリーミング途中の本文を履歴へ残さないための削除。
@@ -389,7 +417,7 @@ final class PersonaChatStore: ObservableObject {
               threads[threadIdx].messages.last?.role == .assistant else { return }
         threads[threadIdx].messages.removeLast()
         threads[threadIdx].updatedAt = Date()
-        persist()
+        persistAfterActivityUpdate()
     }
 
     /// 失敗したターンを再送する前に、直前のユーザー発話だけを取り除く。
@@ -402,11 +430,18 @@ final class PersonaChatStore: ObservableObject {
         if let text, last.text != text { return }
         threads[threadIdx].messages.removeLast()
         threads[threadIdx].updatedAt = Date()
-        persist()
+        persistAfterActivityUpdate()
     }
 
     func finalizePersist() {
         guard canMutatePersistedState() else { return }
+        // Keep non-assistant final saves (for example narration) consistent
+        // with the same activity-order invariant.
+        persistAfterActivityUpdate()
+    }
+
+    private func persistAfterActivityUpdate() {
+        threads = PersonaThreadOrdering.mostRecentFirst(threads)
         persist()
     }
 

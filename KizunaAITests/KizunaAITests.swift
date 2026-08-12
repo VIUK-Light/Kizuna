@@ -846,6 +846,7 @@ final class KizunaAITests: XCTestCase {
         return url
     }
 
+<<<<<<< HEAD
     @MainActor
     func testPersonaStorePreservesCorruptRawBlobAcrossCRUDAndFinalize() {
         let suiteName = "KizunaAITests.PersonaCorrupt.\(UUID().uuidString)"
@@ -940,5 +941,36 @@ final class KizunaAITests: XCTestCase {
         let second = PersonaChatStore(defaults: defaults)
         XCTAssertEqual(second.threads.count, 1)
         XCTAssertEqual(second.threads.first?.messages.first?.text, "keep this")
+    }
+
+    func testPersonaThreadOrderingPlacesCompletedConversationFirst() {
+        let olderID = UUID()
+        let newerID = UUID()
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let olderDate = Date(timeIntervalSince1970: 100)
+        let newerDate = Date(timeIntervalSince1970: 200)
+        let older = PersonaThread(
+            id: olderID,
+            personaSnapshot: profile,
+            title: "Older",
+            createdAt: olderDate,
+            updatedAt: olderDate
+        )
+        let newer = PersonaThread(
+            id: newerID,
+            personaSnapshot: profile,
+            title: "Newer",
+            createdAt: olderDate,
+            updatedAt: newerDate
+        )
+
+        let ordered = PersonaThreadOrdering.mostRecentFirst([older, newer])
+
+        XCTAssertEqual(ordered.map(\.id), [newerID, olderID])
     }
 }
