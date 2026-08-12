@@ -43,20 +43,26 @@ struct StorySessionChatView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let world: StoryWorld
     let initialSessionID: UUID?
+    let startsNewSession: Bool
 
     @StateObject private var detailVM: StoryWorldDetailViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var sessionVM: StorySessionViewModel?
     @State private var loadError: String?
+    /// A new-session request is consumed once. If bootstrap fails and the user
+    /// retries, resume the session that was already persisted instead of
+    /// creating another empty branch in the same world.
+    @State private var resolvedSessionID: UUID?
     // 右上の「?」から開く、休憩提案設定の UI フレーム。
     @State private var isShowingRestHelp = false
 
-    init(world: StoryWorld, initialSessionID: UUID? = nil) {
+    init(world: StoryWorld, initialSessionID: UUID? = nil, startsNewSession: Bool = false) {
         // Keep the raw persisted world at the session boundary.  Localized
         // copies are presentation-only and must never seed StorySession's
         // durable goal, summary, or first narration.
         self.world = world
         self.initialSessionID = initialSessionID
+        self.startsNewSession = startsNewSession
         _detailVM = StateObject(wrappedValue: StoryWorldDetailViewModel(world: world))
     }
 
@@ -122,7 +128,11 @@ struct StorySessionChatView: View {
             )
             return
         }
-        guard let (session, scene) = await detailVM.createOrResumeSession(preferredSessionID: initialSessionID) else {
+        let preferredSessionID = resolvedSessionID ?? initialSessionID
+        guard let (session, scene) = await detailVM.createOrResumeSession(
+            preferredSessionID: preferredSessionID,
+            forceNew: startsNewSession && resolvedSessionID == nil
+        ) else {
             loadError = storyCopy(
                 detailVM.sessionSaveFailed
                     ? "セッションを保存できませんでした。保存先を確認してから再試行してください。"
@@ -133,6 +143,7 @@ struct StorySessionChatView: View {
             )
             return
         }
+        resolvedSessionID = session.id
         let vm = StorySessionViewModel(world: world, session: session, scene: scene)
         await vm.bootstrap()
         if let bootstrapError = vm.bootstrapError {
@@ -150,7 +161,7 @@ struct StorySessionChatView: View {
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: horizontalSizeClass == .compact ? 20 : 22, weight: .semibold))
-                    .frame(width: horizontalSizeClass == .compact ? 30 : 34, height: horizontalSizeClass == .compact ? 30 : 34)
+                    .frame(width: 44, height: 44)
                     .foregroundStyle(storyText)
             }
             .buttonStyle(.plain)
@@ -187,7 +198,7 @@ struct StorySessionChatView: View {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: horizontalSizeClass == .compact ? 21 : 23, weight: .semibold))
                     .foregroundStyle(storyText)
-                    .frame(width: horizontalSizeClass == .compact ? 30 : 34, height: horizontalSizeClass == .compact ? 30 : 34)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
         }
@@ -619,7 +630,7 @@ private struct StorySessionChatBody: View {
                         Image(systemName: "questionmark.circle")
                             .font(.system(size: 19, weight: .semibold))
                             .foregroundStyle(storyMuted)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("story.rest.help")
@@ -747,7 +758,7 @@ private struct StorySessionChatBody: View {
                         Image(systemName: "questionmark.circle")
                             .font(.system(size: 19, weight: .semibold))
                             .foregroundStyle(storyMuted)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("story.safety.help")
@@ -918,9 +929,14 @@ private struct StorySessionChatBody: View {
     }
 
     private var sceneVisual: some View {
-        StorySceneImageView(scene: vm.scene, world: vm.world.localizedForCurrentLanguage)
+        StorySceneImageView(
+            scene: vm.scene,
+            world: vm.world.localizedForCurrentLanguage,
+            contentMode: .fit
+        )
             .frame(maxWidth: .infinity)
-            .frame(height: horizontalSizeClass == .compact ? 78 : 104)
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .background(Color.black.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
                 LinearGradient(

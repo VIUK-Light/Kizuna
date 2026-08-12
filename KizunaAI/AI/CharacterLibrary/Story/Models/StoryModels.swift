@@ -677,6 +677,9 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
     var characterUpdates: [StoryCharacterStatePatch]?
     var inventoryChanges: [StoryInventoryChange]?
     var activeGoals: [String]?
+    /// 通常のStoryState差分と同じSTATE_UPDATEに含める、任意の短い出来事更新。
+    /// 履歴・ID・時刻はアプリ側が付与するため、モデルはactionと要約だけ返す。
+    var eventUpdate: StoryEventUpdate?
 
     /// 既存値を保ちつつ、空文字の更新は無視する。
     func applying(
@@ -1024,6 +1027,11 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
     var unresolvedHooks: [String]?
     /// 本文とは独立して保存する、AI更新可能な現在状態。
     var storyState: StoryState?
+    /// 会話から自然に生まれた短い出来事の履歴。旧JSONには存在しないため
+    /// optionalのまま読み込み、保存時に直近8件へ正規化する。
+    var spontaneousEvents: [StoryEvent]?
+    /// 次に自然発生イベントを許可するユーザー発言番号。nilは旧データを表す。
+    var nextSpontaneousEventUserTurn: Int?
     /// 直近ターンでユーザーが選んだモデル名。実行結果の透明性表示に使う。
     var lastSelectedModelName: String?
     /// 直近ターンで実際に使ったバックエンド、または未起動/失敗理由の短い状態。
@@ -1043,6 +1051,8 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         lastSceneSummary: String? = nil,
         unresolvedHooks: [String]? = nil,
         storyState: StoryState? = nil,
+        spontaneousEvents: [StoryEvent]? = nil,
+        nextSpontaneousEventUserTurn: Int? = nil,
         lastSelectedModelName: String? = nil,
         lastUsedBackendName: String? = nil,
         createdAt: Date = Date(),
@@ -1059,6 +1069,8 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         self.lastSceneSummary = lastSceneSummary
         self.unresolvedHooks = unresolvedHooks
         self.storyState = storyState
+        self.spontaneousEvents = spontaneousEvents
+        self.nextSpontaneousEventUserTurn = nextSpontaneousEventUserTurn
         self.lastSelectedModelName = lastSelectedModelName
         self.lastUsedBackendName = lastUsedBackendName
         self.createdAt = createdAt

@@ -26,10 +26,14 @@ jobs:
       - name: Build pinned XcodeGen
         env:
           XCODEGEN_VERSION: 2.45.3
+          XCODEGEN_SHA: 90dfa9da31eeb3b95153e22f46dce676d9ebaba7
         run: |
-          git clone --depth 1 --branch "$XCODEGEN_VERSION" \
+          git clone --filter=blob:none --no-checkout \
             https://github.com/yonaskolb/XcodeGen.git \
             "$RUNNER_TEMP/XcodeGen"
+          git -C "$RUNNER_TEMP/XcodeGen" fetch --depth 1 origin "$XCODEGEN_SHA"
+          git -C "$RUNNER_TEMP/XcodeGen" checkout --detach "$XCODEGEN_SHA"
+          test "$(git -C "$RUNNER_TEMP/XcodeGen" rev-parse HEAD)" = "$XCODEGEN_SHA"
           swift build \
             --package-path "$RUNNER_TEMP/XcodeGen" \
             --configuration release \
@@ -116,6 +120,37 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO
+
+  ios-ui-tests:
+    name: iOS UI Tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Run KizunaAI UI tests on an available iPhone simulator
+        shell: bash
+        run: |
+          device_id="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/ {print $2; exit}')"
+          test -n "$device_id"
+          xcodebuild test \
+            -project "KizunaAI.xcodeproj" \
+            -scheme "KizunaAI-UI" \
+            -destination "id=$device_id" \
+            -derivedDataPath "$RUNNER_TEMP/kizuna-ios-ui-tests" \
+            -jobs 2 \
+            -parallel-testing-enabled NO \
+            -only-testing:KizunaAIUITests/KizunaNavigationSmokeTests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            ENABLE_PREVIEWS=NO
 
   build:
     name: Swift Build

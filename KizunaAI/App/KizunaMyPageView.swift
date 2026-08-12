@@ -7,6 +7,7 @@ struct KizunaMyPageView: View {
     @ObservedObject private var profileStore = KizunaUserProfileStore.shared
     @ObservedObject private var modelManager = LocalAssistantModelManager.shared
     @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isShowingProfileEditor = false
     @State private var isShowingDetailedSettings = false
     @State private var isShowingResetLaunchAlert = false
@@ -59,6 +60,7 @@ struct KizunaMyPageView: View {
                 .foregroundStyle(.tint)
             Text(KizunaCopy.text(japanese: "マイページ", english: "My page"))
                 .font(.system(size: 32, weight: .heavy, design: .rounded))
+                .accessibilityIdentifier("workspace.myPage.heading")
             Text(KizunaCopy.text(
                 japanese: "必要な設定だけ。",
                 english: "Only the essentials."
@@ -143,7 +145,10 @@ struct KizunaMyPageView: View {
     }
 
     private var settingsGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), spacing: 14)], spacing: 14) {
+        let columns = horizontalSizeClass == .compact
+            ? [GridItem(.flexible(minimum: 0), spacing: 14)]
+            : [GridItem(.adaptive(minimum: 290), spacing: 14)]
+        return LazyVGrid(columns: columns, spacing: 14) {
             languageCard
             runtimeCard
             launchCard

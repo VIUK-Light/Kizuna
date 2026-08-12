@@ -11,6 +11,7 @@
 		0AFD028991A3FFCC665B3769 /* SafetyPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE6E2DA7A0E7BF418B6A3C7 /* SafetyPipeline.swift */; };
 		12A37C424D51D43FBE3E3766 /* LocalAssistantModelArtifactValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B35D4A556826633BD99FBB0 /* LocalAssistantModelArtifactValidator.swift */; };
 		1646F9BF705069B3CABED43D /* KizunaSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */; };
+		1C4738D924E9B99221BAB816 /* StoryEventPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC197980815CCD8FCE050440 /* StoryEventPolicy.swift */; };
 		1E1CC650E2302CB00D1DF1B2 /* ReportCharacterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECA3C02F943DFC138887DC5B /* ReportCharacterView.swift */; };
 		1E8D68F6FCAF235F2B84FE19 /* MemoryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = E675C1D433A2840AB2461CFD /* MemoryRepository.swift */; };
 		1F0627CABF8181F36724081E /* Apache-2.0.txt in Resources */ = {isa = PBXBuildFile; fileRef = C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */; };
@@ -96,6 +97,7 @@
 		E24AF7F53F9DDDC5FF2393F1 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A29C9D8E926D83E24A952F4 /* AppTheme.swift */; };
 		E94E230B59937818E8B6E544 /* PersonaChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A2E29FC9FACB4D55183726 /* PersonaChatStore.swift */; };
 		EEC5EF2337298255BFF8AC27 /* llama.cpp-MIT.txt in Resources */ = {isa = PBXBuildFile; fileRef = C4C3DBA4298E534FF3BFA4E5 /* llama.cpp-MIT.txt */; };
+		EF37282B3F2DF884E173F223 /* KizunaConversationHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70098F3C51DA9FDED10774A0 /* KizunaConversationHomeView.swift */; };
 		EF3BB16A93B494602BC64DCF /* PersonaChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D9BB02D32A725EB2DA3DA6E /* PersonaChatView.swift */; };
 		F254B500366A544EC2F7FABB /* StoryWorldDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */; };
 		F82CBE124F700EF5AF4DE95A /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 929284E0E8C0C59D87D0EE00 /* LICENSE */; };
@@ -177,6 +179,7 @@
 		6DE6E2DA7A0E7BF418B6A3C7 /* SafetyPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyPipeline.swift; sourceTree = "<group>"; };
 		6F71AFE96C6DB008859AAE96 /* StoryWorldLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryWorldLibraryView.swift; sourceTree = "<group>"; };
 		6FDC6C52E2977CFF9CDBA98E /* nlohmann-json-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "nlohmann-json-MIT.txt"; sourceTree = "<group>"; };
+		70098F3C51DA9FDED10774A0 /* KizunaConversationHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaConversationHomeView.swift; sourceTree = "<group>"; };
 		757985556F2B3FAB58006C1C /* MemoryProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryProtocols.swift; sourceTree = "<group>"; };
 		785139BD8175262981B598A1 /* KizunaAIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaAIApp.swift; sourceTree = "<group>"; };
 		78CFFCEC0FA3CC44BDDA2C99 /* KizunaUserProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaUserProfile.swift; sourceTree = "<group>"; };
@@ -205,6 +208,7 @@
 		C611D89D7CAC7F09D41C0D9A /* KizunaUICompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaUICompatibility.swift; sourceTree = "<group>"; };
 		C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Apache-2.0.txt"; sourceTree = "<group>"; };
 		C86221612DBCBA783CE5BB53 /* StoryRepositories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryRepositories.swift; sourceTree = "<group>"; };
+		CC197980815CCD8FCE050440 /* StoryEventPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryEventPolicy.swift; sourceTree = "<group>"; };
 		CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaChatService.swift; sourceTree = "<group>"; };
 		D06ABDB45B6FC442B7523E83 /* CharacterLorebook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLorebook.swift; sourceTree = "<group>"; };
 		D30A31B134170D7A746DB123 /* ReportRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportRepository.swift; sourceTree = "<group>"; };
@@ -256,6 +260,7 @@
 		082C50DD82340060F7BCF2F2 /* Kizuna */ = {
 			isa = PBXGroup;
 			children = (
+				70098F3C51DA9FDED10774A0 /* KizunaConversationHomeView.swift */,
 				38C38E45DF917A9188C23AAC /* KizunaRuntimeCompatibility.swift */,
 				E422AA1452C576610E41D436 /* VIUKKizunaWorkspaceView.swift */,
 			);
@@ -451,6 +456,7 @@
 		82FAFC6915202038C60A537B /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				CC197980815CCD8FCE050440 /* StoryEventPolicy.swift */,
 				F68963A2E968B513CAFCBF56 /* StoryLocalization.swift */,
 				3FD99FDA49A1F31E9B0AF2D9 /* StoryModels.swift */,
 			);
@@ -775,6 +781,7 @@
 				B29F5AD5678DACCCEDD9CB4B /* KeychainHelper.swift in Sources */,
 				CD7F4B290DCF9E71F3BDDDA0 /* KizunaAIApp.swift in Sources */,
 				6002D2CE2F28C465C0E18B87 /* KizunaAvatarView.swift in Sources */,
+				EF37282B3F2DF884E173F223 /* KizunaConversationHomeView.swift in Sources */,
 				25BE9FBCEE85A531DDB3CD99 /* KizunaCopy.swift in Sources */,
 				B0BDEAE6C995D61479C4A064 /* KizunaDataMigration.swift in Sources */,
 				242EDCC10810B6E59A09B3AF /* KizunaLanguage.swift in Sources */,
@@ -818,6 +825,7 @@
 				06D0D93E289A58585617D2D9 /* SceneProtocols.swift in Sources */,
 				8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */,
 				95168A37B2B238D2C0275B1C /* StoryCoverView.swift in Sources */,
+				1C4738D924E9B99221BAB816 /* StoryEventPolicy.swift in Sources */,
 				8AFDA9C31775F30993E618BB /* StoryGemma31BAPIService.swift in Sources */,
 				FF11771C6CB952F9E344CD34 /* StoryGemma31BResponseParser.swift in Sources */,
 				56BA4549A1AF6BB5C5DCF65D /* StoryLocalization.swift in Sources */,

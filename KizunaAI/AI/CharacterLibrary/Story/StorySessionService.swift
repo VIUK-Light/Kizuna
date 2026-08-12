@@ -872,7 +872,8 @@ final class StorySessionService: ObservableObject {
                 session: session,
                 storyState: promptStoryState,
                 selectedLorebookEntries: selectedLorebookEntries,
-                userCharacterName: userCharacterName
+                userCharacterName: userCharacterName,
+                userInput: effectiveUserText
             )
         }
         guard isGenerationActive(generationID) else { return }
@@ -1230,6 +1231,7 @@ final class StorySessionService: ObservableObject {
 
         // 11) Scene summary 更新 (270M)
         streamingStatusText = statusText("場面要約を更新中", "Updating scene summary")
+        var sceneSummarySaveFailed = false
         let newSummary = await summarizer.updateSummary(
             currentSummary: scene.summary,
             recentMessages: Array(storyContentMessages(from: session.messages).suffix(18)),
@@ -1241,6 +1243,7 @@ final class StorySessionService: ObservableObject {
             do {
                 try await sceneRepo.saveScene(scene)
             } catch {
+                sceneSummarySaveFailed = true
                 latestRuntimeNotice = StoryRuntimeNotice(
                     text: localizedNotice(
                         "場面の要約を保存できませんでした。本文は保存済みですが、再読み込み前にもう一度試してください。",
@@ -1323,6 +1326,19 @@ final class StorySessionService: ObservableObject {
                 validCharacterIDs: Set(cast.map(\.characterId))
             )
         }
+        // 自然発生イベントも通常のSTATE_UPDATEから一度だけ適用する。
+        // 追加のLLM呼び出しはせず、本文・状態の保存に失敗したターンでは
+        // イベント履歴も変更しない。
+        var eventTransition: StoryEventTransition?
+        if !sceneSummarySaveFailed {
+            eventTransition = StoryEventPolicy.production.apply(
+                update: progressUpdate.storyState?.eventUpdate,
+                to: &session,
+                userMessageID: userMessageID,
+                generationID: generationID,
+                userInput: userText
+            )
+        }
         do {
             try await sessionRepo.saveSession(session)
         } catch {
@@ -1337,6 +1353,14 @@ final class StorySessionService: ObservableObject {
                 backend: .persistence
             )
             NSLog("[StorySession] progress save failed: %@", error.localizedDescription)
+        }
+        if let eventTransition {
+            // 要約や会話本文はログへ出さず、ライフサイクルとIDだけを記録する。
+            NSLog(
+                "[StorySession] spontaneous event action=%@ id=%@",
+                eventTransition.action.rawValue,
+                eventTransition.eventID.uuidString
+            )
         }
         guard isGenerationActive(generationID) else { return }
 
@@ -2273,7 +2297,12 @@ final class StorySessionService: ObservableObject {
         }
 
         let payload = text[marker.upperBound...]
-        guard let open = payload.firstIndex(of: "{") else { return (text, nil) }
+        let visiblePrefix = String(text[..<marker.lowerBound])
+        guard let open = payload.firstIndex(of: "{") else {
+            // STATE_UPDATEマーカー以降はモデル内部用の領域なので、JSONが
+            // 欠けていてもユーザーへそのまま表示しない。
+            return (visiblePrefix.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+        }
         var depth = 0
         var inString = false
         var escaped = false
@@ -2302,15 +2331,17 @@ final class StorySessionService: ObservableObject {
                 }
             }
         }
-        guard let close,
-              let data = String(payload[open...close]).data(using: .utf8),
-              let patch = try? progressDecoder.decode(StoryStatePatch.self, from: data) else {
-            return (text, nil)
+        guard let close else {
+            return (visiblePrefix.trimmingCharacters(in: .whitespacesAndNewlines), nil)
         }
-
         let trailingStart = payload.index(after: close)
-        let visible = (String(text[..<marker.lowerBound]) + String(payload[trailingStart...]))
+        let visible = (visiblePrefix + String(payload[trailingStart...]))
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = String(payload[open...close]).data(using: .utf8),
+              let patch = try? progressDecoder.decode(StoryStatePatch.self, from: data) else {
+            // 壊れたJSONでも会話本文は維持し、STATE_UPDATEだけを捨てる。
+            return (visible, nil)
+        }
         return (visible, patch)
     }
 
