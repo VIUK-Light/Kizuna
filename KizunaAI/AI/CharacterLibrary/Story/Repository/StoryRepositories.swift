@@ -395,24 +395,28 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 throw StoryTurnPersistenceError.sessionNotFound
             }
             let current = sessions[index]
-            let expectedRevision = session.effectivePersistenceRevision
             let actualRevision = current.effectivePersistenceRevision
-            guard expectedRevision == actualRevision else {
-                throw StoryTurnPersistenceError.revisionConflict(
-                    expected: expectedRevision,
-                    actual: actualRevision
-                )
-            }
 
             if let checkpoint = current.latestTurnCheckpoint {
                 if checkpoint.status == .pending && checkpoint.turnID != turnID {
                     throw StoryTurnPersistenceError.turnInProgress
                 }
-                if checkpoint.status == .pending && checkpoint.turnID == turnID {
-                    // 同じ生成処理の再入場はそのまま返す。失敗後の再試行で
-                    // attemptが進んでいる場合だけcheckpointを更新し、古い
-                    // cancel/timeout cleanupが新しい試行を終了しないようにする。
-                    guard attempt > checkpoint.attempt else { return current }
+                if checkpoint.turnID == turnID {
+                    switch checkpoint.status {
+                    case .committed:
+                        // 同じターンの再適用は、現在の保存済み結果を返す。
+                        return current
+                    case .pending:
+                        // 同じ生成処理の再入場はそのまま返す。失敗後の
+                        // 再試行でattemptが進んだ場合だけcheckpointを更新し、
+                        // 古いcancel/timeout cleanupが新しい試行を終了しないようにする。
+                        guard attempt > checkpoint.attempt else { return current }
+                    case .failed, .cancelled, .interrupted:
+                        // 失敗・キャンセル後の再試行も、古い呼び出し元
+                        // Snapshotのrevisionではなくcheckpointを正本にする。
+                        guard attempt > checkpoint.attempt else { return current }
+                    }
+
                     var retried = current
                     let now = Date()
                     retried.latestTurnCheckpoint = StoryTurnReducer.begin(
@@ -420,7 +424,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                         userMessageID: checkpoint.userMessageID,
                         attempt: attempt,
                         ownerID: StoryTurnOwner.currentID,
-                        baseRevision: checkpoint.baseRevision,
+                        baseRevision: actualRevision,
                         startedAt: checkpoint.startedAt,
                         updatedAt: now
                     )
@@ -430,9 +434,14 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                     try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
                     return retried
                 }
-                if checkpoint.status == .committed && checkpoint.turnID == turnID {
-                    return current
-                }
+            }
+
+            let expectedRevision = session.effectivePersistenceRevision
+            guard expectedRevision == actualRevision else {
+                throw StoryTurnPersistenceError.revisionConflict(
+                    expected: expectedRevision,
+                    actual: actualRevision
+                )
             }
 
             var next = current
