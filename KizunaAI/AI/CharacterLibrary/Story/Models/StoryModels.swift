@@ -1052,7 +1052,7 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         case failureCode
     }
 
-    init(
+    nonisolated init(
         turnID: UUID,
         userMessageID: UUID,
         status: StoryTurnStatus = .pending,
@@ -1076,7 +1076,7 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         self.failureCode = failureCode
     }
 
-    init(from decoder: Decoder) throws {
+    nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.turnID = try container.decode(UUID.self, forKey: .turnID)
         self.userMessageID = try container.decode(UUID.self, forKey: .userMessageID)
