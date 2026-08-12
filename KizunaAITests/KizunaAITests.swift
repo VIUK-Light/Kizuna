@@ -168,21 +168,31 @@ final class KizunaAITests: XCTestCase {
             storyWorldId: worldID,
             text: mergedText,
             storySessionId: sessionID,
+            importance: 0.2,
+            createdAt: Date(timeIntervalSince1970: 100),
             sourceTurnIds: [firstSourceTurnID]
         )
         let secondMerged = StoryMemory(
             storyWorldId: worldID,
             text: mergedText,
             storySessionId: sessionID,
+            importance: 0.9,
+            createdAt: Date(timeIntervalSince1970: 200),
             sourceTurnIds: [secondSourceTurnID]
         )
         try await repository.saveMemory(firstMerged)
+        let firstSaved = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: sessionID
+        ).first(where: { $0.text == mergedText })
         try await repository.saveMemory(secondMerged)
         try await repository.removeSourceTurnIds([secondSourceTurnID])
 
         let merged = try await repository.fetchMemories(storyWorldId: worldID, storySessionId: sessionID)
             .first(where: { $0.text == mergedText })
         XCTAssertEqual(merged?.sourceTurnIds, [firstSourceTurnID])
+        XCTAssertEqual(merged?.importance, firstSaved?.importance)
+        XCTAssertEqual(merged?.lastUsedAt, firstSaved?.lastUsedAt)
     }
 
     func testPersonaResponseSanitizerPreservesVisibleText() {
