@@ -43,6 +43,29 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(visibleText, text)
     }
 
+    func testStorySessionUsesSessionCastAndLegacySceneFallback() {
+        let sessionCharacterID = UUID()
+        let sceneCharacterID = UUID()
+        let scene = StoryScene(
+            storyWorldId: UUID(),
+            activeCharacterIds: [sceneCharacterID]
+        )
+        let session = StorySession(
+            storyWorldId: scene.storyWorldId,
+            activeCharacterIds: [sessionCharacterID]
+        )
+        let legacySession = StorySession(storyWorldId: scene.storyWorldId)
+
+        XCTAssertEqual(
+            session.resolvedActiveCharacterIds(fallback: scene),
+            [sessionCharacterID]
+        )
+        XCTAssertEqual(
+            legacySession.resolvedActiveCharacterIds(fallback: scene),
+            [sceneCharacterID]
+        )
+    }
+
     func testPersonaResponseSanitizerPreservesVisibleText() {
         let input = "<think>private reasoning</think>Visible response"
 
