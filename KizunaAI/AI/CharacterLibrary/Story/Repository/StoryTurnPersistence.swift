@@ -129,24 +129,26 @@ enum StoryTurnJournal {
             }
             guard !entries.isEmpty else { return }
 
-            guard entries.allSatisfy({ entry in
-                guard entry.turnID == entry.session.latestTurnCheckpoint?.turnID,
-                      entry.session.latestTurnCheckpoint?.status == .committed,
-                      entry.session.storyWorldId == entry.scene.storyWorldId,
-                      entry.session.currentSceneId == nil || entry.session.currentSceneId == entry.scene.id else {
-                    return false
-                }
-                return true
-            }) else {
+            let validEntries = entries.filter(isValid)
+            let invalidEntries = entries.filter { !isValid($0) }
+            if !invalidEntries.isEmpty {
+                // Keep the original journal as an investigation artifact, but
+                // do not let one semantically invalid entry discard valid
+                // committed entries that can still be replayed.
                 let backupURL = try LocalJSONStoreTransaction.backup(fileName: fileName, baseURL: baseURL)
+                for entry in invalidEntries {
+                    NSLog(
+                        "[StoryTurnJournal] quarantined invalid entry turn=%@ journal=%@",
+                        entry.turnID.uuidString,
+                        backupURL.lastPathComponent
+                    )
+                }
+            }
+            guard !validEntries.isEmpty else {
                 try LocalJSONStoreTransaction.save(
                     [StoryTurnJournalEntry](),
                     fileName: fileName,
                     baseURL: baseURL
-                )
-                NSLog(
-                    "[StoryTurnJournal] quarantined semantically invalid journal=%@",
-                    backupURL.lastPathComponent
                 )
                 return
             }
@@ -162,25 +164,31 @@ enum StoryTurnJournal {
                 baseURL: baseURL
             )
 
-            for entry in entries {
-                guard let sessionIndex = sessions.firstIndex(where: { $0.id == entry.session.id }),
-                      let sceneIndex = scenes.firstIndex(where: { $0.id == entry.scene.id }) else {
-                    // A missing record may have been intentionally deleted
-                    // after the commit. Do not resurrect it from a stale
-                    // journal; the next normal save will create a fresh entry.
+            for entry in validEntries {
+                // A missing record may have been intentionally deleted after
+                // the commit. Do not resurrect it, but replay the other side
+                // when it still exists so a partial commit can be recovered.
+                if let sessionIndex = sessions.firstIndex(where: { $0.id == entry.session.id }) {
+                    let persistedSession = sessions[sessionIndex]
+                    if shouldApply(entry.session, over: persistedSession) {
+                        sessions[sessionIndex] = entry.session
+                    }
+                } else {
                     NSLog(
-                        "[StoryTurnJournal] skipped replay for missing record turn=%@",
+                        "[StoryTurnJournal] skipped session replay for missing record turn=%@",
                         entry.turnID.uuidString
                     )
-                    continue
                 }
-                let persistedSession = sessions[sessionIndex]
-                if shouldApply(entry.session, over: persistedSession) {
-                    sessions[sessionIndex] = entry.session
-                }
-                let persistedScene = scenes[sceneIndex]
-                if shouldApply(entry.scene, over: persistedScene) {
-                    scenes[sceneIndex] = entry.scene
+                if let sceneIndex = scenes.firstIndex(where: { $0.id == entry.scene.id }) {
+                    let persistedScene = scenes[sceneIndex]
+                    if shouldApply(entry.scene, over: persistedScene) {
+                        scenes[sceneIndex] = entry.scene
+                    }
+                } else {
+                    NSLog(
+                        "[StoryTurnJournal] skipped scene replay for missing record turn=%@",
+                        entry.turnID.uuidString
+                    )
                 }
             }
             try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: baseURL)
@@ -196,6 +204,16 @@ enum StoryTurnJournal {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
         }
         return journal.updatedAt > persisted.updatedAt
+    }
+
+    private static func isValid(_ entry: StoryTurnJournalEntry) -> Bool {
+        guard entry.turnID == entry.session.latestTurnCheckpoint?.turnID,
+              entry.session.latestTurnCheckpoint?.status == .committed,
+              entry.session.storyWorldId == entry.scene.storyWorldId,
+              entry.session.currentSceneId == nil || entry.session.currentSceneId == entry.scene.id else {
+            return false
+        }
+        return true
     }
 
     private static func shouldApply(_ journal: StoryScene, over persisted: StoryScene) -> Bool {

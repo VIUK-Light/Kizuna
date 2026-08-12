@@ -321,6 +321,128 @@ final class KizunaAITests: XCTestCase {
                 baseURL: storageURL
             ).isEmpty
         )
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryScene.self,
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            ).first?.id,
+            scene.id
+        )
+    }
+
+    func testStoryTurnJournalReplaysValidEntryWhenAnotherEntryIsInvalid() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let validSceneID = UUID()
+        let validTurnID = UUID()
+        let date = Date(timeIntervalSince1970: 100)
+        let validCheckpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: validTurnID,
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: date,
+                updatedAt: date
+            ),
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+        var persistedSession = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: validSceneID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: validCheckpoint,
+            lastTurnProgress: "古い保存",
+            updatedAt: date
+        )
+        let validScene = StoryScene(
+            id: validSceneID,
+            storyWorldId: worldID,
+            summary: "古い場面",
+            updatedAt: date
+        )
+        var validJournalSession = persistedSession
+        validJournalSession.persistenceRevision = 2
+        validJournalSession.lastTurnProgress = "有効な復旧"
+        validJournalSession.updatedAt = date.addingTimeInterval(100)
+        var validJournalScene = validScene
+        validJournalScene.summary = "有効な場面"
+        validJournalScene.updatedAt = date.addingTimeInterval(100)
+
+        let invalidScene = StoryScene(
+            id: UUID(),
+            storyWorldId: UUID(),
+            updatedAt: date
+        )
+        var invalidSession = persistedSession
+        invalidSession.id = UUID()
+        invalidSession.currentSceneId = invalidScene.id
+        invalidSession.latestTurnCheckpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: UUID(),
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: date,
+                updatedAt: date
+            ),
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+
+        try LocalJSONStoreTransaction.save(
+            [persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [validScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [
+                StoryTurnJournalEntry(
+                    turnID: validTurnID,
+                    session: validJournalSession,
+                    scene: validJournalScene
+                ),
+                StoryTurnJournalEntry(
+                    turnID: UUID(),
+                    session: invalidSession,
+                    scene: invalidScene
+                )
+            ],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        let sessions = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        let scenes = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(sessions.first?.lastTurnProgress, "有効な復旧")
+        XCTAssertEqual(scenes.first?.summary, "有効な場面")
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
     }
 
     private func makeStoryPersistenceTestDirectory() throws -> URL {
