@@ -595,14 +595,20 @@ final class StorySessionService: ObservableObject {
         let reconciledCast = reconciledCast(cast, for: world, scene: scene)
         // castの読込後にcancel()されても、古い生成が関連データを
         // 書き換えないよう、永続化の直前に所有権を再確認する。
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         if Set(cast.map(\.characterId)) != Set(reconciledCast.map(\.characterId)) || cast.count != reconciledCast.count {
             do {
                 try await castRepo.replaceCast(reconciledCast, storyWorldId: world.id)
                 // cancel()はrepository await中にも呼ばれ得る。完了後に
                 // 生成世代を再確認し、古いローカルスナップショットを
                 // このTaskの後続処理へ渡さない。
-                guard isGenerationActive(generationID) else { return }
+                guard isGenerationActive(generationID) else {
+                    await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                    return
+                }
                 cast = reconciledCast
             } catch {
                 await finishGenerationWithoutSaving(
@@ -656,7 +662,10 @@ final class StorySessionService: ObservableObject {
         // 3) 入力 safety
         // 相談分類は入力/出力を変更しない。本文生成と並行するUI用の情報だけを作る。
         let safetyConcern = await safetyPipeline.classifyConcern(userText)
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         // 生成完了を待たず、分類できた時点でUIへ通知する。
         // モデルが遅い／利用できない場合でも相談先を表示できるようにする。
         if let safetyConcern {
@@ -669,7 +678,10 @@ final class StorySessionService: ObservableObject {
             )
         }
         let inSafety = await safetyPipeline.evaluateInput(userText, character: representativeCharacter)
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         if inSafety.action == .block {
             let polite = inSafety.rewrittenText ?? localizedNotice(
                 "(ナレーション) その話題はここではそっと脇に置いて、別の場面に進もう。",
@@ -756,14 +768,23 @@ final class StorySessionService: ObservableObject {
             characterIndex: charIndex,
             maxActive: activeCharacterLimit
         )
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         var sceneWithSelectedCharacters = scene
         sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
         // 選択結果はターンのcommitまでメモリ上に保持する。生成失敗時に
         // activeCharacterIdsだけが先に保存される部分成功を作らない。
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         scene = sceneWithSelectedCharacters
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
 
         let activeCast = cast.filter { scene.activeCharacterIds.contains($0.characterId) }
         let inactiveCast = cast.filter { !scene.activeCharacterIds.contains($0.characterId) }
@@ -802,7 +823,10 @@ final class StorySessionService: ObservableObject {
         } else {
             selectedMemories = candidates
         }
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         if !selectedMemories.isEmpty {
             try? await memoryRepo.markUsed(ids: selectedMemories.map(\.id))
         }
@@ -821,7 +845,10 @@ final class StorySessionService: ObservableObject {
                 return validCastCharacterIDs.contains(characterID)
                     && contextualCharacterIDs.contains(characterID)
             }
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         let selectedStoryMemories = selectStoryMemories(
             query: effectiveUserText,
             candidates: storyMemoryCandidates,
@@ -834,7 +861,10 @@ final class StorySessionService: ObservableObject {
         // 6) Lorebook: キーワード一致した設定だけを選択する。
         streamingStatusText = statusText("Lorebookを選択中", "Selecting lorebook entries")
         var lorebookEntries = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         // 既存のCharacterLorebookも移行期間は同じ選択器に流し込む。
         for member in cast {
             guard let legacy = try? await characterRepo.fetchLorebook(characterId: member.characterId),
@@ -941,7 +971,10 @@ final class StorySessionService: ObservableObject {
                 userCharacterName: userCharacterName
             )
         }
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
 
         // 8) Story model 生成。31B を明示選択した時だけ Gemma4 API を使う。
         // 端末内モデルは、保存直後の自動 self-check が終わるまで同じターンを待つ。
@@ -1068,7 +1101,10 @@ final class StorySessionService: ObservableObject {
         var retryWhenLocalReady = generated.retryWhenLocalReady
 
         // キャンセルやウォッチドッグ後に、古い生成結果を後段へ保存しない。
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
 
         // 9) 出力 safety
         streamingStatusText = statusText("発話を整形中", "Formatting response")
@@ -1154,7 +1190,10 @@ final class StorySessionService: ObservableObject {
                 : localStoryGenerationFailureMessage(runtimeError: "記号だけの本文")
         }
         if isRuntimeNotice {
-            guard isGenerationActive(generationID) else { return }
+            guard isGenerationActive(generationID) else {
+                await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                return
+            }
             let noticeText = textAfterSpeakerDelimiter(rawFinal)
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
@@ -1183,7 +1222,10 @@ final class StorySessionService: ObservableObject {
             return
         }
         let outSafety = await safetyPipeline.evaluateOutput(rawFinal, character: representativeCharacter)
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         switch outSafety.action {
         case .block:
             // 安全ブロックを物語内の沈黙や台詞に偽装しない。モデル本文は保存せず、
@@ -1297,7 +1339,10 @@ final class StorySessionService: ObservableObject {
         )
         session.lastSelectedModelName = generationModel.displayName
         session.lastUsedBackendName = usedBackendName
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
 
         // 11) Scene summary 更新 (270M)
         streamingStatusText = statusText("場面要約を更新中", "Updating scene summary")
@@ -1306,7 +1351,10 @@ final class StorySessionService: ObservableObject {
             recentMessages: Array(storyContentMessages(from: session.messages).suffix(18)),
             characterIndex: charIndex
         )
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         if newSummary != scene.summary {
             scene.summary = newSummary
         }
@@ -1386,22 +1434,12 @@ final class StorySessionService: ObservableObject {
                 assistantMessageIDs: turnMessages.map(\.id)
             )
         } catch {
-            latestRuntimeNotice = StoryRuntimeNotice(
-                text: localizedNotice(
-                    "今回の応答を一貫して保存できませんでした。AI本文は再生成せず、保存状態を確認してから再試行してください。",
-                    "The turn could not be committed consistently. The AI reply was not regenerated; check storage and retry."
-                ),
-                userMessageID: userMessageID,
-                userText: userText,
-                backendName: "turn commit failed",
-                backend: .persistence
-            )
             NSLog("[StorySession] turn commit failed: %@", error.localizedDescription)
             await finishGenerationWithoutSaving(
                 generationID: generationID,
                 notice: localizedNotice(
-                    "今回の応答を保存できませんでした。もう一度試してください。",
-                    "The reply could not be saved. Try again."
+                    "今回の応答を一貫して保存できませんでした。AI本文は再生成せず、保存状態を確認してから同じ発言を再試行してください。",
+                    "The turn could not be committed consistently. The AI reply was not regenerated; check storage and retry the same message."
                 ),
                 backend: .persistence,
                 userMessageID: userMessageID,
@@ -1410,7 +1448,10 @@ final class StorySessionService: ObservableObject {
             )
             return
         }
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
 
         // 13) メモリー抽出。ユーザー事実は全体、出来事は物語内へ保存する。
         // ここを phase=.idle / activeGenerationID=nil より後に置くと、下の
@@ -1421,7 +1462,10 @@ final class StorySessionService: ObservableObject {
         }.joined(separator: "\n")
         var extractedStoryMemoryTexts = Set<String>()
         for member in activeCast {
-            guard isGenerationActive(generationID) else { return }
+            guard isGenerationActive(generationID) else {
+                await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                return
+            }
             guard let profile = charIndex[member.characterId] else { continue }
             let mems = await memorySummarizer.extract(
                 userText: userText,
@@ -1429,7 +1473,10 @@ final class StorySessionService: ObservableObject {
                 character: profile
             )
             for memory in mems {
-                guard isGenerationActive(generationID) else { return }
+                guard isGenerationActive(generationID) else {
+                    await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                    return
+                }
                 if isGlobalMemoryCategory(memory.category) {
                     // ユーザーのプロフィール・好みは、別の物語でも使える全体メモリー。
                     try? await memoryRepo.saveMemory(memory)
@@ -1455,7 +1502,10 @@ final class StorySessionService: ObservableObject {
             .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             .nonEmpty,
            extractedStoryMemoryTexts.insert(progress).inserted {
-            guard isGenerationActive(generationID) else { return }
+            guard isGenerationActive(generationID) else {
+                await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                return
+            }
             try? await storyMemoryRepo.saveMemory(
                 StoryMemory(
                     storyWorldId: world.id,
@@ -1558,6 +1608,28 @@ final class StorySessionService: ObservableObject {
             self.activeTurnAttempt = nil
             self.activeUserMessageID = nil
             self.activeUserText = ""
+        }
+    }
+
+    /// `Task` cancellation makes the normal notice path ineligible because
+    /// `isGenerationActive` also checks `Task.isCancelled`. Finalize the
+    /// persisted checkpoint directly so cancellation cannot leave a pending
+    /// turn behind for the next launch.
+    private func finishCancelledTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int
+    ) async {
+        do {
+            try await sessionRepo.finishTurn(
+                sessionID: sessionID,
+                turnID: turnID,
+                attempt: attempt,
+                status: .cancelled,
+                failureCode: "generation_cancelled"
+            )
+        } catch {
+            NSLog("[StorySession] cancellation cleanup failed: %@", error.localizedDescription)
         }
     }
 

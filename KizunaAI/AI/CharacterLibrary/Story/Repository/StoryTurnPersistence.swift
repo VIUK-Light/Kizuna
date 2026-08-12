@@ -156,8 +156,25 @@ enum StoryTurnJournal {
             )
 
             for entry in entries {
-                upsert(entry.session, in: &sessions)
-                upsert(entry.scene, in: &scenes)
+                if let sessionIndex = sessions.firstIndex(where: { $0.id == entry.session.id }) {
+                    let persisted = sessions[sessionIndex]
+                    if shouldApply(entry.session, over: persisted) {
+                        sessions[sessionIndex] = entry.session
+                    }
+                } else {
+                    // A missing record is normally the half-written side of the
+                    // commit. Recreate it from the journal snapshot.
+                    sessions.append(entry.session)
+                }
+
+                if let sceneIndex = scenes.firstIndex(where: { $0.id == entry.scene.id }) {
+                    let persisted = scenes[sceneIndex]
+                    if shouldApply(entry.scene, over: persisted) {
+                        scenes[sceneIndex] = entry.scene
+                    }
+                } else {
+                    scenes.append(entry.scene)
+                }
             }
             try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
             try LocalJSONStoreTransaction.save(scenes, fileName: "story_scenes.json")
@@ -167,12 +184,15 @@ enum StoryTurnJournal {
         }
     }
 
-    private static func upsert<T: Identifiable>(_ value: T, in values: inout [T]) where T.ID: Equatable {
-        if let index = values.firstIndex(where: { $0.id == value.id }) {
-            values[index] = value
-        } else {
-            values.append(value)
+    private static func shouldApply(_ journal: StorySession, over persisted: StorySession) -> Bool {
+        if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
+            return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
         }
+        return journal.updatedAt > persisted.updatedAt
+    }
+
+    private static func shouldApply(_ journal: StoryScene, over persisted: StoryScene) -> Bool {
+        journal.updatedAt > persisted.updatedAt
     }
 }
 

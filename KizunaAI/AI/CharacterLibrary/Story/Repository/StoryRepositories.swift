@@ -330,9 +330,32 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         return repairedSessions
     }
     func saveSession(_ session: StorySession) async throws {
-        var s = StorySessionMessageRepair.repaired(session)
-        s.updatedAt = Date()
-        try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
+        try StoryTurnJournal.recoverIfNeeded()
+        try LocalJSONStoreTransaction.withSharedLock {
+            var sessions = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json"
+            )
+            if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+                let current = sessions[index]
+                guard current.effectivePersistenceRevision == session.effectivePersistenceRevision else {
+                    throw StoryTurnPersistenceError.revisionConflict(
+                        expected: session.effectivePersistenceRevision,
+                        actual: current.effectivePersistenceRevision
+                    )
+                }
+                var next = StorySessionMessageRepair.repaired(session)
+                next.persistenceRevision = current.effectivePersistenceRevision + 1
+                next.updatedAt = Date()
+                sessions[index] = next
+            } else {
+                var next = StorySessionMessageRepair.repaired(session)
+                next.persistenceRevision = max(1, next.effectivePersistenceRevision)
+                next.updatedAt = Date()
+                sessions.append(next)
+            }
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
+        }
     }
 
     func beginTurn(
@@ -479,7 +502,8 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
 
             var committed = StorySessionMessageRepair.repaired(session)
             let now = Date()
-            let assistantIDs = Array(Set(assistantMessageIDs))
+            var seenAssistantIDs = Set<UUID>()
+            let assistantIDs = assistantMessageIDs.filter { seenAssistantIDs.insert($0).inserted }
             committed.messages = committed.messages.map { message in
                 guard assistantIDs.contains(message.id) || message.id == checkpoint.userMessageID else {
                     return message
