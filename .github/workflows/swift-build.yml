@@ -19,7 +19,25 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Run model artifact validator tests
+        run: |
+          xcrun swiftc \
+            KizunaAI/AI/LocalAssistantModelArtifactValidator.swift \
+            scripts/test_model_artifact_validator.swift \
+            -o "$RUNNER_TEMP/model-artifact-validator-tests"
+          "$RUNNER_TEMP/model-artifact-validator-tests"
+
+      - name: Run model replacement tests
+        run: |
+          xcrun swiftc \
+            KizunaAI/AI/LocalAssistantModelReplacement.swift \
+            scripts/test_model_replacement.swift \
+            -o "$RUNNER_TEMP/model-replacement-tests"
+          "$RUNNER_TEMP/model-replacement-tests"
 
       - name: Build KizunaAI
         run: |
@@ -41,13 +59,45 @@ jobs:
             -o "$RUNNER_TEMP/persona-response-sanitizer-tests"
           "$RUNNER_TEMP/persona-response-sanitizer-tests"
 
+      - name: Run LiteRT-LM execution-gate regression tests
+        shell: bash
+        run: |
+          # GitHub's macos-15 image can lag the Swift toolchain used by the
+          # Xcode project. Use the complete target-equivalent concurrency
+          # settings whenever the compiler supports them; the test driver is
+          # explicitly @MainActor for older runners below.
+          swift_settings=(-swift-version 5)
+          swiftc_help="$(xcrun swiftc -help 2>&1)"
+          if [[ "$swiftc_help" == *"-default-isolation"* ]]; then
+            # Do not silently fall back if a compiler claims this setting but
+            # rejects the complete target-equivalent configuration.
+            xcrun swiftc \
+              -swift-version 5 \
+              -default-isolation MainActor \
+              -enable-upcoming-feature ApproachableConcurrency \
+              -typecheck \
+              KizunaAI/AI/LiteRTLMExecutionGate.swift \
+              scripts/test_litertlm_execution_gate.swift
+            swift_settings+=(
+              -default-isolation MainActor
+              -enable-upcoming-feature ApproachableConcurrency
+            )
+          fi
+          xcrun swiftc "${swift_settings[@]}" \
+            KizunaAI/AI/LiteRTLMExecutionGate.swift \
+            scripts/test_litertlm_execution_gate.swift \
+            -o "$RUNNER_TEMP/litertlm-execution-gate-tests"
+          "$RUNNER_TEMP/litertlm-execution-gate-tests"
+
   gemma-script-tests:
     name: Gemma Script Tests
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Run Gemma script tests
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v

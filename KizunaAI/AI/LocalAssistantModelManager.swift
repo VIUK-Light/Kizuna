@@ -6,6 +6,11 @@
 */
 import Combine
 import Foundation
+#if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
+#if canImport(LiteRTLM)
+import LiteRTLM
+#endif
+#endif
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -25,6 +30,9 @@ enum LocalAssistantDownloadStatus: String, Codable {
     case downloading
     case paused
     case resumable
+    /// A complete download is being checked outside the installed-model path.
+    /// It must not replace an existing model until that check succeeds.
+    case validating
     case failed
     case completed
 }
@@ -40,6 +48,19 @@ struct LocalAssistantDownloadState: Codable {
     var updatedAt: Date
     var lastError: String?
     var suggestedFilename: String?
+    /// A temporary candidate stays outside the installed-model namespace until
+    /// runtime validation has completed. These fields make an interrupted
+    /// validation recoverable without adopting or deleting an existing model.
+    var pendingValidationPath: String? = nil
+    var replacementBackupPath: String? = nil
+    // Optional preserves compatibility with state JSON written before this
+    // recovery marker existed; missing means `false`.
+    var replacementInProgress: Bool? = nil
+    var previousInstalledFileName: String? = nil
+    var previousSourceURL: String? = nil
+    var previousResolvedURL: String? = nil
+    var previousExpectedBytes: Int64? = nil
+    var previousETag: String? = nil
 }
 
 private struct LocalAssistantDownloadPreflight {
@@ -141,6 +162,25 @@ private enum LocalAssistantStatusKind: Equatable {
     case legacyModelDeleted
 }
 
+private struct LocalAssistantInstalledModelSnapshot {
+    let modelURL: URL
+    let fileName: String
+    let sourceURL: String?
+    let resolvedURL: String?
+    let expectedBytes: Int64?
+    let eTag: String?
+}
+
+private struct LocalAssistantPendingModelCandidate {
+    let stagedURL: URL
+    let fileName: String
+    let sourceURL: String
+    let resolvedURL: String?
+    let expectedBytes: Int64
+    let eTag: String?
+    let previousModel: LocalAssistantInstalledModelSnapshot?
+}
+
 final class LocalAssistantModelManager: NSObject, ObservableObject {
     static let shared = LocalAssistantModelManager()
 
@@ -237,6 +277,15 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     // 同じモデルで refreshEnvironment() が連続しても、重いモデル初期化を重ねない。
     private var automaticRuntimeCheckTask: Task<Void, Never>?
     private var automaticRuntimeCheckModelKey: String?
+    /// Strict parsing is needed before adopting an unknown file, but repeatedly
+    /// scanning its full metadata and tensor directory during environment
+    /// refreshes would block the main actor. Entries are tied to the same
+    /// path/size/modification identity used by runtime checks, plus validation
+    /// inputs that can change the result.
+    private var modelArtifactValidationCache: [String: Bool] = [:]
+    private var installedModelSnapshotBeforeDownload: LocalAssistantInstalledModelSnapshot?
+    private var pendingModelCandidate: LocalAssistantPendingModelCandidate?
+    private var candidateRuntimeValidationTask: Task<Void, Never>?
 
     private override init() {
         self.sourceURLString = Self.normalizedSourceURL(
@@ -260,6 +309,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     deinit {
         automaticRuntimeCheckTask?.cancel()
+        candidateRuntimeValidationTask?.cancel()
         lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
@@ -333,6 +383,36 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     var hasLegacyInstalledModel: Bool {
         legacyResolvedInstalledModelURL != nil
+    }
+
+    private var isValidatingDownloadedCandidate: Bool {
+        pendingModelCandidate != nil || candidateRuntimeValidationTask != nil || downloadStatus == .validating
+    }
+
+    private func currentInstalledModelSnapshot() -> LocalAssistantInstalledModelSnapshot? {
+        guard let modelURL = resolvedInstalledModelURL,
+              let fileName = safeModelFileName(modelURL.lastPathComponent) else {
+            return nil
+        }
+
+        let completedState: LocalAssistantDownloadState?
+        if let state = persistedDownloadState,
+           state.status == .completed,
+           stateReferencedFileName(for: state) == fileName {
+            completedState = state
+        } else {
+            completedState = nil
+        }
+
+        let fileSize = (try? modelURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        return LocalAssistantInstalledModelSnapshot(
+            modelURL: modelURL,
+            fileName: fileName,
+            sourceURL: completedState?.sourceURL,
+            resolvedURL: completedState?.resolvedURL,
+            expectedBytes: completedState?.expectedBytes ?? (fileSize > 0 ? fileSize : nil),
+            eTag: completedState?.eTag
+        )
     }
 
     var progressValue: Double? {
@@ -441,6 +521,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return "前回の途中から再開できます。"
         case .paused:
             return "ダウンロードを一時停止しました。"
+        case .validating:
+            return "ダウンロードしたモデルを置換前に確認しています。"
         case .failed:
             return classifyReadableError(lastErrorMessage)
         case .completed:
@@ -783,6 +865,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func scheduleAutomaticRuntimeCheckIfNeeded() {
         guard !isDownloading,
+              !isValidatingDownloadedCandidate,
               runtimeAvailability == .savedOnly,
               let modelURL = installedModelURL else {
             return
@@ -824,8 +907,33 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         return "\(modelURL.standardizedFileURL.path)|\(size)|\(modified)"
     }
 
+    private func modelArtifactValidationCacheKey(
+        for modelURL: URL,
+        expectedBytes: Int64?,
+        trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?
+    ) -> String {
+        let expected = expectedBytes.map { String($0) } ?? "unknown"
+        let artifactIdentity = trustedArtifact.map {
+            "\($0.fileName)|\($0.byteCount)|\($0.sha256)"
+        } ?? "untrusted"
+        let depth = trustedArtifact == nil ? "strict" : "quick"
+        return "\(automaticRuntimeCheckKey(for: modelURL))|\(expected)|\(artifactIdentity)|\(depth)"
+    }
+
+    private func rememberModelArtifactValidation(_ result: Bool, for cacheKey: String) {
+        if modelArtifactValidationCache[cacheKey] == nil,
+           modelArtifactValidationCache.count >= 64 {
+            modelArtifactValidationCache.removeAll(keepingCapacity: true)
+        }
+        modelArtifactValidationCache[cacheKey] = result
+    }
+
+    private func invalidateModelArtifactValidationCache() {
+        modelArtifactValidationCache.removeAll(keepingCapacity: true)
+    }
+
     func startDownload() {
-        guard !isDownloading else { return }
+        guard !isDownloading, !isValidatingDownloadedCandidate else { return }
         NSLog(
             "[ModelManager] DOWNLOAD START requested status=%@ installed=%@ callstack=%@",
             downloadStatus.rawValue,
@@ -836,7 +944,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     func resumeDownloadIfPossible() {
-        guard !isDownloading, canResumeDownload else { return }
+        guard !isDownloading, !isValidatingDownloadedCandidate, canResumeDownload else { return }
         NSLog(
             "[ModelManager] DOWNLOAD RESUME requested status=%@ installed=%@",
             downloadStatus.rawValue,
@@ -989,6 +1097,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private var displayState: LocalAssistantDisplayState {
         // 保存済みモデルがある場合、停止済みの古い状態JSONだけで
         // 「ダウンロード中」に戻さない。実ダウンロード中は isDownloading が真。
+        if isValidatingDownloadedCandidate {
+            return .checking
+        }
         if isDownloading || (resolvedInstalledModelURL == nil && [.preflighting, .downloading].contains(downloadStatus)) {
             return .downloading
         }
@@ -1013,6 +1124,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func beginDownload(resuming: Bool) {
+        installedModelSnapshotBeforeDownload = currentInstalledModelSnapshot()
         activeTransferID = UUID()
         // A previous cancel(byProducingResumeData:) may still be waiting on
         // its callback. The new transfer owns cancellation state from here;
@@ -1034,6 +1146,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return
         }
 
+        invalidateModelArtifactValidationCache()
         isDownloading = true
         downloadedBytes = 0
         expectedBytes = persistedDownloadState?.expectedBytes ?? 0
@@ -1400,7 +1513,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func isBlockedByIncompleteDownloadState(_ url: URL) -> Bool {
         guard let state = persistedDownloadState else { return false }
-        guard state.status != .completed else { return false }
+        // A `.validating` state refers to a hidden candidate file. The file at
+        // the public installed path is still the previous model and must remain
+        // usable while the candidate is checked.
+        guard state.status != .completed, state.status != .validating else { return false }
         guard let stateFileName = stateReferencedFileName(for: state) else { return false }
         guard stateFileName == url.lastPathComponent else { return false }
 
@@ -1430,6 +1546,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func adoptExistingModelIfNeeded(at modelURL: URL) {
+        // During candidate validation the public path still belongs to the
+        // previous model. Do not rewrite the durable validation marker just
+        // because the old model is rediscovered by an environment refresh.
+        guard persistedDownloadState?.status != .validating else { return }
         guard isValidModelFile(at: modelURL) else { return }
         let fileSize = (try? modelURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
         guard fileSize > 0 else { return }
@@ -1483,22 +1603,95 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     private func isValidModelFile(at url: URL, expectedBytes: Int64? = nil) -> Bool {
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
-        let lowercasedPath = url.lastPathComponent.lowercased()
-#if os(iOS)
-        // iOS runs .litertlm through LiteRT-LM and GGUF/bin through the embedded
-        // llama.cpp runtime. Both are valid local model formats.
-        guard lowercasedPath.hasSuffix(".litertlm")
-            || lowercasedPath.hasSuffix(".gguf")
-            || lowercasedPath.hasSuffix(".bin") else { return false }
-#else
-        guard lowercasedPath.hasSuffix(".gguf") || lowercasedPath.hasSuffix(".bin") || lowercasedPath.hasSuffix(".litertlm") else { return false }
-#endif
-        let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-        guard fileSize >= LocalAssistantModelProfile.minimumAcceptedModelSizeBytes else { return false }
-        guard let expectedBytes, expectedBytes > 0 else { return true }
+        let trustedArtifact = trustedArtifactForStoredModel(at: url)
+        let cacheKey = modelArtifactValidationCacheKey(
+            for: url,
+            expectedBytes: expectedBytes,
+            trustedArtifact: trustedArtifact
+        )
+        if let cached = modelArtifactValidationCache[cacheKey] {
+            return cached
+        }
 
-        let tolerance = max(Int64(128 * 1024 * 1024), expectedBytes / 20)
-        return abs(fileSize - expectedBytes) <= tolerance
+        let isValid: Bool
+        do {
+            try validateModelArtifact(
+                at: url,
+                fileName: url.lastPathComponent,
+                expectedBytes: expectedBytes,
+                trustedArtifact: trustedArtifact,
+                requireExactByteCount: false,
+                validateLiteRTLMMetadata: false,
+                validationDepth: trustedArtifact == nil ? .strict : .quick
+            )
+            isValid = true
+        } catch {
+            isValid = false
+        }
+        rememberModelArtifactValidation(isValid, for: cacheKey)
+        return isValid
+    }
+
+    private func trustedArtifactForStoredModel(at url: URL) -> LocalAssistantModelProfile.TrustedArtifact? {
+        guard let state = persistedDownloadState,
+              state.status == .completed,
+              stateReferencedFileName(for: state) == url.lastPathComponent else {
+            return nil
+        }
+        return LocalAssistantModelProfile.trustedArtifact(for: state.sourceURL)
+    }
+
+    private func validateModelArtifact(
+        at url: URL,
+        fileName: String,
+        expectedBytes: Int64?,
+        trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?,
+        requireExactByteCount: Bool,
+        validateLiteRTLMMetadata: Bool,
+        validationDepth: LocalAssistantModelArtifactValidator.ValidationDepth
+    ) throws {
+        if let trustedArtifact, fileName != trustedArtifact.fileName {
+            throw LocalAssistantModelArtifactValidator.ValidationError.unexpectedFileName
+        }
+
+        let verificationSize = trustedArtifact?.byteCount ?? expectedBytes
+        try LocalAssistantModelArtifactValidator.validate(
+            at: url,
+            fileName: fileName,
+            expectedByteCount: verificationSize,
+            // Complete candidates are SHA-256 verified on a utility queue
+            // before replacement. Routine discovery never hashes every
+            // 2.6–5.3 GB model on the main queue. Standard artifacts already
+            // tied to a completed state use a fast header check; unknown files
+            // still receive strict structural parsing before they are adopted.
+            expectedSHA256: nil,
+            minimumByteCount: LocalAssistantModelProfile.minimumAcceptedModelSizeBytes,
+            requireExactByteCount: requireExactByteCount,
+            validationDepth: validationDepth
+        )
+
+        if URL(fileURLWithPath: fileName).pathExtension.lowercased() == "litertlm",
+           validateLiteRTLMMetadata {
+            try Self.validateLiteRTLMMetadata(at: url, hasTrustedDigest: trustedArtifact != nil)
+        }
+    }
+
+    nonisolated private static func validateLiteRTLMMetadata(at url: URL, hasTrustedDigest: Bool) throws {
+#if os(iOS) && !targetEnvironment(simulator) && VIUK_ENABLE_LITERTLM_NATIVE
+#if canImport(LiteRTLM)
+        guard Capabilities(modelPath: url.path) != nil else {
+            throw LocalAssistantModelArtifactValidator.ValidationError.invalidLiteRTLMMetadata
+        }
+#else
+        guard hasTrustedDigest else {
+            throw LocalAssistantModelArtifactValidator.ValidationError.liteRTLMValidationUnavailable
+        }
+#endif
+#else
+        guard hasTrustedDigest else {
+            throw LocalAssistantModelArtifactValidator.ValidationError.liteRTLMValidationUnavailable
+        }
+#endif
     }
 
     private func localizedStatusMessage(for kind: LocalAssistantStatusKind) -> String {
@@ -1563,6 +1756,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return "The previous download can be resumed"
         case .paused:
             return "Download paused"
+        case .validating:
+            return "Checking the downloaded model before replacing the installed model"
         case .failed:
             return localizedReadableError(lastErrorMessage)
         case .completed:
@@ -1677,7 +1872,473 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         if message.contains("HTTP") {
             return "配布元がエラーを返しました"
         }
+        if message.contains("SHA-256")
+            || message.contains("GGUF")
+            || message.contains("GGML")
+            || message.contains("LiteRT-LM")
+            || message.contains("サイズ")
+            || message.contains("小さすぎ") {
+            return "ダウンロードしたモデルの整合性または形式を確認できませんでした。既存モデルは変更していません"
+        }
+        if message.contains("既存モデルは置き換えません") || message.contains("既存モデルは保持") {
+            return "新しいモデルを受け入れなかったため、既存モデルを保持しました"
+        }
         return message
+    }
+
+    nonisolated private static func validateDownloadedCandidate(
+        at url: URL,
+        fileName: String,
+        reportedExpectedBytes: Int64,
+        trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?
+    ) throws {
+        if let trustedArtifact, fileName != trustedArtifact.fileName {
+            throw LocalAssistantModelArtifactValidator.ValidationError.unexpectedFileName
+        }
+
+        let expectedBytes = trustedArtifact?.byteCount
+            ?? (reportedExpectedBytes > 0 ? reportedExpectedBytes : nil)
+        try LocalAssistantModelArtifactValidator.validate(
+            at: url,
+            fileName: fileName,
+            expectedByteCount: expectedBytes,
+            expectedSHA256: trustedArtifact?.sha256,
+            minimumByteCount: LocalAssistantModelProfile.minimumAcceptedModelSizeBytes,
+            requireExactByteCount: true
+        )
+
+        if URL(fileURLWithPath: fileName).pathExtension.lowercased() == "litertlm" {
+            try validateLiteRTLMMetadata(at: url, hasTrustedDigest: trustedArtifact != nil)
+        }
+    }
+
+    private func beginDownloadedCandidateValidation(
+        tempURL: URL,
+        fileName: String,
+        response: URLResponse?,
+        expectedBytes: Int64
+    ) {
+        guard !isValidatingDownloadedCandidate else {
+            try? FileManager.default.removeItem(at: tempURL)
+            return
+        }
+
+        let sourceURL = persistedDownloadState?.sourceURL ?? resolvedSourceURLString
+        let trustedArtifact = LocalAssistantModelProfile.trustedArtifact(for: sourceURL)
+        let recordedExpectedBytes = trustedArtifact?.byteCount ?? max(expectedBytes, 0)
+        let pendingCandidate = LocalAssistantPendingModelCandidate(
+            stagedURL: tempURL,
+            fileName: fileName,
+            sourceURL: sourceURL,
+            resolvedURL: persistedDownloadState?.resolvedURL ?? response?.url?.absoluteString,
+            expectedBytes: recordedExpectedBytes,
+            eTag: persistedDownloadState?.eTag,
+            previousModel: installedModelSnapshotBeforeDownload ?? currentInstalledModelSnapshot()
+        )
+        pendingModelCandidate = pendingCandidate
+
+        persistDownloadState(
+            pendingValidationState(for: pendingCandidate)
+        )
+        guard downloadStatePersistenceError == nil else {
+            rejectDownloadedCandidate(
+                pendingCandidate,
+                message: "モデルの検証状態を保存できなかったため、既存モデルは置き換えませんでした。"
+            )
+            return
+        }
+
+        setStatus(.checking, japaneseMessage: "ダウンロードしたモデルを置換前に確認しています")
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result: Result<Void, Error> = Result {
+                try Self.validateDownloadedCandidate(
+                    at: tempURL,
+                    fileName: fileName,
+                    reportedExpectedBytes: recordedExpectedBytes,
+                    trustedArtifact: trustedArtifact
+                )
+            }
+            DispatchQueue.main.async {
+                self?.finishDownloadedCandidateFileValidation(result, candidate: pendingCandidate)
+            }
+        }
+    }
+
+    private func pendingValidationState(
+        for candidate: LocalAssistantPendingModelCandidate
+    ) -> LocalAssistantDownloadState {
+        LocalAssistantDownloadState(
+            sourceURL: candidate.sourceURL,
+            resolvedURL: candidate.resolvedURL,
+            expectedBytes: candidate.expectedBytes,
+            eTag: candidate.eTag,
+            resumeDataPath: nil,
+            status: .validating,
+            startedAt: persistedDownloadState?.startedAt ?? Date(),
+            updatedAt: Date(),
+            lastError: nil,
+            suggestedFilename: candidate.fileName,
+            pendingValidationPath: candidate.stagedURL.path,
+            replacementBackupPath: nil,
+            replacementInProgress: false,
+            previousInstalledFileName: candidate.previousModel?.fileName,
+            previousSourceURL: candidate.previousModel?.sourceURL,
+            previousResolvedURL: candidate.previousModel?.resolvedURL,
+            previousExpectedBytes: candidate.previousModel?.expectedBytes,
+            previousETag: candidate.previousModel?.eTag
+        )
+    }
+
+    private func finishDownloadedCandidateFileValidation(
+        _ result: Result<Void, Error>,
+        candidate: LocalAssistantPendingModelCandidate
+    ) {
+        guard pendingModelCandidate?.stagedURL.standardizedFileURL == candidate.stagedURL.standardizedFileURL else {
+            try? FileManager.default.removeItem(at: candidate.stagedURL)
+            return
+        }
+
+        switch result {
+        case .failure(let error):
+            rejectDownloadedCandidate(
+                candidate,
+                message: "ダウンロードしたモデルを検証できませんでした: \(error.localizedDescription)"
+            )
+        case .success:
+            do {
+                let stagingURL = validationStagingURL(for: candidate.fileName)
+                try FileManager.default.createDirectory(at: installationDirectoryURL, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: candidate.stagedURL, to: stagingURL)
+                let stagedCandidate = LocalAssistantPendingModelCandidate(
+                    stagedURL: stagingURL,
+                    fileName: candidate.fileName,
+                    sourceURL: candidate.sourceURL,
+                    resolvedURL: candidate.resolvedURL,
+                    expectedBytes: candidate.expectedBytes,
+                    eTag: candidate.eTag,
+                    previousModel: candidate.previousModel
+                )
+                pendingModelCandidate = stagedCandidate
+                persistDownloadState(pendingValidationState(for: stagedCandidate))
+                guard downloadStatePersistenceError == nil else {
+                    throw NSError(
+                        domain: "LocalAssistantModelManager",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "モデルの検証状態を保存できませんでした。"]
+                    )
+                }
+                startRuntimeValidation(for: stagedCandidate)
+            } catch {
+                rejectDownloadedCandidate(
+                    pendingModelCandidate ?? candidate,
+                    message: "検証済みモデルを安全な確認領域へ移せませんでした。既存モデルは保持されています。"
+                )
+            }
+        }
+    }
+
+    private func validationStagingURL(for fileName: String) -> URL {
+        let fileURL = URL(fileURLWithPath: fileName)
+        let baseName = fileURL.deletingPathExtension().lastPathComponent
+        let fileExtension = fileURL.pathExtension
+        return installationDirectoryURL
+            .appendingPathComponent(".\(baseName).candidate-\(UUID().uuidString)")
+            .appendingPathExtension(fileExtension)
+    }
+
+    private func startRuntimeValidation(for candidate: LocalAssistantPendingModelCandidate) {
+        candidateRuntimeValidationTask?.cancel()
+        candidateRuntimeValidationTask = Task { [weak self] in
+            let availability = await LocalAssistantRuntimeBridge.shared.performSelfCheck(
+                installedModelURL: candidate.stagedURL
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.finishRuntimeValidation(availability, candidate: candidate)
+            }
+        }
+    }
+
+    private func finishRuntimeValidation(
+        _ availability: LocalAssistantRuntimeAvailability,
+        candidate: LocalAssistantPendingModelCandidate
+    ) {
+        guard pendingModelCandidate?.stagedURL.standardizedFileURL == candidate.stagedURL.standardizedFileURL else {
+            return
+        }
+        candidateRuntimeValidationTask = nil
+
+        switch availability {
+        case .executable:
+            commitValidatedCandidate(candidate)
+        case .savedOnly where candidate.previousModel == nil:
+            // A first install may be kept after structural/integrity validation
+            // when this build cannot run a local self-check. It cannot displace
+            // an already working model in that state.
+            commitValidatedCandidate(candidate)
+        case .savedOnly:
+            rejectDownloadedCandidate(
+                candidate,
+                message: "このビルドでは新しいモデルを起動確認できないため、既存モデルは置き換えませんでした。"
+            )
+        case .recentFailure:
+            rejectDownloadedCandidate(
+                candidate,
+                message: "新しいモデルの端末内起動確認に失敗したため、既存モデルは置き換えませんでした。"
+            )
+        case .checking:
+            rejectDownloadedCandidate(
+                candidate,
+                message: "新しいモデルの起動確認が完了しなかったため、既存モデルは置き換えませんでした。"
+            )
+        case .modelMissing:
+            rejectDownloadedCandidate(
+                candidate,
+                message: "新しいモデルを確認できなかったため、既存モデルは置き換えませんでした。"
+            )
+        }
+    }
+
+    private func commitValidatedCandidate(_ candidate: LocalAssistantPendingModelCandidate) {
+        let fileManager = FileManager.default
+        let destinationURL = installationDirectoryURL.appendingPathComponent(candidate.fileName)
+        let hasDestination = fileManager.fileExists(atPath: destinationURL.path)
+        let backupURL = hasDestination
+            ? LocalAssistantModelReplacement.backupURL(for: destinationURL)
+            : nil
+        var replacementTransaction: LocalAssistantModelReplacement.Transaction?
+
+        do {
+            guard var validationState = persistedDownloadState else {
+                throw NSError(
+                    domain: "LocalAssistantModelManager",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "モデル検証の状態が見つかりません。"]
+                )
+            }
+            validationState.replacementInProgress = true
+            validationState.replacementBackupPath = backupURL?.path
+            persistDownloadState(validationState)
+            guard downloadStatePersistenceError == nil else {
+                throw NSError(
+                    domain: "LocalAssistantModelManager",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "安全な置換状態を保存できませんでした。"]
+                )
+            }
+
+            let transaction = try LocalAssistantModelReplacement.begin(
+                candidateURL: candidate.stagedURL,
+                destinationURL: destinationURL,
+                backupURL: backupURL,
+                fileManager: fileManager
+            )
+            replacementTransaction = transaction
+
+            let savedSize = (try destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            guard savedSize >= LocalAssistantModelProfile.minimumAcceptedModelSizeBytes else {
+                throw LocalAssistantModelArtifactValidator.ValidationError.fileTooSmall(
+                    minimum: LocalAssistantModelProfile.minimumAcceptedModelSizeBytes,
+                    actual: savedSize
+                )
+            }
+
+            let completedState = LocalAssistantDownloadState(
+                sourceURL: candidate.sourceURL,
+                resolvedURL: candidate.resolvedURL,
+                expectedBytes: max(candidate.expectedBytes, savedSize),
+                eTag: candidate.eTag,
+                resumeDataPath: nil,
+                status: .completed,
+                startedAt: persistedDownloadState?.startedAt ?? Date(),
+                updatedAt: Date(),
+                lastError: nil,
+                suggestedFilename: candidate.fileName,
+                pendingValidationPath: nil,
+                replacementBackupPath: backupURL?.path,
+                replacementInProgress: false
+            )
+            persistDownloadState(completedState)
+            guard downloadStatePersistenceError == nil else {
+                throw NSError(
+                    domain: "LocalAssistantModelManager",
+                    code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: "置換後のモデル状態を保存できませんでした。"]
+                )
+            }
+
+            try LocalAssistantModelReplacement.finish(transaction, fileManager: fileManager)
+            if var savedState = persistedDownloadState {
+                savedState.replacementBackupPath = nil
+                persistDownloadState(savedState)
+            }
+
+            AILegacyCompatibility.exportString(
+                candidate.fileName,
+                primaryKey: installedFileNameKey,
+                aliases: AILegacyCompatibility.localModelInstalledFileAliases,
+                defaults: defaults
+            )
+            installedFileName = candidate.fileName
+            installedFileSize = savedSize
+            resolvedInstalledModelURL = destinationURL
+            downloadedBytes = savedSize
+            expectedBytes = max(candidate.expectedBytes, savedSize)
+            invalidateModelArtifactValidationCache()
+            let trustedArtifact = LocalAssistantModelProfile.trustedArtifact(for: candidate.sourceURL)
+            let validationCacheKey = modelArtifactValidationCacheKey(
+                for: destinationURL,
+                expectedBytes: expectedBytesForCompletedModel(at: destinationURL),
+                trustedArtifact: trustedArtifact
+            )
+            // The candidate passed strict background validation before this
+            // replacement, so the first post-install refresh need not parse it
+            // again on the main actor.
+            rememberModelArtifactValidation(true, for: validationCacheKey)
+            activeDownloadBaseBytes = 0
+            resetDownloadProgressMetrics()
+            lastErrorMessage = nil
+            pendingModelCandidate = nil
+            installedModelSnapshotBeforeDownload = nil
+            removeResumeData()
+            setStatus(.modelSaved, japaneseMessage: "検証済みのローカルモデルを保存しました")
+            refreshEnvironment()
+        } catch {
+            if let replacementTransaction {
+                try? LocalAssistantModelReplacement.rollback(replacementTransaction, fileManager: fileManager)
+            } else {
+                restoreReplacementBackupIfNeeded(for: candidate)
+            }
+            rejectDownloadedCandidate(
+                candidate,
+                message: "検証済みモデルの置換に失敗しました。既存モデルは保持されています。"
+            )
+        }
+    }
+
+    private func restoreReplacementBackupIfNeeded(for candidate: LocalAssistantPendingModelCandidate) {
+        let fileManager = FileManager.default
+        let destinationURL = installationDirectoryURL.appendingPathComponent(candidate.fileName)
+        guard let path = persistedDownloadState?.replacementBackupPath,
+              let backupURL = managedReplacementBackupURL(from: path),
+              fileManager.fileExists(atPath: backupURL.path) else {
+            return
+        }
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try? fileManager.removeItem(at: destinationURL)
+        }
+        try? fileManager.moveItem(at: backupURL, to: destinationURL)
+    }
+
+    private func rejectDownloadedCandidate(
+        _ candidate: LocalAssistantPendingModelCandidate,
+        message: String
+    ) {
+        candidateRuntimeValidationTask?.cancel()
+        candidateRuntimeValidationTask = nil
+        rollbackUnfinishedCandidateReplacementIfNeeded(for: candidate)
+        if isManagedValidationCandidateURL(candidate.stagedURL) {
+            try? FileManager.default.removeItem(at: candidate.stagedURL)
+        }
+
+        pendingModelCandidate = nil
+        installedModelSnapshotBeforeDownload = nil
+        isDownloading = false
+
+        if let previousModel = candidate.previousModel,
+           FileManager.default.fileExists(atPath: previousModel.modelURL.path) {
+            let restoredSize = (try? previousModel.modelURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            let restoredState = LocalAssistantDownloadState(
+                sourceURL: previousModel.sourceURL ?? resolvedSourceURLString,
+                resolvedURL: previousModel.resolvedURL,
+                expectedBytes: max(previousModel.expectedBytes ?? 0, restoredSize),
+                eTag: previousModel.eTag,
+                resumeDataPath: nil,
+                status: .completed,
+                startedAt: Date(),
+                updatedAt: Date(),
+                lastError: nil,
+                suggestedFilename: previousModel.fileName
+            )
+            persistDownloadState(restoredState)
+            AILegacyCompatibility.exportString(
+                previousModel.fileName,
+                primaryKey: installedFileNameKey,
+                aliases: AILegacyCompatibility.localModelInstalledFileAliases,
+                defaults: defaults
+            )
+            installedFileName = previousModel.fileName
+            installedFileSize = restoredSize
+            resolvedInstalledModelURL = previousModel.modelURL
+            downloadedBytes = restoredSize
+            expectedBytes = restoredState.expectedBytes
+            lastErrorMessage = message
+            refreshEnvironment()
+            return
+        }
+
+        let failedState = LocalAssistantDownloadState(
+            sourceURL: candidate.sourceURL,
+            resolvedURL: candidate.resolvedURL,
+            expectedBytes: candidate.expectedBytes,
+            eTag: candidate.eTag,
+            resumeDataPath: nil,
+            status: .failed,
+            startedAt: Date(),
+            updatedAt: Date(),
+            lastError: message,
+            suggestedFilename: candidate.fileName
+        )
+        persistDownloadState(failedState)
+        lastErrorMessage = message
+        applyStatusPresentation()
+    }
+
+    private func rollbackUnfinishedCandidateReplacementIfNeeded(
+        for candidate: LocalAssistantPendingModelCandidate
+    ) {
+        let fileManager = FileManager.default
+        let destinationURL = installationDirectoryURL.appendingPathComponent(candidate.fileName)
+        if let path = persistedDownloadState?.replacementBackupPath,
+           let backupURL = managedReplacementBackupURL(from: path),
+           fileManager.fileExists(atPath: backupURL.path) {
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try? fileManager.removeItem(at: destinationURL)
+            }
+            try? fileManager.moveItem(at: backupURL, to: destinationURL)
+            return
+        }
+
+        guard persistedDownloadState?.replacementInProgress == true,
+              candidate.previousModel?.fileName != candidate.fileName,
+              fileManager.fileExists(atPath: destinationURL.path) else {
+            return
+        }
+        try? fileManager.removeItem(at: destinationURL)
+    }
+
+    private func isManagedValidationCandidateURL(_ url: URL) -> Bool {
+        let standardizedURL = url.standardizedFileURL
+        let temporaryDirectory = FileManager.default.temporaryDirectory.standardizedFileURL
+        let installationDirectory = installationDirectoryURL.standardizedFileURL
+        let fileName = standardizedURL.lastPathComponent
+        if standardizedURL.deletingLastPathComponent() == temporaryDirectory {
+            return fileName.hasPrefix("viuk-local-model-") && standardizedURL.pathExtension == "download"
+        }
+        return standardizedURL.deletingLastPathComponent() == installationDirectory
+            && fileName.hasPrefix(".")
+            && fileName.contains(".candidate-")
+            && ["gguf", "bin", "litertlm"].contains(standardizedURL.pathExtension.lowercased())
+    }
+
+    private func managedReplacementBackupURL(from path: String) -> URL? {
+        let candidateURL = URL(fileURLWithPath: path).standardizedFileURL
+        guard candidateURL.deletingLastPathComponent() == installationDirectoryURL.standardizedFileURL,
+              candidateURL.lastPathComponent.hasPrefix("."),
+              candidateURL.lastPathComponent.contains(".rollback-") else {
+            return nil
+        }
+        return candidateURL
     }
 
     private func localizedReadableError(_ rawMessage: String?) -> String {
@@ -1713,6 +2374,17 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
         if message.contains("保存先") || message.contains("フォルダ") || message.contains("書き込") {
             return "The model could not be saved. Check storage permissions and free space."
+        }
+        if message.contains("SHA-256")
+            || message.contains("GGUF")
+            || message.contains("GGML")
+            || message.contains("LiteRT-LM")
+            || message.contains("サイズ")
+            || message.contains("小さすぎ") {
+            return "The downloaded file failed model integrity or format validation. The installed model was left unchanged."
+        }
+        if message.contains("既存モデルは置き換えません") || message.contains("既存モデルは保持") {
+            return "The new model was not accepted, so the existing installed model was kept."
         }
         if message.contains("不完全") || message.contains("扱えません") {
             return "The saved file is incomplete or is not a supported model. Download it again."
@@ -1769,78 +2441,16 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return
         }
 
-        let destinationURL = installationDirectoryURL.appendingPathComponent(fileName)
         let expectedBytesForValidation = persistedDownloadState?.expectedBytes ?? expectedBytes
-        let backupURL = destinationURL.appendingPathExtension("previous")
-
-        do {
-            try FileManager.default.createDirectory(at: installationDirectoryURL, withIntermediateDirectories: true)
-            // 既存の正常なモデルを先に消さない。新しいファイルを検証してから置き換え、
-            // 検証失敗や移動失敗時には必ず既存ファイルを戻す。
-            if FileManager.default.fileExists(atPath: destinationURL.path) {
-                if FileManager.default.fileExists(atPath: backupURL.path) {
-                    try FileManager.default.removeItem(at: backupURL)
-                }
-                try FileManager.default.moveItem(at: destinationURL, to: backupURL)
-            }
-            do {
-                try FileManager.default.moveItem(at: tempURL, to: destinationURL)
-            } catch {
-                try? FileManager.default.removeItem(at: tempURL)
-                if FileManager.default.fileExists(atPath: backupURL.path) {
-                    try? FileManager.default.moveItem(at: backupURL, to: destinationURL)
-                }
-                throw error
-            }
-
-            guard isValidModelFile(at: destinationURL, expectedBytes: expectedBytesForValidation > 0 ? expectedBytesForValidation : nil) else {
-                try? FileManager.default.removeItem(at: destinationURL)
-                if FileManager.default.fileExists(atPath: backupURL.path) {
-                    try? FileManager.default.moveItem(at: backupURL, to: destinationURL)
-                }
-                applyFailure(message: "保存したファイルが不完全か、モデル本体として扱えませんでした。最初からやり直してください。")
-                return
-            }
-            if FileManager.default.fileExists(atPath: backupURL.path) {
-                try FileManager.default.removeItem(at: backupURL)
-            }
-
-            let savedSize = (try? destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-            AILegacyCompatibility.exportString(
-                fileName,
-                primaryKey: installedFileNameKey,
-                aliases: AILegacyCompatibility.localModelInstalledFileAliases,
-                defaults: defaults
-            )
-            installedFileName = fileName
-            installedFileSize = savedSize
-            resolvedInstalledModelURL = destinationURL
-            lastErrorMessage = nil
-            downloadedBytes = savedSize
-            expectedBytes = max(expectedBytesForValidation, savedSize)
-            activeDownloadBaseBytes = 0
-            resetDownloadProgressMetrics()
-            downloadStatus = .completed
-            persistDownloadState(
-                LocalAssistantDownloadState(
-                    sourceURL: persistedDownloadState?.sourceURL ?? resolvedSourceURLString,
-                    resolvedURL: persistedDownloadState?.resolvedURL ?? response?.url?.absoluteString,
-                    expectedBytes: max(expectedBytesForValidation, savedSize),
-                    eTag: persistedDownloadState?.eTag,
-                    resumeDataPath: nil,
-                    status: .completed,
-                    startedAt: persistedDownloadState?.startedAt ?? Date(),
-                    updatedAt: Date(),
-                    lastError: nil,
-                    suggestedFilename: fileName
-                )
-            )
-            removeResumeData()
-            setStatus(.modelSaved, japaneseMessage: "ローカルモデルを保存しました")
-            refreshEnvironment()
-        } catch {
-            applyFailure(message: "モデル保存に失敗しました。保存先を確認して再試行してください。")
-        }
+        // The URLSession temporary file is verified while the currently
+        // installed model remains in place. It is then self-checked from a
+        // hidden staging path before any replacement operation can begin.
+        beginDownloadedCandidateValidation(
+            tempURL: tempURL,
+            fileName: fileName,
+            response: response,
+            expectedBytes: expectedBytesForValidation
+        )
     }
 
     private func applyFailure(message: String, resumable: Bool = false) {
@@ -2027,6 +2637,109 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         persistDownloadState(state)
     }
 
+    private func recoverInterruptedCandidateValidation(_ state: LocalAssistantDownloadState) {
+        let fileManager = FileManager.default
+        let restorationMessage = "ダウンロード済みモデルの確認が完了しなかったため、既存モデルを維持しました。"
+        let pendingFileName: String?
+        if let referencedFileName = stateReferencedFileName(for: state) {
+            pendingFileName = safeModelFileName(referencedFileName)
+        } else {
+            pendingFileName = nil
+        }
+        let destinationURL = pendingFileName.map {
+            installationDirectoryURL.appendingPathComponent($0)
+        }
+
+        if state.replacementInProgress == true,
+           let destinationURL {
+            if let backupPath = state.replacementBackupPath,
+               let backupURL = managedReplacementBackupURL(from: backupPath),
+               fileManager.fileExists(atPath: backupURL.path) {
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try? fileManager.removeItem(at: destinationURL)
+                }
+                try? fileManager.moveItem(at: backupURL, to: destinationURL)
+            } else if state.previousInstalledFileName != pendingFileName,
+                      fileManager.fileExists(atPath: destinationURL.path) {
+                // No backup means this was a first install, or a replacement
+                // for a different filename. The destination can only be the
+                // candidate that was never committed.
+                try? fileManager.removeItem(at: destinationURL)
+            }
+        }
+
+        if let pendingPath = state.pendingValidationPath,
+           let pendingURL = managedValidationCandidateURL(from: pendingPath) {
+            try? fileManager.removeItem(at: pendingURL)
+        }
+
+        if let rawPreviousFileName = state.previousInstalledFileName,
+           let previousFileName = safeModelFileName(rawPreviousFileName),
+           let previousURL = candidateInstallationDirectories
+            .map({ $0.appendingPathComponent(previousFileName) })
+            .first(where: { fileManager.fileExists(atPath: $0.path) }) {
+            let previousSize = (try? previousURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            let recovered = LocalAssistantDownloadState(
+                sourceURL: state.previousSourceURL ?? resolvedSourceURLString,
+                resolvedURL: state.previousResolvedURL,
+                expectedBytes: max(state.previousExpectedBytes ?? 0, previousSize),
+                eTag: state.previousETag,
+                resumeDataPath: nil,
+                status: .completed,
+                startedAt: state.startedAt,
+                updatedAt: Date(),
+                lastError: nil,
+                suggestedFilename: previousFileName
+            )
+            persistDownloadState(recovered)
+            AILegacyCompatibility.exportString(
+                previousFileName,
+                primaryKey: installedFileNameKey,
+                aliases: AILegacyCompatibility.localModelInstalledFileAliases,
+                defaults: defaults
+            )
+            installedFileName = previousFileName
+            installedFileSize = previousSize
+            resolvedInstalledModelURL = previousURL
+            downloadedBytes = previousSize
+            expectedBytes = recovered.expectedBytes
+            lastErrorMessage = restorationMessage
+            applyStatusPresentation()
+            return
+        }
+
+        var failedState = state
+        failedState.status = .failed
+        failedState.updatedAt = Date()
+        failedState.lastError = "ダウンロード済みモデルの確認が中断されました。最初からやり直してください。"
+        failedState.pendingValidationPath = nil
+        failedState.replacementBackupPath = nil
+        failedState.replacementInProgress = false
+        failedState.previousInstalledFileName = nil
+        failedState.previousSourceURL = nil
+        failedState.previousResolvedURL = nil
+        failedState.previousExpectedBytes = nil
+        failedState.previousETag = nil
+        persistDownloadState(failedState)
+        lastErrorMessage = failedState.lastError
+        applyStatusPresentation()
+    }
+
+    private func managedValidationCandidateURL(from path: String) -> URL? {
+        let candidateURL = URL(fileURLWithPath: path).standardizedFileURL
+        return isManagedValidationCandidateURL(candidateURL) ? candidateURL : nil
+    }
+
+    private func removeCompletedReplacementBackupIfNeeded(from state: inout LocalAssistantDownloadState) {
+        guard state.status == .completed,
+              let path = state.replacementBackupPath,
+              let backupURL = managedReplacementBackupURL(from: path) else {
+            return
+        }
+        try? FileManager.default.removeItem(at: backupURL)
+        state.replacementBackupPath = nil
+    }
+
     private func restorePersistedDownloadState() {
         guard FileManager.default.fileExists(atPath: downloadStateURL.path) else {
             persistedDownloadState = nil
@@ -2064,6 +2777,13 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                     }
                 }
             }
+
+            if state.status == .validating, pendingModelCandidate == nil {
+                recoverInterruptedCandidateValidation(state)
+                return
+            }
+
+            removeCompletedReplacementBackupIfNeeded(from: &state)
 
             if [.preflighting, .downloading].contains(state.status) && !isDownloading {
                 if currentResumeDataURL(from: state) != nil {
