@@ -1390,6 +1390,9 @@ final class StoryWorldDetailViewModel: ObservableObject {
         }) {
             var repaired = sessions[brokenIndex]
             repaired.currentSceneId = firstScene.id
+            if repaired.activeCharacterIds == nil {
+                repaired.activeCharacterIds = firstScene.activeCharacterIds
+            }
             if repaired.progressLabel?.isEmpty != false { repaired.progressLabel = "第1章 きっかけ" }
             if repaired.currentObjective?.isEmpty != false { repaired.currentObjective = firstScene.sceneGoal.isEmpty ? world.storyGoal : firstScene.sceneGoal }
             if repaired.lastSceneSummary?.isEmpty != false {
@@ -1409,6 +1412,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
         var session = StorySession(
             storyWorldId: world.id,
             currentSceneId: firstScene.id,
+            activeCharacterIds: firstScene.activeCharacterIds,
             progressLabel: "第1章 きっかけ",
             currentObjective: firstScene.sceneGoal.isEmpty ? world.storyGoal : firstScene.sceneGoal,
             relationshipStage: "出会い",
@@ -2035,7 +2039,8 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     var activeCharacters: [CharacterProfile] {
-        scene.activeCharacterIds.compactMap { characterIndex[$0] }
+        session.resolvedActiveCharacterIds(fallback: scene)
+            .compactMap { characterIndex[$0] }
     }
 }
 
