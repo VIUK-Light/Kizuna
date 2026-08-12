@@ -845,4 +845,35 @@ final class KizunaAITests: XCTestCase {
         }
         return url
     }
+
+    func testPersonaThreadOrderingPlacesCompletedConversationFirst() {
+        let olderID = UUID()
+        let newerID = UUID()
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let olderDate = Date(timeIntervalSince1970: 100)
+        let newerDate = Date(timeIntervalSince1970: 200)
+        let older = PersonaThread(
+            id: olderID,
+            personaSnapshot: profile,
+            title: "Older",
+            createdAt: olderDate,
+            updatedAt: olderDate
+        )
+        let newer = PersonaThread(
+            id: newerID,
+            personaSnapshot: profile,
+            title: "Newer",
+            createdAt: olderDate,
+            updatedAt: newerDate
+        )
+
+        let ordered = PersonaThreadOrdering.mostRecentFirst([older, newer])
+
+        XCTAssertEqual(ordered.map(\.id), [newerID, olderID])
+    }
 }
