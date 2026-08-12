@@ -996,6 +996,9 @@ final class StorySessionService: ObservableObject {
 
         var generationPrompt = prompt
         var generated = await generateStoryReply(systemPrompt: generationPrompt)
+        // The model call has completed. The watchdog must not continue into
+        // Safety, summary, progress, commit, or memory persistence work.
+        generationWatchdogDeadline = nil
         var reply = generated.reply
         var isRuntimeNotice = generated.runtimeNotice
         var usedBackendName = generated.backend
@@ -1037,7 +1040,15 @@ final class StorySessionService: ObservableObject {
                 lastVisibleText = ""
                 streamingResponse = ""
                 streamingStatusText = statusText("重複を避けて再生成中", "Regenerating to avoid duplicate output")
+                generationWatchdogDeadline = Date().addingTimeInterval(Self.generationWatchdogDuration)
+                startWatchdog(
+                    session: session,
+                    generationID: generationID,
+                    generationModel: generationModel,
+                    userMessageID: userMessageID
+                )
                 generated = await generateStoryReply(systemPrompt: generationPrompt)
+                generationWatchdogDeadline = nil
                 reply = generated.reply
                 isRuntimeNotice = generated.runtimeNotice
                 usedBackendName = generated.backend + "・重複再試行"
