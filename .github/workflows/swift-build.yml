@@ -34,7 +34,11 @@ jobs:
             --package-path "$RUNNER_TEMP/XcodeGen" \
             --configuration release \
             --product xcodegen
-          echo "$RUNNER_TEMP/XcodeGen/.build/release" >> "$GITHUB_PATH"
+          xcodegen_bin_dir="$(swift build \
+            --show-bin-path \
+            --package-path "$RUNNER_TEMP/XcodeGen" \
+            --configuration release)"
+          echo "$xcodegen_bin_dir" >> "$GITHUB_PATH"
           test "$(xcodegen --version)" = "Version: $XCODEGEN_VERSION"
 
       - name: Regenerate project and verify no drift
