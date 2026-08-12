@@ -158,7 +158,8 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(probe.hasStarted)
 
         task.cancel()
-        XCTAssertTrue(try await task.value)
+        let completed = try await task.value
+        XCTAssertTrue(completed)
         // The operation started before cancellation, so its completed result
         // is returned instead of pretending an atomic write was rolled back.
         XCTAssertTrue(probe.hasCompleted)
