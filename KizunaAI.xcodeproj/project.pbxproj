@@ -35,6 +35,7 @@
 		55FF5DBC8D045FDFEF161569 /* KizunaMyPageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AF6B261A0A887E41A390BC7 /* KizunaMyPageView.swift */; };
 		56BA4549A1AF6BB5C5DCF65D /* StoryLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = F68963A2E968B513CAFCBF56 /* StoryLocalization.swift */; };
 		57CF512E93E56951F0E19F0F /* PersonaChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */; };
+		B17900000000000000000002 /* PersonaResponseSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17900000000000000000001 /* PersonaResponseSanitizer.swift */; };
 		58C8D8624FD05D256EA24B45 /* CharacterTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF3286F28C642C691A562821 /* CharacterTemplate.swift */; };
 		5F81134FC766267D7083299B /* MockSafetyCheckers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167DE9F165C1D06BC748A477 /* MockSafetyCheckers.swift */; };
 		6002D2CE2F28C465C0E18B87 /* KizunaAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83EDD9AD4F1FD5B92F1011FD /* KizunaAvatarView.swift */; };
@@ -179,6 +180,7 @@
 		C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Apache-2.0.txt"; sourceTree = "<group>"; };
 		C86221612DBCBA783CE5BB53 /* StoryRepositories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryRepositories.swift; sourceTree = "<group>"; };
 		CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaChatService.swift; sourceTree = "<group>"; };
+		B17900000000000000000001 /* PersonaResponseSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaResponseSanitizer.swift; sourceTree = "<group>"; };
 		D06ABDB45B6FC442B7523E83 /* CharacterLorebook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLorebook.swift; sourceTree = "<group>"; };
 		D30A31B134170D7A746DB123 /* ReportRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportRepository.swift; sourceTree = "<group>"; };
 		DA529B4D3926130627D485BB /* RelationshipGenre.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelationshipGenre.swift; sourceTree = "<group>"; };
@@ -269,6 +271,7 @@
 				AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */,
 				5BDA5863DEC1401CCF59E6D2 /* LocalAssistantRuntimeBridge.swift */,
 				CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */,
+				B17900000000000000000001 /* PersonaResponseSanitizer.swift */,
 				69A2E29FC9FACB4D55183726 /* PersonaChatStore.swift */,
 				5D9BB02D32A725EB2DA3DA6E /* PersonaChatView.swift */,
 				423041EC8E5CB59368D5AF9A /* PersonaConfigView.swift */,
@@ -699,6 +702,7 @@
 				68081B3C44658315697F78EB /* MockSceneAdapters.swift in Sources */,
 				A8D4FCAD3F966A5528F01DAD /* MockSmallModelClassifier.swift in Sources */,
 				57CF512E93E56951F0E19F0F /* PersonaChatService.swift in Sources */,
+				B17900000000000000000002 /* PersonaResponseSanitizer.swift in Sources */,
 				E94E230B59937818E8B6E544 /* PersonaChatStore.swift in Sources */,
 				EF3BB16A93B494602BC64DCF /* PersonaChatView.swift in Sources */,
 				70AD59C0680A277276B30DE1 /* PersonaConfigView.swift in Sources */,

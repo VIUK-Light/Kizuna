@@ -30,7 +30,16 @@ final class PersonaChatService: ObservableObject {
     @Published private(set) var lastErrorThreadID: UUID?
 
     private var generationTask: Task<Void, Never>?
+    private var streamSanitizationTask: Task<Void, Never>?
+    /// A later runtime preview always supersedes a prior cumulative preview.
+    /// This prevents a slow background sanitizer result from overwriting the
+    /// newest text after it returns to the main actor.
+    private var streamPreviewRevision = 0
     private var lastVisibleText: String = ""
+    /// The runtime may finish before the latest background sanitizer returns.
+    /// Retain the raw cumulative preview so finalization can still sanitize the
+    /// full response synchronously instead of dropping the final update.
+    private var latestRawStreamingText: String?
     private var activeGenerationID: UUID?
     private var activeThreadID: UUID?
     private var lastRequestThreadID: UUID?
@@ -67,7 +76,9 @@ final class PersonaChatService: ObservableObject {
         phase = .thinking
         streamingResponse = ""
         lastErrorThreadID = nil
+        invalidatePendingStreamSanitization()
         lastVisibleText = ""
+        latestRawStreamingText = nil
         lastRequestThreadID = thread.id
         lastRequestText = trimmed
         let generationID = UUID()
@@ -215,6 +226,7 @@ final class PersonaChatService: ObservableObject {
                 PersonaChatStore.shared.finalizePersist()
                 self.streamingResponse = polite
                 self.phase = .idle
+                self.invalidatePendingStreamSanitization()
                 self.activeGenerationID = nil
                 self.activeThreadID = nil
                 self.activeGenerationThreadID = nil
@@ -293,7 +305,7 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
 
         // ── 6) 出力 safety ──
-        let rawFinalText = reply?.isEmpty == false ? reply! : streamingResponse
+        let rawFinalText = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
         guard var finalText = meaningfulResponse(rawFinalText) else {
             await MainActor.run {
                 self.failGeneration(
@@ -329,6 +341,7 @@ final class PersonaChatService: ObservableObject {
             PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: finalText)
             PersonaChatStore.shared.finalizePersist()
             self.phase = .idle
+            self.invalidatePendingStreamSanitization()
             self.activeGenerationID = nil
             self.activeThreadID = nil
             self.activeGenerationThreadID = nil
@@ -348,9 +361,11 @@ final class PersonaChatService: ObservableObject {
     func cancel() {
         generationTask?.cancel()
         generationTask = nil
+        invalidatePendingStreamSanitization()
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: activeGenerationID)
         if let threadID = activeThreadID {
-            let partial = streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+            let partial = (latestRawStreamingText ?? streamingResponse)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if let meaningful = meaningfulResponse(partial) {
                 PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: meaningful)
                 PersonaChatStore.shared.finalizePersist()
@@ -393,20 +408,52 @@ final class PersonaChatService: ObservableObject {
     private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, threadID: UUID, generationID: UUID) {
         guard activeGenerationID == generationID else { return }
         guard case let .visiblePreview(text) = update else { return }
-        let stripped = sanitize(text)
-        if stripped.count < lastVisibleText.count {
-            // リセット系の更新が来た場合は最新値で上書き
-            lastVisibleText = stripped
-        } else {
-            lastVisibleText = stripped
+
+        latestRawStreamingText = text
+        streamPreviewRevision &+= 1
+        let revision = streamPreviewRevision
+        streamSanitizationTask?.cancel()
+        streamSanitizationTask = Task.detached(priority: .utility) { [weak self] in
+            // Structured previews are cumulative and can arrive faster than a
+            // full sanitization pass. Give a newer update 32 ms to supersede
+            // this one, then check cancellation again before scanning text.
+            // Task.sleep only throws when this task is cancelled.
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(nanoseconds: 32_000_000)
+            guard !Task.isCancelled else { return }
+            let sanitized = PersonaResponseSanitizer.sanitize(text)
+            guard !Task.isCancelled else { return }
+            await self?.applySanitizedStreamPreview(
+                sanitized,
+                threadID: threadID,
+                generationID: generationID,
+                revision: revision
+            )
         }
-        streamingResponse = stripped
-        PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: stripped)
+    }
+
+    private func applySanitizedStreamPreview(
+        _ text: String,
+        threadID: UUID,
+        generationID: UUID,
+        revision: Int
+    ) {
+        guard activeGenerationID == generationID,
+              streamPreviewRevision == revision else { return }
+        lastVisibleText = text
+        streamingResponse = text
+        PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: text)
+    }
+
+    private func invalidatePendingStreamSanitization() {
+        streamPreviewRevision &+= 1
+        streamSanitizationTask?.cancel()
+        streamSanitizationTask = nil
     }
 
     private func finalize(reply: String?, threadID: UUID, generationID: UUID) {
         guard activeGenerationID == generationID else { return }
-        let final = reply?.isEmpty == false ? reply! : streamingResponse
+        let final = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
         guard let cleaned = meaningfulResponse(final) else {
             failGeneration(
                 threadID: threadID,
@@ -422,6 +469,7 @@ final class PersonaChatService: ObservableObject {
         PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: cleaned)
         PersonaChatStore.shared.finalizePersist()
         phase = .idle
+        invalidatePendingStreamSanitization()
         activeGenerationID = nil
         activeThreadID = nil
         activeGenerationThreadID = nil
@@ -438,11 +486,14 @@ final class PersonaChatService: ObservableObject {
                 self.generationTask?.cancel()
                 self.generationTask = nil
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
-                if let partial = self.meaningfulResponse(self.streamingResponse) {
+                if let partial = self.meaningfulResponse(
+                    self.latestRawStreamingText ?? self.streamingResponse
+                ) {
                     PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: partial)
                     PersonaChatStore.shared.finalizePersist()
                     self.streamingResponse = partial
                     self.phase = .idle
+                    self.invalidatePendingStreamSanitization()
                     self.activeGenerationID = nil
                     self.activeThreadID = nil
                     self.activeGenerationThreadID = nil
@@ -519,11 +570,12 @@ final class PersonaChatService: ObservableObject {
     }
 
     private func meaningfulResponse(_ text: String) -> String? {
-        let cleaned = sanitize(text).trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitized = sanitize(text)
+        let cleaned = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return nil }
         let placeholders: Set<String> = ["…", "・・・", "・・", "...", "..", "."]
         guard !placeholders.contains(cleaned) else { return nil }
-        return cleaned
+        return sanitized
     }
 
     private func failGeneration(threadID: UUID, generationID: UUID, message: String) {
@@ -531,6 +583,7 @@ final class PersonaChatService: ObservableObject {
         PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
         streamingResponse = ""
         phase = .error(message)
+        invalidatePendingStreamSanitization()
         activeGenerationID = nil
         activeThreadID = nil
         activeGenerationThreadID = nil
@@ -552,123 +605,9 @@ final class PersonaChatService: ObservableObject {
         return s
     }
 
-    /// Gemma 4 の thinking channel リーク + markdown 記号 + 思考漏れラベルを剥がす。
+    /// The runtime exposes structured visible text. Keep this final safeguard
+    /// deliberately non-destructive because the value is persisted to history.
     private func sanitize(_ text: String) -> String {
-        var out = text
-
-        // === Gemma 4 の channel マーカー以前 (=thinking 部分) を削除 ===
-        // Gemma 4 は内部で thought / answer のチャンネル切替に
-        // `<|channel|>`, `<channel|>`, `<channel>`, `<start_of_turn|>`, `<|start|>` 等の
-        // バリアントを出すことがある。マーカーが現れた場合、それ以前は thinking と見なし破棄、
-        // マーカー以降を visible として採用する。
-        let channelMarkers = [
-            "<|channel|>", "<channel|>", "<|channel>", "<channel>",
-            "<|message|>", "<message|>", "<|message>", "<message>",
-            "<|start_of_turn|>", "<start_of_turn|>", "<|start|>"
-        ]
-        // 一番最後に現れたマーカーで切る (thinking → answer の最終境界を取る)。
-        var lastMarkerEndIndex: String.Index?
-        for marker in channelMarkers {
-            if let range = out.range(of: marker, options: .backwards) {
-                if let existing = lastMarkerEndIndex {
-                    if range.upperBound > existing {
-                        lastMarkerEndIndex = range.upperBound
-                    }
-                } else {
-                    lastMarkerEndIndex = range.upperBound
-                }
-            }
-        }
-        if let endIdx = lastMarkerEndIndex {
-            out = String(out[endIdx...])
-        }
-
-        // === markdown 記号を剥がす ===
-        for token in ["**", "__", "`", "*", "_"] {
-            out = out.replacingOccurrences(of: token, with: "")
-        }
-
-        // === 計画/実行/分析 などのラベル行 + 番号付き行を削除 ===
-        let droppedPrefixes = [
-            "計画:", "計画:", "計画：",
-            "実行:", "実行:", "実行：",
-            "分析:", "分析:", "分析：",
-            "内部メモ:", "内部メモ：",
-            "ステップ:", "ステップ：",
-            "Step:", "step:",
-            "Plan:", "plan:",
-            "Action:", "action:",
-            "以下:", "以下：",
-            "(案)", "(案)", "案:", "案：",
-            "ユーザーから", "ユーザーは"
-        ]
-        let lines = out.components(separatedBy: "\n")
-        let filtered = lines.compactMap { line -> String? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty { return line }
-            // 行全体が "1." "2." "1)" などで始まる箇条書きを除外
-            if let first = trimmed.first {
-                if first.isNumber {
-                    let chars = Array(trimmed)
-                    if chars.count >= 2 {
-                        let second = chars[1]
-                        if second == "." || second == ")" || second == "、" || second == ":" || second == "。" {
-                            return nil
-                        }
-                    }
-                }
-            }
-            for prefix in droppedPrefixes {
-                if trimmed.hasPrefix(prefix) {
-                    return nil
-                }
-            }
-            return line
-        }
-        out = filtered.joined(separator: "\n")
-
-        // === XML/特殊タグ残りを削除 ===
-        // <channel> / <|...|> 系の閉じタグ・断片が残っている場合、除去する。
-        let tagPattern = "<\\|?[^>]{0,40}\\|?>"
-        if let regex = try? NSRegularExpression(pattern: tagPattern) {
-            let range = NSRange(out.startIndex..<out.endIndex, in: out)
-            out = regex.stringByReplacingMatches(in: out, range: range, withTemplate: "")
-        }
-
-        // === 連続改行/空白を圧縮 + 前後トリム ===
-        while out.contains("\n\n") {
-            out = out.replacingOccurrences(of: "\n\n", with: "\n")
-        }
-        out = out.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // === ナレーション救済: もし結果に三人称ナレーションキーワードが残っていて、
-        //     かつ「...」で囲まれた引用が含まれている場合、最後の引用部分だけを採用する ===
-        let narrationKeywords = ["として", "考える", "を意識", "を出す", "受け止", "案)", "落とし込", "反応する"]
-        let hasNarration = narrationKeywords.contains { out.contains($0) }
-        if hasNarration {
-            // 「...」または「..." または '...' で囲まれた最終引用を取り出す
-            let quotePatterns: [(String, String)] = [
-                ("「", "」"),
-                ("『", "』"),
-                ("\"", "\"")
-            ]
-            var bestQuote: String?
-            for (openQ, closeQ) in quotePatterns {
-                if let openRange = out.range(of: openQ, options: .backwards) {
-                    let after = out[openRange.upperBound...]
-                    if let closeRange = after.range(of: closeQ) {
-                        let inner = String(after[..<closeRange.lowerBound])
-                        if !inner.isEmpty {
-                            bestQuote = inner
-                            break
-                        }
-                    }
-                }
-            }
-            if let q = bestQuote {
-                out = q.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-        }
-        return out
+        PersonaResponseSanitizer.sanitize(text)
     }
 }
