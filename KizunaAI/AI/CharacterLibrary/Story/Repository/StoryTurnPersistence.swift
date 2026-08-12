@@ -92,17 +92,17 @@ enum StoryTurnJournal {
     static func recoverIfNeeded() throws {
         try LocalJSONStoreTransaction.withSharedLock {
             let entries = try LocalJSONStoreTransaction.load(
-                [StoryTurnJournalEntry].self,
+                StoryTurnJournalEntry.self,
                 fileName: fileName
             )
             guard !entries.isEmpty else { return }
 
             var sessions = try LocalJSONStoreTransaction.load(
-                [StorySession].self,
+                StorySession.self,
                 fileName: "story_sessions.json"
             )
             var scenes = try LocalJSONStoreTransaction.load(
-                [StoryScene].self,
+                StoryScene.self,
                 fileName: "story_scenes.json"
             )
 
@@ -132,7 +132,7 @@ extension StoryTurnJournal {
     /// 同じファイルロックの中から呼び出す前提で、二重ロックはしない。
     static func prepareUnlocked(_ entry: StoryTurnJournalEntry) throws {
         var entries = try LocalJSONStoreTransaction.load(
-            [StoryTurnJournalEntry].self,
+            StoryTurnJournalEntry.self,
             fileName: fileName
         )
         entries.removeAll { $0.turnID == entry.turnID }
@@ -142,7 +142,7 @@ extension StoryTurnJournal {
 
     static func removeUnlocked(turnID: UUID) throws {
         var entries = try LocalJSONStoreTransaction.load(
-            [StoryTurnJournalEntry].self,
+            StoryTurnJournalEntry.self,
             fileName: fileName
         )
         entries.removeAll { $0.turnID == turnID }

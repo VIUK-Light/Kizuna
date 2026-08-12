@@ -242,7 +242,7 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
     private let store = LocalJSONStore<StoryScene>(fileName: "story_scenes.json")
     func fetchScenes(storyWorldId: UUID) async throws -> [StoryScene] {
         try StoryTurnJournal.recoverIfNeeded()
-        try await store.loadRecoveringCorruptRecords()
+        return try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.createdAt < $1.createdAt }
     }
@@ -343,7 +343,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try StoryTurnJournal.recoverIfNeeded()
         return try LocalJSONStoreTransaction.withSharedLock {
             var sessions = try LocalJSONStoreTransaction.load(
-                [StorySession].self,
+                StorySession.self,
                 fileName: "story_sessions.json"
             )
             guard let index = sessions.firstIndex(where: { $0.id == session.id }) else {
@@ -414,11 +414,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try StoryTurnJournal.recoverIfNeeded()
         return try LocalJSONStoreTransaction.withSharedLock {
             var sessions = try LocalJSONStoreTransaction.load(
-                [StorySession].self,
+                StorySession.self,
                 fileName: "story_sessions.json"
             )
             var scenes = try LocalJSONStoreTransaction.load(
-                [StoryScene].self,
+                StoryScene.self,
                 fileName: "story_scenes.json"
             )
             guard let sessionIndex = sessions.firstIndex(where: { $0.id == session.id }) else {
@@ -495,7 +495,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try StoryTurnJournal.recoverIfNeeded()
         try LocalJSONStoreTransaction.withSharedLock {
             var sessions = try LocalJSONStoreTransaction.load(
-                [StorySession].self,
+                StorySession.self,
                 fileName: "story_sessions.json"
             )
             guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
@@ -528,7 +528,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try StoryTurnJournal.recoverIfNeeded()
         try LocalJSONStoreTransaction.withSharedLock {
             var sessions = try LocalJSONStoreTransaction.load(
-                [StorySession].self,
+                StorySession.self,
                 fileName: "story_sessions.json"
             )
             var changed = false
