@@ -3,6 +3,7 @@ name: KizunaAI
 options:
   bundleIdPrefix: com.viuk
   createIntermediateGroups: true
+  minimumXcodeGenVersion: 2.45.3
   deploymentTarget:
     iOS: "26.0"
     macOS: "26.0"
@@ -81,7 +82,7 @@ targets:
     info:
       path: KizunaAI/Info.plist
       properties:
-        CFBundleDisplayName: VIUK 絆
+        CFBundleDisplayName: kizuna
         CFBundleName: KizunaAI
         LSApplicationCategoryType: public.app-category.entertainment
         NSAppTransportSecurity:
@@ -204,12 +205,54 @@ targets:
             done
           fi
 
+  KizunaAITests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget:
+      macOS: "26.0"
+    sources:
+      - path: KizunaAITests
+    dependencies:
+      - target: KizunaAI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.viuk.KizunaAI.Tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/KizunaAI.app/Contents/MacOS/KizunaAI"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+  KizunaAIUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget:
+      iOS: "26.0"
+    sources:
+      - path: KizunaAIUITests
+    dependencies:
+      - target: KizunaAI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.viuk.KizunaAI.UITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: KizunaAI
+
 schemes:
   KizunaAI:
     build:
       targets:
         KizunaAI: all
+    test:
+      targets:
+        - KizunaAITests
     run:
       config: Debug
     archive:
       config: Release
+  KizunaAI-UI:
+    build:
+      targets:
+        KizunaAI: all
+        KizunaAIUITests: test
+    test:
+      targets:
+        - KizunaAIUITests

@@ -21,6 +21,20 @@
                ReferencedContainer = "container:KizunaAI.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "BEEB980465558F24A5CB5DA7"
+               BuildableName = "KizunaAIUITests.xctest"
+               BlueprintName = "KizunaAIUITests"
+               ReferencedContainer = "container:KizunaAI.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -44,9 +58,9 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "241BF27E1A6EDFA755943D3E"
-               BuildableName = "KizunaAITests.xctest"
-               BlueprintName = "KizunaAITests"
+               BlueprintIdentifier = "BEEB980465558F24A5CB5DA7"
+               BuildableName = "KizunaAIUITests.xctest"
+               BlueprintName = "KizunaAIUITests"
                ReferencedContainer = "container:KizunaAI.xcodeproj">
             </BuildableReference>
          </TestableReference>
@@ -74,8 +88,6 @@
             ReferencedContainer = "container:KizunaAI.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
-      <CommandLineArguments>
-      </CommandLineArguments>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"

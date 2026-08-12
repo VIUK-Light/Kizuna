@@ -13,6 +13,102 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  xcodegen-drift:
+    name: XcodeGen Drift
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Build pinned XcodeGen
+        env:
+          XCODEGEN_VERSION: 2.45.3
+        run: |
+          git clone --depth 1 --branch "$XCODEGEN_VERSION" \
+            https://github.com/yonaskolb/XcodeGen.git \
+            "$RUNNER_TEMP/XcodeGen"
+          swift build \
+            --package-path "$RUNNER_TEMP/XcodeGen" \
+            --configuration release \
+            --product xcodegen
+          echo "$RUNNER_TEMP/XcodeGen/.build/release" >> "$GITHUB_PATH"
+          test "$(xcodegen --version)" = "Version: $XCODEGEN_VERSION"
+
+      - name: Regenerate project and verify no drift
+        run: |
+          xcodegen generate --spec project.yml --project-root .
+          git diff --exit-code -- project.yml KizunaAI.xcodeproj KizunaAI/Info.plist
+
+  macos-unit-tests:
+    name: macOS Unit Tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Run KizunaAITests
+        run: |
+          xcodebuild test \
+            -project "KizunaAI.xcodeproj" \
+            -scheme "KizunaAI" \
+            -destination "platform=macOS" \
+            -derivedDataPath "$RUNNER_TEMP/kizuna-macos-tests" \
+            -jobs 2 \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+  ios-simulator-compile:
+    name: iOS Simulator Compile
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Compile KizunaAI for iOS Simulator
+        run: |
+          xcodebuild build \
+            -project "KizunaAI.xcodeproj" \
+            -scheme "KizunaAI" \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$RUNNER_TEMP/kizuna-ios-simulator" \
+            -jobs 2 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+  ios-device-compile:
+    name: iOS Device Compile
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Compile KizunaAI for iOS device SDK
+        run: |
+          xcodebuild build \
+            -project "KizunaAI.xcodeproj" \
+            -scheme "KizunaAI" \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$RUNNER_TEMP/kizuna-ios-device" \
+            -jobs 2 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
   build:
     name: Swift Build
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
