@@ -75,12 +75,13 @@ struct PersonaThread: Codable, Hashable, Identifiable {
 
 @MainActor
 final class PersonaChatStore: ObservableObject {
-    static let shared = PersonaChatStore()
+    static let shared = PersonaChatStore(defaults: UserDefaults.standard)
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private enum Key {
         static let threads = "persona.threads.v1"
         static let activeThreadID = "persona.activeThreadID.v1"
+        static let corruptThreadsBackup = "persona.threads.v1.corrupt-backup"
     }
 
     /// 新しい順 (updatedAt 降順) でソートして保持。
@@ -91,6 +92,10 @@ final class PersonaChatStore: ObservableObject {
     private var didFailToLoadPersistedThreads = false
     @Published var activeThreadID: UUID? {
         didSet {
+            guard !didFailToLoadPersistedThreads else {
+                NSLog("[PersonaChatStore] skipped active thread write while recovery is required")
+                return
+            }
             if let id = activeThreadID {
                 defaults.set(id.uuidString, forKey: Key.activeThreadID)
             } else {
@@ -108,7 +113,10 @@ final class PersonaChatStore: ObservableObject {
         threads.first { $0.id == id }
     }
 
-    private init() {
+    /// テストや復旧画面が保存先を明示できる初期化経路。
+    /// 本番は `shared` から同じUserDefaults.standardを使う。
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
         load()
         guard !didFailToLoadPersistedThreads else {
             NSLog("[PersonaChatStore] thread data was not decoded; preserving the source file")
@@ -141,7 +149,12 @@ final class PersonaChatStore: ObservableObject {
     }
 
     private func load() {
+        guard defaults.object(forKey: Key.threads) != nil else {
+            return
+        }
         guard let data = defaults.data(forKey: Key.threads) else {
+            didFailToLoadPersistedThreads = true
+            NSLog("[PersonaChatStore] saved thread value is not a Data blob")
             return
         }
         do {
@@ -154,9 +167,35 @@ final class PersonaChatStore: ObservableObject {
     }
 
     private func persist() {
+        guard !didFailToLoadPersistedThreads else {
+            NSLog("[PersonaChatStore] skipped thread persist while recovery is required")
+            return
+        }
         if let data = try? JSONEncoder().encode(threads) {
             defaults.set(data, forKey: Key.threads)
         }
+    }
+
+    /// 壊れた保存データを破棄する唯一の明示的な復旧操作。
+    /// 先にraw値をバックアップキーへ移し、確認済みの呼び出し元だけが
+    /// 空状態として保存を再開できるようにする。
+    @discardableResult
+    func discardCorruptPersistedThreads() -> Bool {
+        guard didFailToLoadPersistedThreads else { return false }
+        if let rawValue = defaults.object(forKey: Key.threads) {
+            defaults.set(rawValue, forKey: Key.corruptThreadsBackup)
+        }
+        defaults.removeObject(forKey: Key.threads)
+        defaults.removeObject(forKey: Key.activeThreadID)
+        didFailToLoadPersistedThreads = false
+        threads = []
+        activeThreadID = nil
+        persist()
+        return true
+    }
+
+    var isPersistenceRecoveryRequired: Bool {
+        didFailToLoadPersistedThreads
     }
 
     // MARK: - Thread CRUD
