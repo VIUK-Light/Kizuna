@@ -192,7 +192,11 @@ final class KizunaAITests: XCTestCase {
             .first(where: { $0.text == mergedText })
         XCTAssertEqual(merged?.sourceTurnIds, [firstSourceTurnID])
         XCTAssertEqual(merged?.importance, firstSaved?.importance)
-        XCTAssertEqual(merged?.lastUsedAt, firstSaved?.lastUsedAt)
+        XCTAssertEqual(
+            merged?.sourceTurnMetadata[firstSourceTurnID]?.lastUsedAt,
+            firstSaved?.sourceTurnMetadata[firstSourceTurnID]?.lastUsedAt
+        )
+        XCTAssertNotNil(merged?.lastUsedAt)
     }
 
     func testPersonaResponseSanitizerPreservesVisibleText() {
