@@ -18,6 +18,7 @@
 		2B2592AAD858D3D96862FAF3 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26955C791E26219A2224961B /* AppBrand.swift */; };
 		2BEDC445F7013C3F2361CD4D /* AIExecutionModes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */; };
 		4D9F4AAE2CE841BCB5014D92 /* LocalAssistantLiteRTLMContextLimit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B1E5F4D0BE4B4DBF6F1A8C /* LocalAssistantLiteRTLMContextLimit.swift */; };
+		E1780001A11B22C33D44E55F /* LiteRTLMExecutionGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1780002A11B22C33D44E55F /* LiteRTLMExecutionGate.swift */; };
 		36622231CDB22D277C6DF874 /* MockMemoryAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A976D1A75B17989A4E31F /* MockMemoryAdapters.swift */; };
 		394AF1822F599F8200201257 /* CharacterCreateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001A2AFEEF6464336BE37E55 /* CharacterCreateView.swift */; };
 		39F796C9FFDF72D566506CB6 /* cpp-httplib-MIT.txt in Resources */ = {isa = PBXBuildFile; fileRef = F91A09679C3C6E56FF05DEBE /* cpp-httplib-MIT.txt */; };
@@ -130,6 +131,7 @@
 		38C38E45DF917A9188C23AAC /* KizunaRuntimeCompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaRuntimeCompatibility.swift; sourceTree = "<group>"; };
 		38F8CC58ED1AF696296164C0 /* LiteRT-LM-COPYRIGHT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LiteRT-LM-COPYRIGHT.txt"; sourceTree = "<group>"; };
 		72B1E5F4D0BE4B4DBF6F1A8C /* LocalAssistantLiteRTLMContextLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantLiteRTLMContextLimit.swift; sourceTree = "<group>"; };
+		E1780002A11B22C33D44E55F /* LiteRTLMExecutionGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteRTLMExecutionGate.swift; sourceTree = "<group>"; };
 		3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryWorldDetailView.swift; sourceTree = "<group>"; };
 		3FD99FDA49A1F31E9B0AF2D9 /* StoryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryModels.swift; sourceTree = "<group>"; };
 		4021480B714F2F541000C5DD /* StoryViewModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryViewModels.swift; sourceTree = "<group>"; };
@@ -259,6 +261,7 @@
 				9689ADAB0694870AC5964DFA /* AISecretStore.swift */,
 				2A196A347E7975CA1A50C5D8 /* AIToolCatalog.swift */,
 				72B1E5F4D0BE4B4DBF6F1A8C /* LocalAssistantLiteRTLMContextLimit.swift */,
+				E1780002A11B22C33D44E55F /* LiteRTLMExecutionGate.swift */,
 				3802A51489C449BBE1A57390 /* LocalAssistantLiteRTLMRuntime.swift */,
 				F181A1A10000000000000002 /* LocalAssistantModelArtifactValidator.swift */,
 				F181A1A10000000000000004 /* LocalAssistantModelReplacement.swift */,
@@ -681,6 +684,7 @@
 				9A8CE4D58FDECCE2E073009F /* KizunaUserProfileView.swift in Sources */,
 				73CA926153543CC3A95892EB /* LocalAssistantEmbeddedRuntime.mm in Sources */,
 				4D9F4AAE2CE841BCB5014D92 /* LocalAssistantLiteRTLMContextLimit.swift in Sources */,
+				E1780001A11B22C33D44E55F /* LiteRTLMExecutionGate.swift in Sources */,
 				3AAE3D8F684575A640306140 /* LocalAssistantLiteRTLMRuntime.swift in Sources */,
 				F181A1A10000000000000001 /* LocalAssistantModelArtifactValidator.swift in Sources */,
 				F181A1A10000000000000003 /* LocalAssistantModelReplacement.swift in Sources */,
