@@ -867,7 +867,7 @@ final class KizunaAITests: XCTestCase {
         let threadsBeforeMutation = store.threads
         let activeThreadBeforeMutation = store.activeThreadID
         store.finalizePersist()
-        _ = store.createThread(with: persona, characterID: UUID())
+        XCTAssertNil(store.createThread(with: persona, characterID: UUID()))
         store.appendMessage(
             PersonaMessage(role: .assistant, text: "hello"),
             toThread: UUID()
