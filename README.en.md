@@ -97,6 +97,17 @@ Issues and Pull Requests should include, where possible:
 
 Do not publish conversation history, API keys, access tokens, private URLs, or other secrets.
 
-## Licenses
+## License and third-party components
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `Licenses/` for third-party component licenses.
+Kizuna's software components—including Swift source code, tests, scripts, project configuration, and documentation—are provided under the [Apache License 2.0](LICENSE). The original Kizuna software was developed by VIUK-Light. See [NOTICE](NOTICE) for the attribution that must accompany redistributions.
+
+The following content is not licensed under the Apache License 2.0. Unless separately and explicitly licensed, all rights to this content are reserved by VIUK-Light contributors.
+
+- `KizunaAI/Assets.xcassets/**`
+- `GeneratedStories/**`
+- `docs/screenshots/**`
+- `KizunaAI/AI/CharacterLibrary/SeedData/SeedStoryPacks*.json`
+- Creative content, including character definitions, stories, dialogue, and scenarios
+- The Kizuna and VIUK-Light names, logos, and brand assets
+
+Third-party code and components remain subject to their respective licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `Licenses/`.
