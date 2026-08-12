@@ -132,6 +132,7 @@ protocol StorySessionRepository: AnyObject {
     func finishTurn(
         sessionID: UUID,
         turnID: UUID,
+        attempt: Int,
         status: StoryTurnStatus,
         failureCode: String?
     ) async throws
@@ -364,7 +365,26 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                     throw StoryTurnPersistenceError.turnInProgress
                 }
                 if checkpoint.status == .pending && checkpoint.turnID == turnID {
-                    return current
+                    // 同じ生成処理の再入場はそのまま返す。失敗後の再試行で
+                    // attemptが進んでいる場合だけcheckpointを更新し、古い
+                    // cancel/timeout cleanupが新しい試行を終了しないようにする。
+                    guard attempt > checkpoint.attempt else { return current }
+                    var retried = current
+                    let now = Date()
+                    retried.latestTurnCheckpoint = StoryTurnReducer.begin(
+                        turnID: turnID,
+                        userMessageID: checkpoint.userMessageID,
+                        attempt: attempt,
+                        ownerID: StoryTurnOwner.currentID,
+                        baseRevision: checkpoint.baseRevision,
+                        startedAt: checkpoint.startedAt,
+                        updatedAt: now
+                    )
+                    retried.persistenceRevision = actualRevision + 1
+                    retried.updatedAt = now
+                    sessions[index] = retried
+                    try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
+                    return retried
                 }
                 if checkpoint.status == .committed && checkpoint.turnID == turnID {
                     return current
@@ -427,9 +447,14 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             guard let sceneIndex = scenes.firstIndex(where: { $0.id == scene.id }) else {
                 throw StoryTurnPersistenceError.worldMismatch
             }
-            guard scenes[sceneIndex].storyWorldId == session.storyWorldId,
+            let currentScene = scenes[sceneIndex]
+            guard currentScene.storyWorldId == session.storyWorldId,
                   scene.storyWorldId == session.storyWorldId else {
                 throw StoryTurnPersistenceError.worldMismatch
+            }
+            guard session.currentSceneId == nil || session.currentSceneId == scene.id,
+                  sessions[sessionIndex].currentSceneId == nil || sessions[sessionIndex].currentSceneId == scene.id else {
+                throw StoryTurnPersistenceError.sceneConflict
             }
 
             let current = sessions[sessionIndex]
@@ -463,24 +488,50 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 message.turnID = turnID
                 return message
             }
+            let retainedAssistantIDs = committed.messages
+                .filter { assistantIDs.contains($0.id) }
+                .map(\.id)
             committed.latestTurnCheckpoint = StoryTurnReducer.commit(
                 pending: checkpoint,
-                assistantMessageIDs: assistantIDs,
+                assistantMessageIDs: retainedAssistantIDs,
                 updatedAt: now
             )
+            committed.currentSceneId = sessions[sessionIndex].currentSceneId ?? scene.id
             committed.persistenceRevision = actualRevision + 1
             committed.updatedAt = now
+
+            // Scene全体を古い呼び出し側スナップショットで置き換えない。
+            // このターンが生成したsummary/activeキャラだけを、生成開始時点
+            // から外部編集されていない場合に反映し、imageKey等の最新編集は残す。
+            var committedScene = currentScene
+            if currentScene.updatedAt == scene.updatedAt {
+                committedScene.summary = scene.summary
+                committedScene.activeCharacterIds = Array(
+                    scene.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
+                )
+                committedScene.updatedAt = now
+            }
 
             // ジャーナルを先に置いてから2つのスナップショットを更新する。
             // 途中終了時は次回のfetchで両方を再適用する。
             try StoryTurnJournal.prepareUnlocked(
-                StoryTurnJournalEntry(turnID: turnID, session: committed, scene: scene)
+                StoryTurnJournalEntry(turnID: turnID, session: committed, scene: committedScene)
             )
             sessions[sessionIndex] = committed
-            scenes[sceneIndex] = scene
+            scenes[sceneIndex] = committedScene
             try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json")
             try LocalJSONStoreTransaction.save(scenes, fileName: "story_scenes.json")
-            try StoryTurnJournal.removeUnlocked(turnID: turnID)
+            do {
+                try StoryTurnJournal.removeUnlocked(turnID: turnID)
+            } catch {
+                // Session/Sceneが確定した後のjournal削除失敗は、ターン自体の
+                // 失敗ではない。次回recoveryで同じ確定snapshotを再適用する。
+                NSLog(
+                    "[StoryTurnJournal] committed turn cleanup deferred turn=%@ error=%@",
+                    turnID.uuidString,
+                    error.localizedDescription
+                )
+            }
             return committed
         }
     }
@@ -488,6 +539,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
     func finishTurn(
         sessionID: UUID,
         turnID: UUID,
+        attempt: Int,
         status: StoryTurnStatus,
         failureCode: String?
     ) async throws {
@@ -503,7 +555,8 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             }
             var current = sessions[index]
             guard var checkpoint = current.latestTurnCheckpoint,
-                  checkpoint.turnID == turnID else {
+                  checkpoint.turnID == turnID,
+                  checkpoint.attempt == attempt else {
                 return
             }
             if checkpoint.status == .committed || checkpoint.status == status {
@@ -534,7 +587,8 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             var changed = false
             for index in sessions.indices where sessions[index].storyWorldId == storyWorldId {
                 guard var checkpoint = sessions[index].latestTurnCheckpoint,
-                      checkpoint.status == .pending else { continue }
+                      checkpoint.status == .pending,
+                      checkpoint.ownerID != StoryTurnOwner.currentID else { continue }
                 checkpoint = StoryTurnReducer.finish(
                     pending: checkpoint,
                     status: .interrupted,

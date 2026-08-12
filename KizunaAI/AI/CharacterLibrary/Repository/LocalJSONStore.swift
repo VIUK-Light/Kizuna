@@ -67,6 +67,21 @@ enum LocalJSONStoreTransaction {
             throw LocalJSONStoreError.ioFailure(underlying: error)
         }
     }
+
+    /// 壊れた補助ファイルを上書きせずに同じ保存先へ退避する。
+    /// 呼び出し側は退避後に新しい空ファイルを作るか、失敗を利用者へ返す。
+    static func backup(fileName: String) throws -> URL {
+        let base = KizunaDataMigration.characterLibraryURL
+        let sourceURL = base.appendingPathComponent(fileName)
+        let backupName = "\(sourceURL.deletingPathExtension().lastPathComponent).corrupt-\(UUID().uuidString).json"
+        let backupURL = base.appendingPathComponent(backupName)
+        do {
+            try FileManager.default.copyItem(at: sourceURL, to: backupURL)
+            return backupURL
+        } catch {
+            throw LocalJSONStoreError.ioFailure(underlying: error)
+        }
+    }
 }
 
 actor LocalJSONStore<T: Codable> {

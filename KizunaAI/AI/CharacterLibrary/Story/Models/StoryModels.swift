@@ -1029,6 +1029,10 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
     var userMessageID: UUID
     var status: StoryTurnStatus
     var attempt: Int
+    /// 同一プロセス内の別ViewModelが、まだ実行中のターンを
+    /// 「前回起動の残骸」として終了しないための所有者ID。
+    /// 旧保存データではnilのまま読み込む。
+    var ownerID: UUID?
     var baseRevision: UInt64
     var assistantMessageIDs: [UUID]
     var startedAt: Date
@@ -1040,6 +1044,7 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         userMessageID: UUID,
         status: StoryTurnStatus = .pending,
         attempt: Int = 1,
+        ownerID: UUID? = nil,
         baseRevision: UInt64 = 0,
         assistantMessageIDs: [UUID] = [],
         startedAt: Date = Date(),
@@ -1050,6 +1055,7 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         self.userMessageID = userMessageID
         self.status = status
         self.attempt = max(1, attempt)
+        self.ownerID = ownerID
         self.baseRevision = baseRevision
         self.assistantMessageIDs = assistantMessageIDs
         self.startedAt = startedAt

@@ -153,6 +153,9 @@ final class StorySessionService: ObservableObject {
     private var activeGenerationModel: StoryGenerationModel?
     private var activeTurnID: UUID?
     private var activeSessionID: UUID?
+    private var activeTurnAttempt: Int?
+    private var activeUserMessageID: UUID?
+    private var activeUserText = ""
     /// Timeout notice persistence has its own validity token. A watchdog may
     /// suspend at a repository await; cancellation or a newer turn must then
     /// invalidate the pending save before it can write a stale snapshot.
@@ -210,8 +213,11 @@ final class StorySessionService: ObservableObject {
         }
         activeTurnID = turnID
         activeSessionID = session.id
+        activeTurnAttempt = attempt
         timeoutSaveToken = nil
         let userMessageID = existingUserMessageID ?? UUID()
+        activeUserMessageID = userMessageID
+        activeUserText = trimmed
 
         generationTask = Task { [weak self] in
             await self?.runPipeline(
@@ -409,16 +415,37 @@ final class StorySessionService: ObservableObject {
         timeoutSaveToken = nil
         let sessionID = activeSessionID
         let turnID = activeTurnID
+        let attempt = activeTurnAttempt
+        let userMessageID = activeUserMessageID
+        let userText = activeUserText
         generationTask?.cancel()
         generationTask = nil
-        if let sessionID, let turnID {
-            Task { [sessionRepo] in
-                try? await sessionRepo.finishTurn(
-                    sessionID: sessionID,
-                    turnID: turnID,
-                    status: .cancelled,
-                    failureCode: "user_cancelled"
-                )
+        if let sessionID, let turnID, let attempt {
+            Task { [weak self, sessionRepo] in
+                do {
+                    try await sessionRepo.finishTurn(
+                        sessionID: sessionID,
+                        turnID: turnID,
+                        attempt: attempt,
+                        status: .cancelled,
+                        failureCode: "user_cancelled"
+                    )
+                } catch {
+                    NSLog("[StorySession] cancel cleanup failed: %@", error.localizedDescription)
+                    guard let userMessageID, let self else { return }
+                    await MainActor.run {
+                        self.latestRuntimeNotice = StoryRuntimeNotice(
+                            text: self.localizedNotice(
+                                "キャンセル状態を保存できませんでした。保存先を確認してから同じ発言を再試行してください。",
+                                "The cancelled state could not be saved. Check storage and retry the same message."
+                            ),
+                            userMessageID: userMessageID,
+                            userText: userText,
+                            backendName: "cancel cleanup failed",
+                            backend: .persistence
+                        )
+                    }
+                }
             }
         }
         if activeGenerationModel == .e4b {
@@ -429,6 +456,9 @@ final class StorySessionService: ObservableObject {
         generationWatchdogDeadline = nil
         activeTurnID = nil
         activeSessionID = nil
+        activeTurnAttempt = nil
+        activeUserMessageID = nil
+        activeUserText = ""
         phase = .idle
         streamingSpeakerName = nil
         streamingStatusText = ""
@@ -506,12 +536,17 @@ final class StorySessionService: ObservableObject {
             return
         }
         guard isGenerationActive(generationID) else {
-            try? await sessionRepo.finishTurn(
-                sessionID: session.id,
-                turnID: turnID,
-                status: .cancelled,
-                failureCode: "cancelled_before_pipeline"
-            )
+            do {
+                try await sessionRepo.finishTurn(
+                    sessionID: session.id,
+                    turnID: turnID,
+                    attempt: attempt,
+                    status: .cancelled,
+                    failureCode: "cancelled_before_pipeline"
+                )
+            } catch {
+                NSLog("[StorySession] pre-pipeline cancel cleanup failed: %@", error.localizedDescription)
+            }
             return
         }
 
@@ -681,6 +716,9 @@ final class StorySessionService: ObservableObject {
                 self.activeGenerationModel = nil
                 self.activeTurnID = nil
                 self.activeSessionID = nil
+                self.activeTurnAttempt = nil
+                self.activeUserMessageID = nil
+                self.activeUserText = ""
             }
             return
         }
@@ -1138,6 +1176,9 @@ final class StorySessionService: ObservableObject {
                 self.activeGenerationModel = nil
                 self.activeTurnID = nil
                 self.activeSessionID = nil
+                self.activeTurnAttempt = nil
+                self.activeUserMessageID = nil
+                self.activeUserText = ""
             }
             return
         }
@@ -1170,6 +1211,9 @@ final class StorySessionService: ObservableObject {
                 self.activeGenerationModel = nil
                 self.activeTurnID = nil
                 self.activeSessionID = nil
+                self.activeTurnAttempt = nil
+                self.activeUserMessageID = nil
+                self.activeUserText = ""
             }
             return
         case .soften, .requireEdit:
@@ -1201,6 +1245,9 @@ final class StorySessionService: ObservableObject {
                 self.activeGenerationModel = nil
                 self.activeTurnID = nil
                 self.activeSessionID = nil
+                self.activeTurnAttempt = nil
+                self.activeUserMessageID = nil
+                self.activeUserText = ""
             }
             return
         }
@@ -1349,12 +1396,6 @@ final class StorySessionService: ObservableObject {
                 backendName: "turn commit failed",
                 backend: .persistence
             )
-            try? await sessionRepo.finishTurn(
-                sessionID: session.id,
-                turnID: turnID,
-                status: .failed,
-                failureCode: "turn_commit_failed"
-            )
             NSLog("[StorySession] turn commit failed: %@", error.localizedDescription)
             await finishGenerationWithoutSaving(
                 generationID: generationID,
@@ -1438,6 +1479,9 @@ final class StorySessionService: ObservableObject {
             self.activeGenerationModel = nil
             self.activeTurnID = nil
             self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
         }
     }
 
@@ -1464,26 +1508,44 @@ final class StorySessionService: ObservableObject {
         backendName: String = ""
     ) async {
         guard isGenerationActive(generationID) else { return }
-        if let sessionID = activeSessionID, let turnID = activeTurnID {
-            try? await sessionRepo.finishTurn(
-                sessionID: sessionID,
-                turnID: turnID,
-                status: .failed,
-                failureCode: backendName.isEmpty ? "generation_failed" : backendName
-            )
+        var finishFailed = false
+        if let sessionID = activeSessionID,
+           let turnID = activeTurnID,
+           let attempt = activeTurnAttempt {
+            do {
+                try await sessionRepo.finishTurn(
+                    sessionID: sessionID,
+                    turnID: turnID,
+                    attempt: attempt,
+                    status: .failed,
+                    failureCode: backendName.isEmpty ? "generation_failed" : backendName
+                )
+            } catch {
+                finishFailed = true
+                NSLog("[StorySession] generation failure cleanup failed: %@", error.localizedDescription)
+            }
         }
+        let displayedNotice = finishFailed
+            ? localizedNotice(
+                "応答は保存しませんでしたが、ターンの終了状態を保存できませんでした。保存先を確認してから同じ発言を再試行してください。",
+                "The response was not saved, but the turn could not be finalized. Check storage and retry the same message."
+            )
+            : notice
+        let displayedBackendName = finishFailed
+            ? "turn finalization failed"
+            : backendName
         await MainActor.run {
             guard self.activeGenerationID == generationID else { return }
             if let userMessageID, let userText {
                 self.latestRuntimeNotice = StoryRuntimeNotice(
-                    text: notice,
+                    text: displayedNotice,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: backendName,
+                    backendName: displayedBackendName,
                     backend: backend
                 )
             }
-            self.streamingResponse = notice
+            self.streamingResponse = displayedNotice
             self.streamingSpeakerName = "システム"
             self.streamingStatusText = ""
             self.savedTurnRevision += 1
@@ -1493,6 +1555,9 @@ final class StorySessionService: ObservableObject {
             self.activeGenerationModel = nil
             self.activeTurnID = nil
             self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
         }
     }
 
@@ -1659,14 +1724,20 @@ final class StorySessionService: ObservableObject {
             self.generationTask = nil
             let timedOutSessionID = self.activeSessionID
             let timedOutTurnID = self.activeTurnID
-            if let timedOutSessionID, let timedOutTurnID {
+            let timedOutAttempt = self.activeTurnAttempt
+            if let timedOutSessionID, let timedOutTurnID, let timedOutAttempt {
                 Task { [sessionRepo = self.sessionRepo] in
-                    try? await sessionRepo.finishTurn(
-                        sessionID: timedOutSessionID,
-                        turnID: timedOutTurnID,
-                        status: .failed,
-                        failureCode: "generation_timeout"
-                    )
+                    do {
+                        try await sessionRepo.finishTurn(
+                            sessionID: timedOutSessionID,
+                            turnID: timedOutTurnID,
+                            attempt: timedOutAttempt,
+                            status: .failed,
+                            failureCode: "generation_timeout"
+                        )
+                    } catch {
+                        NSLog("[StorySession] timeout cleanup failed: %@", error.localizedDescription)
+                    }
                 }
             }
             self.activeGenerationID = nil
@@ -1674,6 +1745,9 @@ final class StorySessionService: ObservableObject {
             self.generationWatchdogDeadline = nil
             self.activeTurnID = nil
             self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
             if generationModel == .e4b {
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
             }
@@ -1721,6 +1795,9 @@ final class StorySessionService: ObservableObject {
             self.activeGenerationModel = nil
             self.activeTurnID = nil
             self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
         }
     }
 

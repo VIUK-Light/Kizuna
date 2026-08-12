@@ -15,7 +15,13 @@ enum StoryTurnPersistenceError: Error, Equatable {
     case turnInProgress
     case turnNotPending
     case worldMismatch
+    case sceneConflict
     case corruptJournal
+}
+
+enum StoryTurnOwner {
+    /// アプリプロセス内で共有する所有者ID。プロセスが再起動すると変わる。
+    static let currentID = UUID()
 }
 
 /// ターン状態の純粋な遷移部分。ファイルIOや時刻の取得を持たないため、
@@ -25,6 +31,7 @@ enum StoryTurnReducer {
         turnID: UUID,
         userMessageID: UUID,
         attempt: Int,
+        ownerID: UUID? = StoryTurnOwner.currentID,
         baseRevision: UInt64,
         startedAt: Date,
         updatedAt: Date
@@ -34,6 +41,7 @@ enum StoryTurnReducer {
             userMessageID: userMessageID,
             status: .pending,
             attempt: attempt,
+            ownerID: ownerID,
             baseRevision: baseRevision,
             startedAt: startedAt,
             updatedAt: updatedAt
@@ -50,6 +58,7 @@ enum StoryTurnReducer {
             userMessageID: pending.userMessageID,
             status: .committed,
             attempt: pending.attempt,
+            ownerID: pending.ownerID,
             baseRevision: pending.baseRevision,
             assistantMessageIDs: assistantMessageIDs,
             startedAt: pending.startedAt,
@@ -68,6 +77,7 @@ enum StoryTurnReducer {
             userMessageID: pending.userMessageID,
             status: status,
             attempt: pending.attempt,
+            ownerID: pending.ownerID,
             baseRevision: pending.baseRevision,
             assistantMessageIDs: pending.assistantMessageIDs,
             startedAt: pending.startedAt,
@@ -91,11 +101,50 @@ enum StoryTurnJournal {
 
     static func recoverIfNeeded() throws {
         try LocalJSONStoreTransaction.withSharedLock {
-            let entries = try LocalJSONStoreTransaction.load(
-                StoryTurnJournalEntry.self,
-                fileName: fileName
-            )
+            let entries: [StoryTurnJournalEntry]
+            do {
+                entries = try LocalJSONStoreTransaction.load(
+                    StoryTurnJournalEntry.self,
+                    fileName: fileName
+                )
+            } catch {
+                // 壊れたjournalを残したままにすると、全てのStory read/writeが
+                // 同じdecode errorで停止する。元ファイルを退避してから空journalへ
+                // 戻し、部分コミットの調査材料を失わないようにする。
+                let backupURL = try LocalJSONStoreTransaction.backup(fileName: fileName)
+                try LocalJSONStoreTransaction.save(
+                    [StoryTurnJournalEntry](),
+                    fileName: fileName
+                )
+                NSLog(
+                    "[StoryTurnJournal] quarantined corrupt journal=%@ reason=%@",
+                    backupURL.lastPathComponent,
+                    error.localizedDescription
+                )
+                return
+            }
             guard !entries.isEmpty else { return }
+
+            guard entries.allSatisfy({ entry in
+                guard entry.turnID == entry.session.latestTurnCheckpoint?.turnID,
+                      entry.session.latestTurnCheckpoint?.status == .committed,
+                      entry.session.storyWorldId == entry.scene.storyWorldId,
+                      entry.session.currentSceneId == nil || entry.session.currentSceneId == entry.scene.id else {
+                    return false
+                }
+                return true
+            }) else {
+                let backupURL = try LocalJSONStoreTransaction.backup(fileName: fileName)
+                try LocalJSONStoreTransaction.save(
+                    [StoryTurnJournalEntry](),
+                    fileName: fileName
+                )
+                NSLog(
+                    "[StoryTurnJournal] quarantined semantically invalid journal=%@",
+                    backupURL.lastPathComponent
+                )
+                return
+            }
 
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
