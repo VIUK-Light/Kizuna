@@ -121,7 +121,8 @@ protocol StorySessionRepository: AnyObject {
         session: StorySession,
         userMessage: StoryMessage,
         turnID: UUID,
-        attempt: Int
+        attempt: Int,
+        ownerID: UUID
     ) async throws -> StorySession
     func commitTurn(
         session: StorySession,
@@ -136,7 +137,10 @@ protocol StorySessionRepository: AnyObject {
         status: StoryTurnStatus,
         failureCode: String?
     ) async throws
-    func recoverInterruptedTurns(storyWorldId: UUID) async throws
+    func recoverInterruptedTurns(
+        storyWorldId: UUID,
+        activeOwnerIDs: Set<UUID>
+    ) async throws
     func deleteSession(id: UUID) async throws
 }
 
@@ -395,7 +399,8 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         session: StorySession,
         userMessage: StoryMessage,
         turnID: UUID,
-        attempt: Int
+        attempt: Int,
+        ownerID: UUID = StoryTurnOwner.currentID
     ) async throws -> StorySession {
         let storageURL = self.storageURL
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
@@ -438,7 +443,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                         turnID: turnID,
                         userMessageID: checkpoint.userMessageID,
                         attempt: attempt,
-                        ownerID: StoryTurnOwner.currentID,
+                        ownerID: ownerID,
                         baseRevision: actualRevision,
                         startedAt: checkpoint.startedAt,
                         updatedAt: now
@@ -479,6 +484,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 turnID: turnID,
                 userMessageID: userMessage.id,
                 attempt: attempt,
+                ownerID: ownerID,
                 baseRevision: actualRevision,
                 startedAt: current.latestTurnCheckpoint?.turnID == turnID
                     ? current.latestTurnCheckpoint?.startedAt ?? now
@@ -659,7 +665,10 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         }
     }
 
-    func recoverInterruptedTurns(storyWorldId: UUID) async throws {
+    func recoverInterruptedTurns(
+        storyWorldId: UUID,
+        activeOwnerIDs: Set<UUID> = StoryTurnOwnerRegistry.shared.activeOwnerIDs()
+    ) async throws {
         let storageURL = self.storageURL
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
@@ -672,8 +681,9 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             var changed = false
             for index in sessions.indices where sessions[index].storyWorldId == storyWorldId {
                 guard var checkpoint = sessions[index].latestTurnCheckpoint,
-                      checkpoint.status == .pending,
-                      checkpoint.ownerID != StoryTurnOwner.currentID else { continue }
+                      checkpoint.status == .pending else { continue }
+                let isOwnedByLiveService = checkpoint.ownerID.map(activeOwnerIDs.contains) ?? false
+                guard !isOwnedByLiveService else { continue }
                 checkpoint = StoryTurnReducer.finish(
                     pending: checkpoint,
                     status: .interrupted,

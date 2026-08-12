@@ -1560,6 +1560,7 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     deinit {
+        service.shutdown()
         debugRestSuggestionTask?.cancel()
         debugSafetyConcernTask?.cancel()
         debugRequestPollingTask?.cancel()
@@ -1578,7 +1579,10 @@ final class StorySessionViewModel: ObservableObject {
             // 前回のプロセス終了時に残ったpendingターンは、生成を再開せず
             // interruptedとして明示的に終了させる。通常ターンのpolling中に
             // fetchするだけではこの処理を実行しない。
-            try await sessionRepo.recoverInterruptedTurns(storyWorldId: world.id)
+            try await sessionRepo.recoverInterruptedTurns(
+                storyWorldId: world.id,
+                activeOwnerIDs: StoryTurnOwnerRegistry.shared.activeOwnerIDs()
+            )
         } catch {
             bootstrapError = KizunaCopy.text(
                 japanese: "物語の保存状態を確認できませんでした。再試行してください。",

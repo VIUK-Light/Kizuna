@@ -484,6 +484,101 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persisted?.latestTurnCheckpoint?.ownerID, StoryTurnOwner.currentID)
     }
 
+    func testStorySessionRepositoryRecoversOwnerAfterServiceIsDestroyed() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let staleOwnerID = UUID()
+        let checkpoint = StoryTurnReducer.begin(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            attempt: 1,
+            ownerID: staleOwnerID,
+            baseRevision: 0,
+            startedAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let session = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        try await repository.recoverInterruptedTurns(
+            storyWorldId: worldID,
+            activeOwnerIDs: []
+        )
+
+        let persisted = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.status, .interrupted)
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.failureCode, "app_relaunch")
+    }
+
+    func testStorySessionRepositoryDoesNotInterruptRegisteredOwner() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let liveOwnerID = UUID()
+        let checkpoint = StoryTurnReducer.begin(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            attempt: 1,
+            ownerID: liveOwnerID,
+            baseRevision: 0,
+            startedAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let session = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        try await repository.recoverInterruptedTurns(
+            storyWorldId: worldID,
+            activeOwnerIDs: [liveOwnerID]
+        )
+
+        let persisted = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.status, .pending)
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.ownerID, liveOwnerID)
+    }
+
+    func testStoryTurnOwnerRegistryTracksLiveServiceOwnersIndependently() {
+        let first = StoryTurnOwnerRegistry.shared.register()
+        let second = StoryTurnOwnerRegistry.shared.register()
+        defer {
+            StoryTurnOwnerRegistry.shared.unregister(first)
+            StoryTurnOwnerRegistry.shared.unregister(second)
+        }
+
+        XCTAssertNotEqual(first, second)
+        XCTAssertTrue(StoryTurnOwnerRegistry.shared.activeOwnerIDs().isSuperset(of: [first, second]))
+        StoryTurnOwnerRegistry.shared.unregister(first)
+        XCTAssertFalse(StoryTurnOwnerRegistry.shared.activeOwnerIDs().contains(first))
+        XCTAssertTrue(StoryTurnOwnerRegistry.shared.activeOwnerIDs().contains(second))
+    }
+
     func testStorySessionRepositoryCommitPreservesExternallyEditedScene() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()

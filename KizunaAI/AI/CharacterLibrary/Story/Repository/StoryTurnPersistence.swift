@@ -19,6 +19,37 @@ enum StoryTurnPersistenceError: Error, Equatable {
     case corruptJournal
 }
 
+/// 同一プロセス内で現在生存しているStorySessionServiceを識別する。
+/// 永続化されたownerIDだけではServiceのdeinitを検知できないため、
+/// 新しい画面が古い画面の実行中turnを誤って中断しないよう登録状態を持つ。
+final class StoryTurnOwnerRegistry: @unchecked Sendable {
+    static let shared = StoryTurnOwnerRegistry()
+
+    private let lock = NSLock()
+    private var owners = Set<UUID>()
+
+    @discardableResult
+    func register() -> UUID {
+        let ownerID = UUID()
+        lock.lock()
+        owners.insert(ownerID)
+        lock.unlock()
+        return ownerID
+    }
+
+    func unregister(_ ownerID: UUID) {
+        lock.lock()
+        owners.remove(ownerID)
+        lock.unlock()
+    }
+
+    func activeOwnerIDs() -> Set<UUID> {
+        lock.lock()
+        defer { lock.unlock() }
+        return owners
+    }
+}
+
 enum StoryTurnOwner {
     /// アプリプロセス内で共有する所有者ID。プロセスが再起動すると変わる。
     nonisolated static let currentID = UUID()
