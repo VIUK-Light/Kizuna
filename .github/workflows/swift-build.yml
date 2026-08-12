@@ -16,7 +16,7 @@ jobs:
   xcodegen-drift:
     name: XcodeGen Drift
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -45,7 +45,7 @@ jobs:
   macos-unit-tests:
     name: macOS Unit Tests
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -68,7 +68,7 @@ jobs:
   ios-simulator-compile:
     name: iOS Simulator Compile
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -90,7 +90,7 @@ jobs:
   ios-device-compile:
     name: iOS Device Compile
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -112,7 +112,7 @@ jobs:
   build:
     name: Swift Build
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
