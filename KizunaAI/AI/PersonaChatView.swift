@@ -15,6 +15,8 @@ import UIKit
 #endif
 
 struct PersonaChatView: View {
+    private let initialThreadID: UUID?
+    private let showsStoryActions: Bool
     @StateObject private var store = PersonaChatStore.shared
     @StateObject private var service = PersonaChatService.shared
     @StateObject private var settings = PersonaSettings.shared
@@ -23,6 +25,7 @@ struct PersonaChatView: View {
     @State private var showWorldLibrary = false
     @State private var activeStoryWorld: StoryWorld?
     @State private var activeStorySessionID: UUID?
+    @State private var activeStoryStartsNewSession = false
     @State private var compactShowsChat = false
     @State private var storyHistoryItems: [StoryHistoryItem] = []
     @State private var storyHistoryLoadError: String?
@@ -31,14 +34,26 @@ struct PersonaChatView: View {
     @State private var storyHistoryReloadID = UUID()
     @State private var isPersonaChatNearBottom = true
     @State private var unreadPersonaMessageCount = 0
+    @State private var pendingThreadDeletion: PersonaThread?
+    @State private var pendingThreadRename: PersonaThread?
+    @State private var threadRenameText = ""
     /// スレッドを切り替えても入力途中の本文が別スレッドへ移らないよう、
     /// 下書きをスレッドIDごとに保持する。会話本文とは別の一時UI状態であり、
     /// 永続化は行わない。
     @State private var personaDrafts: [UUID: String] = [:]
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dismiss) private var dismiss
 
     private let storyWorldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let storySessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
+
+    init(initialThreadID: UUID? = nil, showsStoryActions: Bool = true) {
+        self.initialThreadID = initialThreadID
+        self.showsStoryActions = showsStoryActions
+        _store = StateObject(wrappedValue: PersonaChatStore.shared)
+        _service = StateObject(wrappedValue: PersonaChatService.shared)
+        _settings = StateObject(wrappedValue: PersonaSettings.shared)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,8 +62,10 @@ struct PersonaChatView: View {
             if horizontalSizeClass == .compact {
                 if compactShowsChat, store.activeThread != nil {
                     compactChat
-                } else {
+                } else if showsStoryActions {
                     compactStoryList
+                } else {
+                    compactConversationList
                 }
             } else {
                 HStack(spacing: 0) {
@@ -104,11 +121,19 @@ struct PersonaChatView: View {
             StoryWorldLibraryView(
                 onStartSession: { world in
                     activeStorySessionID = nil
+                    activeStoryStartsNewSession = false
                     activeStoryWorld = world
                     showWorldLibrary = false
                 },
                 onResumeSession: { world, sessionID in
                     activeStorySessionID = sessionID
+                    activeStoryStartsNewSession = false
+                    activeStoryWorld = world
+                    showWorldLibrary = false
+                },
+                onStartNewSession: { world in
+                    activeStorySessionID = nil
+                    activeStoryStartsNewSession = true
                     activeStoryWorld = world
                     showWorldLibrary = false
                 }
@@ -117,13 +142,72 @@ struct PersonaChatView: View {
         }
         .sheet(item: $activeStoryWorld, onDismiss: {
             activeStorySessionID = nil
+            activeStoryStartsNewSession = false
             storyHistoryReloadID = UUID()
         }) { world in
-            StorySessionChatView(world: world, initialSessionID: activeStorySessionID)
+            StorySessionChatView(
+                world: world,
+                initialSessionID: activeStorySessionID,
+                startsNewSession: activeStoryStartsNewSession
+            )
                 .viukAdaptiveSheetSizing(minWidth: 760, minHeight: 720)
         }
+        .confirmationDialog(
+            KizunaCopy.text(japanese: "この会話を削除しますか？", english: "Delete this conversation?"),
+            isPresented: Binding(
+                get: { pendingThreadDeletion != nil },
+                set: { if !$0 { pendingThreadDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
+                if let thread = pendingThreadDeletion {
+                    store.deleteThread(id: thread.id)
+                }
+                pendingThreadDeletion = nil
+            }
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {
+                pendingThreadDeletion = nil
+            }
+        } message: {
+            Text(KizunaCopy.text(
+                japanese: "会話本文もこの端末から削除されます。",
+                english: "The conversation text will also be deleted from this device."
+            ))
+        }
+        .alert(
+            KizunaCopy.text(japanese: "会話名を変更", english: "Rename conversation"),
+            isPresented: Binding(
+                get: { pendingThreadRename != nil },
+                set: { if !$0 { pendingThreadRename = nil } }
+            )
+        ) {
+            TextField(
+                KizunaCopy.text(japanese: "会話名", english: "Conversation name"),
+                text: $threadRenameText
+            )
+            Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
+                let title = threadRenameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let thread = pendingThreadRename, !title.isEmpty {
+                    store.renameThread(id: thread.id, title: title)
+                }
+                pendingThreadRename = nil
+            }
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {
+                pendingThreadRename = nil
+            }
+        }
         .task(id: storyHistoryReloadID) {
-            await loadStoryHistory()
+            if showsStoryActions {
+                await loadStoryHistory()
+            }
+        }
+        .task(id: initialThreadID) {
+            guard let initialThreadID else { return }
+            store.selectThread(id: initialThreadID)
+            if horizontalSizeClass == .compact {
+                compactShowsChat = true
+            }
         }
         .onChange(of: store.activeThreadID) { _, _ in
             isPersonaChatNearBottom = true
@@ -141,10 +225,24 @@ struct PersonaChatView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
-                Text(KizunaCopy.text(japanese: "あなたの物語", english: "Your story"))
+                Text(showsStoryActions
+                     ? KizunaCopy.text(japanese: "あなたの物語", english: "Your story")
+                     : KizunaCopy.text(japanese: "会話", english: "Conversations"))
                     .font(.system(size: 13, weight: .bold))
                 Spacer()
-                Color.clear.frame(width: 48)
+                if !showsStoryActions {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(KizunaCopy.text(japanese: "閉じる", english: "Close"))
+                } else {
+                    Color.clear.frame(width: 44, height: 44)
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -178,23 +276,27 @@ struct PersonaChatView: View {
 
             Spacer()
 
-            Button {
-                showWorldLibrary = true
-            } label: {
-                Image(systemName: "sparkles.rectangle.stack.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(Color.accentColor.opacity(0.16)))
-                    .foregroundStyle(Color.accentColor)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(KizunaCopy.text(japanese: "kizunaライブラリー", english: "kizuna library"))
-
-            Menu {
+            if showsStoryActions {
                 Button {
                     showWorldLibrary = true
                 } label: {
-                    Label(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"), systemImage: "sparkles.rectangle.stack.fill")
+                    Image(systemName: "sparkles.rectangle.stack.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.accentColor.opacity(0.16)))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(KizunaCopy.text(japanese: "kizunaライブラリー", english: "kizuna library"))
+            }
+
+            Menu {
+                if showsStoryActions {
+                    Button {
+                        showWorldLibrary = true
+                    } label: {
+                        Label(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"), systemImage: "sparkles.rectangle.stack.fill")
+                    }
                 }
                 Button {
                     showLibrary = true
@@ -215,10 +317,53 @@ struct PersonaChatView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .accessibilityLabel(KizunaCopy.text(japanese: "kizunaメニュー", english: "kizuna menu"))
+
+            if !showsStoryActions {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(KizunaCopy.text(japanese: "閉じる", english: "Close"))
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.thinMaterial)
+    }
+
+    private var compactConversationList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(KizunaCopy.text(japanese: "会話", english: "Conversations"))
+                    .font(.headline)
+                Spacer()
+                Text(KizunaCopy.text(japanese: "タップして再開", english: "Tap to resume"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            Divider()
+
+            if store.threads.isEmpty {
+                noActiveThreadState
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(store.threads) { thread in
+                            threadRow(thread)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 10)
+                }
+            }
+        }
+        .background(Color.appCanvasBackground)
     }
 
     private var regularTopSwitchBar: some View {
@@ -233,28 +378,32 @@ struct PersonaChatView: View {
 
             Spacer()
 
-            Button {
-                showWorldLibrary = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles.rectangle.stack.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                Text(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"))
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(Color.accentColor.opacity(0.16)))
-                .foregroundStyle(Color.accentColor)
-            }
-            .buttonStyle(.plain)
-            .help(KizunaCopy.text(japanese: "関係性を続けられるシナリオを開く", english: "Open scenarios that continue your relationship"))
-
-            Menu {
+            if showsStoryActions {
                 Button {
                     showWorldLibrary = true
                 } label: {
-                    Label(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"), systemImage: "sparkles.rectangle.stack.fill")
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles.rectangle.stack.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"))
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+                    .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .help(KizunaCopy.text(japanese: "関係性を続けられるシナリオを開く", english: "Open scenarios that continue your relationship"))
+            }
+
+            Menu {
+                if showsStoryActions {
+                    Button {
+                        showWorldLibrary = true
+                    } label: {
+                        Label(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"), systemImage: "sparkles.rectangle.stack.fill")
+                    }
                 }
                 Button {
                     showLibrary = true
@@ -276,6 +425,18 @@ struct PersonaChatView: View {
             .menuIndicator(.hidden)
             .help(KizunaCopy.text(japanese: "キャラクターなどの補助メニュー", english: "More character options"))
 
+            if !showsStoryActions {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(KizunaCopy.text(japanese: "閉じる", english: "Close"))
+            }
+
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -296,15 +457,17 @@ struct PersonaChatView: View {
                     .textCase(.uppercase)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button {
-                    showWorldLibrary = true
-                } label: {
-                    Image(systemName: "books.vertical.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 26, height: 26)
+                if showsStoryActions {
+                    Button {
+                        showWorldLibrary = true
+                    } label: {
+                        Image(systemName: "books.vertical.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 26, height: 26)
+                    }
+                    .buttonStyle(.plain)
+                    .help(KizunaCopy.text(japanese: "kizunaライブラリーを開く", english: "Open the kizuna library"))
                 }
-                .buttonStyle(.plain)
-                .help(KizunaCopy.text(japanese: "kizunaライブラリーを開く", english: "Open the kizuna library"))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -331,21 +494,23 @@ struct PersonaChatView: View {
             Spacer(minLength: 0)
 
             Divider()
-            Button {
-                showWorldLibrary = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "sparkles.rectangle.stack.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"))
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer()
+            if showsStoryActions {
+                Button {
+                    showWorldLibrary = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles.rectangle.stack.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"))
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .background(Color.appSecondaryBackground.opacity(0.22))
     }
@@ -398,7 +563,7 @@ struct PersonaChatView: View {
 
     @ViewBuilder
     private var storyListSections: some View {
-        if !storyHistoryItems.isEmpty {
+        if showsStoryActions, !storyHistoryItems.isEmpty {
             sidebarSectionTitle(KizunaCopy.text(japanese: "続きのある物語", english: "Stories in progress"))
             ForEach(storyHistoryItems) { item in
                 storyHistoryRow(item)
@@ -482,17 +647,19 @@ struct PersonaChatView: View {
             Text(KizunaCopy.text(japanese: "会話はまだありません", english: "No conversations yet"))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            Button {
-                showWorldLibrary = true
-            } label: {
-                Text(KizunaCopy.text(japanese: "シナリオを選ぶ", english: "Choose a scenario"))
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                    .foregroundStyle(Color.accentColor)
+            if showsStoryActions {
+                Button {
+                    showWorldLibrary = true
+                } label: {
+                    Text(KizunaCopy.text(japanese: "シナリオを選ぶ", english: "Choose a scenario"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
@@ -536,10 +703,17 @@ struct PersonaChatView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button(role: .destructive) {
-                store.deleteThread(id: thread.id)
+            Button {
+                threadRenameText = thread.title
+                pendingThreadRename = thread
             } label: {
-                    Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
+                Label(KizunaCopy.text(japanese: "名前を変更", english: "Rename"), systemImage: "pencil")
+            }
+            Divider()
+            Button(role: .destructive) {
+                pendingThreadDeletion = thread
+            } label: {
+                Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
             }
         }
     }
@@ -697,15 +871,17 @@ struct PersonaChatView: View {
             }
             Spacer()
             Menu {
-                Button {
-                    showWorldLibrary = true
-                } label: {
-                    Label(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"), systemImage: "sparkles.rectangle.stack.fill")
+                if showsStoryActions {
+                    Button {
+                        showWorldLibrary = true
+                    } label: {
+                        Label(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"), systemImage: "sparkles.rectangle.stack.fill")
+                    }
                 }
                 Button {
                     showConfig = true
                 } label: {
-                    Label(KizunaCopy.text(japanese: "このキャラクターを編集", english: "Edit this character"), systemImage: "slider.horizontal.3")
+                    Label(KizunaCopy.text(japanese: "新しい会話の設定", english: "New conversation settings"), systemImage: "slider.horizontal.3")
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -740,23 +916,25 @@ struct PersonaChatView: View {
 
     private var noActiveThreadState: some View {
         VStack(spacing: 14) {
-            Image(systemName: "sparkles.rectangle.stack.fill")
+            Image(systemName: showsStoryActions ? "sparkles.rectangle.stack.fill" : "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 40))
                 .foregroundStyle(.tertiary)
             Text(KizunaCopy.text(japanese: "始めましょう", english: "Let’s begin"))
                 .font(.system(size: 16, weight: .semibold))
-          
-            Button {
-                showWorldLibrary = true
-            } label: {
-                Text(KizunaCopy.text(japanese: "物語を見つける", english: "Find a story"))
-                    .font(.system(size: 13, weight: .semibold))
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.18)))
-                    .foregroundStyle(Color.accentColor)
+
+            if showsStoryActions {
+                Button {
+                    showWorldLibrary = true
+                } label: {
+                    Text(KizunaCopy.text(japanese: "物語を見つける", english: "Find a story"))
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(personaChatBackground)
@@ -967,7 +1145,7 @@ private extension String {
 
 // MARK: - Persona avatar
 
-private struct PersonaAvatarView: View {
+struct PersonaAvatarView: View {
     let profile: PersonaProfile
     let size: CGFloat
 

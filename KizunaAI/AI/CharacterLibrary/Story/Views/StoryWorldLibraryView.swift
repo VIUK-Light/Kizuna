@@ -24,31 +24,37 @@ struct StoryWorldLibraryView: View {
     var onStartSession: ((StoryWorld) -> Void)?
     /// 履歴行から既存セッションを指定して再開する。
     var onResumeSession: ((StoryWorld, UUID) -> Void)?
+    /// 既存Worldでも最新セッションを再利用せず、新しいセッションを作る。
+    var onStartNewSession: ((StoryWorld) -> Void)?
 
     @MainActor
     init(
         viewModel: StoryWorldLibraryViewModel,
         showsDismissButton: Bool = true,
         onStartSession: ((StoryWorld) -> Void)? = nil,
-        onResumeSession: ((StoryWorld, UUID) -> Void)? = nil
+        onResumeSession: ((StoryWorld, UUID) -> Void)? = nil,
+        onStartNewSession: ((StoryWorld) -> Void)? = nil
     ) {
         _vm = StateObject(wrappedValue: viewModel)
         self.showsDismissButton = showsDismissButton
         self.onStartSession = onStartSession
         self.onResumeSession = onResumeSession
+        self.onStartNewSession = onStartNewSession
     }
 
     @MainActor
     init(
         showsDismissButton: Bool = true,
         onStartSession: ((StoryWorld) -> Void)? = nil,
-        onResumeSession: ((StoryWorld, UUID) -> Void)? = nil
+        onResumeSession: ((StoryWorld, UUID) -> Void)? = nil,
+        onStartNewSession: ((StoryWorld) -> Void)? = nil
     ) {
         self.init(
             viewModel: StoryWorldLibraryViewModel(),
             showsDismissButton: showsDismissButton,
             onStartSession: onStartSession,
-            onResumeSession: onResumeSession
+            onResumeSession: onResumeSession,
+            onStartNewSession: onStartNewSession
         )
     }
 
@@ -73,6 +79,7 @@ struct StoryWorldLibraryView: View {
             content
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
+        .accessibilityElement(children: .contain)
         .task { await vm.bootstrap() }
         .sheet(isPresented: $showCreate) {
             StoryWorldCreateView(onSaved: { _ in
@@ -104,6 +111,11 @@ struct StoryWorldLibraryView: View {
                     onResumeSession?(world, sessionID)
                     dismiss()
                 },
+                onStartNewSession: { world in
+                    selected = nil
+                    onStartNewSession?(world)
+                    dismiss()
+                },
                 onEdit: { world in
                     selected = nil
                     editing = world
@@ -128,6 +140,7 @@ struct StoryWorldLibraryView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(KizunaCopy.text(japanese: "ストーリーライブラリー", english: "Story library"))
                     .font(.system(size: 15, weight: .semibold))
+                    .accessibilityIdentifier("workspace.story.heading")
                 Text(vm.isBootstrapping && vm.worlds.isEmpty
                      ? KizunaCopy.text(japanese: "初期ストーリーを準備中…", english: "Preparing stories…")
                      : KizunaCopy.language == .english

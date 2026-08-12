@@ -6,8 +6,6 @@ final class KizunaNavigationSmokeTests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        // Keep the PR1 smoke test aligned with the current navigation. PR2
-        // will update these labels when the standard TabView is introduced.
         app.launchArguments = [
             "-AppleLanguages", "(ja)",
             "-AppleLocale", "ja_JP",
@@ -17,17 +15,33 @@ final class KizunaNavigationSmokeTests: XCTestCase {
     }
 
     func testPrimarySectionsAreReachable() throws {
-        XCTAssertTrue(app.buttons["ストーリー"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["あなたの物語"].exists)
-        XCTAssertTrue(app.buttons["マイページ"].exists)
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
 
-        app.buttons["あなたの物語"].tap()
-        XCTAssertTrue(app.buttons["あなたの物語"].exists)
+        let conversationTab = tabBar.buttons["会話"]
+        let storyTab = tabBar.buttons["ストーリー"]
+        let myPageTab = tabBar.buttons["マイページ"]
 
-        app.buttons["ストーリー"].tap()
-        XCTAssertTrue(app.buttons["ストーリー"].exists)
+        XCTAssertTrue(conversationTab.exists)
+        XCTAssertTrue(storyTab.exists)
+        XCTAssertTrue(myPageTab.exists)
 
-        app.buttons["マイページ"].tap()
-        XCTAssertTrue(app.buttons["マイページ"].exists)
+        conversationTab.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["workspace.conversation.heading"]
+                .waitForExistence(timeout: 5)
+        )
+
+        storyTab.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["workspace.story.heading"]
+                .waitForExistence(timeout: 10)
+        )
+
+        myPageTab.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["workspace.myPage.heading"]
+                .waitForExistence(timeout: 10)
+        )
     }
 }
