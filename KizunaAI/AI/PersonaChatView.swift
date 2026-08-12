@@ -122,6 +122,14 @@ struct PersonaChatView: View {
                             .joined(separator: " / ")
                     )
                     guard let thread = store.createThread(with: persona, characterID: character.id) else {
+                        if store.isPersistenceRecoveryRequired {
+                            // Character Library is presented as a sheet. Close it
+                            // before showing the recovery confirmation so the
+                            // existing banner/export path remains reachable
+                            // instead of failing silently behind the sheet.
+                            showLibrary = false
+                            isShowingPersonaRecoveryResetConfirmation = true
+                        }
                         return
                     }
                     // 初回メッセージがあればアシスタント発として入れておく。
