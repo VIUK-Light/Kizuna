@@ -51,7 +51,8 @@ final class StoryTurnOwnerRegistry: @unchecked Sendable {
 }
 
 enum StoryTurnOwner {
-    /// アプリプロセス内で共有する所有者ID。プロセスが再起動すると変わる。
+    /// 旧保存データと低レベルReducerの互換性用。実際のServiceは
+    /// `StoryTurnOwnerRegistry`からインスタンス単位のIDを取得する。
     nonisolated static let currentID = UUID()
 }
 

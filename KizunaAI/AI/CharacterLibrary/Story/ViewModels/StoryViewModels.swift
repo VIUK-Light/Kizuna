@@ -1560,7 +1560,12 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     deinit {
-        service.shutdown()
+        // ViewModel deinit is nonisolated. Keep shutdown on the service's
+        // MainActor while retaining only the service needed for that cleanup.
+        let service = service
+        Task { @MainActor in
+            service.shutdown()
+        }
         debugRestSuggestionTask?.cancel()
         debugSafetyConcernTask?.cancel()
         debugRequestPollingTask?.cancel()

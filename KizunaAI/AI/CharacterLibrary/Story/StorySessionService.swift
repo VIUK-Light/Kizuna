@@ -177,7 +177,10 @@ final class StorySessionService: ObservableObject {
     private let progressDecoder = JSONDecoder()
 
     deinit {
-        releaseTurnOwner()
+        // Deinitializers are nonisolated. The registry is lock-protected, so
+        // unregister the current owner directly instead of calling the
+        // MainActor-isolated helper from this context.
+        StoryTurnOwnerRegistry.shared.unregister(turnOwnerID)
     }
 
     /// ViewModelが画面から外れる時に呼び出し、保存済みpending turnを
