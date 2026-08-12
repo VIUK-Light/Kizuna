@@ -2265,53 +2265,13 @@ final class StorySessionService: ObservableObject {
     private func parseStateMetadata(
         from text: String
     ) -> (visibleText: String, patch: StoryStatePatch?) {
-        let markers = ["STATE_UPDATE:", "状態更新:"]
-        guard let marker = markers
-            .compactMap({ marker in text.range(of: marker, options: [.caseInsensitive]) })
-            .min(by: { $0.lowerBound < $1.lowerBound }) else {
-            return (text, nil)
+        switch StoryStateMetadataParser.parse(text) {
+        case .absent(let visibleText), .invalid(let visibleText):
+            return (visibleText, nil)
+        case .valid(let visibleText, let payload):
+            let patch = try? progressDecoder.decode(StoryStatePatch.self, from: payload)
+            return (visibleText, patch)
         }
-
-        let payload = text[marker.upperBound...]
-        guard let open = payload.firstIndex(of: "{") else { return (text, nil) }
-        var depth = 0
-        var inString = false
-        var escaped = false
-        var close: String.Index?
-        for index in payload.indices {
-            let character = payload[index]
-            if inString {
-                if escaped {
-                    escaped = false
-                } else if character == "\\" {
-                    escaped = true
-                } else if character == "\"" {
-                    inString = false
-                }
-                continue
-            }
-            if character == "\"" {
-                inString = true
-            } else if character == "{" {
-                depth += 1
-            } else if character == "}" {
-                depth -= 1
-                if depth == 0 {
-                    close = index
-                    break
-                }
-            }
-        }
-        guard let close,
-              let data = String(payload[open...close]).data(using: .utf8),
-              let patch = try? progressDecoder.decode(StoryStatePatch.self, from: data) else {
-            return (text, nil)
-        }
-
-        let trailingStart = payload.index(after: close)
-        let visible = (String(text[..<marker.lowerBound]) + String(payload[trailingStart...]))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (visible, patch)
     }
 
     private func normalizedHooks(_ hooks: [String]?, fallback: [String]) -> [String] {

@@ -93,6 +93,7 @@
 		D8ACCA7952AFD15E4226412B /* CharacterLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 287757A56CBE15F666DC908D /* CharacterLibraryView.swift */; };
 		DBFC9E2365F72196EF243242 /* AISecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9689ADAB0694870AC5964DFA /* AISecretStore.swift */; };
 		E0137663C598478E9EC3368D /* RelationshipGenre.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA529B4D3926130627D485BB /* RelationshipGenre.swift */; };
+		E1F764305C062BF570B0115A /* StateUpdateParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D7CA9D609E316A35BEED04 /* StateUpdateParser.swift */; };
 		E24AF7F53F9DDDC5FF2393F1 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A29C9D8E926D83E24A952F4 /* AppTheme.swift */; };
 		E94E230B59937818E8B6E544 /* PersonaChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A2E29FC9FACB4D55183726 /* PersonaChatStore.swift */; };
 		EEC5EF2337298255BFF8AC27 /* llama.cpp-MIT.txt in Resources */ = {isa = PBXBuildFile; fileRef = C4C3DBA4298E534FF3BFA4E5 /* llama.cpp-MIT.txt */; };
@@ -152,6 +153,7 @@
 		2A196A347E7975CA1A50C5D8 /* AIToolCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIToolCatalog.swift; sourceTree = "<group>"; };
 		303798654908AC5FC3B19558 /* LocalAssistantEmbeddedRuntime.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LocalAssistantEmbeddedRuntime.h; sourceTree = "<group>"; };
 		374F9636C3B27129BBD78882 /* CharacterReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterReport.swift; sourceTree = "<group>"; };
+		37D7CA9D609E316A35BEED04 /* StateUpdateParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StateUpdateParser.swift; sourceTree = "<group>"; };
 		3802A51489C449BBE1A57390 /* LocalAssistantLiteRTLMRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantLiteRTLMRuntime.swift; sourceTree = "<group>"; };
 		38C38E45DF917A9188C23AAC /* KizunaRuntimeCompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaRuntimeCompatibility.swift; sourceTree = "<group>"; };
 		38F8CC58ED1AF696296164C0 /* LiteRT-LM-COPYRIGHT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LiteRT-LM-COPYRIGHT.txt"; sourceTree = "<group>"; };
@@ -393,6 +395,7 @@
 		59B9C642A7C0BA5463857DF5 /* Story */ = {
 			isa = PBXGroup;
 			children = (
+				37D7CA9D609E316A35BEED04 /* StateUpdateParser.swift */,
 				A67380B9E9B6A3F03A59ED67 /* StoryGemma31BAPIService.swift */,
 				147E2C4E3F9F157694A269A4 /* StoryGemma31BResponseParser.swift */,
 				69642812D805EA2FF6BFE60E /* StorySessionService.swift */,
@@ -817,6 +820,7 @@
 				43A8E84FD2A1382EA5583EFB /* SafetyTypes.swift in Sources */,
 				06D0D93E289A58585617D2D9 /* SceneProtocols.swift in Sources */,
 				8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */,
+				E1F764305C062BF570B0115A /* StateUpdateParser.swift in Sources */,
 				95168A37B2B238D2C0275B1C /* StoryCoverView.swift in Sources */,
 				8AFDA9C31775F30993E618BB /* StoryGemma31BAPIService.swift in Sources */,
 				FF11771C6CB952F9E344CD34 /* StoryGemma31BResponseParser.swift in Sources */,
