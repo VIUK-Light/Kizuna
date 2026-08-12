@@ -66,6 +66,25 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testExistingStoryStateDoesNotReapplySceneValuesWhenObjectiveIsMissing() {
+        let existingState = StoryState(
+            location: "駅前の屋上",
+            timeOfDay: "午前二時",
+            mood: "静かな緊張",
+            activeGoals: ["すでに選び直した目的"]
+        )
+
+        let completedTurnState = StorySessionService.deterministicStateForTurn(
+            existing: existingState,
+            currentObjective: nil
+        )
+
+        XCTAssertEqual(completedTurnState.location, existingState.location)
+        XCTAssertEqual(completedTurnState.timeOfDay, existingState.timeOfDay)
+        XCTAssertEqual(completedTurnState.mood, existingState.mood)
+        XCTAssertEqual(completedTurnState.activeGoals, existingState.activeGoals)
+    }
+
     func testPersonaResponseSanitizerPreservesVisibleText() {
         let input = "<think>private reasoning</think>Visible response"
 
