@@ -38,6 +38,7 @@ jobs:
             --show-bin-path \
             --package-path "$RUNNER_TEMP/XcodeGen" \
             --configuration release)"
+          export PATH="$xcodegen_bin_dir:$PATH"
           echo "$xcodegen_bin_dir" >> "$GITHUB_PATH"
           test "$(xcodegen --version)" = "Version: $XCODEGEN_VERSION"
 
