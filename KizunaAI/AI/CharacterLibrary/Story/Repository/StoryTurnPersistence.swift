@@ -102,6 +102,17 @@ enum StoryTurnJournal {
     private struct RecoverableEntries {
         let entries: [StoryTurnJournalEntry]
         let containsInvalidEntries: Bool
+
+    }
+
+    /// Async repositories use the dedicated file-I/O executor. The original
+    /// synchronous entry point remains available for low-level recovery tests.
+    static func recoverIfNeededAsync(
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) async throws {
+        try await LocalJSONStoreTransaction.performOnFileIO {
+            try recoverIfNeeded(baseURL: baseURL)
+        }
     }
 
     static func recoverIfNeeded(
