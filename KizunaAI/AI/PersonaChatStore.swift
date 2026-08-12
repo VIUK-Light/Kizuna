@@ -73,6 +73,20 @@ struct PersonaThread: Codable, Hashable, Identifiable {
     }
 }
 
+enum PersonaChatRecoveryError: LocalizedError {
+    case noCorruptPersistedValue
+    case unsupportedPersistedValue
+
+    var errorDescription: String? {
+        switch self {
+        case .noCorruptPersistedValue:
+            return "復旧対象の保存データが見つかりません。"
+        case .unsupportedPersistedValue:
+            return "保存データをバックアップ形式へ変換できません。"
+        }
+    }
+}
+
 @MainActor
 final class PersonaChatStore: ObservableObject {
     static let shared = PersonaChatStore(defaults: UserDefaults.standard)
@@ -192,6 +206,44 @@ final class PersonaChatStore: ObservableObject {
 
     var isPersistenceRecoveryRequired: Bool {
         didFailToLoadPersistedThreads
+    }
+
+    /// 破損した保存値を、明示的な共有・保存操作へ渡せる一時ファイルへ書き出す。
+    /// Data と String は保存されていた値をそのままバイト列として扱い、
+    /// その他の UserDefaults のプロパティリスト値も内容を失わない形式で保存する。
+    /// この操作は保存値を変更せず、復旧が必要な状態でのみ実行できる。
+    func exportCorruptPersistedThreads() throws -> URL {
+        guard didFailToLoadPersistedThreads,
+              let rawValue = defaults.object(forKey: Key.threads) else {
+            throw PersonaChatRecoveryError.noCorruptPersistedValue
+        }
+
+        let data: Data
+        let fileExtension: String
+        if let rawData = rawValue as? Data {
+            data = rawData
+            fileExtension = "bin"
+        } else if let rawString = rawValue as? String {
+            data = Data(rawString.utf8)
+            fileExtension = "txt"
+        } else if PropertyListSerialization.propertyList(
+            rawValue,
+            isValidFor: .binary
+        ) {
+            data = try PropertyListSerialization.data(
+                fromPropertyList: rawValue,
+                format: .binary,
+                options: 0
+            )
+            fileExtension = "plist"
+        } else {
+            throw PersonaChatRecoveryError.unsupportedPersistedValue
+        }
+
+        let fileName = "Kizuna-Persona-Recovery-\(UUID().uuidString).\(fileExtension)"
+        let exportURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        try data.write(to: exportURL, options: .atomic)
+        return exportURL
     }
 
     /// 破損した保存値を自動的に空状態で上書きしないための共通ガード。

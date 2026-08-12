@@ -854,6 +854,7 @@ final class KizunaAITests: XCTestCase {
 
         let raw = Data([0x00, 0xFF, 0x10, 0x7B])
         defaults.set(raw, forKey: "persona.threads.v1")
+        defaults.set("sentinel-active", forKey: "persona.activeThreadID.v1")
         let store = PersonaChatStore(defaults: defaults)
         let persona = PersonaProfile(
             name: "Test",
@@ -875,9 +876,19 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(store.threads, threadsBeforeMutation)
         XCTAssertEqual(store.activeThreadID, activeThreadBeforeMutation)
         XCTAssertEqual(defaults.data(forKey: "persona.threads.v1"), raw)
+        XCTAssertEqual(defaults.string(forKey: "persona.activeThreadID.v1"), "sentinel-active")
+
+        do {
+            let exportURL = try store.exportCorruptPersistedThreads()
+            defer { try? FileManager.default.removeItem(at: exportURL) }
+            XCTAssertEqual(try Data(contentsOf: exportURL), raw)
+        } catch {
+            XCTFail("corrupt data should be exportable: \(error)")
+        }
 
         XCTAssertTrue(store.discardCorruptPersistedThreads())
         XCTAssertEqual(defaults.data(forKey: "persona.threads.v1.corrupt-backup"), raw)
+        XCTAssertNil(defaults.object(forKey: "persona.activeThreadID.v1"))
     }
 
     @MainActor
@@ -891,6 +902,13 @@ final class KizunaAITests: XCTestCase {
 
         XCTAssertTrue(store.isPersistenceRecoveryRequired)
         XCTAssertEqual(defaults.string(forKey: "persona.threads.v1"), "not-a-data-blob")
+        do {
+            let exportURL = try store.exportCorruptPersistedThreads()
+            defer { try? FileManager.default.removeItem(at: exportURL) }
+            XCTAssertEqual(try String(contentsOf: exportURL, encoding: .utf8), "not-a-data-blob")
+        } catch {
+            XCTFail("string corruption should be exportable: \(error)")
+        }
         XCTAssertTrue(store.discardCorruptPersistedThreads())
         XCTAssertFalse(store.isPersistenceRecoveryRequired)
         XCTAssertEqual(defaults.string(forKey: "persona.threads.v1.corrupt-backup"), "not-a-data-blob")

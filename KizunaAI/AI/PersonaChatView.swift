@@ -29,6 +29,9 @@ struct PersonaChatView: View {
     @State private var compactShowsChat = false
     @State private var storyHistoryItems: [StoryHistoryItem] = []
     @State private var storyHistoryLoadError: String?
+    @State private var personaRecoveryExportURL: URL?
+    @State private var personaRecoveryErrorMessage: String?
+    @State private var isShowingPersonaRecoveryResetConfirmation = false
     /// SwiftUIが履歴ロードの世代を管理する。シートの再表示や画面破棄時に
     /// 未完了のロードを置き去りにせず、古い結果を次の一覧へ適用しない。
     @State private var storyHistoryReloadID = UUID()
@@ -59,6 +62,10 @@ struct PersonaChatView: View {
         VStack(spacing: 0) {
             topSwitchBar
             Divider()
+            if store.isPersistenceRecoveryRequired {
+                personaRecoveryBanner
+                Divider()
+            }
             if horizontalSizeClass == .compact {
                 if compactShowsChat, store.activeThread != nil {
                     compactChat
@@ -228,6 +235,130 @@ struct PersonaChatView: View {
             isPersonaChatNearBottom = true
             unreadPersonaMessageCount = 0
         }
+        .confirmationDialog(
+            KizunaCopy.text(
+                japanese: "壊れたPersona履歴をリセットしますか？",
+                english: "Reset the corrupted Persona history?"
+            ),
+            isPresented: $isShowingPersonaRecoveryResetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(
+                KizunaCopy.text(japanese: "履歴をリセット", english: "Reset history"),
+                role: .destructive
+            ) {
+                resetPersonaRecoveryState()
+            }
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(
+                KizunaCopy.text(
+                    japanese: "先にバックアップを書き出してください。リセットすると、読み込めなかったPersona履歴は新しい空状態に置き換わります。",
+                    english: "Export a backup first. Resetting replaces the unreadable Persona history with a new empty state."
+                )
+            )
+        }
+        .alert(
+            KizunaCopy.text(japanese: "バックアップを書き出せませんでした", english: "Could not export the backup"),
+            isPresented: Binding(
+                get: { personaRecoveryErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        personaRecoveryErrorMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) {}
+        } message: {
+            Text(personaRecoveryErrorMessage ?? "")
+        }
+    }
+
+    private var personaRecoveryBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text(
+                    KizunaCopy.text(
+                        japanese: "Persona履歴を読み込めません",
+                        english: "Persona history could not be loaded"
+                    )
+                )
+                .font(.system(size: 12, weight: .semibold))
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+
+            Text(
+                KizunaCopy.text(
+                    japanese: "元の保存データは保持されています。変更は一時停止中です。バックアップを書き出すか、内容を確認してからリセットしてください。",
+                    english: "The original saved data is preserved and changes are paused. Export a backup or review it before resetting."
+                )
+            )
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button {
+                    exportPersonaRecoveryData()
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "バックアップを書き出す", english: "Export backup"),
+                        systemImage: "arrow.down.doc"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                if let personaRecoveryExportURL {
+                    ShareLink(item: personaRecoveryExportURL) {
+                        Label(
+                            KizunaCopy.text(japanese: "共有／保存", english: "Share / Save"),
+                            systemImage: "square.and.arrow.up"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                Button(
+                    KizunaCopy.text(japanese: "リセット…", english: "Reset…"),
+                    role: .destructive
+                ) {
+                    isShowingPersonaRecoveryResetConfirmation = true
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .frame(minHeight: 40, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.10))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func exportPersonaRecoveryData() {
+        do {
+            personaRecoveryExportURL = try store.exportCorruptPersistedThreads()
+            personaRecoveryErrorMessage = nil
+        } catch {
+            personaRecoveryErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func resetPersonaRecoveryState() {
+        guard store.discardCorruptPersistedThreads() else {
+            personaRecoveryErrorMessage = KizunaCopy.text(
+                japanese: "復旧状態を変更できませんでした。画面を再度開いて確認してください。",
+                english: "The recovery state could not be changed. Reopen this screen and try again."
+            )
+            return
+        }
+        personaRecoveryExportURL = nil
+        personaRecoveryErrorMessage = nil
     }
 
     private var compactChat: some View {
