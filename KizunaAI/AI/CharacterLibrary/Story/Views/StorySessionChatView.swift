@@ -435,6 +435,7 @@ private struct StoryGenerationModelPill: View {
 
 private struct StorySessionChatBody: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @ObservedObject var vm: StorySessionViewModel
     @ObservedObject private var service: StorySessionService
     @ObservedObject private var localModelManager: LocalAssistantModelManager
@@ -935,7 +936,12 @@ private struct StorySessionChatBody: View {
             contentMode: .fit
         )
             .frame(maxWidth: .infinity)
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            // `.fit` preserves the source image, but it does not cap the
+            // container height.  An unbounded 16:9 aspect-ratio container
+            // can consume the whole compact landscape screen and push the
+            // composer below the visible area. Keep the visual discoverable
+            // while reserving room for the conversation and input controls.
+            .frame(height: verticalSizeClass == .compact ? 78 : 104)
             .background(Color.black.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
