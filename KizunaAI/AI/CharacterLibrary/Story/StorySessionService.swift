@@ -855,7 +855,10 @@ final class StorySessionService: ObservableObject {
         // 参加していないキャラの記憶まで一括注入すると、同じ本文を持つ
         // 別キャラの経験が混ざるため、共通(nil)または今回のactive castだけに絞る。
         let contextualCharacterIDs = Set(activeCast.map(\.characterId))
-        let storyMemoryCandidates = ((try? await storyMemoryRepo.fetchMemories(storyWorldId: world.id)) ?? [])
+        let storyMemoryCandidates = ((try? await storyMemoryRepo.fetchMemories(
+            storyWorldId: world.id,
+            storySessionId: session.id
+        )) ?? [])
             .filter { memory in
                 // キャラ削除後に古いメモリーJSONが残っていても、次のターンへ
                 // そのキャラを再注入しない。世界イベント(nil)は保持する。
@@ -1478,7 +1481,8 @@ final class StorySessionService: ObservableObject {
                         text: memory.text,
                         category: memory.category,
                         importance: memory.importance,
-                        source: memory.source
+                        source: memory.source,
+                        storySessionId: session.id
                     )
                     try? await storyMemoryRepo.saveMemory(storyMemory)
                     extractedStoryMemoryTexts.insert(memory.text)
@@ -1502,7 +1506,8 @@ final class StorySessionService: ObservableObject {
                     text: progress,
                     category: .event,
                     importance: 0.6,
-                    source: .summary
+                    source: .summary,
+                    storySessionId: session.id
                 )
             )
         }

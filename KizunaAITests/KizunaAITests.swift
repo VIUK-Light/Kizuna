@@ -43,6 +43,39 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(visibleText, text)
     }
 
+    func testStoryMemoryScopeExcludesOtherSessionsAndLegacyRecords() {
+        let worldID = UUID()
+        let sessionID = UUID()
+        let otherSessionID = UUID()
+        let current = StoryMemory(
+            storyWorldId: worldID,
+            text: "current session event",
+            storySessionId: sessionID
+        )
+        let other = StoryMemory(
+            storyWorldId: worldID,
+            text: "other session event",
+            storySessionId: otherSessionID
+        )
+        let legacy = StoryMemory(
+            storyWorldId: worldID,
+            text: "legacy event"
+        )
+
+        XCTAssertEqual(
+            StoryMemory.scoped(to: sessionID, from: [current, other, legacy]),
+            [current]
+        )
+    }
+
+    func testStoryMemorySessionIDIsBackwardCompatibleWhenAbsent() throws {
+        let memory = StoryMemory(storyWorldId: UUID(), text: "event")
+        let encoded = try JSONEncoder().encode(memory)
+        let decoded = try JSONDecoder().decode(StoryMemory.self, from: encoded)
+
+        XCTAssertNil(decoded.storySessionId)
+    }
+
     func testPersonaResponseSanitizerPreservesVisibleText() {
         let input = "<think>private reasoning</think>Visible response"
 
