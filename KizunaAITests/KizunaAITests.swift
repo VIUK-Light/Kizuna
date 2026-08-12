@@ -1,5 +1,36 @@
+import Foundation
 import XCTest
 @testable import KizunaAI
+
+private final class FileIOTestProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    private var completed = false
+
+    func markStarted() {
+        lock.lock()
+        started = true
+        lock.unlock()
+    }
+
+    func markCompleted() {
+        lock.lock()
+        completed = true
+        lock.unlock()
+    }
+
+    var hasStarted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return started
+    }
+
+    var hasCompleted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return completed
+    }
+}
 
 @MainActor
 final class KizunaAITests: XCTestCase {
@@ -100,6 +131,40 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(interrupted.status, .interrupted)
         XCTAssertEqual(interrupted.failureCode, "app_relaunch")
         XCTAssertEqual(interrupted.turnID, turnID)
+    }
+
+    func testLocalJSONFileIOExecutorDoesNotRunOnMainThread() async throws {
+        let ranOnMainThread = try await LocalJSONStoreTransaction.performOnFileIO {
+            Thread.isMainThread
+        }
+
+        XCTAssertFalse(ranOnMainThread)
+    }
+
+    func testLocalJSONFileIOCancellationWaitsForOperationToFinish() async throws {
+        let probe = FileIOTestProbe()
+        let task = Task {
+            try await LocalJSONStoreTransaction.performOnFileIO {
+                probe.markStarted()
+                Thread.sleep(forTimeInterval: 0.05)
+                probe.markCompleted()
+            }
+        }
+
+        for _ in 0..<100 where !probe.hasStarted {
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        XCTAssertTrue(probe.hasStarted)
+
+        task.cancel()
+        do {
+            try await task.value
+            XCTFail("a cancelled file-I/O request should report cancellation")
+        } catch is CancellationError {
+            // The queued operation still completes before cancellation is
+            // delivered, preserving atomic-write semantics.
+        }
+        XCTAssertTrue(probe.hasCompleted)
     }
 
     func testLegacyStorySessionWithoutTurnFieldsStillDecodes() throws {

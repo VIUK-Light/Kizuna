@@ -6,6 +6,7 @@
 - 保存先: ~/Library/Application Support/VIUK/KizunaAI/CharacterLibrary/<fileName>
 */
 
+import Dispatch
 import Foundation
 
 enum LocalJSONStoreError: Error {
@@ -25,6 +26,43 @@ final class LocalJSONStoreFileLock: @unchecked Sendable {
     }
 }
 
+/// Synchronous file operations must not inherit the caller's MainActor.
+/// Keep the queue separate from the shared lock: the queue provides the
+/// asynchronous execution boundary, while the lock still protects callers
+/// that use the regular LocalJSONStore actor or the transaction helpers.
+final class LocalJSONStoreFileIOExecutor: @unchecked Sendable {
+    nonisolated static let shared = LocalJSONStoreFileIOExecutor()
+
+    private let queue = DispatchQueue(
+        label: "com.viuk.kizuna.local-json-file-io",
+        qos: .utility
+    )
+
+    nonisolated func submit(_ operation: @escaping () -> Void) {
+        queue.async(execute: operation)
+    }
+}
+
+/// Cancellation state for a queued file operation. Cancellation never
+/// interrupts a synchronous read/write halfway through an atomic operation;
+/// it only changes the result delivered after the operation has finished.
+final class LocalJSONStoreFileIOCancellationState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+}
+
 /// 複数のJSONファイルへまたがる短いコミットで、通常のLocalJSONStoreと
 /// 同じプロセス内ロックを共有するための低レベルヘルパー。
 ///
@@ -34,6 +72,42 @@ final class LocalJSONStoreFileLock: @unchecked Sendable {
 enum LocalJSONStoreTransaction {
     static func withSharedLock<Result>(_ body: () throws -> Result) rethrows -> Result {
         try LocalJSONStoreFileLock.shared.withLock(body)
+    }
+
+    /// Execute a synchronous transaction on the dedicated file-I/O queue.
+    ///
+    /// The low-level transaction APIs remain synchronous so they can be used
+    /// inside one lock-held read-modify-write section and by recovery tests.
+    /// Production async repositories call this boundary before entering those
+    /// APIs, preventing Data(contentsOf:), JSON encoding, backup copies, and
+    /// atomic writes from blocking the MainActor.
+    static func performOnFileIO<Result>(
+        _ body: @escaping () throws -> Result
+    ) async throws -> Result {
+        let cancellationState = LocalJSONStoreFileIOCancellationState()
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Result, Error>) in
+                LocalJSONStoreFileIOExecutor.shared.submit {
+                    guard !cancellationState.isCancelled else {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
+                    do {
+                        let result = try body()
+                        if cancellationState.isCancelled {
+                            continuation.resume(throwing: CancellationError())
+                        } else {
+                            continuation.resume(returning: result)
+                        }
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }, onCancel: {
+            cancellationState.cancel()
+        })
     }
 
     static func load<T: Codable>(
