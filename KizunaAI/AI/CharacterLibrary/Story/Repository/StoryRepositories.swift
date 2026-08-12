@@ -161,6 +161,9 @@ protocol StoryMemoryRepository: AnyObject {
     /// records without a session ID are intentionally excluded from prompts.
     func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory]
     func saveMemory(_ memory: StoryMemory) async throws
+    /// Remove only the cancelled turn provenance. A merged memory created by
+    /// another turn must remain available.
+    func removeSourceTurnIds(_ sourceTurnIds: Set<UUID>) async throws
     func deleteMemory(id: UUID) async throws
     func deleteAllMemories(storyWorldId: UUID) async throws
     func markUsed(ids: [UUID]) async throws
@@ -798,8 +801,17 @@ final class LocalJSONStoryLorebookRepository: StoryLorebookRepository {
 
 /// 現在はローカルJSON。将来クラウド同期へ差し替えてもService側の呼び出しは変えない。
 final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
-    private let store = LocalJSONStore<StoryMemory>(fileName: "story_memories.json")
-    private let perWorldLimit = 120
+    private struct MemoryScope: Hashable {
+        let storyWorldId: UUID
+        let storySessionId: UUID?
+    }
+
+    private let store: LocalJSONStore<StoryMemory>
+    private let perScopeLimit = 120
+
+    init(fileName: String = "story_memories.json") {
+        store = LocalJSONStore<StoryMemory>(fileName: fileName)
+    }
 
     func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] {
         try await store.loadRecoveringCorruptRecords()
@@ -836,19 +848,23 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             }) {
                 var existing = all[index]
                 existing.importance = max(existing.importance, memory.importance)
+                existing.sourceTurnIds.formUnion(memory.sourceTurnIds)
                 existing.lastUsedAt = Date()
                 all[index] = existing
             } else {
                 all.append(memory)
             }
 
-            // 物語ごとの上限を設け、古く重要度の低いものから自然に整理する。
-            let grouped = Dictionary(grouping: all, by: { $0.storyWorldId })
+            // Sessionごとに上限を設ける。World単位で切り詰めると、新しい
+            // Sessionの保存が別Sessionやnilのレガシー記録を削除してしまう。
+            let grouped = Dictionary(grouping: all) {
+                MemoryScope(storyWorldId: $0.storyWorldId, storySessionId: $0.storySessionId)
+            }
             all = grouped.values.flatMap { values in
                 values.sorted {
                     if $0.importance != $1.importance { return $0.importance > $1.importance }
                     return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
-                }.prefix(perWorldLimit)
+                }.prefix(perScopeLimit)
             }
         }
     }
@@ -873,6 +889,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             }) {
                 var target = all[targetIndex]
                 target.importance = max(target.importance, memory.importance)
+                target.sourceTurnIds.formUnion(memory.sourceTurnIds)
                 target.lastUsedAt = max(target.lastUsedAt ?? target.createdAt, memory.lastUsedAt ?? memory.createdAt)
                 all[targetIndex] = target
                 all.remove(at: sourceIndex)
@@ -882,12 +899,27 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                 all[sourceIndex] = moved
             }
 
-            let grouped = Dictionary(grouping: all, by: { $0.storyWorldId })
+            let grouped = Dictionary(grouping: all) {
+                MemoryScope(storyWorldId: $0.storyWorldId, storySessionId: $0.storySessionId)
+            }
             all = grouped.values.flatMap { values in
                 values.sorted {
                     if $0.importance != $1.importance { return $0.importance > $1.importance }
                     return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
-                }.prefix(perWorldLimit)
+                }.prefix(perScopeLimit)
+            }
+        }
+    }
+
+    func removeSourceTurnIds(_ sourceTurnIds: Set<UUID>) async throws {
+        guard !sourceTurnIds.isEmpty else { return }
+        try await store.mutate { all in
+            for index in all.indices.reversed() {
+                guard !all[index].sourceTurnIds.isDisjoint(with: sourceTurnIds) else { continue }
+                all[index].sourceTurnIds.subtract(sourceTurnIds)
+                if all[index].sourceTurnIds.isEmpty {
+                    all.remove(at: index)
+                }
             }
         }
     }

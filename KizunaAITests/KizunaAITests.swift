@@ -47,10 +47,12 @@ final class KizunaAITests: XCTestCase {
         let worldID = UUID()
         let sessionID = UUID()
         let otherSessionID = UUID()
+        let sourceTurnID = UUID()
         let current = StoryMemory(
             storyWorldId: worldID,
             text: "current session event",
-            storySessionId: sessionID
+            storySessionId: sessionID,
+            sourceTurnIds: [sourceTurnID]
         )
         let other = StoryMemory(
             storyWorldId: worldID,
@@ -66,14 +68,121 @@ final class KizunaAITests: XCTestCase {
             StoryMemory.scoped(to: sessionID, from: [current, other, legacy]),
             [current]
         )
+        XCTAssertEqual(
+            StoryMemory.scoped(
+                to: sessionID,
+                sourceTurnIds: [sourceTurnID],
+                from: [current, other, legacy]
+            ),
+            [current]
+        )
+        XCTAssertTrue(
+            StoryMemory.scoped(
+                to: sessionID,
+                sourceTurnIds: [UUID()],
+                from: [current, other, legacy]
+            ).isEmpty
+        )
     }
 
     func testStoryMemorySessionIDIsBackwardCompatibleWhenAbsent() throws {
-        let memory = StoryMemory(storyWorldId: UUID(), text: "event")
+        let sessionID = UUID()
+        let sourceTurnID = UUID()
+        let memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "event",
+            storySessionId: sessionID,
+            sourceTurnIds: [sourceTurnID]
+        )
         let encoded = try JSONEncoder().encode(memory)
         let decoded = try JSONDecoder().decode(StoryMemory.self, from: encoded)
 
-        XCTAssertNil(decoded.storySessionId)
+        XCTAssertEqual(decoded.storySessionId, sessionID)
+        XCTAssertEqual(decoded.sourceTurnIds, [sourceTurnID])
+
+        let legacyJSON = """
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "storyWorldId": "00000000-0000-0000-0000-000000000002",
+          "characterId": null,
+          "text": "legacy event",
+          "category": "event",
+          "importance": 0.5,
+          "source": "system",
+          "createdAt": 0,
+          "lastUsedAt": null
+        }
+        """.data(using: .utf8)!
+        let legacy = try JSONDecoder().decode(StoryMemory.self, from: legacyJSON)
+        XCTAssertNil(legacy.storySessionId)
+        XCTAssertTrue(legacy.sourceTurnIds.isEmpty)
+    }
+
+    func testLocalJSONStoryMemoryRepositoryKeepsSessionScopesAndLegacyRecords() async throws {
+        let fileName = "story-memories-test-\(UUID().uuidString).json"
+        let fileURL = KizunaDataMigration.characterLibraryURL.appendingPathComponent(fileName)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let repository = LocalJSONStoryMemoryRepository(fileName: fileName)
+        let worldID = UUID()
+        let otherWorldID = UUID()
+        let sessionID = UUID()
+        let otherSessionID = UUID()
+        let current = StoryMemory(
+            storyWorldId: worldID,
+            text: "current",
+            storySessionId: sessionID,
+            sourceTurnIds: [UUID()]
+        )
+        let otherSession = StoryMemory(
+            storyWorldId: worldID,
+            text: "other session",
+            storySessionId: otherSessionID,
+            sourceTurnIds: [UUID()]
+        )
+        let legacy = StoryMemory(storyWorldId: worldID, text: "legacy")
+        let otherWorld = StoryMemory(
+            storyWorldId: otherWorldID,
+            text: "other world",
+            storySessionId: sessionID,
+            sourceTurnIds: [UUID()]
+        )
+
+        for memory in [current, otherSession, legacy, otherWorld] {
+            try await repository.saveMemory(memory)
+        }
+
+        let scoped = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: sessionID
+        )
+        XCTAssertEqual(scoped.map(\.id), [current.id])
+
+        let allInWorld = try await repository.fetchMemories(storyWorldId: worldID)
+        XCTAssertEqual(Set(allInWorld.map(\.id)), Set([current.id, otherSession.id, legacy.id]))
+
+        let mergedText = "merged event"
+        let firstSourceTurnID = UUID()
+        let secondSourceTurnID = UUID()
+        let firstMerged = StoryMemory(
+            storyWorldId: worldID,
+            text: mergedText,
+            storySessionId: sessionID,
+            sourceTurnIds: [firstSourceTurnID]
+        )
+        let secondMerged = StoryMemory(
+            storyWorldId: worldID,
+            text: mergedText,
+            storySessionId: sessionID,
+            sourceTurnIds: [secondSourceTurnID]
+        )
+        try await repository.saveMemory(firstMerged)
+        try await repository.saveMemory(secondMerged)
+        try await repository.removeSourceTurnIds([secondSourceTurnID])
+
+        let merged = try await repository.fetchMemories(storyWorldId: worldID, storySessionId: sessionID)
+            .first(where: { $0.text == mergedText })
+        XCTAssertEqual(merged?.sourceTurnIds, [firstSourceTurnID])
     }
 
     func testPersonaResponseSanitizerPreservesVisibleText() {

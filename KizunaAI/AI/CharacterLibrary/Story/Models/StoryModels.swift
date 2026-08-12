@@ -928,6 +928,9 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
     /// Memoryが生まれたStorySession。旧データはnilのまま読み込めるが、
     /// Sessionへ自動注入する候補には含めない。
     var storySessionId: UUID?
+    /// Memoryが根拠にした生成ターン。本文の重複統合で複数ターンが
+    /// 同じレコードへまとまっても、どのターン由来かを失わない。
+    var sourceTurnIds: Set<UUID>
     var characterId: UUID?
     var text: String
     var category: MemoryCategory
@@ -946,11 +949,13 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         source: MemorySource = .system,
         createdAt: Date = Date(),
         lastUsedAt: Date? = nil,
-        storySessionId: UUID? = nil
+        storySessionId: UUID? = nil,
+        sourceTurnIds: Set<UUID> = []
     ) {
         self.id = id
         self.storyWorldId = storyWorldId
         self.storySessionId = storySessionId
+        self.sourceTurnIds = sourceTurnIds
         self.characterId = characterId
         self.text = text
         self.category = category
@@ -960,11 +965,70 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         self.lastUsedAt = lastUsedAt
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case storyWorldId
+        case storySessionId
+        case sourceTurnIds
+        case characterId
+        case text
+        case category
+        case importance
+        case source
+        case createdAt
+        case lastUsedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        storyWorldId = try container.decode(UUID.self, forKey: .storyWorldId)
+        storySessionId = try container.decodeIfPresent(UUID.self, forKey: .storySessionId)
+        sourceTurnIds = try container.decodeIfPresent(Set<UUID>.self, forKey: .sourceTurnIds) ?? []
+        characterId = try container.decodeIfPresent(UUID.self, forKey: .characterId)
+        text = try container.decode(String.self, forKey: .text)
+        category = try container.decode(MemoryCategory.self, forKey: .category)
+        importance = try container.decode(Double.self, forKey: .importance)
+        source = try container.decode(MemorySource.self, forKey: .source)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(storyWorldId, forKey: .storyWorldId)
+        try container.encodeIfPresent(storySessionId, forKey: .storySessionId)
+        try container.encode(sourceTurnIds, forKey: .sourceTurnIds)
+        try container.encodeIfPresent(characterId, forKey: .characterId)
+        try container.encode(text, forKey: .text)
+        try container.encode(category, forKey: .category)
+        try container.encode(importance, forKey: .importance)
+        try container.encode(source, forKey: .source)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(lastUsedAt, forKey: .lastUsedAt)
+    }
+
     /// 同じStoryWorldでもSessionをまたいで出来事を注入しない。
     /// 旧データ（storySessionId == nil）はユーザー所有データとして保持するが、
     /// 新しいSessionの文脈へ勝手に混ぜない。
     static func scoped(to storySessionId: UUID, from memories: [StoryMemory]) -> [StoryMemory] {
         memories.filter { $0.storySessionId == storySessionId }
+    }
+
+    /// A session memory is eligible for prompt injection only while at least
+    /// one source turn still exists in that session's message history.
+    static func scoped(
+        to storySessionId: UUID,
+        sourceTurnIds: Set<UUID>,
+        from memories: [StoryMemory]
+    ) -> [StoryMemory] {
+        guard !sourceTurnIds.isEmpty else { return [] }
+        return memories.filter {
+            $0.storySessionId == storySessionId
+                && !$0.sourceTurnIds.isEmpty
+                && !$0.sourceTurnIds.isDisjoint(with: sourceTurnIds)
+        }
     }
 }
 
