@@ -794,15 +794,7 @@ final class StorySessionService: ObservableObject {
         sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
         // 選択結果はターンのcommitまでメモリ上に保持する。生成失敗時に
         // activeCharacterIdsだけが先に保存される部分成功を作らない。
-        guard isGenerationActive(generationID) else {
-            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
-            return
-        }
         scene = sceneWithSelectedCharacters
-        guard isGenerationActive(generationID) else {
-            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
-            return
-        }
 
         let activeCast = cast.filter { scene.activeCharacterIds.contains($0.characterId) }
         let inactiveCast = cast.filter { !scene.activeCharacterIds.contains($0.characterId) }

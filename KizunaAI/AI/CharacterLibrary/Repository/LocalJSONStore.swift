@@ -15,6 +15,21 @@ enum LocalJSONStoreError: Error {
     case decode(underlying: Error)
 }
 
+enum LocalJSONStoreCoding {
+    nonisolated static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    nonisolated static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
 final class LocalJSONStoreFileLock: @unchecked Sendable {
     nonisolated static let shared = LocalJSONStoreFileLock()
     private let lock = NSLock()
@@ -35,28 +50,29 @@ final class LocalJSONStoreFileIOExecutor: @unchecked Sendable {
 
     private let queue = DispatchQueue(
         label: "com.viuk.kizuna.local-json-file-io",
-        qos: .utility
+        qos: .userInitiated
     )
 
-    nonisolated func submit(_ operation: @escaping () -> Void) {
+    nonisolated func submit(_ operation: @escaping @Sendable () -> Void) {
         queue.async(execute: operation)
     }
 }
 
 /// Cancellation state for a queued file operation. Cancellation never
-/// interrupts a synchronous read/write halfway through an atomic operation;
-/// it only changes the result delivered after the operation has finished.
+/// interrupts a synchronous read/write halfway through an atomic operation.
+/// It can prevent work that has not started, but once the body begins the
+/// completed result is returned even if the waiting task is cancelled.
 final class LocalJSONStoreFileIOCancellationState: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
 
-    func cancel() {
+    nonisolated func cancel() {
         lock.lock()
         cancelled = true
         lock.unlock()
     }
 
-    var isCancelled: Bool {
+    nonisolated var isCancelled: Bool {
         lock.lock()
         defer { lock.unlock() }
         return cancelled
@@ -70,7 +86,7 @@ final class LocalJSONStoreFileIOCancellationState: @unchecked Sendable {
 /// ネットワーク待ちをロック内で実行しない。Storyのターンジャーナルが
 /// session/sceneを一緒に確定するために使う。
 enum LocalJSONStoreTransaction {
-    static func withSharedLock<Result>(_ body: () throws -> Result) rethrows -> Result {
+    nonisolated static func withSharedLock<Result>(_ body: () throws -> Result) rethrows -> Result {
         try LocalJSONStoreFileLock.shared.withLock(body)
     }
 
@@ -81,8 +97,8 @@ enum LocalJSONStoreTransaction {
     /// Production async repositories call this boundary before entering those
     /// APIs, preventing Data(contentsOf:), JSON encoding, backup copies, and
     /// atomic writes from blocking the MainActor.
-    static func performOnFileIO<Result>(
-        _ body: @escaping () throws -> Result
+    nonisolated static func performOnFileIO<Result>(
+        _ body: @escaping @Sendable () throws -> Result
     ) async throws -> Result {
         let cancellationState = LocalJSONStoreFileIOCancellationState()
         return try await withTaskCancellationHandler(operation: {
@@ -95,11 +111,12 @@ enum LocalJSONStoreTransaction {
                     }
                     do {
                         let result = try body()
-                        if cancellationState.isCancelled {
-                            continuation.resume(throwing: CancellationError())
-                        } else {
-                            continuation.resume(returning: result)
-                        }
+                        // A synchronous atomic operation cannot be rolled back
+                        // by cancelling the waiting task after it has started.
+                        // Return its result so callers do not retry a write
+                        // that already committed; callers may check their own
+                        // task cancellation before continuing post-processing.
+                        continuation.resume(returning: result)
                     } catch {
                         continuation.resume(throwing: error)
                     }
@@ -110,7 +127,7 @@ enum LocalJSONStoreTransaction {
         })
     }
 
-    static func load<T: Codable>(
+    nonisolated static func load<T: Codable>(
         _ type: T.Type,
         fileName: String,
         baseURL: URL = KizunaDataMigration.characterLibraryURL
@@ -119,8 +136,7 @@ enum LocalJSONStoreTransaction {
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
         do {
             let data = try Data(contentsOf: url)
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            let decoder = LocalJSONStoreCoding.makeDecoder()
             return try decoder.decode([T].self, from: data)
         } catch let decodingError as DecodingError {
             throw LocalJSONStoreError.decode(underlying: decodingError)
@@ -129,7 +145,7 @@ enum LocalJSONStoreTransaction {
         }
     }
 
-    static func save<T: Codable>(
+    nonisolated static func save<T: Codable>(
         _ items: [T],
         fileName: String,
         baseURL: URL = KizunaDataMigration.characterLibraryURL
@@ -138,9 +154,7 @@ enum LocalJSONStoreTransaction {
         let url = base.appendingPathComponent(fileName)
         do {
             try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
+            let encoder = LocalJSONStoreCoding.makeEncoder()
             let data = try encoder.encode(items)
             try data.write(to: url, options: [.atomic])
         } catch let encodingError as EncodingError {
@@ -152,7 +166,7 @@ enum LocalJSONStoreTransaction {
 
     /// 壊れた補助ファイルを上書きせずに同じ保存先へ退避する。
     /// 呼び出し側は退避後に新しい空ファイルを作るか、失敗を利用者へ返す。
-    static func backup(
+    nonisolated static func backup(
         fileName: String,
         baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws -> URL {
@@ -185,17 +199,8 @@ actor LocalJSONStore<T: Codable> {
         let base = baseURL
         self.fileURL = base.appendingPathComponent(fileName)
 
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        enc.dateEncodingStrategy = .iso8601
-        self.encoder = enc
-
-        let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
-        self.decoder = dec
-
-        // ディレクトリ作成
-        try? fm.createDirectory(at: base, withIntermediateDirectories: true)
+        self.encoder = LocalJSONStoreCoding.makeEncoder()
+        self.decoder = LocalJSONStoreCoding.makeDecoder()
     }
 
     func load() async throws -> [T] {
@@ -315,6 +320,10 @@ actor LocalJSONStore<T: Codable> {
 
     private func saveUnlocked(_ items: [T]) throws {
         do {
+            try fm.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
             let data = try encoder.encode(items)
             try data.write(to: fileURL, options: [.atomic])
         } catch let encodeErr as EncodingError {

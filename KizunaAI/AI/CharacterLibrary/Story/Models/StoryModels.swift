@@ -1039,6 +1039,19 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
     var updatedAt: Date
     var failureCode: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case turnID
+        case userMessageID
+        case status
+        case attempt
+        case ownerID
+        case baseRevision
+        case assistantMessageIDs
+        case startedAt
+        case updatedAt
+        case failureCode
+    }
+
     init(
         turnID: UUID,
         userMessageID: UUID,
@@ -1061,6 +1074,20 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.failureCode = failureCode
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.turnID = try container.decode(UUID.self, forKey: .turnID)
+        self.userMessageID = try container.decode(UUID.self, forKey: .userMessageID)
+        self.status = try container.decode(StoryTurnStatus.self, forKey: .status)
+        self.attempt = max(1, try container.decodeIfPresent(Int.self, forKey: .attempt) ?? 1)
+        self.ownerID = try container.decodeIfPresent(UUID.self, forKey: .ownerID)
+        self.baseRevision = try container.decodeIfPresent(UInt64.self, forKey: .baseRevision) ?? 0
+        self.assistantMessageIDs = try container.decodeIfPresent([UUID].self, forKey: .assistantMessageIDs) ?? []
+        self.startedAt = try container.decode(Date.self, forKey: .startedAt)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        self.failureCode = try container.decodeIfPresent(String.self, forKey: .failureCode)
     }
 }
 

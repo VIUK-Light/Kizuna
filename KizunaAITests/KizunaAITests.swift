@@ -143,27 +143,24 @@ final class KizunaAITests: XCTestCase {
 
     func testLocalJSONFileIOCancellationWaitsForOperationToFinish() async throws {
         let probe = FileIOTestProbe()
-        let task = Task {
+        let task = Task { () -> Bool in
             try await LocalJSONStoreTransaction.performOnFileIO {
                 probe.markStarted()
                 Thread.sleep(forTimeInterval: 0.05)
                 probe.markCompleted()
+                return true
             }
         }
 
-        for _ in 0..<100 where !probe.hasStarted {
+        for _ in 0..<1_000 where !probe.hasStarted {
             try await Task.sleep(nanoseconds: 1_000_000)
         }
         XCTAssertTrue(probe.hasStarted)
 
         task.cancel()
-        do {
-            try await task.value
-            XCTFail("a cancelled file-I/O request should report cancellation")
-        } catch is CancellationError {
-            // The queued operation still completes before cancellation is
-            // delivered, preserving atomic-write semantics.
-        }
+        XCTAssertTrue(try await task.value)
+        // The operation started before cancellation, so its completed result
+        // is returned instead of pretending an atomic write was rolled back.
         XCTAssertTrue(probe.hasCompleted)
     }
 
