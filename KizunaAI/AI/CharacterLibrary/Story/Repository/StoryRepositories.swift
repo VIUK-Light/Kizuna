@@ -157,6 +157,9 @@ protocol StoryLorebookRepository: AnyObject {
 /// 物語内メモリー。全体のCharacterMemoryとは保存先・取得条件を分ける。
 protocol StoryMemoryRepository: AnyObject {
     func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory]
+    /// Fetch only memories created in the specified StorySession. Legacy
+    /// records without a session ID are intentionally excluded from prompts.
+    func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory]
     func saveMemory(_ memory: StoryMemory) async throws
     func deleteMemory(id: UUID) async throws
     func deleteAllMemories(storyWorldId: UUID) async throws
@@ -807,6 +810,16 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             }
     }
 
+    func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory] {
+        let memories = try await store.loadRecoveringCorruptRecords()
+            .filter { $0.storyWorldId == storyWorldId }
+        return StoryMemory.scoped(to: storySessionId, from: memories)
+            .sorted { lhs, rhs in
+                if lhs.importance != rhs.importance { return lhs.importance > rhs.importance }
+                return (lhs.lastUsedAt ?? lhs.createdAt) > (rhs.lastUsedAt ?? rhs.createdAt)
+            }
+    }
+
     func saveMemory(_ memory: StoryMemory) async throws {
         try await store.mutate { all in
             let normalized = normalize(memory.text)
@@ -815,6 +828,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                 // world/textだけをキーにすると、別キャラの帰属・カテゴリ・出典が
                 // 最初のレコードへ統合されてしまい、次回のプロンプト選択も壊れる。
                 $0.storyWorldId == memory.storyWorldId
+                    && $0.storySessionId == memory.storySessionId
                     && $0.characterId == memory.characterId
                     && $0.category == memory.category
                     && $0.source == memory.source
@@ -849,9 +863,10 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             guard let sourceIndex = all.firstIndex(where: { $0.id == memory.id }) else { return }
             let normalized = normalize(memory.text)
             if let targetIndex = all.indices.first(where: {
-                $0 != sourceIndex
-                    && all[$0].storyWorldId == storyWorldId
-                    && all[$0].characterId == memory.characterId
+                    $0 != sourceIndex
+                        && all[$0].storyWorldId == storyWorldId
+                        && all[$0].storySessionId == memory.storySessionId
+                        && all[$0].characterId == memory.characterId
                     && all[$0].category == memory.category
                     && all[$0].source == memory.source
                     && normalize(all[$0].text) == normalized

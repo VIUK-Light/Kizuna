@@ -925,6 +925,9 @@ struct StoryLorebookEntry: Codable, Identifiable, Equatable, Hashable {
 struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
     var id: UUID
     var storyWorldId: UUID
+    /// Memoryが生まれたStorySession。旧データはnilのまま読み込めるが、
+    /// Sessionへ自動注入する候補には含めない。
+    var storySessionId: UUID?
     var characterId: UUID?
     var text: String
     var category: MemoryCategory
@@ -942,10 +945,12 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         importance: Double = 0.5,
         source: MemorySource = .system,
         createdAt: Date = Date(),
-        lastUsedAt: Date? = nil
+        lastUsedAt: Date? = nil,
+        storySessionId: UUID? = nil
     ) {
         self.id = id
         self.storyWorldId = storyWorldId
+        self.storySessionId = storySessionId
         self.characterId = characterId
         self.text = text
         self.category = category
@@ -953,6 +958,13 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         self.source = source
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
+    }
+
+    /// 同じStoryWorldでもSessionをまたいで出来事を注入しない。
+    /// 旧データ（storySessionId == nil）はユーザー所有データとして保持するが、
+    /// 新しいSessionの文脈へ勝手に混ぜない。
+    static func scoped(to storySessionId: UUID, from memories: [StoryMemory]) -> [StoryMemory] {
+        memories.filter { $0.storySessionId == storySessionId }
     }
 }
 
