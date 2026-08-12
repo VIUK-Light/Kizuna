@@ -61,6 +61,10 @@ targets:
           - "**/.DS_Store"
       - path: THIRD_PARTY_NOTICES.md
         buildPhase: resources
+      - path: LICENSE
+        buildPhase: resources
+      - path: NOTICE
+        buildPhase: resources
       - path: Licenses
         buildPhase: resources
       # XcodeGenで再生成しても、Storyの初期パックをiOS/macOS両方へ同梱する。

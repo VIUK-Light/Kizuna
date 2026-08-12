@@ -106,4 +106,15 @@ IssueやPull Requestでは、可能な範囲で次の情報を含めてくださ
 
 ## ライセンスと第三者コンポーネント
 
-第三者コンポーネントのライセンスは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) と `Licenses/` を参照してください。
+Kizunaのソフトウェア部分（Swiftコード、テスト、スクリプト、プロジェクト設定、文書）は、[Apache License 2.0](LICENSE) のもとで提供されます。原版はVIUK-Lightが開発しました。再配布時の帰属表示については [NOTICE](NOTICE) を参照してください。
+
+次のコンテンツはApache License 2.0の対象外です。別途明示的な許諾がない限り、VIUK-Light contributorsが権利を留保します。
+
+- `KizunaAI/Assets.xcassets/**`
+- `GeneratedStories/**`
+- `docs/screenshots/**`
+- `KizunaAI/AI/CharacterLibrary/SeedData/SeedStoryPacks*.json`
+- キャラクター設定、物語、台詞、シナリオなどの創作コンテンツ
+- KizunaおよびVIUK-Lightの名称、ロゴ、ブランド資産
+
+第三者コードとコンポーネントには、それぞれのライセンスが適用されます。[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) と `Licenses/` を参照してください。
