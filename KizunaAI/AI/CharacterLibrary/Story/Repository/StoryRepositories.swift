@@ -684,11 +684,25 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
     /// 進行中turnの古いsnapshotが移行を巻き戻さないようrevisionを進める。
     /// 会話本文のcreatedAtは変更せず、updatedAtだけを移行時刻へ更新する。
     func moveSession(id: UUID, toStoryWorldId: UUID) async throws {
-        try await store.mutate { sessions in
-            guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
-            sessions[index].storyWorldId = toStoryWorldId
-            sessions[index].persistenceRevision = sessions[index].effectivePersistenceRevision + 1
-            sessions[index].updatedAt = Date()
+        let storageURL = self.storageURL
+        try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
+        try await LocalJSONStoreTransaction.performOnFileIO {
+            try LocalJSONStoreTransaction.withSharedLock {
+                var sessions = try LocalJSONStoreTransaction.load(
+                    StorySession.self,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+                guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+                sessions[index].storyWorldId = toStoryWorldId
+                sessions[index].persistenceRevision = sessions[index].effectivePersistenceRevision + 1
+                sessions[index].updatedAt = Date()
+                try LocalJSONStoreTransaction.save(
+                    sessions,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+            }
         }
     }
 
