@@ -920,6 +920,13 @@ struct StoryLorebookEntry: Codable, Identifiable, Equatable, Hashable {
 
 // MARK: - StoryMemory (この物語だけの思い出)
 
+/// 1つの生成ターンがMemoryへ与えた重要度・利用時刻。
+struct StoryMemorySourceMetadata: Codable, Equatable, Hashable {
+    var importance: Double
+    var createdAt: Date
+    var lastUsedAt: Date?
+}
+
 /// 全体メモリー(CharacterMemory)とは分離して、StoryWorld内の出来事だけを保持する。
 /// 別の物語へ持ち越さないため、storyWorldIdを必須にする。
 struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
@@ -931,6 +938,9 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
     /// Memoryが根拠にした生成ターン。本文の重複統合で複数ターンが
     /// 同じレコードへまとまっても、どのターン由来かを失わない。
     var sourceTurnIds: Set<UUID>
+    /// 出典を取消したあとに、残った出典のimportance／利用時刻を
+    /// 再計算できるようにする。旧JSONには存在しないため復元時に補完する。
+    var sourceTurnMetadata: [UUID: StoryMemorySourceMetadata]
     var characterId: UUID?
     var text: String
     var category: MemoryCategory
@@ -950,12 +960,25 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         createdAt: Date = Date(),
         lastUsedAt: Date? = nil,
         storySessionId: UUID? = nil,
-        sourceTurnIds: Set<UUID> = []
+        sourceTurnIds: Set<UUID> = [],
+        sourceTurnMetadata: [UUID: StoryMemorySourceMetadata]? = nil
     ) {
         self.id = id
         self.storyWorldId = storyWorldId
         self.storySessionId = storySessionId
         self.sourceTurnIds = sourceTurnIds
+        self.sourceTurnMetadata = sourceTurnMetadata ?? Dictionary(
+            uniqueKeysWithValues: sourceTurnIds.map {
+                (
+                    $0,
+                    StoryMemorySourceMetadata(
+                        importance: min(max(importance, 0.0), 1.0),
+                        createdAt: createdAt,
+                        lastUsedAt: lastUsedAt
+                    )
+                )
+            }
+        )
         self.characterId = characterId
         self.text = text
         self.category = category
@@ -970,6 +993,7 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         case storyWorldId
         case storySessionId
         case sourceTurnIds
+        case sourceTurnMetadata
         case characterId
         case text
         case category
@@ -992,6 +1016,18 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         source = try container.decode(MemorySource.self, forKey: .source)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        var metadata = try container.decodeIfPresent(
+            [UUID: StoryMemorySourceMetadata].self,
+            forKey: .sourceTurnMetadata
+        ) ?? [:]
+        for sourceTurnId in sourceTurnIds where metadata[sourceTurnId] == nil {
+            metadata[sourceTurnId] = StoryMemorySourceMetadata(
+                importance: importance,
+                createdAt: createdAt,
+                lastUsedAt: lastUsedAt
+            )
+        }
+        sourceTurnMetadata = metadata
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1000,6 +1036,7 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         try container.encode(storyWorldId, forKey: .storyWorldId)
         try container.encodeIfPresent(storySessionId, forKey: .storySessionId)
         try container.encode(sourceTurnIds, forKey: .sourceTurnIds)
+        try container.encode(sourceTurnMetadata, forKey: .sourceTurnMetadata)
         try container.encodeIfPresent(characterId, forKey: .characterId)
         try container.encode(text, forKey: .text)
         try container.encode(category, forKey: .category)
@@ -1029,6 +1066,16 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
                 && !$0.sourceTurnIds.isEmpty
                 && !$0.sourceTurnIds.isDisjoint(with: sourceTurnIds)
         }
+    }
+
+    /// Recalculate aggregate fields from the provenance that remains after a
+    /// cancellation or source removal.
+    mutating func recomputeAggregatesFromSourceMetadata() {
+        guard !sourceTurnMetadata.isEmpty else { return }
+        importance = sourceTurnMetadata.values.map(\.importance).max() ?? importance
+        lastUsedAt = sourceTurnMetadata.values
+            .map { $0.lastUsedAt ?? $0.createdAt }
+            .max()
     }
 }
 

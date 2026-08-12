@@ -835,24 +835,41 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
     func saveMemory(_ memory: StoryMemory) async throws {
         try await store.mutate { all in
             let normalized = normalize(memory.text)
+            var incoming = memory
+            let now = Date()
+            for sourceTurnId in incoming.sourceTurnIds {
+                var metadata = incoming.sourceTurnMetadata[sourceTurnId]
+                    ?? StoryMemorySourceMetadata(
+                        importance: incoming.importance,
+                        createdAt: incoming.createdAt,
+                        lastUsedAt: incoming.lastUsedAt
+                    )
+                metadata.lastUsedAt = now
+                incoming.sourceTurnMetadata[sourceTurnId] = metadata
+            }
             if let index = all.firstIndex(where: {
                 // 同じ本文でもキャラクターごとの記憶は別レコードとして保持する。
                 // world/textだけをキーにすると、別キャラの帰属・カテゴリ・出典が
                 // 最初のレコードへ統合されてしまい、次回のプロンプト選択も壊れる。
-                $0.storyWorldId == memory.storyWorldId
-                    && $0.storySessionId == memory.storySessionId
-                    && $0.characterId == memory.characterId
-                    && $0.category == memory.category
-                    && $0.source == memory.source
+                $0.storyWorldId == incoming.storyWorldId
+                    && $0.storySessionId == incoming.storySessionId
+                    && $0.characterId == incoming.characterId
+                    && $0.category == incoming.category
+                    && $0.source == incoming.source
                     && normalize($0.text) == normalized
             }) {
                 var existing = all[index]
-                existing.importance = max(existing.importance, memory.importance)
-                existing.sourceTurnIds.formUnion(memory.sourceTurnIds)
-                existing.lastUsedAt = Date()
+                if incoming.sourceTurnIds.isEmpty {
+                    existing.importance = max(existing.importance, incoming.importance)
+                    existing.lastUsedAt = now
+                } else {
+                    existing.sourceTurnIds.formUnion(incoming.sourceTurnIds)
+                    existing.sourceTurnMetadata.merge(incoming.sourceTurnMetadata) { _, new in new }
+                    existing.recomputeAggregatesFromSourceMetadata()
+                }
                 all[index] = existing
             } else {
-                all.append(memory)
+                all.append(incoming)
             }
 
             // Sessionごとに上限を設ける。World単位で切り詰めると、新しい
@@ -888,9 +905,14 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                     && normalize(all[$0].text) == normalized
             }) {
                 var target = all[targetIndex]
-                target.importance = max(target.importance, memory.importance)
-                target.sourceTurnIds.formUnion(memory.sourceTurnIds)
-                target.lastUsedAt = max(target.lastUsedAt ?? target.createdAt, memory.lastUsedAt ?? memory.createdAt)
+                if memory.sourceTurnIds.isEmpty {
+                    target.importance = max(target.importance, memory.importance)
+                    target.lastUsedAt = max(target.lastUsedAt ?? target.createdAt, memory.lastUsedAt ?? memory.createdAt)
+                } else {
+                    target.sourceTurnIds.formUnion(memory.sourceTurnIds)
+                    target.sourceTurnMetadata.merge(memory.sourceTurnMetadata) { _, new in new }
+                    target.recomputeAggregatesFromSourceMetadata()
+                }
                 all[targetIndex] = target
                 all.remove(at: sourceIndex)
             } else {
@@ -917,8 +939,13 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             for index in all.indices.reversed() {
                 guard !all[index].sourceTurnIds.isDisjoint(with: sourceTurnIds) else { continue }
                 all[index].sourceTurnIds.subtract(sourceTurnIds)
+                for sourceTurnId in sourceTurnIds {
+                    all[index].sourceTurnMetadata.removeValue(forKey: sourceTurnId)
+                }
                 if all[index].sourceTurnIds.isEmpty {
                     all.remove(at: index)
+                } else {
+                    all[index].recomputeAggregatesFromSourceMetadata()
                 }
             }
         }
