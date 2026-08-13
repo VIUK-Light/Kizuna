@@ -417,8 +417,7 @@ enum StoryTurnJournal {
                 )
             }
 
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            let decoder = LocalJSONStoreCoding.makeDecoder()
             var entries: [StoryTurnJournalEntry] = []
             var containsInvalidEntries = false
             for (index, rawItem) in rawItems.enumerated() {
@@ -569,8 +568,7 @@ enum StoryTurnJournal {
                 return []
             }
 
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            let decoder = LocalJSONStoreCoding.makeDecoder()
             var validItems: [StoryMemoryRetry] = []
             var invalidCount = 0
             for rawItem in rawItems {

@@ -1017,7 +1017,9 @@ final class KizunaAITests: XCTestCase {
         }
         XCTAssertEqual(memoryRetry.turnID, retry.turnID)
         XCTAssertEqual(memoryRetry.characterMemories, retry.characterMemories)
-        XCTAssertEqual(memoryRetry.storyMemories, retry.storyMemories)
+        var expectedStoryMemories = retry.storyMemories
+        expectedStoryMemories[0].storySessionId = session.id
+        XCTAssertEqual(memoryRetry.storyMemories, expectedStoryMemories)
     }
 
     func testPersonaResponseSanitizerPreservesVisibleText() {

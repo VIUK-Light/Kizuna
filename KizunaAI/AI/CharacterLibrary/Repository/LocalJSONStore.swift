@@ -16,16 +16,83 @@ enum LocalJSONStoreError: Error {
 }
 
 enum LocalJSONStoreCoding {
+    private static func encodeISO8601Date(_ date: Date, to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        let seconds = date.timeIntervalSince1970
+        let wholeSeconds = floor(seconds)
+        let fraction = seconds - wholeSeconds
+        let fractionText = String(
+            format: "%.17f",
+            locale: Locale(identifier: "en_US_POSIX"),
+            fraction
+        )
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let base = formatter.string(from: Date(timeIntervalSince1970: wholeSeconds))
+        let fractionalDigits = fractionText.dropFirst(2)
+        try container.encode(
+            "\(base.dropLast()).\(fractionalDigits)Z"
+        )
+    }
+
+    private static func decodeISO8601Date(from decoder: Decoder) throws -> Date {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+
+        if let dot = value.firstIndex(of: ".") {
+            let suffix = value[value.index(after: dot)...]
+            if let timezoneStart = suffix.firstIndex(where: { $0 == "Z" || $0 == "+" || $0 == "-" }) {
+                let fractionDigits = suffix[..<timezoneStart]
+                if !fractionDigits.isEmpty,
+                   fractionDigits.allSatisfy({ $0.isNumber }),
+                   let fraction = Double("0.\(fractionDigits)") {
+                    let base = String(value[..<dot]) + String(suffix[timezoneStart...])
+                    let formatter = ISO8601DateFormatter()
+                    formatter.formatOptions = [.withInternetDateTime]
+                    if let baseDate = formatter.date(from: base) {
+                        return Date(
+                            timeIntervalSince1970: baseDate.timeIntervalSince1970 + fraction
+                        )
+                    }
+                }
+            }
+        }
+
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: value) {
+            return date
+        }
+
+        // Existing Kizuna JSON used ISO8601 without fractional seconds.
+        // Keep those files readable while preserving sub-second precision for
+        // new retry and journal records.
+        let legacyFormatter = ISO8601DateFormatter()
+        legacyFormatter.formatOptions = [.withInternetDateTime]
+        if let date = legacyFormatter.date(from: value) {
+            return date
+        }
+
+        throw DecodingError.dataCorruptedError(
+            in: container,
+            debugDescription: "Invalid ISO8601 date: \(value)"
+        )
+    }
+
     nonisolated static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            try encodeISO8601Date(date, to: encoder)
+        }
         return encoder
     }
 
     nonisolated static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            try decodeISO8601Date(from: decoder)
+        }
         return decoder
     }
 }
