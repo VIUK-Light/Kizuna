@@ -151,6 +151,17 @@ final class KizunaAITests: XCTestCase {
         XCTAssertFalse(decoded.isCompleted)
     }
 
+    func testFileIOCancellationStateAtomicallyClaimsQueuedOperation() {
+        let cancelled = LocalJSONStoreFileIOCancellationState()
+        cancelled.cancel()
+        XCTAssertFalse(cancelled.begin())
+
+        let started = LocalJSONStoreFileIOCancellationState()
+        XCTAssertTrue(started.begin())
+        started.cancel()
+        XCTAssertFalse(started.begin())
+    }
+
     func testStoryMemoryProvenanceUsesDurableTurnIDNotGenerationAttemptID() {
         let generationID = UUID()
         let turnID = UUID()
@@ -707,6 +718,113 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(remainingRetries, [retry])
     }
 
+    func testStoryMemoryRetryRestoreSkipsMissingSession() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "存在しないSessionへ記憶を戻さない",
+            characterMemories: [
+                CharacterMemory(
+                    characterId: UUID(),
+                    text: "復元してはいけない記憶",
+                    category: .event,
+                    source: .aiOutput
+                )
+            ],
+            storyMemories: [],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        try await retryRepository.saveRetry(retry)
+
+        let service = StorySessionService(
+            sessionRepo: TestStorySessionRepository(),
+            storyMemoryRetryRepo: retryRepository
+        )
+
+        try await service.restorePendingStoryMemoryRetries(
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+
+        XCTAssertNil(service.latestRuntimeNotice)
+        XCTAssertEqual(try await retryRepository.fetchRetries(), [retry])
+    }
+
+    func testDeletedSessionMemoryRetryDoesNotCallMemoryRepositories() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let session = StorySession(id: sessionID, storyWorldId: worldID)
+        let sessionRepository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        try await sessionRepository.saveSession(session)
+
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "削除後に記憶を保存しない",
+            characterMemories: [
+                CharacterMemory(
+                    characterId: UUID(),
+                    text: "削除後に復活してはいけない記憶",
+                    category: .event,
+                    source: .aiOutput
+                )
+            ],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "削除後に復活してはいけない物語記憶",
+                    storySessionId: sessionID
+                )
+            ],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        try await retryRepository.saveRetry(retry)
+        try await sessionRepository.deleteSession(id: sessionID)
+
+        XCTAssertNil(try await retryRepository.saveMemoryRetryRecords(retry))
+
+        let memoryRepository = TestStoryMemoryRepository()
+        let memoryRetryTransaction = TestStoryMemoryRetryMemoryTransaction()
+        let service = StorySessionService(
+            memoryRepo: memoryRepository,
+            sessionRepo: sessionRepository,
+            storyMemoryRepo: memoryRepository,
+            storyMemoryRetryRepo: retryRepository,
+            storyMemoryRetryMemoryTransaction: memoryRetryTransaction,
+            pendingStoryMemoryRetries: [retry]
+        )
+
+        await service.retryStoryMemorySave(retry)
+
+        let counts = await memoryRepository.saveCounts()
+        XCTAssertEqual(counts.character, 0)
+        XCTAssertEqual(counts.story, 0)
+        XCTAssertEqual(await memoryRetryTransaction.saveCount(), 1)
+        XCTAssertTrue(try await retryRepository.fetchRetries().isEmpty)
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                CharacterMemory.self,
+                fileName: "memories.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryMemory.self,
+                fileName: "story_memories.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+    }
+
     func testStoryRuntimeNoticeUserRetryKeepsStableMessageIDWithoutCachedSession() {
         let userMessageID = UUID()
         let notice = StoryRuntimeNotice(
@@ -1011,7 +1129,11 @@ final class KizunaAITests: XCTestCase {
         let commit = await sessionRepository.lastCommit
         XCTAssertEqual(commit?.turnID, retry.turnID)
         XCTAssertEqual(commit?.assistantMessageIDs, retry.assistantMessageIDs)
-        XCTAssertEqual(service.savedTurnRevision, 0)
+        XCTAssertEqual(
+            service.savedTurnRevision,
+            1,
+            "a committed assistant turn must advance the UI revision even when memory retry remains"
+        )
         guard case let .storyMemory(memoryRetry) = service.latestRuntimeNotice?.retryAction else {
             return XCTFail("failed memory writes must become a memory-only retry")
         }
@@ -2688,6 +2810,19 @@ final class KizunaAITests: XCTestCase {
             try? FileManager.default.removeItem(at: url)
         }
         return url
+    }
+}
+
+private actor TestStoryMemoryRetryMemoryTransaction: StoryMemoryRetryMemoryTransaction {
+    private var count = 0
+
+    func saveMemoryRetryRecords(_ retry: StoryMemoryRetry) async throws -> StoryMemoryRetry? {
+        count += 1
+        return nil
+    }
+
+    func saveCount() -> Int {
+        count
     }
 }
 
