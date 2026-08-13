@@ -1678,15 +1678,16 @@ struct PersonaComposer: View {
 
     private var canSubmit: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !store.isPersistenceRecoveryRequired
             && !isGeneratingAnotherThread
     }
 
     private func submit() {
         guard canSubmit else { return }
         let toSend = text
+        guard service.send(toSend, to: thread) else { return }
         text = ""
         focused = false
-        service.send(toSend, to: thread)
     }
 }
 

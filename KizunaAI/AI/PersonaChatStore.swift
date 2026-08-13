@@ -373,15 +373,17 @@ final class PersonaChatStore: ObservableObject {
 
     // MARK: - Messages
 
-    func appendMessage(_ message: PersonaMessage, toThread threadID: UUID) {
-        guard canMutatePersistedState() else { return }
-        guard let idx = threads.firstIndex(where: { $0.id == threadID }) else { return }
+    @discardableResult
+    func appendMessage(_ message: PersonaMessage, toThread threadID: UUID) -> Bool {
+        guard canMutatePersistedState() else { return false }
+        guard let idx = threads.firstIndex(where: { $0.id == threadID }) else { return false }
         threads[idx].messages.append(message)
         threads[idx].updatedAt = Date()
         // 最新スレッドを先頭に
         let updated = threads.remove(at: idx)
         threads.insert(updated, at: 0)
         persist()
+        return true
     }
 
     /// Commit the final assistant text and activity order as one MainActor

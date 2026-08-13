@@ -1321,10 +1321,10 @@ final class KizunaAITests: XCTestCase {
         let activeThreadBeforeMutation = store.activeThreadID
         store.finalizePersist()
         XCTAssertNil(store.createThread(with: persona, characterID: UUID()))
-        store.appendMessage(
+        XCTAssertFalse(store.appendMessage(
             PersonaMessage(role: .assistant, text: "hello"),
             toThread: UUID()
-        )
+        ))
 
         XCTAssertEqual(store.threads, threadsBeforeMutation)
         XCTAssertEqual(store.activeThreadID, activeThreadBeforeMutation)

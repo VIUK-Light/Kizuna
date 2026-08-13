@@ -97,19 +97,24 @@ final class PersonaChatService: ObservableObject {
     private let memorySummarizer: MemorySummarizing = MockMemorySummarizer()
     private let promptBuilder = PromptBuilder()
 
-    func send(_ userText: String, to thread: PersonaThread) {
+    @discardableResult
+    func send(_ userText: String, to thread: PersonaThread) -> Bool {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard phase != .thinking else { return }
+        guard !trimmed.isEmpty else { return false }
+        guard phase != .thinking else { return false }
+        // PersonaChatStore deliberately blocks all mutations while corrupt
+        // history recovery is required. Do not start a generation that can
+        // never persist its user turn or final assistant reply.
+        guard !PersonaChatStore.shared.isPersistenceRecoveryRequired else { return false }
 
         // 旧バージョンが残したpending assistant枠を先に整理する。
         // 新しい生成ではユーザー発話だけを先に保存し、assistant本文はSafety評価を通過した
         // 完成時にだけ追加し、アプリ終了やキャンセルで未確定の空枠を残さない。
         PersonaChatStore.shared.removePendingAssistantMessage(in: thread.id)
-        PersonaChatStore.shared.appendMessage(
+        guard PersonaChatStore.shared.appendMessage(
             PersonaMessage(role: .user, text: trimmed),
             toThread: thread.id
-        )
+        ) else { return false }
         let assistantMessageID = UUID()
 
         phase = .thinking
@@ -140,6 +145,7 @@ final class PersonaChatService: ObservableObject {
             }
         }
         startWatchdog(threadID: thread.id, generationID: generationID)
+        return true
     }
 
     private func runLegacyPersonaGeneration(
