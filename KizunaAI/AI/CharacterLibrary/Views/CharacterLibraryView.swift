@@ -43,6 +43,21 @@ struct CharacterLibraryView: View {
 
     /// チャット開始時に呼ばれる (PersonaChatView 側で受け取って sheet を閉じ、スレッド作成)。
     var onStartChat: ((CharacterProfile) -> Void)?
+    /// When embedded in the Conversation tab, selecting a card should start
+    /// the conversation directly. The default remains the detail sheet so
+    /// existing library callers keep their current behavior.
+    private let startsChatImmediately: Bool
+    private let showsDismissButton: Bool
+
+    init(
+        showsDismissButton: Bool = true,
+        startsChatImmediately: Bool = false,
+        onStartChat: ((CharacterProfile) -> Void)? = nil
+    ) {
+        self.showsDismissButton = showsDismissButton
+        self.startsChatImmediately = startsChatImmediately
+        self.onStartChat = onStartChat
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -170,15 +185,17 @@ struct CharacterLibraryView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 32, height: 32)
+            if showsDismissButton {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .help(KizunaCopy.text(japanese: "閉じる", english: "Close"))
             }
-            .buttonStyle(.plain)
-            .help(KizunaCopy.text(japanese: "閉じる", english: "Close"))
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(KizunaCopy.text(japanese: "キャラライブラリー", english: "Character library"))
@@ -205,7 +222,12 @@ struct CharacterLibraryView: View {
                 prefillTemplate = nil
                 showCreate = true
             } label: {
-                Label(KizunaCopy.text(japanese: "作成", english: "Create"), systemImage: "plus")
+                Label(
+                    startsChatImmediately
+                        ? KizunaCopy.text(japanese: "キャラを作る", english: "Create a character")
+                        : KizunaCopy.text(japanese: "作成", english: "Create"),
+                    systemImage: "plus"
+                )
                     .font(.system(size: 12, weight: .semibold))
             }
             .buttonStyle(.borderedProminent)
@@ -455,7 +477,12 @@ struct CharacterLibraryView: View {
                     Button {
                         showCreate = true
                     } label: {
-                        Label(KizunaCopy.text(japanese: "ゼロから作る", english: "Create from scratch"), systemImage: "plus")
+                        Label(
+                            startsChatImmediately
+                                ? KizunaCopy.text(japanese: "キャラを作る", english: "Create a character")
+                                : KizunaCopy.text(japanese: "ゼロから作る", english: "Create from scratch"),
+                            systemImage: "plus"
+                        )
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -467,7 +494,11 @@ struct CharacterLibraryView: View {
 
     private func characterCard(_ c: CharacterProfile) -> some View {
         Button {
-            selected = c
+            if startsChatImmediately, onStartChat != nil {
+                onStartChat?(c)
+            } else {
+                selected = c
+            }
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
@@ -523,7 +554,21 @@ struct CharacterLibraryView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityHint(startsChatImmediately
+                           ? KizunaCopy.text(
+                               japanese: "タップするとこのキャラクターとの会話を始めます",
+                               english: "Starts a conversation with this character"
+                           )
+                           : KizunaCopy.text(
+                               japanese: "タップすると詳細を表示します",
+                               english: "Shows character details"
+                           ))
         .contextMenu {
+            if startsChatImmediately {
+                Button { selected = c } label: {
+                    Label(KizunaCopy.text(japanese: "詳細を見る", english: "View details"), systemImage: "info.circle")
+                }
+            }
             Button { editing = c } label: {
                 Label(KizunaCopy.text(japanese: "編集", english: "Edit"), systemImage: "pencil")
             }

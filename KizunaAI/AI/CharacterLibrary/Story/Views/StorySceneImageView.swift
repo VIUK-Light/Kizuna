@@ -25,13 +25,20 @@ private extension Image {
 struct StorySceneImageView: View {
     let scene: StoryScene
     let world: StoryWorld?
+    private let contentMode: ContentMode
+
+    init(scene: StoryScene, world: StoryWorld?, contentMode: ContentMode = .fill) {
+        self.scene = scene
+        self.world = world
+        self.contentMode = contentMode
+    }
 
     var body: some View {
         Group {
             if let image = storedImage {
                 Image(storyScenePlatformImage: image)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: contentMode)
             } else {
                 fallback
             }

@@ -22,4 +22,8 @@ enum KizunaCopy {
 /// prevents Settings, My Page, and the root gate from drifting apart.
 enum KizunaStorageKeys {
     static let launchCompleted = "kizuna.launch.completed"
+    /// The selected workspace tab is presentation state, not conversation data.
+    /// Keeping it under a namespaced key lets the standard TabView restore the
+    /// user's last destination without touching any saved Persona/Story records.
+    static let workspaceSection = "kizuna.workspace.section"
 }

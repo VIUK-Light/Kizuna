@@ -37,6 +37,7 @@ struct StoryWorldDetailView: View {
     let world: StoryWorld
     var onStartSession: ((StoryWorld) -> Void)?
     var onResumeSession: ((StoryWorld, UUID) -> Void)?
+    var onStartNewSession: ((StoryWorld) -> Void)?
     var onEdit: ((StoryWorld) -> Void)?
     var onDelete: (() async throws -> Void)?
 
@@ -46,18 +47,22 @@ struct StoryWorldDetailView: View {
     @State private var showDeleteConfirmation = false
     @State private var deleteError: String?
     @State private var isDeleting = false
+    @State private var isLoading = true
+    @State private var reloadID = UUID()
     @State private var spotlightCharacter: CharacterProfile?
 
     init(
         world: StoryWorld,
         onStartSession: ((StoryWorld) -> Void)? = nil,
         onResumeSession: ((StoryWorld, UUID) -> Void)? = nil,
+        onStartNewSession: ((StoryWorld) -> Void)? = nil,
         onEdit: ((StoryWorld) -> Void)? = nil,
         onDelete: (() async throws -> Void)? = nil
     ) {
         self.world = world
         self.onStartSession = onStartSession
         self.onResumeSession = onResumeSession
+        self.onStartNewSession = onStartNewSession
         self.onEdit = onEdit
         self.onDelete = onDelete
         _vm = StateObject(wrappedValue: StoryWorldDetailViewModel(world: world))
@@ -67,21 +72,26 @@ struct StoryWorldDetailView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    relationshipHero
-                    progressCard
-                    overviewCard
-                    castCard
-                    scenesCard
-                    rulesCard
-                    historyCard
+            if isLoading {
+                ProgressView(KizunaCopy.text(
+                    japanese: "ストーリーの保存データを読み込んでいます…",
+                    english: "Loading saved story data…"
+                ))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if hasLoadFailure {
+                loadFailureState
+            } else {
+                ScrollView {
+                    detailContent
                 }
-                .padding(18)
             }
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
-        .task { await vm.reload() }
+        .task(id: reloadID) {
+            isLoading = true
+            await vm.reload()
+            isLoading = false
+        }
         .alert(KizunaCopy.text(japanese: "この世界を削除しますか？", english: "Delete this story world?"), isPresented: $showDeleteConfirmation) {
             Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
                 guard !isDeleting else { return }
@@ -134,6 +144,65 @@ struct StoryWorldDetailView: View {
         world.localizedForCurrentLanguage
     }
 
+    private var hasLoadFailure: Bool {
+        vm.castLoadFailed || vm.sceneLoadFailed || vm.sessionLoadFailed || vm.characterLoadFailed
+    }
+
+    private var canStartSession: Bool {
+        !isLoading && !hasLoadFailure
+    }
+
+    private var detailContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            relationshipHero
+            progressCard
+            overviewCard
+            castCard
+            scenesCard
+            rulesCard
+            historyCard
+        }
+        .padding(18)
+    }
+
+    private var loadFailureState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+                .font(.system(size: 34))
+                .foregroundStyle(.orange)
+            Text(KizunaCopy.text(
+                japanese: "保存データを読み込めませんでした",
+                english: "Saved story data could not be loaded"
+            ))
+                .font(.headline)
+            Text(KizunaCopy.text(
+                japanese: "データを空として扱っていません。保存内容は変更されていないので、再試行してください。",
+                english: "The data was not treated as empty. Nothing was changed; try again."
+            ))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+            Button {
+                reloadID = UUID()
+            } label: {
+                Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
+
+    private var resumableSession: StorySession? {
+        vm.sessions.first { session in
+            guard let sceneID = session.currentSceneId else { return false }
+            return vm.scenes.contains(where: { $0.id == sceneID })
+        }
+    }
+
+    private var canResume: Bool { resumableSession != nil }
+
     /// StoryScene predates the presentation-localization catalog and therefore
     /// has no language-specific payload of its own. Standard worlds keep one
     /// durable seed scene as their first scene; localize that stable identity
@@ -163,43 +232,6 @@ struct StoryWorldDetailView: View {
         copy.conflict = nil
         copy.summary = translatedOpening
         return copy
-    }
-
-    /// Progress fields are durable session data and must not be rewritten when
-    /// the display language changes.  For bundled stories, however, a session
-    /// may still contain the original Japanese opening/goal from before the
-    /// presentation catalog was added.  Translate only exact canonical values
-    /// at the view boundary; leave user-authored progress text untouched.
-    private func displayedSessionText(_ value: String?, scene: StoryScene?) -> String? {
-        guard let value else { return nil }
-        guard KizunaCopy.language == .english,
-              world.isSystemProtected == true,
-              StoryEnglishCatalog.localization(for: world) != nil else {
-            return value
-        }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed == world.storyGoal.trimmingCharacters(in: .whitespacesAndNewlines),
-           !displayedWorld.storyGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return displayedWorld.storyGoal
-        }
-        if trimmed == world.openingScene.trimmingCharacters(in: .whitespacesAndNewlines),
-           !displayedWorld.openingScene.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return displayedWorld.openingScene
-        }
-        if let scene {
-            let presentation = displayedScene(scene)
-            if trimmed == scene.sceneGoal.trimmingCharacters(in: .whitespacesAndNewlines),
-               presentation.sceneGoal != scene.sceneGoal,
-               !presentation.sceneGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return presentation.sceneGoal
-            }
-            if trimmed == scene.summary.trimmingCharacters(in: .whitespacesAndNewlines),
-               presentation.summary != scene.summary,
-               !presentation.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return presentation.summary
-            }
-        }
-        return value
     }
 
     private var header: some View {
@@ -236,9 +268,27 @@ struct StoryWorldDetailView: View {
             if horizontalSizeClass == .compact {
                 Menu {
                     Button {
-                        onStartSession?(world)
+                        if let session = resumableSession {
+                            onResumeSession?(world, session.id)
+                        } else {
+                            onStartSession?(world)
+                        }
                     } label: {
-                        Label(KizunaCopy.text(japanese: "チャットを開始", english: "Start chat"), systemImage: "play.fill")
+                        Label(
+                            canResume
+                                ? KizunaCopy.text(japanese: "続きから", english: "Continue")
+                                : KizunaCopy.text(japanese: "始める", english: "Start"),
+                            systemImage: "play.fill"
+                        )
+                    }
+                    .disabled(!canStartSession)
+                    if canResume {
+                        Button {
+                            onStartNewSession?(world)
+                        } label: {
+                            Label(KizunaCopy.text(japanese: "新しい物語", english: "New story"), systemImage: "plus")
+                        }
+                        .disabled(!canStartSession)
                     }
                     if world.isSystemProtected != true {
                         Button {
@@ -261,7 +311,7 @@ struct StoryWorldDetailView: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 18, weight: .bold))
-                        .frame(width: 36, height: 36)
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.bordered)
             } else {
@@ -288,12 +338,32 @@ struct StoryWorldDetailView: View {
                         .background(Capsule().fill(Color.primary.opacity(0.07)))
                 }
 
+                if canResume {
+                    Button {
+                        onStartNewSession?(world)
+                    } label: {
+                        Label(KizunaCopy.text(japanese: "新しい物語", english: "New story"), systemImage: "plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!canStartSession)
+                }
+
                 Button {
-                    onStartSession?(world)
+                    if let session = resumableSession {
+                        onResumeSession?(world, session.id)
+                    } else {
+                        onStartSession?(world)
+                    }
                 } label: {
-                    Label(KizunaCopy.text(japanese: "チャットを開始", english: "Start chat"), systemImage: "play.fill")
+                    Label(
+                        canResume
+                            ? KizunaCopy.text(japanese: "続きから", english: "Continue")
+                            : KizunaCopy.text(japanese: "始める", english: "Start"),
+                        systemImage: "play.fill"
+                    )
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(!canStartSession)
             }
         }
         .padding(.horizontal, 16)
@@ -358,20 +428,44 @@ struct StoryWorldDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 8) {
-                    Label("\(vm.sessions.reduce(0) { $0 + $1.messages.count })", systemImage: "bubble.left.fill")
+                    Label(
+                        canResume
+                            ? KizunaCopy.text(japanese: "続きあり", english: "Ready to continue")
+                            : KizunaCopy.text(japanese: "未開始", english: "Not started"),
+                        systemImage: canResume ? "arrow.uturn.forward.circle.fill" : "play.circle"
+                    )
                         .font(.system(size: 12, weight: .bold))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
                         .background(Capsule().fill(Color.primary.opacity(0.08)))
                     Spacer()
                     Button {
-                        onStartSession?(world)
+                        if let session = resumableSession {
+                            onResumeSession?(world, session.id)
+                        } else {
+                            onStartSession?(world)
+                        }
                     } label: {
-                        Label(KizunaCopy.text(japanese: "続きから", english: "Continue"), systemImage: "play.fill")
+                        Label(
+                            canResume
+                                ? KizunaCopy.text(japanese: "続きから", english: "Continue")
+                                : KizunaCopy.text(japanese: "始める", english: "Start"),
+                            systemImage: "play.fill"
+                        )
                             .font(.system(size: 15, weight: .bold))
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
+                }
+                if canResume {
+                    Button {
+                        onStartNewSession?(world)
+                    } label: {
+                        Label(KizunaCopy.text(japanese: "新しい物語を始める", english: "Start a new story"), systemImage: "plus.circle")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!canStartSession)
                 }
             }
         }
@@ -394,85 +488,29 @@ struct StoryWorldDetailView: View {
     }
 
     private var progressCard: some View {
-        let session = vm.sessions.first
-        let messageCount = session?.messages.count ?? 0
-        let progress = session == nil ? 0 : min(1.0, Double(messageCount) / 24.0)
+        let session = resumableSession
         let currentScene = session?.currentSceneId.flatMap { id in vm.scenes.first(where: { $0.id == id }) }
-            ?? vm.scenes.first
         let presentationScene = currentScene.map { displayedScene($0) }
-        let sceneTitle = presentationScene?.title
-            ?? KizunaCopy.text(japanese: "第1場面", english: "Scene 1")
-        let objective = displayedSessionText(session?.currentObjective, scene: currentScene)
-            ?? presentationScene?.sceneGoal
-            ?? displayedWorld.storyGoal
-        let stage = session?.relationshipStage ?? (session == nil
-            ? KizunaCopy.text(japanese: "未開始", english: "Not started")
-            : KizunaCopy.text(japanese: "進行中", english: "In progress"))
-        return detailCard(title: KizunaCopy.text(japanese: "物語状態", english: "Story status"), icon: "chart.line.uptrend.xyaxis") {
-            HStack(alignment: .center, spacing: 14) {
-                ZStack {
-                    Circle()
-                        .stroke(Color.primary.opacity(0.10), lineWidth: 7)
-                    Circle()
-                        .trim(from: 0, to: progress)
-                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                    Text("\(Int(progress * 100))%")
-                        .font(.system(size: 13, weight: .heavy).monospacedDigit())
-                }
-                .frame(width: 58, height: 58)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(session == nil
-                         ? KizunaCopy.text(japanese: "まだ始まっていません", english: "Not started yet")
-                         : KizunaCopy.text(japanese: "再開できます", english: "Ready to continue"))
-                        .font(.system(size: 16, weight: .heavy))
-                    Text("\(sceneTitle) ・ \(stage)")
-                        .font(.system(size: 12, weight: .bold))
+        let sceneTitle = presentationScene.flatMap { scene in
+            scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : scene.title
+        }
+            ?? KizunaCopy.text(japanese: "最初の場面", english: "Opening scene")
+        return detailCard(title: KizunaCopy.text(japanese: "物語状態", english: "Story status"), icon: "location.north.line") {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(
+                    session == nil
+                        ? KizunaCopy.text(japanese: "まだ始まっていません", english: "Not started yet")
+                        : sceneTitle,
+                    systemImage: session == nil ? "play.circle" : "bookmark.fill"
+                )
+                    .font(.system(size: 16, weight: .bold))
+                if let updatedAt = session?.updatedAt {
+                    Text(KizunaCopy.language == .english
+                         ? "Last updated \(updatedAt, style: .relative)"
+                         : "最終更新 \(updatedAt, style: .relative)")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    if !objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(objective)
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                    Text(KizunaCopy.language == .english
-                         ? "\(messageCount) messages · \(vm.cast.count) characters · \(vm.scenes.count) scenes"
-                         : "\(messageCount)件のやり取り ・ \(vm.cast.count)人のキャスト ・ \(vm.scenes.count)シーン")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                    // この物語に閉じたメモリー件数。全体メモリーとは混ぜない。
-                    Text(KizunaCopy.language == .english
-                         ? "Story memory: \(vm.storyMemories.count)"
-                         : "物語内メモリー \(vm.storyMemories.count)件")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(.tertiary)
                 }
-                Spacer()
-                Button {
-                    onStartSession?(world)
-                } label: {
-                    Label(session == nil
-                          ? KizunaCopy.text(japanese: "開始", english: "Start")
-                          : KizunaCopy.text(japanese: "続きから", english: "Continue"), systemImage: "play.fill")
-                        .font(.system(size: 13, weight: .bold))
-                }
-                .buttonStyle(.borderedProminent)
-            }
-
-            if let summary = displayedSessionText(session?.lastSceneSummary, scene: currentScene), !summary.isEmpty {
-                Text(summary)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .padding(.top, 4)
-            } else if let last = session?.messages.last {
-                Text(last.text)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .padding(.top, 4)
             }
         }
     }
@@ -721,8 +759,8 @@ struct StoryWorldDetailView: View {
             if vm.sessions.isEmpty {
                 emptyLine(KizunaCopy.text(japanese: "まだ会話セッションはありません。", english: "No conversation sessions yet."))
             } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(vm.sessions.prefix(5)) { session in
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(vm.sessions) { session in
                         Button {
                             onResumeSession?(world, session.id)
                         } label: {

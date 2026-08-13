@@ -43,20 +43,26 @@ struct StorySessionChatView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let world: StoryWorld
     let initialSessionID: UUID?
+    let startsNewSession: Bool
 
     @StateObject private var detailVM: StoryWorldDetailViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var sessionVM: StorySessionViewModel?
     @State private var loadError: String?
+    /// A new-session request is consumed once. If bootstrap fails and the user
+    /// retries, resume the session that was already persisted instead of
+    /// creating another empty branch in the same world.
+    @State private var resolvedSessionID: UUID?
     // 右上の「?」から開く、休憩提案設定の UI フレーム。
     @State private var isShowingRestHelp = false
 
-    init(world: StoryWorld, initialSessionID: UUID? = nil) {
+    init(world: StoryWorld, initialSessionID: UUID? = nil, startsNewSession: Bool = false) {
         // Keep the raw persisted world at the session boundary.  Localized
         // copies are presentation-only and must never seed StorySession's
         // durable goal, summary, or first narration.
         self.world = world
         self.initialSessionID = initialSessionID
+        self.startsNewSession = startsNewSession
         _detailVM = StateObject(wrappedValue: StoryWorldDetailViewModel(world: world))
     }
 
@@ -122,7 +128,11 @@ struct StorySessionChatView: View {
             )
             return
         }
-        guard let (session, scene) = await detailVM.createOrResumeSession(preferredSessionID: initialSessionID) else {
+        let preferredSessionID = resolvedSessionID ?? initialSessionID
+        guard let (session, scene) = await detailVM.createOrResumeSession(
+            preferredSessionID: preferredSessionID,
+            forceNew: startsNewSession && resolvedSessionID == nil
+        ) else {
             loadError = storyCopy(
                 detailVM.sessionSaveFailed
                     ? "セッションを保存できませんでした。保存先を確認してから再試行してください。"
@@ -133,6 +143,7 @@ struct StorySessionChatView: View {
             )
             return
         }
+        resolvedSessionID = session.id
         let vm = StorySessionViewModel(world: world, session: session, scene: scene)
         await vm.bootstrap()
         if let bootstrapError = vm.bootstrapError {
@@ -150,7 +161,7 @@ struct StorySessionChatView: View {
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: horizontalSizeClass == .compact ? 20 : 22, weight: .semibold))
-                    .frame(width: horizontalSizeClass == .compact ? 30 : 34, height: horizontalSizeClass == .compact ? 30 : 34)
+                    .frame(width: 44, height: 44)
                     .foregroundStyle(storyText)
             }
             .buttonStyle(.plain)
@@ -187,7 +198,7 @@ struct StorySessionChatView: View {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: horizontalSizeClass == .compact ? 21 : 23, weight: .semibold))
                     .foregroundStyle(storyText)
-                    .frame(width: horizontalSizeClass == .compact ? 30 : 34, height: horizontalSizeClass == .compact ? 30 : 34)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
         }
@@ -424,6 +435,7 @@ private struct StoryGenerationModelPill: View {
 
 private struct StorySessionChatBody: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @ObservedObject var vm: StorySessionViewModel
     @ObservedObject private var service: StorySessionService
     @ObservedObject private var localModelManager: LocalAssistantModelManager
@@ -447,126 +459,132 @@ private struct StorySessionChatBody: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            sceneStrip
-            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
-            ScrollViewReader { proxy in
-                ZStack(alignment: .bottomTrailing) {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(visibleMessages) { message in
-                                messageRow(message)
-                                    .id(message.id)
-                            }
-                            if service.phase == .thinking {
-                                streamingPreview
-                            }
-                            // 最新のキャラクター発話の後ろに、会話の一部として表示する。
-                            restSuggestionCard
-                            safetySupportCard
-                            runtimeNoticeCard
-                        }
-                        .padding(18)
-                    }
-                    .background(storyCanvas)
-                    .onScrollGeometryChange(for: Bool.self) { geometry in
-                        let distanceFromBottom = geometry.contentSize.height
-                            - geometry.contentOffset.y
-                            - geometry.containerSize.height
-                        return distanceFromBottom < 72
-                    } action: { _, nearLatest in
-                        isStoryChatNearLatest = nearLatest
-                        if nearLatest {
-                            unreadStoryMessageCount = 0
-                        }
-                    }
-                    .onChange(of: vm.session.messages.count) { _, _ in
-                        if isStoryChatNearLatest {
-                            if let last = vm.session.messages.last?.id {
-                                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
-                            }
-                        } else {
-                            unreadStoryMessageCount += 1
-                        }
-                    }
-                    .task(id: vm.session.id) {
-                        // 既存セッションを開いた直後は messages.count が変化しないため、
-                        // onChangeだけでは保存済みの最新発話へ移動できない。LazyVStackの
-                        // レイアウトを1回待ってから、再開時だけ最新へ初期配置する。
-                        await Task.yield()
-                        guard let last = vm.session.messages.last?.id else { return }
-                        proxy.scrollTo(last, anchor: .bottom)
-                        isStoryChatNearLatest = true
-                        unreadStoryMessageCount = 0
-                    }
-                    .onChange(of: service.streamingResponse) { _, _ in
-                        guard isStoryChatNearLatest, service.phase == .thinking else { return }
-                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("streaming-preview", anchor: .bottom) }
-                    }
-                    .onChange(of: service.savedTurnRevision) { _, _ in
-                        // キャラクター発話の保存後にだけ、アプリ側の60分判定を行う。
-                        Task {
-                            await vm.refreshAfterTurn()
-                            await vm.evaluateRestSuggestionAfterTurn()
-                        }
-                    }
-                    .onChange(of: vm.restSuggestion?.id) { _, suggestionID in
-                        guard suggestionID != nil, isStoryChatNearLatest else { return }
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            proxy.scrollTo("rest-suggestion-card", anchor: .bottom)
-                        }
-                    }
-                    .onChange(of: service.latestSafetyConcern?.id) { _, concernID in
-                        guard concernID != nil, isStoryChatNearLatest else { return }
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            proxy.scrollTo("safety-support-card", anchor: .bottom)
-                        }
-                    }
-                    .onChange(of: service.latestRuntimeNotice?.id) { _, noticeID in
-                        guard noticeID != nil, isStoryChatNearLatest else { return }
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            proxy.scrollTo("runtime-notice-card", anchor: .bottom)
-                        }
-                    }
-
-                    if !isStoryChatNearLatest {
-                        Button {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                if let last = vm.session.messages.last?.id {
-                                    proxy.scrollTo(last, anchor: .bottom)
-                                } else {
-                                    proxy.scrollTo("streaming-preview", anchor: .bottom)
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                sceneStrip(availableHeight: geometry.size.height)
+                Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+                ScrollViewReader { proxy in
+                    ZStack(alignment: .bottomTrailing) {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 12) {
+                                ForEach(visibleMessages) { message in
+                                    messageRow(message)
+                                        .id(message.id)
                                 }
+                                if service.phase == .thinking {
+                                    streamingPreview
+                                }
+                                // 最新のキャラクター発話の後ろに、会話の一部として表示する。
+                                restSuggestionCard
+                                safetySupportCard
+                                runtimeNoticeCard
                             }
+                            .padding(18)
+                        }
+                        .background(storyCanvas)
+                        .onScrollGeometryChange(for: Bool.self) { geometry in
+                            let distanceFromBottom = geometry.contentSize.height
+                                - geometry.contentOffset.y
+                                - geometry.containerSize.height
+                            return distanceFromBottom < 72
+                        } action: { _, nearLatest in
+                            isStoryChatNearLatest = nearLatest
+                            if nearLatest {
+                                unreadStoryMessageCount = 0
+                            }
+                        }
+                        .onChange(of: vm.session.messages.count) { _, _ in
+                            if isStoryChatNearLatest {
+                                if let last = vm.session.messages.last?.id {
+                                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
+                                }
+                            } else {
+                                unreadStoryMessageCount += 1
+                            }
+                        }
+                        .task(id: vm.session.id) {
+                            // 既存セッションを開いた直後は messages.count が変化しないため、
+                            // onChangeだけでは保存済みの最新発話へ移動できない。LazyVStackの
+                            // レイアウトを1回待ってから、再開時だけ最新へ初期配置する。
+                            await Task.yield()
+                            guard let last = vm.session.messages.last?.id else { return }
+                            proxy.scrollTo(last, anchor: .bottom)
                             isStoryChatNearLatest = true
                             unreadStoryMessageCount = 0
-                        } label: {
-                            Label(
-                                unreadStoryMessageCount > 0
-                                    ? "\(unreadStoryMessageCount) " + storyCopy("新しい発言", "new messages")
-                                    : storyCopy("最新へ", "Latest"),
-                                systemImage: "arrow.down"
-                            )
-                            .font(.system(size: 11, weight: .bold))
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 8)
-                            .background(.regularMaterial, in: Capsule())
-                            .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
                         }
-                        .buttonStyle(.plain)
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 14)
-                        .accessibilityLabel(storyCopy("最新の発言へ移動", "Jump to the latest message"))
+                        .onChange(of: service.streamingResponse) { _, _ in
+                            guard isStoryChatNearLatest, service.phase == .thinking else { return }
+                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("streaming-preview", anchor: .bottom) }
+                        }
+                        .onChange(of: service.savedTurnRevision) { _, _ in
+                            // キャラクター発話の保存後にだけ、アプリ側の60分判定を行う。
+                            Task {
+                                await vm.refreshAfterTurn()
+                                await vm.evaluateRestSuggestionAfterTurn()
+                            }
+                        }
+                        .onChange(of: vm.restSuggestion?.id) { _, suggestionID in
+                            guard suggestionID != nil, isStoryChatNearLatest else { return }
+                            withAnimation(.easeOut(duration: 0.25)) {
+                                proxy.scrollTo("rest-suggestion-card", anchor: .bottom)
+                            }
+                        }
+                        .onChange(of: service.latestSafetyConcern?.id) { _, concernID in
+                            guard concernID != nil, isStoryChatNearLatest else { return }
+                            withAnimation(.easeOut(duration: 0.25)) {
+                                proxy.scrollTo("safety-support-card", anchor: .bottom)
+                            }
+                        }
+                        .onChange(of: service.latestRuntimeNotice?.id) { _, noticeID in
+                            guard noticeID != nil, isStoryChatNearLatest else { return }
+                            withAnimation(.easeOut(duration: 0.25)) {
+                                proxy.scrollTo("runtime-notice-card", anchor: .bottom)
+                            }
+                        }
+
+                        if !isStoryChatNearLatest {
+                            Button {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    if let last = vm.session.messages.last?.id {
+                                        proxy.scrollTo(last, anchor: .bottom)
+                                    } else {
+                                        proxy.scrollTo("streaming-preview", anchor: .bottom)
+                                    }
+                                }
+                                isStoryChatNearLatest = true
+                                unreadStoryMessageCount = 0
+                            } label: {
+                                Label(
+                                    unreadStoryMessageCount > 0
+                                        ? "\(unreadStoryMessageCount) " + storyCopy("新しい発言", "new messages")
+                                        : storyCopy("最新へ", "Latest"),
+                                    systemImage: "arrow.down"
+                                )
+                                .font(.system(size: 11, weight: .bold))
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 8)
+                                .background(.regularMaterial, in: Capsule())
+                                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.trailing, 16)
+                            .padding(.bottom, 14)
+                            .accessibilityLabel(storyCopy("最新の発言へ移動", "Jump to the latest message"))
+                        }
+                    }
+                    .background(storyCanvas)
+                    .alert(storyCopy("モデルを準備してください", "Prepare a model"), isPresented: $isShowingUnavailableModelAlert) {
+                        Button(storyCopy("閉じる", "Close"), role: .cancel) { }
+                    } message: {
+                        Text(unavailableModelMessage)
                     }
                 }
-                .background(storyCanvas)
-                .alert(storyCopy("モデルを準備してください", "Prepare a model"), isPresented: $isShowingUnavailableModelAlert) {
-                    Button(storyCopy("閉じる", "Close"), role: .cancel) { }
-                } message: {
-                    Text(unavailableModelMessage)
-                }
             }
-            composer
+            // Keeping the composer in the safe-area inset reserves its actual
+            // height from the ScrollView, including when the keyboard appears.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                composer
+            }
         }
         .sheet(isPresented: $isShowingCharacterSheet) {
             StoryCharacterSpotlightSheet(
@@ -619,7 +637,7 @@ private struct StorySessionChatBody: View {
                         Image(systemName: "questionmark.circle")
                             .font(.system(size: 19, weight: .semibold))
                             .foregroundStyle(storyMuted)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("story.rest.help")
@@ -747,7 +765,7 @@ private struct StorySessionChatBody: View {
                         Image(systemName: "questionmark.circle")
                             .font(.system(size: 19, weight: .semibold))
                             .foregroundStyle(storyMuted)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("story.safety.help")
@@ -873,12 +891,12 @@ private struct StorySessionChatBody: View {
         isShowingUnavailableModelAlert = true
     }
 
-    private var sceneStrip: some View {
+    private func sceneStrip(availableHeight: CGFloat) -> some View {
         Group {
             if horizontalSizeClass == .compact {
-                compactSceneStrip
+                compactSceneStrip(availableHeight: availableHeight)
             } else {
-                regularSceneStrip
+                regularSceneStrip(availableHeight: availableHeight)
             }
         }
         .padding(.horizontal, horizontalSizeClass == .compact ? 14 : 18)
@@ -886,7 +904,7 @@ private struct StorySessionChatBody: View {
         .background(storyCanvas)
     }
 
-    private var regularSceneStrip: some View {
+    private func regularSceneStrip(availableHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .center, spacing: 12) {
                 Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
@@ -896,11 +914,11 @@ private struct StorySessionChatBody: View {
                 Spacer()
                 activeCharacterChips
             }
-            sceneVisual
+            sceneVisual(availableHeight: availableHeight)
         }
     }
 
-    private var compactSceneStrip: some View {
+    private func compactSceneStrip(availableHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 10) {
                 Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
@@ -913,14 +931,24 @@ private struct StorySessionChatBody: View {
                 activeCharacterChips
                     .frame(maxWidth: 210, alignment: .trailing)
             }
-            sceneVisual
+            sceneVisual(availableHeight: availableHeight)
         }
     }
 
-    private var sceneVisual: some View {
-        StorySceneImageView(scene: vm.scene, world: vm.world.localizedForCurrentLanguage)
+    private func sceneVisual(availableHeight: CGFloat) -> some View {
+        StorySceneImageView(
+            scene: vm.scene,
+            world: vm.world.localizedForCurrentLanguage,
+            contentMode: .fit
+        )
             .frame(maxWidth: .infinity)
-            .frame(height: horizontalSizeClass == .compact ? 78 : 104)
+            // `.fit` preserves the source image, but it does not cap the
+            // container height. An unbounded 16:9 aspect-ratio container can
+            // consume the compact landscape screen. Limit the image to a
+            // small share of the available body height while keeping the
+            // established compact/regular caps for taller layouts.
+            .frame(height: sceneVisualHeight(availableHeight: availableHeight))
+            .background(Color.black.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
                 LinearGradient(
@@ -930,6 +958,11 @@ private struct StorySessionChatBody: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+    }
+
+    private func sceneVisualHeight(availableHeight: CGFloat) -> CGFloat {
+        let sizeClassCap: CGFloat = verticalSizeClass == .compact ? 78 : 104
+        return min(sizeClassCap, max(0, availableHeight * 0.20))
     }
 
     private var activeCharacterChips: some View {

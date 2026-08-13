@@ -1358,16 +1358,21 @@ final class StoryWorldDetailViewModel: ObservableObject {
     }
 
     @discardableResult
-    func createOrResumeSession(preferredSessionID: UUID? = nil) async -> (StorySession, StoryScene)? {
+    func createOrResumeSession(
+        preferredSessionID: UUID? = nil,
+        forceNew: Bool = false
+    ) async -> (StorySession, StoryScene)? {
         guard !sceneLoadFailed, !sessionLoadFailed, !characterLoadFailed else { return nil }
         sessionSaveFailed = false
-        if let preferredSessionID,
+        if !forceNew,
+           let preferredSessionID,
            let session = sessions.first(where: { $0.id == preferredSessionID }),
            let sceneId = session.currentSceneId,
            let scene = scenes.first(where: { $0.id == sceneId }) {
             return (session, scene)
         }
-        if preferredSessionID == nil,
+        if !forceNew,
+           preferredSessionID == nil,
            let last = sessions.first,
            let sceneId = last.currentSceneId,
            let scene = scenes.first(where: { $0.id == sceneId }) {
@@ -1379,7 +1384,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
         // セッション保存中にシーンが削除・置換されると currentSceneId だけが
         // 無効になる。ここで既存セッションを先頭シーンへ修復しないと、画面を
         // 開くたびに同じセッションが新規作成され、会話履歴が分裂する。
-        if let brokenIndex = sessions.firstIndex(where: { session in
+        if !forceNew, let brokenIndex = sessions.firstIndex(where: { session in
             if let preferredSessionID { return session.id == preferredSessionID }
             return session.id == sessions.first?.id
         }) {
