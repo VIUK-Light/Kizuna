@@ -34,6 +34,7 @@ final class LocalJSONMemoryRepository: MemoryRepository {
     }
 
     func saveMemory(_ memory: CharacterMemory) async throws {
+        let perCharacterLimit = self.perCharacterLimit
         try await store.mutate { all in
             Self.mergeMemory(
                 memory,

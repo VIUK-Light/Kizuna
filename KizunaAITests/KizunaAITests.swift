@@ -43,6 +43,50 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(visibleText, text)
     }
 
+    func testLocalJSONStoreDecoderReadsNumericAndBothISO8601DateForms() throws {
+        let decoder = LocalJSONStoreCoding.makeDecoder()
+
+        let numeric = try decoder.decode(
+            Date.self,
+            from: Data("1234.5".utf8)
+        )
+        XCTAssertEqual(
+            numeric.timeIntervalSinceReferenceDate,
+            1234.5,
+            accuracy: 0.000_001
+        )
+
+        let seconds = try decoder.decode(
+            Date.self,
+            from: Data("\"2026-08-14T12:34:56Z\"".utf8)
+        )
+        let secondsFormatter = ISO8601DateFormatter()
+        secondsFormatter.formatOptions = [.withInternetDateTime]
+        let expectedSeconds = try XCTUnwrap(
+            secondsFormatter.date(from: "2026-08-14T12:34:56Z")
+        )
+        XCTAssertEqual(
+            seconds.timeIntervalSince1970,
+            expectedSeconds.timeIntervalSince1970,
+            accuracy: 0.000_001
+        )
+
+        let fractional = try decoder.decode(
+            Date.self,
+            from: Data("\"2026-08-14T12:34:56.789Z\"".utf8)
+        )
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let expectedFractional = try XCTUnwrap(
+            fractionalFormatter.date(from: "2026-08-14T12:34:56.789Z")
+        )
+        XCTAssertEqual(
+            fractional.timeIntervalSince1970,
+            expectedFractional.timeIntervalSince1970,
+            accuracy: 0.000_001
+        )
+    }
+
     func testStoryMemoryScopeExcludesOtherSessionsAndLegacyRecords() {
         let worldID = UUID()
         let sessionID = UUID()
@@ -273,6 +317,45 @@ final class KizunaAITests: XCTestCase {
         )
         XCTAssertEqual(memory.importance, 0.7)
         XCTAssertEqual(memory.lastUsedAt, createdAt.addingTimeInterval(10))
+    }
+
+    func testSourceLessStoryMemoryMergeKeepsProvenanceAggregatesInSync() {
+        let sourceTurnID = UUID()
+        let createdAt = Date(timeIntervalSince1970: 100)
+        let existing = StoryMemory(
+            storyWorldId: UUID(),
+            text: "同じ出来事",
+            importance: 0.2,
+            createdAt: createdAt,
+            lastUsedAt: createdAt,
+            sourceTurnIds: [sourceTurnID],
+            sourceTurnMetadata: [
+                sourceTurnID: StoryMemorySourceMetadata(
+                    importance: 0.2,
+                    createdAt: createdAt,
+                    lastUsedAt: createdAt
+                )
+            ]
+        )
+        var incoming = existing
+        incoming.id = UUID()
+        incoming.importance = 0.8
+        incoming.sourceTurnIds = []
+        incoming.sourceTurnMetadata = [:]
+
+        var values = [existing]
+        LocalJSONStoryMemoryRepository.mergeMemory(incoming, &values)
+
+        let merged = values[0]
+        XCTAssertEqual(merged.importance, 0.8)
+        XCTAssertEqual(
+            merged.sourceTurnMetadata[sourceTurnID]?.importance,
+            merged.importance
+        )
+        XCTAssertEqual(
+            merged.sourceTurnMetadata[sourceTurnID]?.lastUsedAt,
+            merged.lastUsedAt
+        )
     }
 
     func testStoryMemorySourceMetadataUsesObjectAndReadsLegacyUUIDDictionary() throws {
@@ -752,7 +835,8 @@ final class KizunaAITests: XCTestCase {
         )
 
         XCTAssertNil(service.latestRuntimeNotice)
-        XCTAssertEqual(try await retryRepository.fetchRetries(), [retry])
+        let remainingRetries = try await retryRepository.fetchRetries()
+        XCTAssertEqual(remainingRetries, [retry])
     }
 
     func testDeletedSessionMemoryRetryDoesNotCallMemoryRepositories() async throws {
@@ -789,7 +873,8 @@ final class KizunaAITests: XCTestCase {
         try await retryRepository.saveRetry(retry)
         try await sessionRepository.deleteSession(id: sessionID)
 
-        XCTAssertNil(try await retryRepository.saveMemoryRetryRecords(retry))
+        let deletedSessionResult = try await retryRepository.saveMemoryRetryRecords(retry)
+        XCTAssertNil(deletedSessionResult)
 
         let memoryRepository = TestStoryMemoryRepository()
         let memoryRetryTransaction = TestStoryMemoryRetryMemoryTransaction()
@@ -807,8 +892,10 @@ final class KizunaAITests: XCTestCase {
         let counts = await memoryRepository.saveCounts()
         XCTAssertEqual(counts.character, 0)
         XCTAssertEqual(counts.story, 0)
-        XCTAssertEqual(await memoryRetryTransaction.saveCount(), 1)
-        XCTAssertTrue(try await retryRepository.fetchRetries().isEmpty)
+        let transactionSaveCount = await memoryRetryTransaction.saveCount()
+        XCTAssertEqual(transactionSaveCount, 1)
+        let remainingRetries = try await retryRepository.fetchRetries()
+        XCTAssertTrue(remainingRetries.isEmpty)
         XCTAssertTrue(
             try LocalJSONStoreTransaction.load(
                 CharacterMemory.self,
@@ -816,6 +903,52 @@ final class KizunaAITests: XCTestCase {
                 baseURL: storageURL
             ).isEmpty
         )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryMemory.self,
+                fileName: "story_memories.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+    }
+
+    func testLegacyPayloadSessionTombstoneDoesNotResurrectStoryMemory() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let sessionRepository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        try await sessionRepository.saveSession(
+            StorySession(id: sessionID, storyWorldId: worldID)
+        )
+        try await sessionRepository.deleteSession(id: sessionID)
+
+        // Bypass saveRetry to model a record written before payload-side
+        // session validation existed. The envelope has no owner, but the
+        // embedded StoryMemory still names the deleted Session.
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "legacy payload",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "削除済みSessionの記憶",
+                    storySessionId: sessionID
+                )
+            ],
+            storySessionID: nil,
+            storyWorldID: worldID
+        )
+        try LocalJSONStoreTransaction.save(
+            [retry],
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
+
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        let deletedPayloadResult = try await retryRepository.saveMemoryRetryRecords(retry)
+        XCTAssertNil(deletedPayloadResult)
         XCTAssertTrue(
             try LocalJSONStoreTransaction.load(
                 StoryMemory.self,
@@ -1024,6 +1157,45 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(counts.story, 1)
         XCTAssertEqual(service.savedTurnRevision, 1)
         XCTAssertNil(service.latestRuntimeNotice)
+    }
+
+    func testStoryServiceDropsDeletedStoryMemoryInFallbackRetryPath() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let memoryRepository = TestStoryMemoryRepository(
+            shouldThrowStoryRecordDeleted: true
+        )
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "削除済みSessionのfallback再試行",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "削除済みSessionの物語記憶",
+                    storySessionId: sessionID
+                )
+            ],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        let service = StorySessionService(
+            memoryRepo: memoryRepository,
+            storyMemoryRepo: memoryRepository,
+            storyMemoryRetryRepo: retryRepository,
+            pendingStoryMemoryRetries: [retry]
+        )
+
+        await service.retryStoryMemorySave(retry)
+
+        let counts = await memoryRepository.saveCounts()
+        XCTAssertEqual(counts.story, 0)
+        XCTAssertNil(service.latestRuntimeNotice)
+        let remainingRetries = try await retryRepository.fetchRetries()
+        XCTAssertTrue(remainingRetries.isEmpty)
     }
 
     func testStoryServiceDeletesDurableMemoryRetryAfterSuccessfulSave() async throws {
@@ -2832,11 +3004,16 @@ private actor TestStoryMemoryRepository: MemoryRepository, StoryMemoryRepository
     }
 
     private let shouldFailSaves: Bool
+    private let shouldThrowStoryRecordDeleted: Bool
     private var characterSaveCount = 0
     private var storySaveCount = 0
 
-    init(shouldFailSaves: Bool = false) {
+    init(
+        shouldFailSaves: Bool = false,
+        shouldThrowStoryRecordDeleted: Bool = false
+    ) {
         self.shouldFailSaves = shouldFailSaves
+        self.shouldThrowStoryRecordDeleted = shouldThrowStoryRecordDeleted
     }
 
     func fetchMemories(characterId: UUID) async throws -> [CharacterMemory] { [] }
@@ -2855,6 +3032,12 @@ private actor TestStoryMemoryRepository: MemoryRepository, StoryMemoryRepository
     func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory] { [] }
 
     func saveMemory(_ memory: StoryMemory) async throws {
+        if shouldThrowStoryRecordDeleted {
+            throw StoryTurnPersistenceError.recordDeleted(
+                kind: .session,
+                id: UUID()
+            )
+        }
         if shouldFailSaves { throw TestError.saveFailed }
         storySaveCount += 1
     }

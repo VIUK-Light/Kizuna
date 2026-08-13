@@ -1062,6 +1062,22 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             if incoming.sourceTurnIds.isEmpty {
                 existing.importance = max(existing.importance, incoming.importance)
                 existing.lastUsedAt = now
+                // A legacy/source-less merge still changes the aggregate
+                // values. Keep every surviving provenance entry in sync so a
+                // later recompute cannot restore stale importance or usage
+                // timestamps from old metadata.
+                for sourceTurnID in existing.sourceTurnIds {
+                    var metadata = existing.sourceTurnMetadata[sourceTurnID]
+                        ?? StoryMemorySourceMetadata(
+                            importance: existing.importance,
+                            createdAt: existing.createdAt,
+                            lastUsedAt: existing.lastUsedAt
+                        )
+                    metadata.importance = existing.importance
+                    metadata.lastUsedAt = existing.lastUsedAt
+                    existing.sourceTurnMetadata[sourceTurnID] = metadata
+                }
+                existing.recomputeAggregatesFromSourceMetadata()
             } else {
                 existing.sourceTurnIds.formUnion(incoming.sourceTurnIds)
                 existing.sourceTurnMetadata.merge(incoming.sourceTurnMetadata) { _, new in new }
@@ -1235,7 +1251,29 @@ private enum LocalJSONStoryMemoryRetryMemoryTransaction {
     ) throws -> StoryMemoryRetry? {
         try LocalJSONStoreTransaction.withSharedLock {
             let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
-            if let sessionID = retry.storySessionID {
+            let ownedStoryMemories = retry.storyMemories.map { memory -> StoryMemory in
+                var ownedMemory = memory
+                if ownedMemory.storySessionId == nil {
+                    ownedMemory.storySessionId = retry.storySessionID
+                }
+                return ownedMemory
+            }
+
+            // Validate the envelope and every embedded StoryMemory. Legacy
+            // retries may have no envelope ID while still carrying a session
+            // ID in the payload; skipping that case can resurrect memory after
+            // the session was deleted.
+            let sessionIDs = Set(
+                [retry.storySessionID].compactMap { $0 }
+                    + ownedStoryMemories.compactMap(\.storySessionId)
+            )
+            guard sessionIDs.count <= 1 else {
+                // A single retry must never merge memories from multiple
+                // sessions. Keep it durable for diagnosis instead of writing
+                // a cross-session partial result.
+                return retry
+            }
+            if let sessionID = sessionIDs.first {
                 if tombstones.contains(where: {
                     $0.recordID == sessionID && $0.recordKind == .session
                 }) {
@@ -1262,23 +1300,6 @@ private enum LocalJSONStoryMemoryRetryMemoryTransaction {
                     // write a payload into a different StoryWorld.
                     return retry
                 }
-            }
-
-            let ownedStoryMemories = retry.storyMemories.map { memory -> StoryMemory in
-                var ownedMemory = memory
-                if ownedMemory.storySessionId == nil {
-                    ownedMemory.storySessionId = retry.storySessionID
-                }
-                return ownedMemory
-            }
-            if let sessionID = retry.storySessionID,
-               ownedStoryMemories.contains(where: {
-                   if let memorySessionID = $0.storySessionId {
-                       return memorySessionID != sessionID
-                   }
-                   return false
-               }) {
-                return retry
             }
 
             if !retry.characterMemories.isEmpty {

@@ -2397,6 +2397,21 @@ final class StorySessionService: ObservableObject {
             }
             do {
                 try await storyMemoryRepo.saveMemory(ownedMemory)
+            } catch let error as StoryTurnPersistenceError {
+                if case .recordDeleted = error {
+                    // An intentional Session deletion is terminal for this
+                    // payload. Retrying it forever would keep an impossible
+                    // notice visible and could resurrect deleted state in a
+                    // replaceable repository implementation.
+                    NSLog(
+                        "[StorySession] dropped story memory retry for deleted session turn=%@ memory=%@",
+                        retry.turnID.uuidString,
+                        ownedMemory.id.uuidString
+                    )
+                    continue
+                }
+                remainingStoryMemories.append(ownedMemory)
+                NSLog("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, ownedMemory.id.uuidString, error.localizedDescription)
             } catch {
                 remainingStoryMemories.append(ownedMemory)
                 NSLog("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, ownedMemory.id.uuidString, error.localizedDescription)
