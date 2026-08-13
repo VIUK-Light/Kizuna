@@ -1303,33 +1303,20 @@ final class StorySessionService: ObservableObject {
             // in the rewrite bypass the same metadata parser. A patch that was
             // not serializable or did not pass its own safety check is also
             // omitted, without discarding an otherwise safe visible reply.
-            let statePatchAfterSafety = statePatchForSafety.flatMap { patch in
-                StoryOutputSafetyPolicy.persistableStatePatch(
-                    action: stateSafetyAction ?? .block,
-                    original: patch
+            let persistableStatePatch = StoryOutputSafetyPolicy
+                .persistableStructuredStatePatch(
+                    outputAction: outSafety.action,
+                    stateAction: stateSafetyAction,
+                    dedicatedPatch: modelStatePatchForSafety,
+                    fallbackPatch: structuredProgressUpdate?.storyState
                 )
-            } ?? nil
-            // If the structured state itself was softened, blocked, or could
-            // not be evaluated, remove it from the progress fallback too.
-            // Otherwise `modelStatePatch == nil` below could accidentally
-            // re-adopt the same unsafe patch from `structuredProgressUpdate`.
-            if modelStatePatchForSafety != nil {
-                // The dedicated STATE_UPDATE patch was evaluated above; do
-                // not retain a second, independently parsed progress patch as
-                // a fallback for the same generated response.
+            // Whether accepted or rejected, consume the fallback candidate so
+            // it cannot be applied a second time below after `modelStatePatch`
+            // becomes nil.
+            if statePatchForSafety != nil {
                 acceptedStructuredProgressUpdate?.storyState = nil
-            } else {
-                switch stateSafetyAction {
-                case .allow, .warn:
-                    break
-                default:
-                    acceptedStructuredProgressUpdate?.storyState = nil
-                }
             }
-            modelStatePatch = StoryOutputSafetyPolicy.persistableStatePatch(
-                action: outSafety.action,
-                original: statePatchAfterSafety
-            )
+            modelStatePatch = persistableStatePatch
             let persistableMetadata = parseStateMetadata(from: persistableText)
             rawFinal = sanitizedFinalText(persistableMetadata.visibleText)
             if case .soften = outSafety.action {

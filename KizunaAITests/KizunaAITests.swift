@@ -1250,4 +1250,46 @@ final class KizunaAITests: XCTestCase {
             )
         )
     }
+
+    func testStoryOutputSafetyPolicyDropsPreRewriteStructuredState() {
+        let original = StoryStatePatch(
+            location: "unsafe location",
+            mood: "unsafe mood"
+        )
+
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableStructuredStatePatch(
+                outputAction: .soften,
+                stateAction: .allow,
+                dedicatedPatch: nil,
+                fallbackPatch: original
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableStructuredStatePatch(
+                outputAction: .allow,
+                stateAction: .soften,
+                dedicatedPatch: nil,
+                fallbackPatch: original
+            )
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableStructuredStatePatch(
+                outputAction: .allow,
+                stateAction: .allow,
+                dedicatedPatch: original,
+                fallbackPatch: StoryStatePatch(location: "unselected fallback")
+            ),
+            original
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableStructuredStatePatch(
+                outputAction: .warn,
+                stateAction: .warn,
+                dedicatedPatch: nil,
+                fallbackPatch: original
+            ),
+            original
+        )
+    }
 }

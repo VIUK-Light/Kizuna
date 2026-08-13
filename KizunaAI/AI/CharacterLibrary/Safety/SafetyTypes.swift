@@ -123,6 +123,29 @@ enum StoryOutputSafetyPolicy {
             return nil
         }
     }
+
+    /// Keep one state patch only when both the visible output boundary and the
+    /// state patch's own safety evaluation allow it. A patch parsed from the
+    /// pre-rewrite progress object is only a fallback candidate; `.soften`
+    /// must never carry it across the rewritten-text boundary.
+    static func persistableStructuredStatePatch(
+        outputAction: SafetyAction,
+        stateAction: SafetyAction?,
+        dedicatedPatch: StoryStatePatch?,
+        fallbackPatch: StoryStatePatch?
+    ) -> StoryStatePatch? {
+        switch outputAction {
+        case .allow, .warn:
+            break
+        case .soften, .block, .requireEdit:
+            return nil
+        }
+        let candidate = dedicatedPatch ?? fallbackPatch
+        return persistableStatePatch(
+            action: stateAction ?? .block,
+            original: candidate
+        )
+    }
 }
 
 /// 重要度。
