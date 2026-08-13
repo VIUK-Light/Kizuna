@@ -248,7 +248,7 @@ private struct StoryGenerationModelPill: View {
                     .font(.system(size: 9, weight: .bold))
             }
             .foregroundStyle(storyText)
-            .frame(width: 88, height: 34, alignment: .center)
+            .frame(width: 88, height: 44, alignment: .center)
             .background(Capsule().fill(Color.white.opacity(0.16)))
         }
         .buttonStyle(.plain)
@@ -436,6 +436,7 @@ private struct StoryGenerationModelPill: View {
 private struct StorySessionChatBody: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject var vm: StorySessionViewModel
     @ObservedObject private var service: StorySessionService
     @ObservedObject private var localModelManager: LocalAssistantModelManager
@@ -496,7 +497,9 @@ private struct StorySessionChatBody: View {
                         .onChange(of: vm.session.messages.count) { _, _ in
                             if isStoryChatNearLatest {
                                 if let last = vm.session.messages.last?.id {
-                                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
+                                    withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
+                                        proxy.scrollTo(last, anchor: .bottom)
+                                    }
                                 }
                             } else {
                                 unreadStoryMessageCount += 1
@@ -514,7 +517,9 @@ private struct StorySessionChatBody: View {
                         }
                         .onChange(of: service.streamingResponse) { _, _ in
                             guard isStoryChatNearLatest, service.phase == .thinking else { return }
-                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("streaming-preview", anchor: .bottom) }
+                            withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
+                                proxy.scrollTo("streaming-preview", anchor: .bottom)
+                            }
                         }
                         .onChange(of: service.savedTurnRevision) { _, _ in
                             // キャラクター発話の保存後にだけ、アプリ側の60分判定を行う。
@@ -525,26 +530,26 @@ private struct StorySessionChatBody: View {
                         }
                         .onChange(of: vm.restSuggestion?.id) { _, suggestionID in
                             guard suggestionID != nil, isStoryChatNearLatest else { return }
-                            withAnimation(.easeOut(duration: 0.25)) {
+                            withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.25)) {
                                 proxy.scrollTo("rest-suggestion-card", anchor: .bottom)
                             }
                         }
                         .onChange(of: service.latestSafetyConcern?.id) { _, concernID in
                             guard concernID != nil, isStoryChatNearLatest else { return }
-                            withAnimation(.easeOut(duration: 0.25)) {
+                            withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.25)) {
                                 proxy.scrollTo("safety-support-card", anchor: .bottom)
                             }
                         }
                         .onChange(of: service.latestRuntimeNotice?.id) { _, noticeID in
                             guard noticeID != nil, isStoryChatNearLatest else { return }
-                            withAnimation(.easeOut(duration: 0.25)) {
+                            withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.25)) {
                                 proxy.scrollTo("runtime-notice-card", anchor: .bottom)
                             }
                         }
 
                         if !isStoryChatNearLatest {
                             Button {
-                                withAnimation(.easeOut(duration: 0.2)) {
+                                withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
                                     if let last = vm.session.messages.last?.id {
                                         proxy.scrollTo(last, anchor: .bottom)
                                     } else {
@@ -563,6 +568,7 @@ private struct StorySessionChatBody: View {
                                 .font(.system(size: 11, weight: .bold))
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 8)
+                                .frame(minHeight: 44)
                                 .background(.regularMaterial, in: Capsule())
                                 .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
                             }
@@ -665,12 +671,14 @@ private struct StorySessionChatBody: View {
                         vm.chooseRestSuggestionBreak()
                     }
                     .buttonStyle(.borderedProminent)
+                    .frame(minHeight: 44)
                     .disabled(vm.isSavingRestAcknowledgement)
 
                     Button(storyCopy("このまま続ける", "Continue")) {
                         vm.chooseRestSuggestionContinue()
                     }
                     .buttonStyle(.bordered)
+                    .frame(minHeight: 44)
                     .disabled(vm.isSavingRestAcknowledgement)
                 }
             }
@@ -683,7 +691,7 @@ private struct StorySessionChatBody: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .id("rest-suggestion-card")
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(accessibilityReduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -703,7 +711,7 @@ private struct StorySessionChatBody: View {
                         .font(.system(size: 10, weight: .heavy))
                         .foregroundStyle(storyMuted)
                     Text(notice.text)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(storyText.opacity(0.78))
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
@@ -713,6 +721,7 @@ private struct StorySessionChatBody: View {
                         .font(.system(size: 11.5, weight: .bold))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .frame(minHeight: 44)
                         if notice.backend == .local {
                             Button {
                                 vm.generationModel = .b31
@@ -728,6 +737,7 @@ private struct StorySessionChatBody: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
+                            .frame(minHeight: 44)
                             .disabled(!StoryGemma31BAPIService.shared.hasAPIKey)
                         }
                     }
@@ -802,7 +812,7 @@ private struct StorySessionChatBody: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .id("safety-support-card")
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(accessibilityReduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -981,6 +991,7 @@ private struct StorySessionChatBody: View {
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
+                    .frame(minHeight: 44)
                     .background(Capsule().fill(selectedCharacterID == character.id ? storyPurple.opacity(0.42) : Color.white.opacity(0.10)))
                     .overlay(Capsule().stroke(selectedCharacterID == character.id ? storyPurple.opacity(0.78) : Color.clear, lineWidth: 1))
                     .foregroundStyle(storyText)
@@ -993,13 +1004,25 @@ private struct StorySessionChatBody: View {
 
     @ViewBuilder
     private func messageRow(_ message: StoryMessage) -> some View {
+        if case .system = message.author {
+            messageRowContent(message)
+        } else {
+            messageRowContent(message)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(storyAccessibilityLabel(for: message))
+                .accessibilityValue(Text(message.createdAt, style: .time))
+        }
+    }
+
+    @ViewBuilder
+    private func messageRowContent(_ message: StoryMessage) -> some View {
         switch message.author {
         case .user:
             HStack {
                 Spacer(minLength: 80)
                 VStack(alignment: .trailing, spacing: 3) {
                     Text(message.text)
-                        .font(.system(size: 14.5, weight: .medium))
+                        .font(.body.weight(.medium))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 13)
                         .padding(.vertical, 9)
@@ -1008,7 +1031,7 @@ private struct StorySessionChatBody: View {
                                 .fill(storyPurple)
                         )
                     Text(message.createdAt, style: .time)
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(storyMuted.opacity(0.72))
                 }
             }
@@ -1025,7 +1048,7 @@ private struct StorySessionChatBody: View {
                             .font(.system(size: 10, weight: .heavy))
                             .foregroundStyle(storyMuted)
                         Text(StoryRetryMetadata.removingMetadata(from: message.text))
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .font(.callout.weight(.semibold))
                             .foregroundStyle(storyText.opacity(0.78))
                             .fixedSize(horizontal: false, vertical: true)
                         Button(storyCopy("もう一度試す", "Try again")) {
@@ -1034,6 +1057,7 @@ private struct StorySessionChatBody: View {
                         .font(.system(size: 11.5, weight: .bold))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .frame(minHeight: 44)
                         if shouldOfferNAGISwitch(for: message) {
                             Button {
                                 vm.generationModel = .b31
@@ -1051,6 +1075,7 @@ private struct StorySessionChatBody: View {
                             .controlSize(.small)
                             .disabled(!StoryGemma31BAPIService.shared.hasAPIKey)
                             .padding(.top, 4)
+                            .frame(minHeight: 44)
                         }
                     }
                 }
@@ -1079,7 +1104,7 @@ private struct StorySessionChatBody: View {
                     .foregroundStyle(storyWarmAccent.opacity(0.78))
                     .frame(width: 34)
                     Text(message.text)
-                        .font(.system(size: horizontalSizeClass == .compact ? 17 : 18, weight: .medium))
+                        .font(.body.weight(.medium))
                         .foregroundStyle(storyText.opacity(0.50))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1092,11 +1117,11 @@ private struct StorySessionChatBody: View {
                 VStack(alignment: .leading, spacing: 3) {
                     // アイコンの隣に発話者名を置き、誰の返答かをすぐ確認できるようにする。
                     Text(displayName)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(storyMuted)
                         .lineLimit(1)
                     Text(message.text)
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.body.weight(.medium))
                         .foregroundStyle(storyText.opacity(0.82))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 18)
@@ -1106,12 +1131,25 @@ private struct StorySessionChatBody: View {
                                 .fill(storyBubble)
                         )
                     Text(message.createdAt, style: .time)
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(storyMuted.opacity(0.72))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func storyAccessibilityLabel(for message: StoryMessage) -> String {
+        switch message.author {
+        case .user:
+            return storyCopy("あなた: \(message.text)", "You: \(message.text)")
+        case .narrator:
+            return storyCopy("ナレーション: \(message.text)", "Narration: \(message.text)")
+        case let .cast(_, displayName):
+            return "\(displayName): \(message.text)"
+        case .system:
+            return storyCopy("システム: \(message.text)", "System: \(message.text)")
         }
     }
 
@@ -1263,7 +1301,7 @@ private struct StorySessionChatBody: View {
             } label: {
                 Image(systemName: service.phase == .thinking ? "stop.fill" : "paperplane.fill")
                     .font(.system(size: 14, weight: .bold))
-                    .frame(width: 42, height: 42)
+                    .frame(width: 44, height: 44)
                     .background(
                         Circle().fill(
                             service.phase == .thinking || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
