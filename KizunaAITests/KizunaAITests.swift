@@ -1590,7 +1590,7 @@ final class KizunaAITests: XCTestCase {
             PersonaOutputSafetyPolicy.persistableText(
                 action: .soften,
                 original: "unsafe original",
-                rewritten: "safe rewrite"
+                rewritten: "  safe rewrite  \n"
             ),
             "safe rewrite"
         )

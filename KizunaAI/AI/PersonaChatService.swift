@@ -27,7 +27,7 @@ enum PersonaOutputSafetyPolicy {
                   !rewritten.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return nil
             }
-            return rewritten
+            return rewritten.trimmingCharacters(in: .whitespacesAndNewlines)
         case .allow, .warn:
             return original
         }
