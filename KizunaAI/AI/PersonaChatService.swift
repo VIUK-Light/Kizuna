@@ -144,23 +144,33 @@ final class PersonaChatService: ObservableObject {
         runtime: PersonaReplyGenerating = LocalAssistantRuntimeBridge.shared,
         store: PersonaChatStore = PersonaChatStore.shared,
         safetyPipeline: SafetyPipeline = SafetyPipeline.shared,
+        characterRepo: CharacterRepository = LocalJSONCharacterRepository(),
+        memoryRepo: MemoryRepository = LocalJSONMemoryRepository(),
+        smallClassifier: SmallModelClassifying = MockSmallModelClassifier(),
+        memorySelector: MemorySelecting = MockMemorySelector(),
+        memorySummarizer: MemorySummarizing = MockMemorySummarizer(),
         watchdogNanoseconds: UInt64 = 75_000_000_000
     ) {
         self.runtime = runtime
         self.store = store
         self.safetyPipeline = safetyPipeline
+        self.characterRepo = characterRepo
+        self.memoryRepo = memoryRepo
+        self.smallClassifier = smallClassifier
+        self.memorySelector = memorySelector
+        self.memorySummarizer = memorySummarizer
         self.watchdogNanoseconds = watchdogNanoseconds
     }
 
     /// 指定スレッドにユーザー発話を追加し、Gemma 4 のペルソナモードで応答を生成する。
-    // MARK: - DI for Character Library pipeline (default: Local + Mock)
+    // MARK: - Character Library pipeline dependencies
     /// 既存挙動を壊さないために、スレッドに characterID が紐付いている場合だけ使う。
-    private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
-    private let memoryRepo: MemoryRepository = LocalJSONMemoryRepository()
+    private let characterRepo: CharacterRepository
+    private let memoryRepo: MemoryRepository
     private let safetyPipeline: SafetyPipeline
-    private let smallClassifier: SmallModelClassifying = MockSmallModelClassifier()
-    private let memorySelector: MemorySelecting = MockMemorySelector()
-    private let memorySummarizer: MemorySummarizing = MockMemorySummarizer()
+    private let smallClassifier: SmallModelClassifying
+    private let memorySelector: MemorySelecting
+    private let memorySummarizer: MemorySummarizing
     private let promptBuilder = PromptBuilder()
 
     @discardableResult
