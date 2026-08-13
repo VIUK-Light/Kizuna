@@ -155,6 +155,13 @@ final class KizunaAITests: XCTestCase {
                 return true
             }
         }
+        var didReleaseBody = false
+        defer {
+            task.cancel()
+            if !didReleaseBody {
+                bodyMayFinish.signal()
+            }
+        }
 
         // Yield the MainActor while the detached task reaches the dedicated
         // file-I/O queue. Blocking the test actor on a semaphore here would
@@ -164,8 +171,8 @@ final class KizunaAITests: XCTestCase {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         guard probe.hasStarted else {
-            task.cancel()
             bodyMayFinish.signal()
+            didReleaseBody = true
             _ = try? await task.value
             XCTFail("the file operation must reach its started state before cancellation")
             return
@@ -173,6 +180,7 @@ final class KizunaAITests: XCTestCase {
 
         task.cancel()
         bodyMayFinish.signal()
+        didReleaseBody = true
         let completed = try await task.value
         XCTAssertTrue(completed)
         // The operation started before cancellation, so its completed result
