@@ -807,10 +807,15 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
     }
 
     private let store: LocalJSONStore<StoryMemory>
-    private let perScopeLimit = 120
+    private let perScopeLimit: Int
 
-    init(fileName: String = "story_memories.json") {
-        store = LocalJSONStore<StoryMemory>(fileName: fileName)
+    init(
+        fileName: String = "story_memories.json",
+        storageURL: URL = KizunaDataMigration.characterLibraryURL,
+        perScopeLimit: Int = 120
+    ) {
+        self.perScopeLimit = max(1, perScopeLimit)
+        store = LocalJSONStore<StoryMemory>(fileName: fileName, baseURL: storageURL)
     }
 
     func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] {
@@ -879,17 +884,13 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                 all.append(incoming)
             }
 
-            // Sessionごとに上限を設ける。World単位で切り詰めると、新しい
-            // Sessionの保存が別Sessionやnilのレガシー記録を削除してしまう。
-            let grouped = Dictionary(grouping: all) {
-                MemoryScope(storyWorldId: $0.storyWorldId, storySessionId: $0.storySessionId)
-            }
-            all = grouped.values.flatMap { values in
-                values.sorted {
-                    if $0.importance != $1.importance { return $0.importance > $1.importance }
-                    return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
-                }.prefix(perScopeLimit)
-            }
+            // Sessionごとに上限を設ける。今回の保存対象以外のScopeまで
+            // 切り詰めると、新しいSessionの保存が別Sessionやnilの
+            // レガシー記録を削除してしまうため、対象Scopeだけを整理する。
+            trim(&all, to: [MemoryScope(
+                storyWorldId: incoming.storyWorldId,
+                storySessionId: incoming.storySessionId
+            )])
         }
     }
 
@@ -928,15 +929,21 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                 all[sourceIndex] = moved
             }
 
-            let grouped = Dictionary(grouping: all) {
-                MemoryScope(storyWorldId: $0.storyWorldId, storySessionId: $0.storySessionId)
-            }
-            all = grouped.values.flatMap { values in
-                values.sorted {
-                    if $0.importance != $1.importance { return $0.importance > $1.importance }
-                    return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
-                }.prefix(perScopeLimit)
-            }
+            // 移動元で空いた枠と移動先の上限だけを整理する。他のWorldや
+            // Sessionの保持順序・件数には触れない。
+            trim(
+                &all,
+                to: [
+                    MemoryScope(
+                        storyWorldId: memory.storyWorldId,
+                        storySessionId: memory.storySessionId
+                    ),
+                    MemoryScope(
+                        storyWorldId: storyWorldId,
+                        storySessionId: memory.storySessionId
+                    )
+                ]
+            )
         }
     }
 
@@ -993,5 +1000,22 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    private func trim(_ all: inout [StoryMemory], to scopes: Set<MemoryScope>) {
+        for scope in scopes {
+            let scoped = all
+                .filter { MemoryScope(storyWorldId: $0.storyWorldId, storySessionId: $0.storySessionId) == scope }
+                .sorted {
+                    if $0.importance != $1.importance { return $0.importance > $1.importance }
+                    return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
+                }
+            guard scoped.count > perScopeLimit else { continue }
+            let keptIDs = Set(scoped.prefix(perScopeLimit).map(\.id))
+            all.removeAll {
+                MemoryScope(storyWorldId: $0.storyWorldId, storySessionId: $0.storySessionId) == scope
+                    && !keptIDs.contains($0.id)
+            }
+        }
     }
 }

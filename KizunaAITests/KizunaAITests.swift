@@ -133,10 +133,83 @@ final class KizunaAITests: XCTestCase {
           "createdAt": 0,
           "lastUsedAt": null
         }
-        """.data(using: .utf8)!
-        let legacy = try JSONDecoder().decode(StoryMemory.self, from: legacyJSON)
+        """
+        let legacyData = try XCTUnwrap(legacyJSON.data(using: .utf8))
+        let legacy = try JSONDecoder().decode(StoryMemory.self, from: legacyData)
         XCTAssertNil(legacy.storySessionId)
         XCTAssertTrue(legacy.sourceTurnIds.isEmpty)
+    }
+
+    func testStoryMemoryAggregatesIgnoreOrphanedSourceMetadata() {
+        let validSourceTurnID = UUID()
+        let orphanedSourceTurnID = UUID()
+        let createdAt = Date(timeIntervalSince1970: 100)
+        var memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "event",
+            importance: 0.2,
+            createdAt: createdAt,
+            sourceTurnIds: [validSourceTurnID],
+            sourceTurnMetadata: [
+                validSourceTurnID: StoryMemorySourceMetadata(
+                    importance: 0.2,
+                    createdAt: createdAt,
+                    lastUsedAt: createdAt
+                ),
+                orphanedSourceTurnID: StoryMemorySourceMetadata(
+                    importance: 0.99,
+                    createdAt: createdAt,
+                    lastUsedAt: createdAt.addingTimeInterval(100)
+                )
+            ]
+        )
+
+        memory.recomputeAggregatesFromSourceMetadata()
+
+        XCTAssertEqual(Set(memory.sourceTurnMetadata.keys), Set([validSourceTurnID]))
+        XCTAssertEqual(memory.importance, 0.2)
+        XCTAssertEqual(memory.lastUsedAt, createdAt)
+    }
+
+    func testSavingNewSessionDoesNotTrimOtherSessionOrLegacyScope() async throws {
+        let storageURL = KizunaDataMigration.characterLibraryURL
+            .appendingPathComponent("story-memory-scope-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let repository = LocalJSONStoryMemoryRepository(
+            storageURL: storageURL,
+            perScopeLimit: 1
+        )
+        let worldID = UUID()
+        let existingSessionID = UUID()
+        let newSessionID = UUID()
+        let existingSessionMemories = [
+            StoryMemory(storyWorldId: worldID, text: "existing 1", storySessionId: existingSessionID),
+            StoryMemory(storyWorldId: worldID, text: "existing 2", storySessionId: existingSessionID)
+        ]
+        let legacyMemories = [
+            StoryMemory(storyWorldId: worldID, text: "legacy 1"),
+            StoryMemory(storyWorldId: worldID, text: "legacy 2")
+        ]
+
+        for memory in existingSessionMemories + legacyMemories {
+            try await repository.saveMemory(memory)
+        }
+        try await repository.saveMemory(
+            StoryMemory(storyWorldId: worldID, text: "new session", storySessionId: newSessionID)
+        )
+
+        let existingSession = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: existingSessionID
+        )
+        XCTAssertEqual(Set(existingSession.map(\.id)), Set(existingSessionMemories.map(\.id)))
+
+        let allMemories = try await repository.fetchMemories(storyWorldId: worldID)
+        XCTAssertEqual(
+            Set(allMemories.filter { $0.storySessionId == nil }.map(\.id)),
+            Set(legacyMemories.map(\.id))
+        )
     }
 
     func testLocalJSONStoryMemoryRepositoryKeepsSessionScopesAndLegacyRecords() async throws {
@@ -217,7 +290,8 @@ final class KizunaAITests: XCTestCase {
             storySessionId: sessionID
         ).first(where: { $0.text == mergedText })
         XCTAssertNotNil(mergedBeforeMark)
-        try await repository.markUsed(ids: [mergedBeforeMark!.id])
+        let mergedBeforeMarkID = try XCTUnwrap(mergedBeforeMark?.id)
+        try await repository.markUsed(ids: [mergedBeforeMarkID])
         let marked = try await repository.fetchMemories(
             storyWorldId: worldID,
             storySessionId: sessionID
@@ -974,10 +1048,12 @@ final class KizunaAITests: XCTestCase {
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        var rawItems = try JSONSerialization.jsonObject(
-            with: encoder.encode([validEntry]),
-            options: [.fragmentsAllowed]
-        ) as! [Any]
+        var rawItems = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: encoder.encode([validEntry]),
+                options: [.fragmentsAllowed]
+            ) as? [Any]
+        )
         rawItems.append(["turnID": "not-a-uuid"])
         let journalData = try JSONSerialization.data(
             withJSONObject: rawItems,
