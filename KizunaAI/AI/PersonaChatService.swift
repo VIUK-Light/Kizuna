@@ -222,8 +222,7 @@ final class PersonaChatService: ObservableObject {
             )
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
-                PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: polite)
-                PersonaChatStore.shared.finalizePersist()
+                PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: polite)
                 self.streamingResponse = polite
                 self.phase = .idle
                 self.invalidatePendingStreamSanitization()
@@ -338,8 +337,7 @@ final class PersonaChatService: ObservableObject {
         await MainActor.run {
             guard self.activeGenerationID == generationID else { return }
             self.streamingResponse = finalText
-            PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: finalText)
-            PersonaChatStore.shared.finalizePersist()
+            PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: finalText)
             self.phase = .idle
             self.invalidatePendingStreamSanitization()
             self.activeGenerationID = nil
@@ -367,8 +365,7 @@ final class PersonaChatService: ObservableObject {
             let partial = (latestRawStreamingText ?? streamingResponse)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if let meaningful = meaningfulResponse(partial) {
-                PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: meaningful)
-                PersonaChatStore.shared.finalizePersist()
+                PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: meaningful)
             } else {
                 PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
             }
@@ -466,8 +463,7 @@ final class PersonaChatService: ObservableObject {
             return
         }
         streamingResponse = cleaned
-        PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: cleaned)
-        PersonaChatStore.shared.finalizePersist()
+        PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: cleaned)
         phase = .idle
         invalidatePendingStreamSanitization()
         activeGenerationID = nil
@@ -489,8 +485,7 @@ final class PersonaChatService: ObservableObject {
                 if let partial = self.meaningfulResponse(
                     self.latestRawStreamingText ?? self.streamingResponse
                 ) {
-                    PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: partial)
-                    PersonaChatStore.shared.finalizePersist()
+                    PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: partial)
                     self.streamingResponse = partial
                     self.phase = .idle
                     self.invalidatePendingStreamSanitization()

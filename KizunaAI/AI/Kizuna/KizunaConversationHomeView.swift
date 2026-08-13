@@ -13,6 +13,11 @@ struct KizunaConversationHomeView: View {
             header
             Divider()
 
+            if store.isPersistenceRecoveryRequired {
+                recoveryPrompt
+                Divider()
+            }
+
             if let latestThread = store.threads.first {
                 latestConversation(latestThread)
                 if store.threads.count > 1 {
@@ -198,6 +203,43 @@ struct KizunaConversationHomeView: View {
         .accessibilityIdentifier("conversation.empty")
     }
 
+    private var recoveryPrompt: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(KizunaCopy.text(
+                        japanese: "Persona履歴の復旧が必要です",
+                        english: "Persona history recovery is required"
+                    ))
+                        .font(.subheadline.weight(.semibold))
+                    Text(KizunaCopy.text(
+                        japanese: "保存データは保持されています。復旧画面からバックアップまたはリセットを選べます。",
+                        english: "Your saved data is preserved. Open recovery to export a backup or reset it."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Button(KizunaCopy.text(japanese: "復旧を開く", english: "Open recovery")) {
+                isShowingAllConversations = true
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .frame(minHeight: 44)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.10))
+        .accessibilityElement(children: .contain)
+    }
+
     private func open(_ thread: PersonaThread) {
         store.selectThread(id: thread.id)
         presentedThread = store.thread(id: thread.id) ?? thread
@@ -230,7 +272,14 @@ struct KizunaConversationHomeView: View {
                 .filter { !$0.isEmpty }
                 .joined(separator: " / ")
         )
-        let thread = store.createThread(with: persona, characterID: character.id)
+        guard let thread = store.createThread(with: persona, characterID: character.id) else {
+            // The recovery screen owns export/reset. Do not drop the tap
+            // silently when corrupted data has intentionally blocked writes.
+            if store.isPersistenceRecoveryRequired {
+                isShowingAllConversations = true
+            }
+            return
+        }
         if thread.messages.isEmpty, !character.firstMessage.isEmpty {
             store.appendMessage(
                 PersonaMessage(role: .assistant, text: character.firstMessage),

@@ -845,4 +845,269 @@ final class KizunaAITests: XCTestCase {
         }
         return url
     }
+
+    @MainActor
+    func testPersonaStorePreservesCorruptRawBlobAcrossCRUDAndFinalize() {
+        let suiteName = "KizunaAITests.PersonaCorrupt.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let raw = Data([0x00, 0xFF, 0x10, 0x7B])
+        defaults.set(raw, forKey: "persona.threads.v1")
+        defaults.set("sentinel-active", forKey: "persona.activeThreadID.v1")
+        let store = PersonaChatStore(defaults: defaults)
+        let persona = PersonaProfile(
+            name: "Test",
+            personality: "quiet",
+            tone: .casual,
+            relation: .friend
+        )
+
+        XCTAssertTrue(store.isPersistenceRecoveryRequired)
+        let threadsBeforeMutation = store.threads
+        let activeThreadBeforeMutation = store.activeThreadID
+        store.finalizePersist()
+        XCTAssertNil(store.createThread(with: persona, characterID: UUID()))
+        store.appendMessage(
+            PersonaMessage(role: .assistant, text: "hello"),
+            toThread: UUID()
+        )
+
+        XCTAssertEqual(store.threads, threadsBeforeMutation)
+        XCTAssertEqual(store.activeThreadID, activeThreadBeforeMutation)
+        XCTAssertEqual(defaults.data(forKey: "persona.threads.v1"), raw)
+        XCTAssertEqual(defaults.string(forKey: "persona.activeThreadID.v1"), "sentinel-active")
+
+        do {
+            let exportURL = try store.exportCorruptPersistedThreads()
+            defer { try? FileManager.default.removeItem(at: exportURL) }
+            XCTAssertEqual(try Data(contentsOf: exportURL), raw)
+        } catch {
+            XCTFail("corrupt data should be exportable: \(error)")
+        }
+
+        XCTAssertTrue(store.discardCorruptPersistedThreads())
+        XCTAssertEqual(defaults.data(forKey: "persona.threads.v1.corrupt-backup"), raw)
+        XCTAssertNil(defaults.object(forKey: "persona.activeThreadID.v1"))
+    }
+
+    @MainActor
+    func testPersonaStoreTreatsNonDataRawValueAsCorruptAndAllowsExplicitRecovery() {
+        let suiteName = "KizunaAITests.PersonaWrongType.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("not-a-data-blob", forKey: "persona.threads.v1")
+        let store = PersonaChatStore(defaults: defaults)
+
+        XCTAssertTrue(store.isPersistenceRecoveryRequired)
+        XCTAssertEqual(defaults.string(forKey: "persona.threads.v1"), "not-a-data-blob")
+        do {
+            let exportURL = try store.exportCorruptPersistedThreads()
+            defer { try? FileManager.default.removeItem(at: exportURL) }
+            XCTAssertEqual(try String(contentsOf: exportURL, encoding: .utf8), "not-a-data-blob")
+        } catch {
+            XCTFail("string corruption should be exportable: \(error)")
+        }
+        XCTAssertTrue(store.discardCorruptPersistedThreads())
+        XCTAssertFalse(store.isPersistenceRecoveryRequired)
+        XCTAssertEqual(defaults.string(forKey: "persona.threads.v1.corrupt-backup"), "not-a-data-blob")
+        XCTAssertEqual(defaults.data(forKey: "persona.threads.v1"), try? JSONEncoder().encode([PersonaThread]()))
+    }
+
+    @MainActor
+    func testPersonaStoreStillPersistsValidData() {
+        let suiteName = "KizunaAITests.PersonaValid.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let first = PersonaChatStore(defaults: defaults)
+        let persona = PersonaProfile(
+            name: "Saved",
+            personality: "warm",
+            tone: .casual,
+            relation: .friend
+        )
+        guard let thread = first.createThread(with: persona) else {
+            XCTFail("valid persistence should allow thread creation")
+            return
+        }
+        first.appendMessage(
+            PersonaMessage(role: .user, text: "keep this"),
+            toThread: thread.id
+        )
+
+        let second = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(second.threads.count, 1)
+        XCTAssertEqual(second.threads.first?.messages.first?.text, "keep this")
+    }
+
+    @MainActor
+    func testPersonaStoreDetachingCharacterReferenceKeepsRecentOrder() throws {
+        let suiteName = "KizunaPersonaStoreTests.Detach.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let characterID = UUID()
+        let olderDate = Date(timeIntervalSince1970: 100)
+        let newerDate = Date(timeIntervalSince1970: 200)
+        let older = PersonaThread(
+            id: UUID(),
+            personaSnapshot: profile,
+            characterID: characterID,
+            title: "Older",
+            createdAt: olderDate,
+            updatedAt: olderDate
+        )
+        let newer = PersonaThread(
+            id: UUID(),
+            personaSnapshot: profile,
+            characterID: UUID(),
+            title: "Newer",
+            createdAt: newerDate,
+            updatedAt: newerDate
+        )
+        defaults.set(
+            try JSONEncoder().encode([older, newer]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults)
+        store.detachCharacterReference(threadID: older.id)
+
+        XCTAssertEqual(store.threads.first?.id, older.id)
+        XCTAssertNil(store.thread(id: older.id)?.characterID)
+    }
+
+    func testPersonaThreadOrderingPlacesCompletedConversationFirst() {
+        let olderID = UUID()
+        let newerID = UUID()
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let olderDate = Date(timeIntervalSince1970: 100)
+        let newerDate = Date(timeIntervalSince1970: 200)
+        let older = PersonaThread(
+            id: olderID,
+            personaSnapshot: profile,
+            title: "Older",
+            createdAt: olderDate,
+            updatedAt: olderDate
+        )
+        let newer = PersonaThread(
+            id: newerID,
+            personaSnapshot: profile,
+            title: "Newer",
+            createdAt: olderDate,
+            updatedAt: newerDate
+        )
+
+        let ordered = PersonaThreadOrdering.mostRecentFirst([older, newer])
+
+        XCTAssertEqual(ordered.map(\.id), [newerID, olderID])
+    }
+
+    func testPersonaStoreFinalizationAndCancellationPersistAcrossReload() throws {
+        let suiteName = "KizunaPersonaStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let targetID = UUID()
+        let pendingID = UUID()
+        let newerID = UUID()
+        let oldDate = Date(timeIntervalSince1970: 100)
+        let newerDate = Date(timeIntervalSince1970: 200)
+        let target = PersonaThread(
+            id: targetID,
+            personaSnapshot: profile,
+            title: "Target",
+            messages: [
+                PersonaMessage(role: .user, text: "hello", createdAt: oldDate),
+                PersonaMessage(role: .assistant, text: "", createdAt: oldDate)
+            ],
+            createdAt: oldDate,
+            updatedAt: oldDate
+        )
+        let pending = PersonaThread(
+            id: pendingID,
+            personaSnapshot: profile,
+            title: "Pending",
+            messages: [
+                PersonaMessage(role: .user, text: "stop", createdAt: oldDate),
+                PersonaMessage(role: .assistant, text: "…", createdAt: oldDate)
+            ],
+            createdAt: oldDate,
+            updatedAt: oldDate
+        )
+        let newer = PersonaThread(
+            id: newerID,
+            personaSnapshot: profile,
+            title: "Newer",
+            messages: [PersonaMessage(role: .user, text: "new", createdAt: newerDate)],
+            createdAt: newerDate,
+            updatedAt: newerDate
+        )
+        defaults.set(
+            try JSONEncoder().encode([target, pending, newer]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults)
+        XCTAssertTrue(store.finalizeLastAssistantMessage(in: targetID, text: "completed"))
+        XCTAssertEqual(store.threads.first?.id, targetID)
+        XCTAssertEqual(store.thread(id: targetID)?.messages.last?.text, "completed")
+
+        store.removePendingAssistantMessage(in: pendingID)
+        let reloaded = PersonaChatStore(defaults: defaults)
+
+        XCTAssertEqual(reloaded.thread(id: targetID)?.messages.last?.text, "completed")
+        XCTAssertFalse(reloaded.thread(id: pendingID)?.messages.last?.role == .assistant)
+        XCTAssertEqual(reloaded.threads.first?.id, pendingID)
+    }
+
+    func testPersonaThreadOrderingUsesCreatedAtAndIDTieBreakers() {
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let sameDate = Date(timeIntervalSince1970: 100)
+        let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let first = PersonaThread(
+            id: firstID,
+            personaSnapshot: profile,
+            title: "First",
+            createdAt: sameDate,
+            updatedAt: sameDate
+        )
+        let second = PersonaThread(
+            id: secondID,
+            personaSnapshot: profile,
+            title: "Second",
+            createdAt: sameDate,
+            updatedAt: sameDate
+        )
+
+        XCTAssertEqual(
+            PersonaThreadOrdering.mostRecentFirst([second, first]).map(\.id),
+            [firstID, secondID]
+        )
+    }
 }

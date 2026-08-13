@@ -10,6 +10,22 @@
 import Foundation
 import Combine
 
+enum PersonaThreadOrdering {
+    /// Keep the store's published order consistent with the order used by the
+    /// conversation home: most recently active threads first.
+    static func mostRecentFirst(_ threads: [PersonaThread]) -> [PersonaThread] {
+        threads.sorted {
+            if $0.updatedAt != $1.updatedAt {
+                return $0.updatedAt > $1.updatedAt
+            }
+            if $0.createdAt != $1.createdAt {
+                return $0.createdAt > $1.createdAt
+            }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+}
+
 struct PersonaMessage: Codable, Hashable, Identifiable {
     enum Role: String, Codable { case user, assistant, narrator }
 
@@ -73,14 +89,29 @@ struct PersonaThread: Codable, Hashable, Identifiable {
     }
 }
 
+enum PersonaChatRecoveryError: LocalizedError {
+    case noCorruptPersistedValue
+    case unsupportedPersistedValue
+
+    var errorDescription: String? {
+        switch self {
+        case .noCorruptPersistedValue:
+            return "復旧対象の保存データが見つかりません。"
+        case .unsupportedPersistedValue:
+            return "保存データをバックアップ形式へ変換できません。"
+        }
+    }
+}
+
 @MainActor
 final class PersonaChatStore: ObservableObject {
-    static let shared = PersonaChatStore()
+    static let shared = PersonaChatStore(defaults: UserDefaults.standard)
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private enum Key {
         static let threads = "persona.threads.v1"
         static let activeThreadID = "persona.activeThreadID.v1"
+        static let corruptThreadsBackup = "persona.threads.v1.corrupt-backup"
     }
 
     /// 新しい順 (updatedAt 降順) でソートして保持。
@@ -89,8 +120,12 @@ final class PersonaChatStore: ObservableObject {
     /// 破損データを上書きすると、復旧可能な履歴まで失われるため、明示的な
     /// リセット/再保存が行われるまで現在のファイルを保持する。
     private var didFailToLoadPersistedThreads = false
-    @Published var activeThreadID: UUID? {
+    @Published private(set) var activeThreadID: UUID? {
         didSet {
+            guard !didFailToLoadPersistedThreads else {
+                NSLog("[PersonaChatStore] skipped active thread write while recovery is required")
+                return
+            }
             if let id = activeThreadID {
                 defaults.set(id.uuidString, forKey: Key.activeThreadID)
             } else {
@@ -108,14 +143,13 @@ final class PersonaChatStore: ObservableObject {
         threads.first { $0.id == id }
     }
 
-    private init() {
+    /// テストや復旧画面が保存先を明示できる初期化経路。
+    /// 本番は `shared` から同じUserDefaults.standardを使う。
+    init(defaults: UserDefaults = UserDefaults.standard) {
+        self.defaults = defaults
         load()
         guard !didFailToLoadPersistedThreads else {
             NSLog("[PersonaChatStore] thread data was not decoded; preserving the source file")
-            if let saved = defaults.string(forKey: Key.activeThreadID),
-               let uuid = UUID(uuidString: saved) {
-                self.activeThreadID = uuid
-            }
             return
         }
         // 起動時に「空メッセージのスレッド」を 1 件残して残りを掃除する。
@@ -141,12 +175,17 @@ final class PersonaChatStore: ObservableObject {
     }
 
     private func load() {
+        guard defaults.object(forKey: Key.threads) != nil else {
+            return
+        }
         guard let data = defaults.data(forKey: Key.threads) else {
+            didFailToLoadPersistedThreads = true
+            NSLog("[PersonaChatStore] saved thread value is not a Data blob")
             return
         }
         do {
             let decoded = try JSONDecoder().decode([PersonaThread].self, from: data)
-            self.threads = decoded.sorted { $0.updatedAt > $1.updatedAt }
+            self.threads = PersonaThreadOrdering.mostRecentFirst(decoded)
         } catch {
             didFailToLoadPersistedThreads = true
             NSLog("[PersonaChatStore] failed to decode saved threads: %@", error.localizedDescription)
@@ -154,9 +193,83 @@ final class PersonaChatStore: ObservableObject {
     }
 
     private func persist() {
+        guard !didFailToLoadPersistedThreads else {
+            NSLog("[PersonaChatStore] skipped thread persist while recovery is required")
+            return
+        }
         if let data = try? JSONEncoder().encode(threads) {
             defaults.set(data, forKey: Key.threads)
         }
+    }
+
+    /// 壊れた保存データを破棄する唯一の明示的な復旧操作。
+    /// 先にraw値をバックアップキーへ移し、確認済みの呼び出し元だけが
+    /// 空状態として保存を再開できるようにする。
+    @discardableResult
+    func discardCorruptPersistedThreads() -> Bool {
+        guard didFailToLoadPersistedThreads else { return false }
+        if let rawValue = defaults.object(forKey: Key.threads) {
+            defaults.set(rawValue, forKey: Key.corruptThreadsBackup)
+        }
+        defaults.removeObject(forKey: Key.threads)
+        defaults.removeObject(forKey: Key.activeThreadID)
+        didFailToLoadPersistedThreads = false
+        threads = []
+        activeThreadID = nil
+        persist()
+        return true
+    }
+
+    var isPersistenceRecoveryRequired: Bool {
+        didFailToLoadPersistedThreads
+    }
+
+    /// 破損した保存値を、明示的な共有・保存操作へ渡せる一時ファイルへ書き出す。
+    /// Data と String は保存されていた値をそのままバイト列として扱い、
+    /// その他の UserDefaults のプロパティリスト値も内容を失わない形式で保存する。
+    /// この操作は保存値を変更せず、復旧が必要な状態でのみ実行できる。
+    func exportCorruptPersistedThreads() throws -> URL {
+        guard didFailToLoadPersistedThreads,
+              let rawValue = defaults.object(forKey: Key.threads) else {
+            throw PersonaChatRecoveryError.noCorruptPersistedValue
+        }
+
+        let data: Data
+        let fileExtension: String
+        if let rawData = rawValue as? Data {
+            data = rawData
+            fileExtension = "bin"
+        } else if let rawString = rawValue as? String {
+            data = Data(rawString.utf8)
+            fileExtension = "txt"
+        } else if PropertyListSerialization.propertyList(
+            rawValue,
+            isValidFor: .binary
+        ) {
+            data = try PropertyListSerialization.data(
+                fromPropertyList: rawValue,
+                format: .binary,
+                options: 0
+            )
+            fileExtension = "plist"
+        } else {
+            throw PersonaChatRecoveryError.unsupportedPersistedValue
+        }
+
+        let fileName = "Kizuna-Persona-Recovery-\(UUID().uuidString).\(fileExtension)"
+        let exportURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        try data.write(to: exportURL, options: .atomic)
+        return exportURL
+    }
+
+    /// 破損した保存値を自動的に空状態で上書きしないための共通ガード。
+    /// 復旧操作以外の公開ミューテーションは、メモリ上の状態も変更しない。
+    private func canMutatePersistedState() -> Bool {
+        guard !didFailToLoadPersistedThreads else {
+            NSLog("[PersonaChatStore] skipped mutation while recovery is required")
+            return false
+        }
+        return true
     }
 
     // MARK: - Thread CRUD
@@ -164,7 +277,8 @@ final class PersonaChatStore: ObservableObject {
     /// 新しい会話スレッドを作る。ただし、既に「同じキャラ・空メッセージのスレッド」が
     /// 存在する場合はそれを再利用してアクティブ化する (空スレッドの量産防止)。
     @discardableResult
-    func createThread(with persona: PersonaProfile, characterID: UUID? = nil) -> PersonaThread {
+    func createThread(with persona: PersonaProfile, characterID: UUID? = nil) -> PersonaThread? {
+        guard canMutatePersistedState() else { return nil }
         if let existing = threads.first(where: {
             $0.characterID == characterID
                 && (characterID != nil || $0.personaSnapshot.id == persona.id)
@@ -179,8 +293,7 @@ final class PersonaChatStore: ObservableObject {
                 threads[index].personaSnapshot = persona
                 threads[index].title = persona.name
                 threads[index].updatedAt = Date()
-                threads.sort { $0.updatedAt > $1.updatedAt }
-                persist()
+                persistAfterActivityUpdate()
             }
             activeThreadID = existing.id
             return threads.first(where: { $0.id == existing.id }) ?? existing
@@ -197,23 +310,26 @@ final class PersonaChatStore: ObservableObject {
     }
 
     func selectThread(id: UUID) {
+        guard canMutatePersistedState() else { return }
         guard threads.contains(where: { $0.id == id }) else { return }
         activeThreadID = id
     }
 
     /// キャラ本体が削除されても、会話スナップショットは残して再開できるようにする。
     func detachCharacterReference(threadID: UUID) {
+        guard canMutatePersistedState() else { return }
         guard let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
         guard threads[index].characterID != nil else { return }
         threads[index].characterID = nil
         threads[index].updatedAt = Date()
-        persist()
+        persistAfterActivityUpdate()
     }
 
     /// キャラクター本体を削除した後に、関連する全Personaスレッドを
     /// 保存済みの `personaSnapshot` へ切り替える。会話本文はそのまま残し、
     /// 次回送信時に削除済みUUIDを再取得し続けないよう参照だけを切り離す。
     func detachCharacterReferences(for characterID: UUID) {
+        guard canMutatePersistedState() else { return }
         var didChange = false
         for index in threads.indices where threads[index].characterID == characterID {
             threads[index].characterID = nil
@@ -227,6 +343,7 @@ final class PersonaChatStore: ObservableObject {
     }
 
     func deleteThread(id: UUID) {
+        guard canMutatePersistedState() else { return }
         threads.removeAll { $0.id == id }
         if activeThreadID == id {
             activeThreadID = threads.first?.id
@@ -235,17 +352,18 @@ final class PersonaChatStore: ObservableObject {
     }
 
     func renameThread(id: UUID, title: String) {
+        guard canMutatePersistedState() else { return }
         guard let idx = threads.firstIndex(where: { $0.id == id }) else { return }
         threads[idx].title = title
         threads[idx].updatedAt = Date()
         // ソートし直し
-        threads.sort { $0.updatedAt > $1.updatedAt }
-        persist()
+        persistAfterActivityUpdate()
     }
 
     // MARK: - Messages
 
     func appendMessage(_ message: PersonaMessage, toThread threadID: UUID) {
+        guard canMutatePersistedState() else { return }
         guard let idx = threads.firstIndex(where: { $0.id == threadID }) else { return }
         threads[idx].messages.append(message)
         threads[idx].updatedAt = Date()
@@ -257,6 +375,7 @@ final class PersonaChatStore: ObservableObject {
 
     /// アシスタント応答のストリーミング途中で「最新メッセージのテキスト」を上書きする用。
     func updateLastAssistantMessage(in threadID: UUID, text: String) {
+        guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
         guard let lastIdx = threads[threadIdx].messages.lastIndex(where: { $0.role == .assistant }) else { return }
         threads[threadIdx].messages[lastIdx].text = text
@@ -264,40 +383,65 @@ final class PersonaChatStore: ObservableObject {
         // ストリーミング毎の persist は重いので、ここでは保存しない。最終 finalize 側で persist する。
     }
 
+    /// Commit the final assistant text and activity order as one MainActor
+    /// operation. Streaming updates use `updateLastAssistantMessage` so this
+    /// sort/persist work happens only once per completed turn.
+    @discardableResult
+    func finalizeLastAssistantMessage(in threadID: UUID, text: String) -> Bool {
+        guard canMutatePersistedState() else { return false }
+        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return false }
+        guard let lastIdx = threads[threadIdx].messages.lastIndex(where: { $0.role == .assistant }) else { return false }
+        threads[threadIdx].messages[lastIdx].text = text
+        threads[threadIdx].updatedAt = Date()
+        persistAfterActivityUpdate()
+        return true
+    }
+
     /// 生成開始直後に作った空のアシスタント枠を、ユーザーが停止した時だけ取り除く。
     /// 部分応答がある場合は呼び出し側がその本文を保存するため、ここでは削除しない。
     func removePendingAssistantMessage(in threadID: UUID) {
+        guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
         guard let last = threads[threadIdx].messages.last,
               last.role == .assistant,
               isPendingAssistantText(last.text) else { return }
         threads[threadIdx].messages.removeLast()
         threads[threadIdx].updatedAt = Date()
-        persist()
+        persistAfterActivityUpdate()
     }
 
     /// 失敗確定時に、ストリーミング途中の本文を履歴へ残さないための削除。
     func removeLastAssistantMessage(in threadID: UUID) {
+        guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
               threads[threadIdx].messages.last?.role == .assistant else { return }
         threads[threadIdx].messages.removeLast()
         threads[threadIdx].updatedAt = Date()
-        persist()
+        persistAfterActivityUpdate()
     }
 
     /// 失敗したターンを再送する前に、直前のユーザー発話だけを取り除く。
     /// アシスタント側の空枠は `removePendingAssistantMessage` で先に処理する。
     func removeLastUserMessage(in threadID: UUID, matching text: String? = nil) {
+        guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
               let last = threads[threadIdx].messages.last,
               last.role == .user else { return }
         if let text, last.text != text { return }
         threads[threadIdx].messages.removeLast()
         threads[threadIdx].updatedAt = Date()
-        persist()
+        persistAfterActivityUpdate()
     }
 
     func finalizePersist() {
+        guard canMutatePersistedState() else { return }
+        // Keep non-assistant final saves (for example narration) consistent
+        // with the same activity-order invariant.
+        persistAfterActivityUpdate()
+    }
+
+    private func persistAfterActivityUpdate() {
+        threads = PersonaThreadOrdering.mostRecentFirst(threads)
         persist()
     }
 
