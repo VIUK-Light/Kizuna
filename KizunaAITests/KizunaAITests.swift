@@ -282,6 +282,36 @@ final class KizunaAITests: XCTestCase {
         XCTAssertGreaterThan(moved?.updatedAt ?? .distantPast, session.updatedAt)
     }
 
+    func testStorySceneRepositoryMigratesLegacySceneRevisionOnFirstSave() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let scene = StoryScene(
+            storyWorldId: worldID,
+            summary: "旧形式のScene"
+        )
+
+        // persistenceRevision is intentionally nil here, matching JSON saved
+        // before Scene generations were introduced.
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySceneRepository(storageURL: storageURL)
+        let loaded = try await repository.fetchScenes(storyWorldId: worldID)
+        XCTAssertNil(loaded.first?.persistenceRevision)
+
+        try await repository.saveScene(try XCTUnwrap(loaded.first))
+
+        let persisted = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.persistenceRevision, 1)
+    }
+
     func testStorySessionRepositoryRejectsCommitAfterWorldMoveAndPreservesMovedWorld() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let originalWorldID = UUID()
