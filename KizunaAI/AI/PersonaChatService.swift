@@ -525,12 +525,14 @@ final class PersonaChatService: ObservableObject {
         switch outputSafety.action {
         case .block:
             let rewritten = outputSafety.rewrittenText?.trimmingCharacters(in: .whitespacesAndNewlines)
-            persistableText = rewritten?.isEmpty == false
-                ? outputSafety.rewrittenText!
-                : KizunaCopy.text(
+            if let rewritten, !rewritten.isEmpty {
+                persistableText = rewritten
+            } else {
+                persistableText = KizunaCopy.text(
                     japanese: "うまく言えないけど、それは話したくないな。別の話にしよう?",
                     english: "I can't put that into words, and I'd rather not discuss it. Let's talk about something else."
                 )
+            }
         case .soften, .requireEdit:
             guard let safeText = PersonaOutputSafetyPolicy.persistableText(
                 action: outputSafety.action,
