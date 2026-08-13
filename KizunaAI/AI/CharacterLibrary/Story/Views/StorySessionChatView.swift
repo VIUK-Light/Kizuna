@@ -262,8 +262,10 @@ private struct StoryGenerationModelPill: View {
         .help(modelHelpText(vm.generationModel))
         .sheet(isPresented: $isShowingDetails) {
             NavigationStack {
-                modelDetailPopover
-                    .padding(18)
+                ScrollView {
+                    modelDetailPopover
+                        .padding(18)
+                }
                     .navigationTitle(storyCopy("モデル詳細", "Model details"))
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -271,7 +273,7 @@ private struct StoryGenerationModelPill: View {
                         }
                     }
             }
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large])
         }
         .onAppear(perform: selectUsableModelIfNeeded)
         .onChange(of: localModelManager.runtimeAvailability) { _, _ in
