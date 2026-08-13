@@ -148,6 +148,28 @@ enum StoryTurnJournal {
     nonisolated private static let memoryRetryFileName = "story_memory_retries.json"
     nonisolated private static let tombstoneFileName = "story_turn_journal_tombstones.json"
 
+    private struct TombstoneFileSignature: Equatable {
+        let basePath: String
+        let exists: Bool
+        let byteCount: UInt64
+        let modificationDate: Date?
+    }
+
+    private final class TombstoneCache: @unchecked Sendable {
+        struct Entry {
+            let signature: TombstoneFileSignature
+            let values: [StoryTurnJournalTombstone]
+            var needsReconciliation: Bool
+        }
+
+        var entry: Entry?
+    }
+
+    // All callers of the `Unlocked` APIs already hold the shared file lock.
+    // The reference wrapper keeps this process-wide cache compatible with
+    // Swift's strict-concurrency checks while the lock serializes mutation.
+    nonisolated private static let tombstoneCache = TombstoneCache()
+
     private struct RecoverableEntries {
         let entries: [StoryTurnJournalEntry]
         let containsInvalidEntries: Bool
@@ -620,11 +642,22 @@ extension StoryTurnJournal {
     nonisolated static func loadTombstonesUnlocked(
         baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws -> [StoryTurnJournalTombstone] {
-        try LocalJSONStoreTransaction.load(
+        let signature = tombstoneFileSignature(baseURL: baseURL)
+        if let cached = tombstoneCache.entry,
+           cached.signature == signature {
+            return cached.values
+        }
+        let values = try LocalJSONStoreTransaction.load(
             StoryTurnJournalTombstone.self,
             fileName: tombstoneFileName,
             baseURL: baseURL
         )
+        tombstoneCache.entry = TombstoneCache.Entry(
+            signature: signature,
+            values: values,
+            needsReconciliation: true
+        )
+        return values
     }
 
     nonisolated static func saveTombstonesUnlocked(
@@ -635,6 +668,11 @@ extension StoryTurnJournal {
             tombstones,
             fileName: tombstoneFileName,
             baseURL: baseURL
+        )
+        tombstoneCache.entry = TombstoneCache.Entry(
+            signature: tombstoneFileSignature(baseURL: baseURL),
+            values: tombstones,
+            needsReconciliation: true
         )
     }
 
@@ -731,7 +769,13 @@ extension StoryTurnJournal {
         _ tombstones: [StoryTurnJournalTombstone],
         baseURL: URL
     ) throws {
-        guard !tombstones.isEmpty else { return }
+        let signature = tombstoneFileSignature(baseURL: baseURL)
+        guard tombstoneCache.entry?.signature == signature,
+              tombstoneCache.entry?.needsReconciliation == true else { return }
+        guard !tombstones.isEmpty else {
+            tombstoneCache.entry?.needsReconciliation = false
+            return
+        }
 
         var sessions = try LocalJSONStoreTransaction.load(
             StorySession.self,
@@ -775,6 +819,7 @@ extension StoryTurnJournal {
                 baseURL: baseURL
             )
         }
+        tombstoneCache.entry?.needsReconciliation = false
     }
 
     nonisolated private static func hasTombstone(
@@ -787,28 +832,53 @@ extension StoryTurnJournal {
         }
     }
 
+    nonisolated private static func tombstoneFileSignature(
+        baseURL: URL
+    ) -> TombstoneFileSignature {
+        let url = baseURL.appendingPathComponent(tombstoneFileName)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return TombstoneFileSignature(
+                basePath: baseURL.path,
+                exists: false,
+                byteCount: 0,
+                modificationDate: nil
+            )
+        }
+        return TombstoneFileSignature(
+            basePath: baseURL.path,
+            exists: true,
+            byteCount: (attributes[.size] as? NSNumber)?.uint64Value ?? 0,
+            modificationDate: attributes[.modificationDate] as? Date
+        )
+    }
+
     /// Repository実装だけがジャーナルの全体を扱うための短い書き込みAPI。
     /// 同じファイルロックの中から呼び出す前提で、二重ロックはしない。
     nonisolated static func prepareUnlocked(
         _ entry: StoryTurnJournalEntry,
-        baseURL: URL = KizunaDataMigration.characterLibraryURL,
-        tombstones: [StoryTurnJournalTombstone]? = nil
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws {
-        let resolvedTombstones: [StoryTurnJournalTombstone]
-        if let tombstones {
-            resolvedTombstones = tombstones
-        } else {
-            resolvedTombstones = try loadTombstonesUnlocked(baseURL: baseURL)
-        }
+        try prepareUnlocked(
+            entry,
+            baseURL: baseURL,
+            tombstones: try loadTombstonesUnlocked(baseURL: baseURL)
+        )
+    }
+
+    nonisolated static func prepareUnlocked(
+        _ entry: StoryTurnJournalEntry,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL,
+        tombstones: [StoryTurnJournalTombstone]
+    ) throws {
         try ensureRecordIsNotDeletedUnlocked(
             recordID: entry.session.id,
             recordKind: .session,
-            tombstones: resolvedTombstones
+            tombstones: tombstones
         )
         try ensureRecordIsNotDeletedUnlocked(
             recordID: entry.scene.id,
             recordKind: .scene,
-            tombstones: resolvedTombstones
+            tombstones: tombstones
         )
         var entries = try LocalJSONStoreTransaction.load(
             StoryTurnJournalEntry.self,

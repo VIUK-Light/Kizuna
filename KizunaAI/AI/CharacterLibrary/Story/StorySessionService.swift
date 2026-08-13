@@ -695,8 +695,18 @@ final class StorySessionService: ObservableObject {
         // A failed turn commit is the only retry that keeps the composer
         // disabled. Never replace that recovery path with a less critical
         // narration/acknowledgement failure; doing so would leave the user
-        // unable to reach the exact generated snapshot.
-        guard pendingStoryTurnCommitRetries.isEmpty else { return }
+        // unable to reach the exact generated snapshot. If an earlier path
+        // already cleared the notice, rebuild it from the durable pending
+        // retry instead of leaving the composer permanently disabled with no
+        // visible recovery action.
+        if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+            if case let .storyTurnCommit(existingRetry)? = latestRuntimeNotice?.retryAction,
+               pendingStoryTurnCommitRetries[existingRetry.turnID] == existingRetry {
+                return
+            }
+            latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+            return
+        }
         let lastUserMessage = session.messages.last(where: { $0.author.isUser })
         latestRuntimeNotice = StoryRuntimeNotice(
             text: text,

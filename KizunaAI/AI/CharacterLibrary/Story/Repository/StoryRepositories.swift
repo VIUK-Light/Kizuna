@@ -274,10 +274,11 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
     func saveScene(_ scene: StoryScene) async throws {
         let storageURL = self.storageURL
         try await store.mutate { scenes in
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
             try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                 recordID: scene.id,
                 recordKind: .scene,
-                baseURL: storageURL
+                tombstones: tombstones
             )
             var next = scene
             next.updatedAt = Date()
@@ -299,10 +300,11 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         var repaired = false
         let storageURL = self.storageURL
         try await store.mutate { scenes in
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
             try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                 recordID: sceneId,
                 recordKind: .scene,
-                baseURL: storageURL
+                tombstones: tombstones
             )
             guard let index = scenes.firstIndex(where: {
                 $0.id == sceneId && $0.storyWorldId == storyWorldId
@@ -323,10 +325,11 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
     func moveScene(id: UUID, toStoryWorldId: UUID) async throws {
         let storageURL = self.storageURL
         try await store.mutate { scenes in
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
             try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                 recordID: id,
                 recordKind: .scene,
-                baseURL: storageURL
+                tombstones: tombstones
             )
             guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
             scenes[index].storyWorldId = toStoryWorldId
@@ -412,10 +415,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
                 try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                     recordID: session.id,
                     recordKind: .session,
-                    baseURL: storageURL
+                    tombstones: tombstones
                 )
                 var sessions = try LocalJSONStoreTransaction.load(
                     StorySession.self,
@@ -460,10 +464,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         return try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
             try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                 recordID: session.id,
                 recordKind: .session,
-                baseURL: storageURL
+                tombstones: tombstones
             )
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
@@ -725,10 +730,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
             try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                 recordID: sessionID,
                 recordKind: .session,
-                baseURL: storageURL
+                tombstones: tombstones
             )
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
@@ -804,10 +810,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
                 try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                     recordID: id,
                     recordKind: .session,
-                    baseURL: storageURL
+                    tombstones: tombstones
                 )
                 var sessions = try LocalJSONStoreTransaction.load(
                     StorySession.self,
