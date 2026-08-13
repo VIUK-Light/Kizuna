@@ -74,6 +74,73 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persistedRetry, retry)
     }
 
+    func testStoryServiceRetriesMemoryWithoutGeneratingAnotherTurn() async throws {
+        let memoryRepository = TestStoryMemoryRepository()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "港で約束したことを思い出す",
+            characterMemories: [
+                CharacterMemory(
+                    characterId: UUID(),
+                    text: "港で約束した",
+                    category: .event,
+                    source: .aiOutput
+                )
+            ],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: UUID(),
+                    text: "港で約束した",
+                    category: .event,
+                    source: .summary
+                )
+            ]
+        )
+        let service = StorySessionService(
+            memoryRepo: memoryRepository,
+            storyMemoryRepo: memoryRepository,
+            pendingStoryMemoryRetries: [retry]
+        )
+
+        await service.retryStoryMemorySave(retry)
+
+        let counts = await memoryRepository.saveCounts()
+        XCTAssertEqual(counts.character, 1)
+        XCTAssertEqual(counts.story, 1)
+        XCTAssertEqual(service.savedTurnRevision, 1)
+        XCTAssertNil(service.latestRuntimeNotice)
+    }
+
+    func testStoryServiceRetriesCommittedTurnWithSameTurnIdentity() async throws {
+        let sessionRepository = TestStorySessionRepository()
+        let session = StorySession(storyWorldId: UUID())
+        let scene = StoryScene(storyWorldId: session.storyWorldId)
+        let retry = StoryTurnCommitRetry(
+            session: session,
+            scene: scene,
+            turnID: UUID(),
+            attempt: 3,
+            assistantMessageIDs: [UUID()],
+            characterMemories: [],
+            storyMemories: [],
+            userMessageID: UUID(),
+            userText: "同じターンを保存する"
+        )
+        let service = StorySessionService(
+            sessionRepo: sessionRepository,
+            pendingStoryTurnCommitRetries: [retry]
+        )
+
+        await service.retryStoryTurnCommit(retry)
+
+        let commit = await sessionRepository.lastCommit
+        XCTAssertEqual(commit?.turnID, retry.turnID)
+        XCTAssertEqual(commit?.assistantMessageIDs, retry.assistantMessageIDs)
+        XCTAssertEqual(service.savedTurnRevision, 1)
+        XCTAssertNil(service.latestRuntimeNotice)
+    }
+
     func testPersonaResponseSanitizerPreservesVisibleText() {
         let input = "<think>private reasoning</think>Visible response"
 
@@ -946,4 +1013,73 @@ final class KizunaAITests: XCTestCase {
         }
         return url
     }
+}
+
+private actor TestStoryMemoryRepository: MemoryRepository, StoryMemoryRepository {
+    private var characterSaveCount = 0
+    private var storySaveCount = 0
+
+    func fetchMemories(characterId: UUID) async throws -> [CharacterMemory] { [] }
+
+    func saveMemory(_ memory: CharacterMemory) async throws {
+        characterSaveCount += 1
+    }
+
+    func deleteMemory(id: UUID) async throws {}
+    func deleteAllMemories(characterId: UUID) async throws {}
+    func markUsed(ids: [UUID]) async throws {}
+
+    func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] { [] }
+
+    func saveMemory(_ memory: StoryMemory) async throws {
+        storySaveCount += 1
+    }
+
+    func deleteAllMemories(storyWorldId: UUID) async throws {}
+
+    func saveCounts() -> (character: Int, story: Int) {
+        (characterSaveCount, storySaveCount)
+    }
+}
+
+private actor TestStorySessionRepository: StorySessionRepository {
+    struct Commit: Sendable {
+        let turnID: UUID
+        let assistantMessageIDs: [UUID]
+    }
+
+    private(set) var lastCommit: Commit?
+
+    func fetchSessions(storyWorldId: UUID) async throws -> [StorySession] { [] }
+    func saveSession(_ session: StorySession) async throws {}
+
+    func beginTurn(
+        session: StorySession,
+        userMessage: StoryMessage,
+        turnID: UUID,
+        attempt: Int
+    ) async throws -> StorySession {
+        session
+    }
+
+    func commitTurn(
+        session: StorySession,
+        scene: StoryScene,
+        turnID: UUID,
+        assistantMessageIDs: [UUID]
+    ) async throws -> StorySession {
+        lastCommit = Commit(turnID: turnID, assistantMessageIDs: assistantMessageIDs)
+        return session
+    }
+
+    func finishTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int,
+        status: StoryTurnStatus,
+        failureCode: String?
+    ) async throws {}
+
+    func recoverInterruptedTurns(storyWorldId: UUID) async throws {}
+    func deleteSession(id: UUID) async throws {}
 }
