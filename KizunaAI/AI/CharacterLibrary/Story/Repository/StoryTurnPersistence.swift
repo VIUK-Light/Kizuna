@@ -314,7 +314,7 @@ enum StoryTurnJournal {
         if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
         }
-        journal.updatedAt > persisted.updatedAt
+        return journal.updatedAt > persisted.updatedAt
     }
 }
 
