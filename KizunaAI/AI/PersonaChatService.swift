@@ -10,6 +10,30 @@
 import Foundation
 import Combine
 
+/// Defines which Persona output may cross the history persistence boundary.
+/// The Story pipeline has the same contract, but this local policy keeps the
+/// Persona fix independent so it can be merged without changing Story's PR.
+enum PersonaOutputSafetyPolicy {
+    static func persistableText(
+        action: SafetyAction,
+        original: String,
+        rewritten: String?
+    ) -> String? {
+        switch action {
+        case .block, .requireEdit:
+            return nil
+        case .soften:
+            guard let rewritten,
+                  !rewritten.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return rewritten
+        case .allow, .warn:
+            return original
+        }
+    }
+}
+
 @MainActor
 final class PersonaChatService: ObservableObject {
     static let shared = PersonaChatService()
@@ -147,8 +171,23 @@ final class PersonaChatService: ObservableObject {
                 self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
             }
         )
+        let rawFinalText = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
+        let outputSafety: SafetyDecision
+        if let cleaned = meaningfulResponse(rawFinalText) {
+            outputSafety = await safetyPipeline.evaluateOutput(
+                cleaned,
+                character: safetyCharacter(for: thread.personaSnapshot)
+            )
+        } else {
+            outputSafety = .allow
+        }
         await MainActor.run {
-            self.finalize(reply: reply, threadID: threadID, generationID: generationID)
+            self.finalize(
+                reply: reply,
+                threadID: threadID,
+                generationID: generationID,
+                outputSafety: outputSafety
+            )
         }
     }
 
@@ -327,9 +366,24 @@ final class PersonaChatService: ObservableObject {
                 english: "I can't put that into words, and I'd rather not discuss it. Let's talk about something else."
             )
         case .soften, .requireEdit:
-            if let rewritten = outSafety.rewrittenText, !rewritten.isEmpty {
-                finalText = rewritten
+            guard let persistable = PersonaOutputSafetyPolicy.persistableText(
+                action: outSafety.action,
+                original: finalText,
+                rewritten: outSafety.rewrittenText
+            ) else {
+                await MainActor.run {
+                    self.failGeneration(
+                        threadID: threadID,
+                        generationID: generationID,
+                        message: KizunaCopy.text(
+                            japanese: "安全上の理由で応答を保存できませんでした。別の表現で試してください。",
+                            english: "The response was not saved for safety reasons. Try a different phrasing."
+                        )
+                    )
+                }
+                return
             }
+            finalText = persistable
         case .warn, .allow:
             break
         }
@@ -448,7 +502,12 @@ final class PersonaChatService: ObservableObject {
         streamSanitizationTask = nil
     }
 
-    private func finalize(reply: String?, threadID: UUID, generationID: UUID) {
+    private func finalize(
+        reply: String?,
+        threadID: UUID,
+        generationID: UUID,
+        outputSafety: SafetyDecision
+    ) {
         guard activeGenerationID == generationID else { return }
         let final = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
         guard let cleaned = meaningfulResponse(final) else {
@@ -462,14 +521,60 @@ final class PersonaChatService: ObservableObject {
             )
             return
         }
-        streamingResponse = cleaned
-        PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: cleaned)
+        let persistableText: String
+        switch outputSafety.action {
+        case .block:
+            let rewritten = outputSafety.rewrittenText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            persistableText = rewritten?.isEmpty == false
+                ? outputSafety.rewrittenText!
+                : KizunaCopy.text(
+                    japanese: "うまく言えないけど、それは話したくないな。別の話にしよう?",
+                    english: "I can't put that into words, and I'd rather not discuss it. Let's talk about something else."
+                )
+        case .soften, .requireEdit:
+            guard let safeText = PersonaOutputSafetyPolicy.persistableText(
+                action: outputSafety.action,
+                original: cleaned,
+                rewritten: outputSafety.rewrittenText
+            ) else {
+                failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "安全上の理由で応答を保存できませんでした。別の表現で試してください。",
+                        english: "The response was not saved for safety reasons. Try a different phrasing."
+                    )
+                )
+                return
+            }
+            persistableText = safeText
+        case .warn, .allow:
+            persistableText = cleaned
+        }
+        streamingResponse = persistableText
+        PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: persistableText)
         phase = .idle
         invalidatePendingStreamSanitization()
         activeGenerationID = nil
         activeThreadID = nil
         activeGenerationThreadID = nil
         lastErrorThreadID = nil
+    }
+
+    /// Adapt a legacy PersonaProfile to the CharacterProfile context required
+    /// by the shared output checker. Legacy profiles have no independent
+    /// safety-rating field, so they use the existing general-audience default.
+    private func safetyCharacter(for profile: PersonaProfile) -> CharacterProfile {
+        CharacterProfile(
+            id: profile.id,
+            name: profile.name,
+            displayName: profile.name,
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            personality: profile.personality,
+            scenario: profile.freeFormAddendum,
+            safetyRating: .general
+        )
     }
 
     private func startWatchdog(threadID: UUID, generationID: UUID) {
