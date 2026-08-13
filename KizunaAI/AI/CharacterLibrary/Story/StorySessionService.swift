@@ -2218,37 +2218,37 @@ final class StorySessionService: ObservableObject {
     /// idempotent for that case and returns the persisted session.
     func retryStoryTurnCommit(_ retry: StoryTurnCommitRetry) async {
         guard !isRetryingAuxiliarySave,
-              pendingStoryTurnCommitRetries[retry.turnID] == retry else { return }
+              let pendingRetry = pendingStoryTurnCommitRetries[retry.turnID] else { return }
         isRetryingAuxiliarySave = true
         defer { isRetryingAuxiliarySave = false }
         latestRuntimeNotice = nil
         let memoryRetry: StoryMemoryRetry? = {
-            guard !retry.characterMemories.isEmpty || !retry.storyMemories.isEmpty else {
+            guard !pendingRetry.characterMemories.isEmpty || !pendingRetry.storyMemories.isEmpty else {
                 return nil
             }
             return StoryMemoryRetry(
-                turnID: retry.turnID,
-                userMessageID: retry.userMessageID,
-                userText: retry.userText,
-                characterMemories: retry.characterMemories,
-                storyMemories: retry.storyMemories,
-                storySessionID: retry.session.id,
-                storyWorldID: retry.scene.storyWorldId
+                turnID: pendingRetry.turnID,
+                userMessageID: pendingRetry.userMessageID,
+                userText: pendingRetry.userText,
+                characterMemories: pendingRetry.characterMemories,
+                storyMemories: pendingRetry.storyMemories,
+                storySessionID: pendingRetry.session.id,
+                storyWorldID: pendingRetry.scene.storyWorldId
             )
         }()
         do {
             _ = try await sessionRepo.commitTurn(
-                session: retry.session,
-                scene: retry.scene,
-                turnID: retry.turnID,
-                assistantMessageIDs: retry.assistantMessageIDs,
+                session: pendingRetry.session,
+                scene: pendingRetry.scene,
+                turnID: pendingRetry.turnID,
+                assistantMessageIDs: pendingRetry.assistantMessageIDs,
                 memoryRetries: memoryRetry.map { [$0] } ?? []
             )
-            pendingStoryTurnCommitRetries.removeValue(forKey: retry.turnID)
+            pendingStoryTurnCommitRetries.removeValue(forKey: pendingRetry.turnID)
             if let memoryRetry {
                 if let remaining = await saveStoryMemoryRetryRecords(memoryRetry) {
                     if await enqueueStoryMemoryRetry(remaining) {
-                        _ = await removeStoryMemoryJournal(for: retry.turnID)
+                        _ = await removeStoryMemoryJournal(for: pendingRetry.turnID)
                     }
                     if let pendingRetry = oldestPendingStoryTurnCommitRetry {
                         latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
@@ -2271,17 +2271,17 @@ final class StorySessionService: ObservableObject {
                 }
             }
         } catch {
-            NSLog("[StorySession] auxiliary turn commit retry failed turn=%@: %@", retry.turnID.uuidString, error.localizedDescription)
+            NSLog("[StorySession] auxiliary turn commit retry failed turn=%@: %@", pendingRetry.turnID.uuidString, error.localizedDescription)
             latestRuntimeNotice = StoryRuntimeNotice(
                 text: localizedNotice(
                     "保存を完了できませんでした。AI本文は再生成せず、保存先を確認してからもう一度試してください。",
                     "The save could not be completed. The AI response was not regenerated; check storage and try again."
                 ),
-                userMessageID: retry.userMessageID,
-                userText: retry.userText,
+                userMessageID: pendingRetry.userMessageID,
+                userText: pendingRetry.userText,
                 backendName: "turn commit retry failed",
                 backend: .persistence,
-                retryAction: .storyTurnCommit(retry)
+                retryAction: .storyTurnCommit(pendingRetry)
             )
         }
     }
@@ -2296,13 +2296,14 @@ final class StorySessionService: ObservableObject {
             return
         }
         guard !isRetryingAuxiliarySave,
-              pendingStoryMemoryRetries[retry.turnID] == retry else { return }
+              let pendingRetry = pendingStoryMemoryRetries[retry.turnID],
+              !pendingRetry.isCompleted else { return }
         isRetryingAuxiliarySave = true
         defer { isRetryingAuxiliarySave = false }
         latestRuntimeNotice = nil
 
-        guard let remaining = await saveStoryMemoryRetryRecords(retry) else {
-            _ = await completeStoryMemoryRetry(retry)
+        guard let remaining = await saveStoryMemoryRetryRecords(pendingRetry) else {
+            _ = await completeStoryMemoryRetry(pendingRetry)
             savedTurnRevision += 1
             return
         }

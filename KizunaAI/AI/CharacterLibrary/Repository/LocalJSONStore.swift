@@ -16,47 +16,22 @@ enum LocalJSONStoreError: Error {
 }
 
 enum LocalJSONStoreCoding {
-    private static func encodeISO8601Date(_ date: Date, to encoder: Encoder) throws {
+    private static func encodeDate(_ date: Date, to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        let seconds = date.timeIntervalSince1970
-        let wholeSeconds = floor(seconds)
-        let fraction = seconds - wholeSeconds
-        let fractionText = String(
-            format: "%.17f",
-            locale: Locale(identifier: "en_US_POSIX"),
-            fraction
-        )
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        let base = formatter.string(from: Date(timeIntervalSince1970: wholeSeconds))
-        let fractionalDigits = fractionText.dropFirst(2)
-        try container.encode(
-            "\(base.dropLast()).\(fractionalDigits)Z"
-        )
+        // A JSON number round-trips Date's underlying Double exactly. Using
+        // ISO8601DateFormatter here would discard sub-millisecond precision,
+        // which breaks equality and stable retry ownership after a restart.
+        try container.encode(date.timeIntervalSinceReferenceDate)
     }
 
-    private static func decodeISO8601Date(from decoder: Decoder) throws -> Date {
+    private static func decodeDate(from decoder: Decoder) throws -> Date {
         let container = try decoder.singleValueContainer()
-        let value = try container.decode(String.self)
 
-        if let dot = value.firstIndex(of: ".") {
-            let suffix = value[value.index(after: dot)...]
-            if let timezoneStart = suffix.firstIndex(where: { $0 == "Z" || $0 == "+" || $0 == "-" }) {
-                let fractionDigits = suffix[..<timezoneStart]
-                if !fractionDigits.isEmpty,
-                   fractionDigits.allSatisfy({ $0.isNumber }),
-                   let fraction = Double("0.\(fractionDigits)") {
-                    let base = String(value[..<dot]) + String(suffix[timezoneStart...])
-                    let formatter = ISO8601DateFormatter()
-                    formatter.formatOptions = [.withInternetDateTime]
-                    if let baseDate = formatter.date(from: base) {
-                        return Date(
-                            timeIntervalSince1970: baseDate.timeIntervalSince1970 + fraction
-                        )
-                    }
-                }
-            }
+        if let timestamp = try? container.decode(Double.self) {
+            return Date(timeIntervalSinceReferenceDate: timestamp)
         }
+
+        let value = try container.decode(String.self)
 
         let fractionalFormatter = ISO8601DateFormatter()
         fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -64,9 +39,8 @@ enum LocalJSONStoreCoding {
             return date
         }
 
-        // Existing Kizuna JSON used ISO8601 without fractional seconds.
-        // Keep those files readable while preserving sub-second precision for
-        // new retry and journal records.
+        // Existing Kizuna JSON used ISO8601 strings. Keep those files readable
+        // while new records use the exact numeric representation above.
         let legacyFormatter = ISO8601DateFormatter()
         legacyFormatter.formatOptions = [.withInternetDateTime]
         if let date = legacyFormatter.date(from: value) {
@@ -83,7 +57,7 @@ enum LocalJSONStoreCoding {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .custom { date, encoder in
-            try encodeISO8601Date(date, to: encoder)
+            try encodeDate(date, to: encoder)
         }
         return encoder
     }
@@ -91,7 +65,7 @@ enum LocalJSONStoreCoding {
     nonisolated static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
-            try decodeISO8601Date(from: decoder)
+            try decodeDate(from: decoder)
         }
         return decoder
     }
