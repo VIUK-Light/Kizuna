@@ -2630,7 +2630,7 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
-    func testStoryTurnJournalRetainsConflictingPairBeforeMemoryHandoff() throws {
+    func testStoryTurnJournalRetainsConflictingPairButHandsOffMemory() throws {
         func assertConflictIsRetained(sessionIsNewer: Bool) throws {
             let storageURL = try makeStoryPersistenceTestDirectory()
             let worldID = UUID()
@@ -2758,13 +2758,117 @@ final class KizunaAITests: XCTestCase {
                     StoryMemoryRetry.self,
                     fileName: "story_memory_retries.json",
                     baseURL: storageURL
-                ).isEmpty,
-                "memory retries must not be handed off before the pair conflict is resolved"
+                ) == [retry],
+                "pair recovery must retain the pair while handing off independent memory work"
+            )
+
+            try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+            XCTAssertEqual(
+                try LocalJSONStoreTransaction.load(
+                    StoryTurnJournalEntry.self,
+                    fileName: "story_turn_journal.json",
+                    baseURL: storageURL
+                ),
+                [entry],
+                "a mixed pair remains recoverable after a repeated recovery"
+            )
+            XCTAssertEqual(
+                try LocalJSONStoreTransaction.load(
+                    StoryMemoryRetry.self,
+                    fileName: "story_memory_retries.json",
+                    baseURL: storageURL
+                ),
+                [retry],
+                "repeated recovery must not duplicate or discard the memory retry"
             )
         }
 
         try assertConflictIsRetained(sessionIsNewer: true)
         try assertConflictIsRetained(sessionIsNewer: false)
+    }
+
+    func testStoryTurnJournalDoesNotOverwritePartialMemoryRetryWithStalePayload() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let fixture = makeCommittedJournalFixture()
+        let sessionID = fixture.persistedSession.id
+        let worldID = fixture.persistedSession.storyWorldId
+        let turnID = fixture.entry.turnID
+        let userMessageID = fixture.entry.session.latestTurnCheckpoint!.userMessageID
+        let firstMemory = StoryMemory(
+            storyWorldId: worldID,
+            text: "すでに保存された候補",
+            storySessionId: sessionID,
+            sourceTurnIds: [turnID]
+        )
+        let remainingMemory = StoryMemory(
+            storyWorldId: worldID,
+            text: "まだ保存されていない候補",
+            storySessionId: sessionID,
+            sourceTurnIds: [turnID]
+        )
+        let journalRetry = StoryMemoryRetry(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            userText: "古い完全payloadを再利用しない",
+            characterMemories: [],
+            storyMemories: [firstMemory, remainingMemory],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        let partialQueueRetry = StoryMemoryRetry(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            userText: journalRetry.userText,
+            characterMemories: [],
+            storyMemories: [remainingMemory],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [StoryTurnJournalEntry(
+                turnID: turnID,
+                session: fixture.entry.session,
+                scene: fixture.entry.scene,
+                memoryRetries: [journalRetry]
+            )],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [partialQueueRetry],
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryMemoryRetry.self,
+                fileName: "story_memory_retries.json",
+                baseURL: storageURL
+            ),
+            [partialQueueRetry],
+            "a stale journal must not resurrect candidates already removed from the partial queue"
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
     }
 
     func testStoryTurnJournalDecodesLegacyEntryWithoutMemoryRetries() throws {

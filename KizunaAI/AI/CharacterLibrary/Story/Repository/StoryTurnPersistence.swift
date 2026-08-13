@@ -314,19 +314,6 @@ enum StoryTurnJournal {
                     persistedSession: persistedSession,
                     persistedScene: persistedScene
                 )
-                if case .retain = decision {
-                    // A turn snapshot is a pair. If one journal record is
-                    // newer while the other persisted record is newer, the
-                    // journal cannot safely establish either side alone.
-                    // Keep the complete entry and defer memory handoff too.
-                    unresolvedEntries.append(entry)
-                    NSLog(
-                        "[StoryTurnJournal] retained conflicting pair turn=%@",
-                        entry.turnID.uuidString
-                    )
-                    continue
-                }
-
                 if !entry.memoryRetries.isEmpty {
                     do {
                         try mergeMemoryRetriesUnlocked(
@@ -346,6 +333,21 @@ enum StoryTurnJournal {
                         )
                         continue
                     }
+                }
+
+                if case .retain = decision {
+                    // A turn snapshot is a pair. If one journal record is
+                    // newer while the other persisted record is newer, the
+                    // journal cannot safely establish either side alone.
+                    // The auxiliary memory queue is independent and has
+                    // already been made durable above, so a pair conflict
+                    // cannot permanently block memory handoff.
+                    unresolvedEntries.append(entry)
+                    NSLog(
+                        "[StoryTurnJournal] retained conflicting pair turn=%@",
+                        entry.turnID.uuidString
+                    )
+                    continue
                 }
 
                 if case let .apply(sessionOrdering, sceneOrdering) = decision {
@@ -550,8 +552,22 @@ enum StoryTurnJournal {
             if let index = existing.firstIndex(where: { $0.turnID == retry.turnID }) {
                 // A completion marker is newer than the journal payload. Do
                 // not resurrect an already-successful retry after a crash.
-                if !existing[index].isCompleted || retry.isCompleted {
+                if existing[index].isCompleted {
+                    if retry.isCompleted {
+                        existing[index] = retry
+                    }
+                } else if retry.isCompleted {
                     existing[index] = retry
+                } else {
+                    // The queue may contain the remaining subset after some
+                    // candidates from this turn were already written. A
+                    // retained journal is an older full snapshot and cannot
+                    // safely expand that subset, so keep the durable queue as
+                    // the more recent progress record.
+                    NSLog(
+                        "[StoryTurnJournal] kept existing partial memory retry turn=%@",
+                        retry.turnID.uuidString
+                    )
                 }
             } else {
                 existing.append(retry)
