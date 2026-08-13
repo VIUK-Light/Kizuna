@@ -198,6 +198,7 @@ struct StoryWorldCreateView: View {
             } label: {
                 Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
                     .font(.caption.weight(.semibold))
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
         }
@@ -619,12 +620,15 @@ struct StoryWorldCreateView: View {
                 } label: {
                     Label(KizunaCopy.text(japanese: "作る", english: "Create"), systemImage: "person.crop.circle.badge.plus")
                         .font(.caption.weight(.semibold))
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.bordered)
                 Button {
                     showCharacterPicker = true
                 } label: {
-                    Label(KizunaCopy.text(japanese: "選ぶ", english: "Choose"), systemImage: "plus").font(.caption.weight(.semibold))
+                    Label(KizunaCopy.text(japanese: "選ぶ", english: "Choose"), systemImage: "plus")
+                        .font(.caption.weight(.semibold))
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.bordered)
             }
@@ -712,7 +716,10 @@ struct StoryWorldCreateView: View {
                         .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(KizunaCopy.text(japanese: "キャラを削除", english: "Remove character"))
+                .accessibilityLabel(KizunaCopy.text(
+                    japanese: "キャラを削除：\(profile.visibleName)",
+                    english: "Remove \(profile.visibleName)"
+                ))
             }
             if !profile.shortDescription.isEmpty {
                 Text(profile.shortDescription).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -908,7 +915,10 @@ struct StoryWorldCreateView: View {
                                         .frame(minWidth: 44, minHeight: 44)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel(KizunaCopy.text(japanese: "タグを削除", english: "Remove tag"))
+                                .accessibilityLabel(KizunaCopy.text(
+                                    japanese: "タグを削除：\(t)",
+                                    english: "Remove tag \(t)"
+                                ))
                             }
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(Capsule().fill(Color.accentColor.opacity(0.12)))
@@ -972,7 +982,7 @@ private struct CharacterPickerForStory: View {
                 Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .frame(minHeight: 44)
+                    .frame(minWidth: 44, minHeight: 44)
                 Spacer()
                 Text(KizunaCopy.text(japanese: "キャラを追加", english: "Add character")).font(.subheadline.weight(.semibold))
                 Spacer()

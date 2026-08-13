@@ -157,6 +157,7 @@ struct StoryWorldLibraryView: View {
             } label: {
                 Label(KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story"), systemImage: "plus")
                     .font(.subheadline.weight(.semibold))
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
         }

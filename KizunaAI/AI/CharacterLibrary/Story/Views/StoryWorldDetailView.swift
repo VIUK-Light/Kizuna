@@ -463,6 +463,7 @@ struct StoryWorldDetailView: View {
                     } label: {
                         Label(KizunaCopy.text(japanese: "新しい物語を始める", english: "Start a new story"), systemImage: "plus.circle")
                             .font(.subheadline.weight(.semibold))
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .buttonStyle(.bordered)
                     .disabled(!canStartSession)
@@ -777,8 +778,8 @@ struct StoryWorldDetailView: View {
                             }
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .contentShape(Rectangle())
                             .frame(minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
