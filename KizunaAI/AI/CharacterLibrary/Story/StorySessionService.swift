@@ -401,7 +401,6 @@ final class StorySessionService: ObservableObject {
         let persisted = try await storyMemoryRetryRepo.fetchRetries()
         let sessions = try await sessionRepo.fetchSessions(storyWorldId: storyWorldID)
         let session = sessions.first { $0.id == storySessionID }
-        let latestCheckpoint = session?.latestTurnCheckpoint
         let scoped = persisted.filter { retry in
             if let retrySessionID = retry.storySessionID {
                 return retrySessionID == storySessionID
