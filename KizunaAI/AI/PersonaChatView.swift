@@ -820,6 +820,7 @@ struct PersonaChatView: View {
                         .font(.body.weight(.semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
+                        .frame(minHeight: 44)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(Color.accentColor)
                         .frame(minHeight: 44)
