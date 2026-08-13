@@ -1292,6 +1292,63 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryTurnJournalDecodesLegacyEntryWithoutMemoryRetries() throws {
+        let worldID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let date = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: date,
+                updatedAt: date
+            ),
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+        let session = StorySession(
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: date
+        )
+        let scene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            updatedAt: date
+        )
+        let entry = StoryTurnJournalEntry(
+            turnID: turnID,
+            session: session,
+            scene: scene
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let encoded = try encoder.encode(entry)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "memoryRetries")
+        let legacyData = try JSONSerialization.data(
+            withJSONObject: [object],
+            options: [.sortedKeys]
+        )
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let decoded = try decoder.decode(
+            [StoryTurnJournalEntry].self,
+            from: legacyData
+        )
+        XCTAssertEqual(decoded.first?.turnID, turnID)
+        XCTAssertEqual(decoded.first?.memoryRetries, [])
+    }
+
     func testStoryTurnJournalMakesMemoryRetryDurableDuringRecovery() throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
