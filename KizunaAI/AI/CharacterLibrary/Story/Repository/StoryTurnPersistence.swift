@@ -644,7 +644,7 @@ extension StoryTurnJournal {
         recordKind: StoryTurnJournalRecordKind,
         baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws {
-        guard !hasTombstoneUnlocked(
+        guard try !hasTombstoneUnlocked(
             recordID: recordID,
             recordKind: recordKind,
             baseURL: baseURL
