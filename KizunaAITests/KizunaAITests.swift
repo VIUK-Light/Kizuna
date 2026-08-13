@@ -43,6 +43,34 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(visibleText, text)
     }
 
+    func testStoryStateBootstrapSeedsSceneOnlyForAnEmptySessionState() {
+        let scene = StoryScene(
+            storyWorldId: UUID(),
+            location: "港",
+            timeOfDay: "夕方",
+            mood: "静か",
+            sceneGoal: "灯台へ向かう"
+        )
+
+        let seeded = StoryStateBootstrap.preservingExistingState(nil, scene: scene)
+        XCTAssertEqual(seeded.location, "港")
+        XCTAssertEqual(seeded.timeOfDay, "夕方")
+        XCTAssertEqual(seeded.mood, "静か")
+        XCTAssertEqual(seeded.activeGoals, ["灯台へ向かう"])
+
+        let advanced = StoryState(
+            location: "駅前",
+            timeOfDay: "深夜",
+            mood: "緊張",
+            activeGoals: ["鍵を探す"]
+        )
+        XCTAssertEqual(
+            StoryStateBootstrap.preservingExistingState(advanced, scene: scene),
+            advanced,
+            "a later turn's StoryState must not be reset from the scene seed"
+        )
+    }
+
     func testPersonaResponseSanitizerPreservesVisibleText() {
         let input = "<think>private reasoning</think>Visible response"
 

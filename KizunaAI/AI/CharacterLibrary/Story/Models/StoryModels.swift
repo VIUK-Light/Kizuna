@@ -621,6 +621,23 @@ struct StoryState: Codable, Equatable, Hashable {
     }
 }
 
+/// Creates the first structured state from the scene without overwriting a
+/// state that was already advanced by an earlier turn.
+enum StoryStateBootstrap {
+    static func preservingExistingState(
+        _ existing: StoryState?,
+        scene: StoryScene
+    ) -> StoryState {
+        if let existing { return existing }
+        return StoryState(
+            location: scene.location,
+            timeOfDay: scene.timeOfDay,
+            mood: scene.mood,
+            activeGoals: scene.sceneGoal.isEmpty ? [] : [scene.sceneGoal]
+        )
+    }
+}
+
 /// シーンに登場しているキャラクターの可変状態。
 struct StoryCharacterState: Codable, Equatable, Hashable, Identifiable {
     var id: UUID
