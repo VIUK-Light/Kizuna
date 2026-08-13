@@ -820,6 +820,7 @@ struct PersonaChatView: View {
                         .padding(.vertical, 8)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(Color.accentColor)
+                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.plain)
             }
@@ -1462,7 +1463,7 @@ struct PersonaMessageBubble: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityValue(Text(timestamp))
+        .accessibilityValue(Text(message.createdAt, style: .time))
     }
 
     private var accessibilityLabel: String {

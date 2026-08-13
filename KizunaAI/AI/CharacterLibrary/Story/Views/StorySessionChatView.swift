@@ -1157,7 +1157,8 @@ private struct StorySessionChatBody: View {
         case let .cast(_, displayName):
             return "\(displayName): \(message.text)"
         case .system:
-            return storyCopy("システム: \(message.text)", "System: \(message.text)")
+            let visibleText = StoryRetryMetadata.removingMetadata(from: message.text)
+            return storyCopy("システム: \(visibleText)", "System: \(visibleText)")
         }
     }
 
