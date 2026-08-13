@@ -1588,19 +1588,29 @@ final class KizunaAITests: XCTestCase {
             afterInterruptedGeneration.thread(id: thread.id)?.messages.map(\.role),
             [.user]
         )
-        XCTAssertTrue(
+        XCTAssertEqual(
             afterInterruptedGeneration.appendFinalizedAssistantMessage(
                 in: thread.id,
                 messageID: generationID,
                 text: "completed"
-            )
+            ),
+            .inserted
         )
-        XCTAssertFalse(
+        XCTAssertEqual(
             afterInterruptedGeneration.appendFinalizedAssistantMessage(
                 in: thread.id,
                 messageID: generationID,
                 text: "duplicate"
-            )
+            ),
+            .rejected
+        )
+        XCTAssertEqual(
+            afterInterruptedGeneration.appendFinalizedAssistantMessage(
+                in: thread.id,
+                messageID: generationID,
+                text: "completed"
+            ),
+            .alreadyPresent
         )
         let reloaded = PersonaChatStore(defaults: defaults)
         XCTAssertEqual(
@@ -1729,6 +1739,14 @@ final class KizunaAITests: XCTestCase {
             ),
             "safe rewrite"
         )
+        XCTAssertEqual(
+            PersonaOutputSafetyPolicy.sanitizedRewrite("<think>private</think>  safe rewrite  "),
+            "safe rewrite"
+        )
+        XCTAssertTrue(PersonaMessage.isPendingAssistantText("  …  "))
+        XCTAssertTrue(PersonaMessage.isPendingAssistantText("..."))
+        XCTAssertTrue(PersonaMessage.isPendingAssistantText(" \n"))
+        XCTAssertFalse(PersonaMessage.isPendingAssistantText("completed"))
         XCTAssertEqual(
             PersonaOutputSafetyPolicy.persistableText(
                 action: .warn,

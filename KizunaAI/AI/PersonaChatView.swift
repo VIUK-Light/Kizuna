@@ -1122,7 +1122,7 @@ struct PersonaChatView: View {
         let isErrorThisThread = service.lastErrorThreadID == thread.id
             && isGenerationError
         let visibleMessages = thread.messages.filter { msg in
-            return !(msg.role == .assistant && msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            return !(msg.role == .assistant && PersonaMessage.isPendingAssistantText(msg.text))
         }
         return ScrollViewReader { proxy in
             ZStack(alignment: .bottomTrailing) {

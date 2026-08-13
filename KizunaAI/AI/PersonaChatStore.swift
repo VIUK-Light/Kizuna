@@ -40,6 +40,17 @@ struct PersonaMessage: Codable, Hashable, Identifiable {
         self.text = text
         self.createdAt = createdAt
     }
+
+    static func isPendingAssistantText(_ text: String) -> Bool {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty || ["…", "・・・", "・・", "...", "..", "."].contains(normalized)
+    }
+}
+
+enum PersonaAssistantCommitResult: Equatable {
+    case inserted
+    case alreadyPresent
+    case rejected
 }
 
 struct PersonaThread: Codable, Hashable, Identifiable {
@@ -407,19 +418,28 @@ final class PersonaChatStore: ObservableObject {
     /// safety boundary. A generation ID makes the commit idempotent and keeps
     /// a retry or duplicate completion from appending the same response twice.
     @discardableResult
-    func appendFinalizedAssistantMessage(in threadID: UUID, messageID: UUID, text: String) -> Bool {
+    func appendFinalizedAssistantMessage(
+        in threadID: UUID,
+        messageID: UUID,
+        text: String
+    ) -> PersonaAssistantCommitResult {
         guard canMutatePersistedState(),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
-              !threads[threadIdx].messages.contains(where: { $0.id == messageID }) else {
-            return false
+              let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else {
+            return .rejected
+        }
+        if let existing = threads[threadIdx].messages.first(where: { $0.id == messageID }) {
+            guard existing.role == .assistant, existing.text == text else {
+                return .rejected
+            }
+            return .alreadyPresent
         }
         threads[threadIdx].messages.append(
             PersonaMessage(id: messageID, role: .assistant, text: text)
         )
         threads[threadIdx].updatedAt = Date()
         persistAfterActivityUpdate()
-        return true
+        return .inserted
     }
 
     /// 旧バージョンが生成開始時に保存した空のアシスタント枠を、
@@ -487,7 +507,6 @@ final class PersonaChatStore: ObservableObject {
     }
 
     private func isPendingAssistantText(_ text: String) -> Bool {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized.isEmpty || ["…", "・・・", "・・", "...", "..", "."].contains(normalized)
+        PersonaMessage.isPendingAssistantText(text)
     }
 }
