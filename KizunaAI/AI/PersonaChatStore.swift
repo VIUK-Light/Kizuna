@@ -373,19 +373,9 @@ final class PersonaChatStore: ObservableObject {
         persist()
     }
 
-    /// アシスタント応答のストリーミング途中で「最新メッセージのテキスト」を上書きする用。
-    func updateLastAssistantMessage(in threadID: UUID, text: String) {
-        guard canMutatePersistedState() else { return }
-        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
-        guard let lastIdx = threads[threadIdx].messages.lastIndex(where: { $0.role == .assistant }) else { return }
-        threads[threadIdx].messages[lastIdx].text = text
-        threads[threadIdx].updatedAt = Date()
-        // ストリーミング毎の persist は重いので、ここでは保存しない。最終 finalize 側で persist する。
-    }
-
     /// Commit the final assistant text and activity order as one MainActor
-    /// operation. Streaming updates use `updateLastAssistantMessage` so this
-    /// sort/persist work happens only once per completed turn.
+    /// operation. Streaming previews stay in the service/UI layer and never
+    /// mutate the persisted message array.
     @discardableResult
     func finalizeLastAssistantMessage(in threadID: UUID, text: String) -> Bool {
         guard canMutatePersistedState() else { return false }

@@ -1607,6 +1607,13 @@ final class KizunaAITests: XCTestCase {
     }
 
     func testPersonaOutputSafetyPolicyNeverFallsBackToUnsafeText() {
+        XCTAssertNil(PersonaOutputSafetyPolicy.completedText(from: nil))
+        XCTAssertNil(PersonaOutputSafetyPolicy.completedText(from: "   "))
+        XCTAssertNil(PersonaOutputSafetyPolicy.completedText(from: "…"))
+        XCTAssertEqual(
+            PersonaOutputSafetyPolicy.completedText(from: "<think>private</think>reply"),
+            "reply"
+        )
         XCTAssertNil(
             PersonaOutputSafetyPolicy.persistableText(
                 action: .requireEdit,

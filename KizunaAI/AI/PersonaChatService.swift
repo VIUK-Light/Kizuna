@@ -14,6 +14,20 @@ import Combine
 /// The Story pipeline has the same contract, but this local policy keeps the
 /// Persona fix independent so it can be merged without changing Story's PR.
 enum PersonaOutputSafetyPolicy {
+    /// Only a runtime-completed reply may cross into the output-safety stage.
+    /// A nil/empty result means the runtime failed, timed out, or was
+    /// cancelled; the last visible stream preview must never be promoted to
+    /// a completed assistant message.
+    static func completedText(from reply: String?) -> String? {
+        guard let reply else { return nil }
+        let sanitized = PersonaResponseSanitizer.sanitize(reply)
+        let cleaned = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        let placeholders: Set<String> = ["…", "・・・", "・・", "...", "..", "."]
+        guard !placeholders.contains(cleaned) else { return nil }
+        return sanitized
+    }
+
     static func persistableText(
         action: SafetyAction,
         original: String,
@@ -59,11 +73,6 @@ final class PersonaChatService: ObservableObject {
     /// This prevents a slow background sanitizer result from overwriting the
     /// newest text after it returns to the main actor.
     private var streamPreviewRevision = 0
-    private var lastVisibleText: String = ""
-    /// The runtime may finish before the latest background sanitizer returns.
-    /// Retain the raw cumulative preview so finalization can still sanitize the
-    /// full response synchronously instead of dropping the final update.
-    private var latestRawStreamingText: String?
     private var activeGenerationID: UUID?
     private var activeThreadID: UUID?
     private var lastRequestThreadID: UUID?
@@ -101,8 +110,6 @@ final class PersonaChatService: ObservableObject {
         streamingResponse = ""
         lastErrorThreadID = nil
         invalidatePendingStreamSanitization()
-        lastVisibleText = ""
-        latestRawStreamingText = nil
         lastRequestThreadID = thread.id
         lastRequestText = trimmed
         let generationID = UUID()
@@ -168,19 +175,26 @@ final class PersonaChatService: ObservableObject {
             overrideSystemPrompt: personaPrompt,
             generationID: generationID,
             onUpdate: { @MainActor [weak self] update in
-                self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
+                self?.handleStreamUpdate(update, generationID: generationID)
             }
         )
-        let rawFinalText = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
-        let outputSafety: SafetyDecision
-        if let cleaned = meaningfulResponse(rawFinalText) {
-            outputSafety = await safetyPipeline.evaluateOutput(
-                cleaned,
-                character: safetyCharacter(for: thread.personaSnapshot)
-            )
-        } else {
-            outputSafety = .allow
+        guard let rawFinalText = PersonaOutputSafetyPolicy.completedText(from: reply) else {
+            await MainActor.run {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "応答本文を受け取れませんでした。入力欄からもう一度試してください。",
+                        english: "No reply text was received. Try sending the message again."
+                    )
+                )
+            }
+            return
         }
+        let outputSafety = await safetyPipeline.evaluateOutput(
+            rawFinalText,
+            character: safetyCharacter(for: thread.personaSnapshot)
+        )
         await MainActor.run {
             self.finalize(
                 reply: reply,
@@ -234,9 +248,8 @@ final class PersonaChatService: ObservableObject {
             let canFallback = await MainActor.run { () -> Bool in
                 guard self.isGenerationActive(generationID) else { return false }
                 PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
-                // updateLastAssistantMessageは末尾のassistant枠を更新する。
                 // 先ほどの削除後に空枠を再追加して、旧応答を上書きせず
-                // フォールバック本文をこのターンへ保存できるようにする。
+                // このターンを通常のLegacy経路で完了できるようにする。
                 PersonaChatStore.shared.appendMessage(
                     PersonaMessage(role: .assistant, text: ""),
                     toThread: threadID
@@ -337,14 +350,13 @@ final class PersonaChatService: ObservableObject {
             overrideSystemPrompt: systemPrompt,
             generationID: generationID,
             onUpdate: { @MainActor [weak self] update in
-                self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
+                self?.handleStreamUpdate(update, generationID: generationID)
             }
         )
         guard isGenerationActive(generationID) else { return }
 
         // ── 6) 出力 safety ──
-        let rawFinalText = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
-        guard var finalText = meaningfulResponse(rawFinalText) else {
+        guard var finalText = PersonaOutputSafetyPolicy.completedText(from: reply) else {
             await MainActor.run {
                 self.failGeneration(
                     threadID: threadID,
@@ -452,11 +464,10 @@ final class PersonaChatService: ObservableObject {
 
     // MARK: - Streaming
 
-    private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, threadID: UUID, generationID: UUID) {
+    private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, generationID: UUID) {
         guard activeGenerationID == generationID else { return }
         guard case let .visiblePreview(text) = update else { return }
 
-        latestRawStreamingText = text
         streamPreviewRevision &+= 1
         let revision = streamPreviewRevision
         streamSanitizationTask?.cancel()
@@ -472,7 +483,6 @@ final class PersonaChatService: ObservableObject {
             guard !Task.isCancelled else { return }
             await self?.applySanitizedStreamPreview(
                 sanitized,
-                threadID: threadID,
                 generationID: generationID,
                 revision: revision
             )
@@ -481,15 +491,12 @@ final class PersonaChatService: ObservableObject {
 
     private func applySanitizedStreamPreview(
         _ text: String,
-        threadID: UUID,
         generationID: UUID,
         revision: Int
     ) {
         guard activeGenerationID == generationID,
               streamPreviewRevision == revision else { return }
-        lastVisibleText = text
         streamingResponse = text
-        PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: text)
     }
 
     private func invalidatePendingStreamSanitization() {
@@ -505,8 +512,7 @@ final class PersonaChatService: ObservableObject {
         outputSafety: SafetyDecision
     ) {
         guard activeGenerationID == generationID else { return }
-        let final = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
-        guard let cleaned = meaningfulResponse(final) else {
+        guard let cleaned = PersonaOutputSafetyPolicy.completedText(from: reply) else {
             failGeneration(
                 threadID: threadID,
                 generationID: generationID,
@@ -659,15 +665,6 @@ final class PersonaChatService: ObservableObject {
         """
     }
 
-    private func meaningfulResponse(_ text: String) -> String? {
-        let sanitized = sanitize(text)
-        let cleaned = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return nil }
-        let placeholders: Set<String> = ["…", "・・・", "・・", "...", "..", "."]
-        guard !placeholders.contains(cleaned) else { return nil }
-        return sanitized
-    }
-
     private func failGeneration(threadID: UUID, generationID: UUID, message: String) {
         guard activeGenerationID == generationID else { return }
         PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
@@ -695,9 +692,4 @@ final class PersonaChatService: ObservableObject {
         return s
     }
 
-    /// The runtime exposes structured visible text. Keep this final safeguard
-    /// deliberately non-destructive because the value is persisted to history.
-    private func sanitize(_ text: String) -> String {
-        PersonaResponseSanitizer.sanitize(text)
-    }
 }
