@@ -549,6 +549,10 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
     var summary: String
     /// シーン背景のアセットキー。旧保存データでは nil のまま読み込める。
     var imageKey: String?
+    /// 保存成功ごとに単調増加する世代。旧データはnilを0として扱う。
+    /// updatedAtはISO8601の秒精度へ丸められるため、同一秒内の競合判定には
+    /// このリビジョンを優先して使う。
+    var persistenceRevision: UInt64?
     var createdAt: Date
     var updatedAt: Date
 
@@ -564,6 +568,7 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
         conflict: String? = nil,
         summary: String = "",
         imageKey: String? = nil,
+        persistenceRevision: UInt64? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -578,6 +583,7 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
         self.conflict = conflict
         self.summary = summary
         self.imageKey = imageKey
+        self.persistenceRevision = persistenceRevision
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -1168,7 +1174,20 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
     var updatedAt: Date
     var failureCode: String?
 
-    init(
+    private enum CodingKeys: String, CodingKey {
+        case turnID
+        case userMessageID
+        case status
+        case attempt
+        case ownerID
+        case baseRevision
+        case assistantMessageIDs
+        case startedAt
+        case updatedAt
+        case failureCode
+    }
+
+    nonisolated init(
         turnID: UUID,
         userMessageID: UUID,
         status: StoryTurnStatus = .pending,
@@ -1190,6 +1209,20 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.failureCode = failureCode
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.turnID = try container.decode(UUID.self, forKey: .turnID)
+        self.userMessageID = try container.decode(UUID.self, forKey: .userMessageID)
+        self.status = try container.decode(StoryTurnStatus.self, forKey: .status)
+        self.attempt = max(1, try container.decodeIfPresent(Int.self, forKey: .attempt) ?? 1)
+        self.ownerID = try container.decodeIfPresent(UUID.self, forKey: .ownerID)
+        self.baseRevision = try container.decodeIfPresent(UInt64.self, forKey: .baseRevision) ?? 0
+        self.assistantMessageIDs = try container.decodeIfPresent([UUID].self, forKey: .assistantMessageIDs) ?? []
+        self.startedAt = try container.decode(Date.self, forKey: .startedAt)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        self.failureCode = try container.decodeIfPresent(String.self, forKey: .failureCode)
     }
 }
 
@@ -1261,6 +1294,12 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
 }
 
 extension StorySession {
+    var effectivePersistenceRevision: UInt64 {
+        persistenceRevision ?? 0
+    }
+}
+
+extension StoryScene {
     var effectivePersistenceRevision: UInt64 {
         persistenceRevision ?? 0
     }

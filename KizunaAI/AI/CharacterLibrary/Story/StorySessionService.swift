@@ -373,8 +373,13 @@ final class StorySessionService: ObservableObject {
             )
             return false
         }
+        await removeStoryMemoryJournal(for: turnID)
+        return true
+    }
+
+    private func removeStoryMemoryJournal(for turnID: UUID) async {
         do {
-            try StoryTurnJournal.remove(turnID: turnID)
+            try await StoryTurnJournal.removeAsync(turnID: turnID)
         } catch {
             // The auxiliary write is already complete. Retaining the journal
             // is safe and lets the next recovery retry the idempotent cleanup.
@@ -383,9 +388,7 @@ final class StorySessionService: ObservableObject {
                 turnID.uuidString,
                 error.localizedDescription
             )
-            return false
         }
-        return true
     }
 
     /// Restores only retries belonging to the currently opened StorySession.
@@ -1092,15 +1095,7 @@ final class StorySessionService: ObservableObject {
         sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
         // 選択結果はターンのcommitまでメモリ上に保持する。生成失敗時に
         // activeCharacterIdsだけが先に保存される部分成功を作らない。
-        guard isGenerationActive(generationID) else {
-            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
-            return
-        }
         scene = sceneWithSelectedCharacters
-        guard isGenerationActive(generationID) else {
-            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
-            return
-        }
 
         let activeCast = cast.filter { scene.activeCharacterIds.contains($0.characterId) }
         let inactiveCast = cast.filter { !scene.activeCharacterIds.contains($0.characterId) }
@@ -1890,7 +1885,7 @@ final class StorySessionService: ObservableObject {
                 storyWorldID: world.id
             )
             if await enqueueStoryMemoryRetry(retry) {
-                try? StoryTurnJournal.remove(turnID: turnID)
+                await removeStoryMemoryJournal(for: turnID)
             }
             memoryRetry = retry
         } else if let pendingMemoryRetry {
@@ -2002,7 +1997,7 @@ final class StorySessionService: ObservableObject {
             )
             if let remaining = await saveStoryMemoryRetryRecords(candidate) {
                 if await enqueueStoryMemoryRetry(remaining) {
-                    try? StoryTurnJournal.remove(turnID: retry.turnID)
+                    await removeStoryMemoryJournal(for: retry.turnID)
                 }
                 memoryRetry = remaining
             } else {
@@ -2137,7 +2132,7 @@ final class StorySessionService: ObservableObject {
             if let memoryRetry {
                 if let remaining = await saveStoryMemoryRetryRecords(memoryRetry) {
                     if await enqueueStoryMemoryRetry(remaining) {
-                        try? StoryTurnJournal.remove(turnID: retry.turnID)
+                        await removeStoryMemoryJournal(for: retry.turnID)
                     }
                     latestRuntimeNotice = storyMemoryRetryNotice(remaining)
                 } else {
