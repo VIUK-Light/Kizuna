@@ -128,11 +128,11 @@ struct StoryWorldCreateView: View {
             Text(existing == nil
                  ? KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story")
                  : KizunaCopy.text(japanese: "ストーリーを編集", english: "Edit story"))
-                .font(.system(size: 15, weight: .semibold))
+                .font(.headline.weight(.semibold))
             Spacer()
             if existing == nil {
                 Label(KizunaCopy.text(japanese: "31B Thinking", english: "31B Thinking"), systemImage: "sparkles")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
             } else {
                 Color.clear.frame(width: 60)
@@ -187,9 +187,9 @@ struct StoryWorldCreateView: View {
                     japanese: "保存データを読み込めませんでした",
                     english: "Saved story data could not be loaded"
                 ))
-                .font(.system(size: 12, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 Text(message)
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
@@ -197,7 +197,7 @@ struct StoryWorldCreateView: View {
                 Task { await vm.load() }
             } label: {
                 Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.semibold))
             }
             .buttonStyle(.borderedProminent)
         }
@@ -212,12 +212,12 @@ struct StoryWorldCreateView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(KizunaCopy.text(japanese: "何を作りたい？", english: "What would you like to make?"))
-                            .font(.system(size: 18, weight: .heavy))
+                            .font(.title3.weight(.heavy))
                         Text(KizunaCopy.text(
                             japanese: "短い一文から、世界観・初期シーン・キャラ・ルールまで自動で組み立てます。",
                             english: "Turn one short idea into a world, opening scene, cast, and rules."
                         ))
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(.callout.weight(.medium))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -231,7 +231,7 @@ struct StoryWorldCreateView: View {
                     japanese: "例: BL系。弓道部の無口な先輩と、放課後に少しずつ距離が近づく話",
                     english: "e.g. A quiet archery club senior and a slow after-school connection"
                 ), text: $vm.generationBrief, axis: .vertical)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .textFieldStyle(.plain)
                     .focused($generationBriefFocused)
                     .lineLimit(3...7)
@@ -259,7 +259,7 @@ struct StoryWorldCreateView: View {
                         Label(vm.isGeneratingTemplate
                               ? KizunaCopy.text(japanese: "生成中", english: "Generating")
                               : KizunaCopy.text(japanese: "31B Thinkingでテンプレート作成", english: "Build with 31B Thinking"), systemImage: "sparkles")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.subheadline.weight(.bold))
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
@@ -282,7 +282,7 @@ struct StoryWorldCreateView: View {
                     .foregroundStyle(vm.saveError == nil ? .green : .orange)
             }
             Text(vm.saveError ?? vm.generationStatus ?? KizunaCopy.text(japanese: "生成中…", english: "Generating…"))
-                .font(.system(size: 12, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(vm.saveError == nil ? Color.secondary : Color.orange)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -311,16 +311,16 @@ struct StoryWorldCreateView: View {
                 .frame(minHeight: 150)
             VStack(alignment: .leading, spacing: 8) {
                 Label(KizunaCopy.text(japanese: "カスタムストーリービルダー", english: "Custom story builder"), systemImage: "wand.and.stars")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(.white.opacity(0.72))
                 Text(KizunaCopy.text(japanese: "一文から、すぐ動く物語を作る", english: "Build a playable story from one idea"))
-                    .font(.system(size: 28, weight: .heavy))
+                    .font(.largeTitle.weight(.heavy))
                     .foregroundStyle(.white)
                 Text(KizunaCopy.text(
                     japanese: "生成後にキャラ画像、話し方、初期シーン、進行ルールをそのまま確認して試せます。",
                     english: "Review the cast art, voices, opening scene, and story rules before you play."
                 ))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.74))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -365,11 +365,12 @@ struct StoryWorldCreateView: View {
             generationBriefFocused = false
         } label: {
             Text(title)
-                .font(.system(size: 11, weight: .bold))
+                .font(.caption.weight(.bold))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
         }
         .buttonStyle(.plain)
+        .frame(minHeight: 44)
         .background(Capsule().fill(Color.accentColor.opacity(0.12)))
         .foregroundStyle(Color.accentColor)
     }
@@ -386,7 +387,7 @@ struct StoryWorldCreateView: View {
                         japanese: "31B Thinkingで作ると、ここにタイトル・キャスト・初期シーンが表示されます。",
                         english: "Your title, cast, and opening scene will appear here after generation."
                     ))
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.callout.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
                 .padding(14)
@@ -411,10 +412,10 @@ struct StoryWorldCreateView: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.12)))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 10.5, weight: .bold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(.tertiary)
                 Text(value)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.subheadline.weight(.bold))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -425,7 +426,7 @@ struct StoryWorldCreateView: View {
 
     private func sectionTitle(_ s: String) -> some View {
         Text(s)
-            .font(.system(size: 11, weight: .bold))
+            .font(.caption.weight(.bold))
             .tracking(0.6)
             .textCase(.uppercase)
             .foregroundStyle(.secondary)
@@ -446,7 +447,7 @@ struct StoryWorldCreateView: View {
                 TextField(KizunaCopy.text(japanese: "ひとこと説明", english: "Short description"), text: $vm.draft.shortDescription).textFieldStyle(.roundedBorder)
 
                 HStack {
-                    Text(KizunaCopy.text(japanese: "ジャンル", english: "Genre")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "ジャンル", english: "Genre")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Menu {
                         ForEach(CategoryGroup.allCases) { g in
                             Menu(g.localizedDisplayName) {
@@ -462,20 +463,21 @@ struct StoryWorldCreateView: View {
                             Image(systemName: "chevron.down").font(.system(size: 9))
                         }
                         .padding(.horizontal, 10).padding(.vertical, 6)
+                        .frame(minHeight: 44)
                         .background(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.15)))
                     }
                     .menuStyle(.borderlessButton)
                 }
 
                 HStack {
-                    Text(KizunaCopy.text(japanese: "関係性", english: "Relationship")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "関係性", english: "Relationship")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Picker("", selection: $vm.draft.relationshipGenre) {
                         ForEach(RelationshipGenre.allCases) { g in Text(g.localizedDisplayName).tag(g) }
                     }.labelsHidden().pickerStyle(.menu)
                 }
 
                 HStack(alignment: .top) {
-                    Text(KizunaCopy.text(japanese: "物語形式", english: "Story format")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "物語形式", english: "Story format")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Picker(
                         "",
                         selection: Binding(
@@ -491,13 +493,13 @@ struct StoryWorldCreateView: View {
                     .pickerStyle(.menu)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(vm.draft.resolvedCastMode.localizedDetail)
-                            .font(.system(size: 11))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 HStack {
-                    Text(KizunaCopy.text(japanese: "公開状態", english: "Visibility")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "公開状態", english: "Visibility")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                     Picker("", selection: $vm.draft.visibility) {
                         ForEach(CharacterVisibility.allCases) { v in Label(v.localizedDisplayName, systemImage: v.iconName).tag(v) }
                     }.labelsHidden().pickerStyle(.menu)
@@ -517,7 +519,7 @@ struct StoryWorldCreateView: View {
                     japanese: "世界観・場所・秘密などを登録すると、関連する会話の時だけAIへ渡します。",
                     english: "World details, places, and secrets are sent to the model only when relevant."
                 ))
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.callout.weight(.medium))
                     .foregroundStyle(.secondary)
                 TextField(KizunaCopy.text(japanese: "タイトル（例: 夜の図書館のルール）", english: "Title (e.g. rules for the night library)"), text: $newLorebookTitle)
                     .textFieldStyle(.roundedBorder)
@@ -548,12 +550,12 @@ struct StoryWorldCreateView: View {
                 ForEach(vm.lorebookDrafts) { entry in
                     HStack(alignment: .top, spacing: 8) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(entry.title).font(.system(size: 12, weight: .bold))
+                            Text(entry.title).font(.subheadline.weight(.bold))
                             Text(entry.keywords.joined(separator: " / "))
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.caption.weight(.medium))
                                 .foregroundStyle(.secondary)
                             Text(entry.content)
-                                .font(.system(size: 11))
+                                .font(.caption)
                                 .lineLimit(3)
                         }
                         Spacer(minLength: 0)
@@ -616,13 +618,13 @@ struct StoryWorldCreateView: View {
                     showCharacterCreator = true
                 } label: {
                     Label(KizunaCopy.text(japanese: "作る", english: "Create"), systemImage: "person.crop.circle.badge.plus")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.bordered)
                 Button {
                     showCharacterPicker = true
                 } label: {
-                    Label(KizunaCopy.text(japanese: "選ぶ", english: "Choose"), systemImage: "plus").font(.system(size: 11, weight: .semibold))
+                    Label(KizunaCopy.text(japanese: "選ぶ", english: "Choose"), systemImage: "plus").font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.bordered)
             }
@@ -661,7 +663,7 @@ struct StoryWorldCreateView: View {
                     .background(Circle().fill(Color.accentColor.opacity(0.12)))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(KizunaCopy.text(japanese: "詳細設定", english: "Advanced settings"))
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .font(.headline.weight(.bold))
                     Text(KizunaCopy.text(japanese: "Lorebook・キャラ同士の関係・タグ（必要なときだけ）", english: "Lorebook, character relationships, and tags (optional)"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -686,15 +688,16 @@ struct StoryWorldCreateView: View {
                 characterAvatar(profile, size: 34)
                 Image(systemName: member.roleInStory.iconName).foregroundStyle(.tint)
                 Text(profile.visibleName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                 Spacer()
                 Menu {
                     ForEach(CastRole.allCases, id: \.self) { r in
                         Button(r.localizedDisplayName) { vm.setRole(r, for: member.characterId) }
                     }
                 } label: {
-                    Text(member.roleInStory.localizedDisplayName).font(.system(size: 10, weight: .semibold))
+                    Text(member.roleInStory.localizedDisplayName).font(.caption.weight(.semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
+                        .frame(minHeight: 44)
                         .background(Capsule().fill(Color.accentColor.opacity(0.12)))
                         .foregroundStyle(Color.accentColor)
                 }
@@ -703,9 +706,13 @@ struct StoryWorldCreateView: View {
                 Button(role: .destructive) {
                     vm.removeCharacter(characterID: member.characterId)
                 } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(.secondary)
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(KizunaCopy.text(japanese: "キャラを削除", english: "Remove character"))
             }
             if !profile.shortDescription.isEmpty {
                 Text(profile.shortDescription).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -715,7 +722,7 @@ struct StoryWorldCreateView: View {
                     get: { vm.sceneDraft.activeCharacterIds.contains(member.characterId) },
                     set: { vm.setActiveInOpeningScene($0, for: member.characterId) }
                 ))
-                .font(.system(size: 11, weight: .medium))
+                .font(.callout.weight(.medium))
 
                 Menu {
                     ForEach(IntroductionTiming.allCases, id: \.self) { timing in
@@ -725,7 +732,8 @@ struct StoryWorldCreateView: View {
                     }
                 } label: {
                     Label(member.introductionTiming.localizedDisplayName, systemImage: "clock")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.caption.weight(.semibold))
+                        .frame(minHeight: 44)
                 }
                 .menuStyle(.borderlessButton)
             }
@@ -735,12 +743,12 @@ struct StoryWorldCreateView: View {
             ))
             .textFieldStyle(.roundedBorder)
             HStack(spacing: 6) {
-                Text(KizunaCopy.text(japanese: "重要度", english: "Importance")).font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(KizunaCopy.text(japanese: "重要度", english: "Importance")).font(.caption).foregroundStyle(.secondary)
                 Slider(value: Binding(
                     get: { member.importance },
                     set: { vm.setImportance($0, for: member.characterId) }
                 ), in: 0...1)
-                Text(String(format: "%.1f", member.importance)).font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(String(format: "%.1f", member.importance)).font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(8)
@@ -783,13 +791,13 @@ struct StoryWorldCreateView: View {
             HStack(spacing: 8) {
                 characterAvatar(pair.fromProfile, size: 24)
                 Text(pair.fromName)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.subheadline.weight(.bold))
                 Image(systemName: "arrow.right")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
                 characterAvatar(pair.toProfile, size: 24)
                 Text(pair.toName)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.subheadline.weight(.bold))
                 Spacer()
                 Picker("", selection: Binding(
                     get: { rel.relationshipType },
@@ -809,24 +817,24 @@ struct StoryWorldCreateView: View {
             .textFieldStyle(.roundedBorder)
             HStack(spacing: 10) {
                 Text(KizunaCopy.text(japanese: "信頼", english: "Trust"))
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Slider(value: Binding(
                     get: { rel.trust },
                     set: { vm.updateRelationship(from: pair.from.characterId, to: pair.to.characterId, trust: $0) }
                 ), in: 0...1)
                 Text(String(format: "%.1f", rel.trust))
-                    .font(.system(size: 10))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(KizunaCopy.text(japanese: "緊張", english: "Tension"))
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Slider(value: Binding(
                     get: { rel.tension },
                     set: { vm.updateRelationship(from: pair.from.characterId, to: pair.to.characterId, tension: $0) }
                 ), in: 0...1)
                 Text(String(format: "%.1f", rel.tension))
-                    .font(.system(size: 10))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -892,11 +900,15 @@ struct StoryWorldCreateView: View {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
                         ForEach(Array(vm.draft.tags.enumerated()), id: \.offset) { idx, t in
                             HStack(spacing: 4) {
-                                Text(t).font(.system(size: 11))
+                                Text(t).font(.caption)
                                 Button { vm.draft.tags.remove(at: idx) } label: {
-                                    Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(.secondary)
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .frame(minWidth: 44, minHeight: 44)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel(KizunaCopy.text(japanese: "タグを削除", english: "Remove tag"))
                             }
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(Capsule().fill(Color.accentColor.opacity(0.12)))
@@ -933,7 +945,7 @@ struct StoryWorldCreateView: View {
 
     private func multilineField(_ label: String, _ binding: Binding<String>, hint: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             TextField(hint, text: binding, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(2...4)
@@ -957,9 +969,12 @@ private struct CharacterPickerForStory: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }.buttonStyle(.plain).foregroundStyle(.secondary)
+                Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
                 Spacer()
-                Text(KizunaCopy.text(japanese: "キャラを追加", english: "Add character")).font(.system(size: 14, weight: .semibold))
+                Text(KizunaCopy.text(japanese: "キャラを追加", english: "Add character")).font(.subheadline.weight(.semibold))
                 Spacer()
                 Color.clear.frame(width: 48)
             }
@@ -968,7 +983,7 @@ private struct CharacterPickerForStory: View {
             if filtered.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "person.crop.circle.badge.questionmark").font(.system(size: 34)).foregroundStyle(.tertiary)
-                    Text(KizunaCopy.text(japanese: "追加できるキャラがいません", english: "No characters available")).font(.system(size: 13))
+                    Text(KizunaCopy.text(japanese: "追加できるキャラがいません", english: "No characters available")).font(.subheadline)
                     Text(KizunaCopy.text(japanese: "先に「キャラライブラリー」でキャラを作ってください。", english: "Create a character in the character library first.")).font(.caption).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -980,11 +995,11 @@ private struct CharacterPickerForStory: View {
                             Button { onPick(c) } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(c.visibleName)
-                                        .font(.system(size: 13, weight: .semibold))
+                                        .font(.subheadline.weight(.semibold))
                                     Text(c.category.localizedDisplayName + KizunaCopy.text(japanese: " ・ ", english: " · ") + c.relationshipGenre.localizedDisplayName)
-                                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                                        .font(.caption).foregroundStyle(.secondary)
                                     if !c.shortDescription.isEmpty {
-                                        Text(c.shortDescription).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(2)
+                                        Text(c.shortDescription).font(.caption).foregroundStyle(.tertiary).lineLimit(2)
                                     }
                                 }
                                 .padding(10).frame(maxWidth: .infinity, alignment: .leading)

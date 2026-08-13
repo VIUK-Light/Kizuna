@@ -133,20 +133,22 @@ struct StoryWorldLibraryView: View {
         HStack {
             if showsDismissButton {
                 Button { dismiss() } label: {
-                    Image(systemName: "chevron.down").frame(width: 32, height: 32)
+                    Image(systemName: "chevron.down")
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(KizunaCopy.text(japanese: "閉じる", english: "Close"))
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(KizunaCopy.text(japanese: "ストーリーライブラリー", english: "Story library"))
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.headline.weight(.semibold))
                     .accessibilityIdentifier("workspace.story.heading")
                 Text(vm.isBootstrapping && vm.worlds.isEmpty
                      ? KizunaCopy.text(japanese: "初期ストーリーを準備中…", english: "Preparing stories…")
                      : KizunaCopy.language == .english
                         ? "Choose a world · \(vm.worlds.count)"
                         : "世界観から選ぶ ・ \(vm.worlds.count) 件")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -154,7 +156,7 @@ struct StoryWorldLibraryView: View {
                 showCreate = true
             } label: {
                 Label(KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story"), systemImage: "plus")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
             }
             .buttonStyle(.borderedProminent)
         }
@@ -185,12 +187,13 @@ struct StoryWorldLibraryView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "square.grid.2x2").font(.system(size: 10))
-                        Text(vm.groupFilter?.localizedDisplayName ?? KizunaCopy.text(japanese: "グループ", english: "Group"))
-                        .font(.system(size: 11, weight: .semibold))
+                    Text(vm.groupFilter?.localizedDisplayName ?? KizunaCopy.text(japanese: "グループ", english: "Group"))
+                        .font(.caption.weight(.semibold))
                     Image(systemName: "chevron.down").font(.system(size: 8))
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
+                .frame(minWidth: 44, minHeight: 44)
                 .background(Capsule().fill(Color.primary.opacity(0.06)))
             }
             .menuStyle(.borderlessButton)
@@ -205,10 +208,10 @@ struct StoryWorldLibraryView: View {
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
                 Text(KizunaCopy.text(japanese: "一部の初期ストーリーを読み込めませんでした", english: "Some starter stories could not be loaded"))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                 if let error = vm.seedError {
                     Text(LocalizedStringKey(error.messageKey))
-                        .font(.system(size: 10))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -219,6 +222,7 @@ struct StoryWorldLibraryView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .frame(minHeight: 44)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -233,7 +237,7 @@ struct StoryWorldLibraryView: View {
                 japanese: "最新のストーリー一覧を読み込めませんでした。表示中の一覧は削除されていません。",
                 english: "The latest story list could not be loaded. The displayed list was not deleted."
             ))
-                .font(.system(size: 11, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             Spacer(minLength: 8)
@@ -242,6 +246,7 @@ struct StoryWorldLibraryView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .frame(minHeight: 44)
             .disabled(vm.isBootstrapping)
         }
         .padding(.horizontal, 14)
@@ -257,7 +262,7 @@ struct StoryWorldLibraryView: View {
                 japanese: "保存データの整理を完了できませんでした。",
                 english: "Saved-data cleanup could not be completed."
             ))
-                .font(.system(size: 11, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             Spacer(minLength: 8)
@@ -266,6 +271,7 @@ struct StoryWorldLibraryView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .frame(minHeight: 44)
             .disabled(vm.isBootstrapping)
         }
         .padding(.horizontal, 14)
@@ -280,12 +286,12 @@ struct StoryWorldLibraryView: View {
                 ProgressView()
                     .controlSize(.regular)
                 Text(KizunaCopy.text(japanese: "ストーリーを準備しています…", english: "Preparing stories…"))
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                 Text(KizunaCopy.text(
                     japanese: "初回だけ少し時間がかかります。画面を閉じずにお待ちください。",
                     english: "This may take a little longer the first time. You can keep this screen open."
                 ))
-                    .font(.system(size: 12))
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
@@ -297,15 +303,15 @@ struct StoryWorldLibraryView: View {
                     .font(.system(size: 34))
                     .foregroundStyle(.orange)
                 Text(KizunaCopy.text(japanese: "ストーリーを読み込めませんでした", english: "Stories could not be loaded"))
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                 if let loadError = vm.loadError {
                     Text(LocalizedStringKey(loadError.messageKey))
-                        .font(.system(size: 11))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 } else if let seedError = vm.seedError {
                     Text(LocalizedStringKey(seedError.messageKey))
-                        .font(.system(size: 11))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -324,7 +330,7 @@ struct StoryWorldLibraryView: View {
                 Text(vm.worlds.isEmpty
                      ? KizunaCopy.text(japanese: "ストーリーはまだありません", english: "No stories yet")
                      : KizunaCopy.text(japanese: "条件に合うストーリーがありません", english: "No stories match your filters"))
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                 if vm.worlds.isEmpty {
                     Button {
                         showCreate = true
@@ -369,11 +375,11 @@ struct StoryWorldLibraryView: View {
                         HStack(alignment: .bottom) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(displayedWorld.title)
-                                    .font(.system(size: 18, weight: .bold))
+                                    .font(.headline.weight(.bold))
                                     .foregroundStyle(.white)
                                     .lineLimit(2)
                                 Text(coverCharacter?.visibleName ?? displayedWorld.genre.group.localizedDisplayName)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.caption.weight(.semibold))
                                     .foregroundStyle(.white.opacity(0.86))
                             }
                             Spacer()
@@ -382,7 +388,7 @@ struct StoryWorldLibraryView: View {
                                 .foregroundStyle(.white.opacity(0.84))
                         }
                         Text(displayedWorld.mood.isEmpty ? displayedWorld.genre.group.localizedDisplayName : displayedWorld.mood)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(1)
                     }
@@ -392,11 +398,11 @@ struct StoryWorldLibraryView: View {
 
                 if !displayedWorld.shortDescription.isEmpty {
                     Text(displayedWorld.shortDescription)
-                        .font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary).lineLimit(2)
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(2)
                 }
                 if !displayedWorld.openingScene.isEmpty {
                     Text("「\(displayedWorld.openingScene)」")
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.primary.opacity(0.82))
                         .lineLimit(3)
                         .padding(9)
@@ -408,12 +414,12 @@ struct StoryWorldLibraryView: View {
                 }
                 HStack(spacing: 4) {
                     Text(displayedWorld.genre.localizedDisplayName)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentColor.opacity(0.12)))
                         .foregroundStyle(Color.accentColor)
                     Text(displayedWorld.relationshipGenre.localizedDisplayName)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.purple.opacity(0.12)))
                         .foregroundStyle(.purple)
@@ -422,12 +428,12 @@ struct StoryWorldLibraryView: View {
                         KizunaCopy.language == .english ? "\(w.characterIds.count) people" : "\(w.characterIds.count)人",
                         systemImage: "person.3.fill"
                     )
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.tertiary)
                 }
                 if !displayedWorld.tags.isEmpty {
                     Text(displayedWorld.tags.prefix(4).map { "#\($0)" }.joined(separator: "  "))
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }

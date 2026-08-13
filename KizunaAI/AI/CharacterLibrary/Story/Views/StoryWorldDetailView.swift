@@ -256,10 +256,10 @@ struct StoryWorldDetailView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(displayedWorld.title)
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.headline.weight(.bold))
                     .lineLimit(1)
                 Text(displayedWorld.genre.localizedDisplayName + " ・ " + displayedWorld.relationshipGenre.localizedDisplayName)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
 
@@ -331,7 +331,7 @@ struct StoryWorldDetailView: View {
                     .buttonStyle(.bordered)
                 } else {
                     Label(KizunaCopy.text(japanese: "標準", english: "Starter"), systemImage: "lock.fill")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -399,9 +399,9 @@ struct StoryWorldDetailView: View {
                 .overlay(alignment: .bottomLeading) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(coverCharacter?.visibleName ?? displayedWorld.genre.group.localizedDisplayName)
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.body.weight(.bold))
                         Text(displayedWorld.mood.isEmpty ? displayedWorld.relationshipGenre.localizedDisplayName : displayedWorld.mood)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(.white.opacity(0.72))
                     }
                     .foregroundStyle(.white)
@@ -410,11 +410,11 @@ struct StoryWorldDetailView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 Text(displayedWorld.title)
-                    .font(.system(size: 34, weight: .heavy))
+                    .font(.largeTitle.weight(.heavy))
                     .lineLimit(2)
                 if !displayedWorld.shortDescription.isEmpty {
                     Text(displayedWorld.shortDescription)
-                        .font(.system(size: 17, weight: .medium))
+                        .font(.body.weight(.medium))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -423,7 +423,7 @@ struct StoryWorldDetailView: View {
                     // pill row below; fixedSize allows long tag lists to wrap
                     // instead of silently hiding the remaining tags.
                     Text(displayedWorld.tags.map { "#\($0)" }.joined(separator: " "))
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -434,7 +434,7 @@ struct StoryWorldDetailView: View {
                             : KizunaCopy.text(japanese: "未開始", english: "Not started"),
                         systemImage: canResume ? "arrow.uturn.forward.circle.fill" : "play.circle"
                     )
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.caption.weight(.bold))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
                         .background(Capsule().fill(Color.primary.opacity(0.08)))
@@ -452,7 +452,7 @@ struct StoryWorldDetailView: View {
                                 : KizunaCopy.text(japanese: "始める", english: "Start"),
                             systemImage: "play.fill"
                         )
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.body.weight(.bold))
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
@@ -462,7 +462,7 @@ struct StoryWorldDetailView: View {
                         onStartNewSession?(world)
                     } label: {
                         Label(KizunaCopy.text(japanese: "新しい物語を始める", english: "Start a new story"), systemImage: "plus.circle")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.subheadline.weight(.semibold))
                     }
                     .buttonStyle(.bordered)
                     .disabled(!canStartSession)
@@ -503,7 +503,7 @@ struct StoryWorldDetailView: View {
                         : sceneTitle,
                     systemImage: session == nil ? "play.circle" : "bookmark.fill"
                 )
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.body.weight(.bold))
                 if let updatedAt = session?.updatedAt {
                     Text(KizunaCopy.language == .english
                          ? "Last updated \(updatedAt, style: .relative)"
@@ -553,20 +553,20 @@ struct StoryWorldDetailView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
                             Label(member.roleInStory.localizedDisplayName, systemImage: member.roleInStory.iconName)
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.caption.weight(.bold))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(Capsule().fill(Color.white.opacity(0.16)))
                             Spacer()
                             Text("\(Int(member.importance * 100))%")
-                                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                                .font(.caption.weight(.bold).monospacedDigit())
                                 .foregroundStyle(.white.opacity(0.86))
                         }
                         Text(character?.visibleName ?? KizunaCopy.text(japanese: "未登録キャラ", english: "Unregistered character"))
-                            .font(.system(size: 20, weight: .heavy))
+                            .font(.title3.weight(.heavy))
                             .lineLimit(1)
                         Text(member.introductionTiming.localizedDisplayName)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(.white.opacity(0.78))
                     }
                     .foregroundStyle(.white)
@@ -576,7 +576,7 @@ struct StoryWorldDetailView: View {
 
                 if !member.relationshipToUser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(member.relationshipToUser)
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -657,7 +657,7 @@ struct StoryWorldDetailView: View {
                             Text(scene.title.isEmpty
                                  ? KizunaCopy.text(japanese: "無題のシーン", english: "Untitled scene")
                                  : scene.title)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.subheadline.weight(.semibold))
                             if !scene.location.isEmpty || !scene.timeOfDay.isEmpty || !scene.mood.isEmpty {
                                 sceneMetadata(scene)
                             }
@@ -709,7 +709,7 @@ struct StoryWorldDetailView: View {
             }
             .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.system(size: 10.5))
+        .font(.caption)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -739,11 +739,11 @@ struct StoryWorldDetailView: View {
     private func ruleGroup(_ title: String, _ rules: [String]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 10.5, weight: .bold))
+                .font(.caption.weight(.bold))
                 .foregroundStyle(.tertiary)
             ForEach(rules, id: \.self) { rule in
                 Label(rule, systemImage: title == KizunaCopy.text(japanese: "出力形式", english: "Output format") ? "text.quote" : "checkmark.seal")
-                    .font(.system(size: 11.5))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -773,11 +773,12 @@ struct StoryWorldDetailView: View {
                                 Text(KizunaCopy.language == .english
                                      ? "\(session.messages.count) messages"
                                      : "\(session.messages.count) 件")
-                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                    .font(.caption2.weight(.bold).monospacedDigit())
                             }
-                            .font(.system(size: 11.5))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                             .contentShape(Rectangle())
+                            .frame(minHeight: 44, alignment: .leading)
                         }
                         .buttonStyle(.plain)
                     }
@@ -793,7 +794,7 @@ struct StoryWorldDetailView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: icon)
-                .font(.system(size: 14, weight: .bold))
+                .font(.subheadline.weight(.bold))
             content()
         }
         .padding(14)
@@ -814,7 +815,7 @@ struct StoryWorldDetailView: View {
         if !trimmed.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 10.5, weight: .bold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(.tertiary)
                 detailText(trimmed)
             }
@@ -823,7 +824,7 @@ struct StoryWorldDetailView: View {
 
     private func detailText(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12.5))
+            .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)
@@ -831,7 +832,7 @@ struct StoryWorldDetailView: View {
 
     private func emptyLine(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12))
+            .font(.caption)
             .foregroundStyle(.tertiary)
     }
 }
@@ -845,7 +846,7 @@ private struct FlowTagRow: View {
             // reachable on compact windows instead of hiding the ninth item.
             ForEach(tags, id: \.self) { tag in
                 Text(tag)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Capsule().fill(Color.primary.opacity(0.06)))
@@ -941,10 +942,10 @@ private struct StoryDetailCharacterSpotlight: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(character.visibleName)
-                                    .font(.system(size: 32, weight: .heavy))
+                                    .font(.largeTitle.weight(.heavy))
                                 if !character.shortDescription.isEmpty {
                                     Text(character.shortDescription)
-                                        .font(.system(size: 14, weight: .semibold))
+                                        .font(.subheadline.weight(.semibold))
                                         .lineLimit(2)
                                 }
                             }
@@ -997,10 +998,10 @@ private struct StoryDetailCharacterSpotlight: View {
             if !trimmed.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
                     Text(trimmed)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.subheadline.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
