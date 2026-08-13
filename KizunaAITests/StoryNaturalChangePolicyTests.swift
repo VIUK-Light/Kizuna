@@ -64,6 +64,27 @@ final class StoryNaturalChangePolicyTests: XCTestCase {
         XCTAssertEqual(accepted.evidence, "駅前へ歩き出した")
     }
 
+    func testRejectsEvidenceShorterThanFourCharactersWhenContextIsProvided() {
+        let patch = StoryStatePatch(
+            location: "駅前",
+            timeOfDay: nil,
+            mood: nil,
+            weather: nil,
+            relationshipStage: nil,
+            characterUpdates: nil,
+            inventoryChanges: nil,
+            activeGoals: nil,
+            evidence: "駅前"
+        )
+
+        XCTAssertNil(
+            StoryNaturalChangePolicy.acceptedPatch(
+                from: patch,
+                evidenceText: ["ナギ: 駅前"]
+            )
+        )
+    }
+
     func testRejectsMultipleObservableChangeGroups() {
         let patch = StoryStatePatch(
             location: "森",

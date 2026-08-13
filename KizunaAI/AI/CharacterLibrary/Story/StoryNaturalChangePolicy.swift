@@ -24,6 +24,7 @@ enum StoryNaturalChangePolicy {
         // migration tests; the StorySessionService always supplies context.
         if !evidenceText.isEmpty {
             guard let evidence = normalizedText(patch.evidence),
+                  evidence.count >= 4,
                   evidence.count <= 120,
                   evidenceText.contains(where: { containsEvidence(evidence, in: $0) }) else {
                 return nil
