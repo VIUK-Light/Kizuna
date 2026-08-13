@@ -478,9 +478,10 @@ final class PersonaChatService: ObservableObject {
                 self.generationTask?.cancel()
                 self.generationTask = nil
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
-                // The partial stream was never evaluated by output Safety.
-                // Remove it before exposing the retryable timeout state.
-                PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
+                // `failGeneration` removes the pending assistant message before
+                // exposing the retryable timeout state. Do not remove it here
+                // as well: a second removal could delete the previous completed
+                // assistant message from the same thread.
                 self.failGeneration(
                     threadID: threadID,
                     generationID: generationID,

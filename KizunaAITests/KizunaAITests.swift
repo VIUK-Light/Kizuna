@@ -1128,7 +1128,9 @@ final class KizunaAITests: XCTestCase {
             personaSnapshot: profile,
             title: "Partial",
             messages: [
-                PersonaMessage(role: .user, text: "hello"),
+                PersonaMessage(role: .user, text: "first"),
+                PersonaMessage(role: .assistant, text: "completed response"),
+                PersonaMessage(role: .user, text: "second"),
                 PersonaMessage(role: .assistant, text: "unscreened partial response")
             ]
         )
@@ -1140,8 +1142,14 @@ final class KizunaAITests: XCTestCase {
         let store = PersonaChatStore(defaults: defaults)
         store.removeLastAssistantMessage(in: threadID)
 
-        XCTAssertEqual(store.thread(id: threadID)?.messages.map(\.role), [.user])
+        XCTAssertEqual(
+            store.thread(id: threadID)?.messages.map(\.text),
+            ["first", "completed response", "second"]
+        )
         let reloaded = PersonaChatStore(defaults: defaults)
-        XCTAssertEqual(reloaded.thread(id: threadID)?.messages.map(\.role), [.user])
+        XCTAssertEqual(
+            reloaded.thread(id: threadID)?.messages.map(\.text),
+            ["first", "completed response", "second"]
+        )
     }
 }
