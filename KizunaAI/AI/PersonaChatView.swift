@@ -1018,19 +1018,21 @@ struct PersonaChatView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
                     Text(thread.personaSnapshot.name)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.headline.weight(.bold))
                         .foregroundStyle(.primary)
                     Text(thread.personaSnapshot.relation.localizedDisplayName)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.caption.weight(.bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(Capsule().fill(style.primary.opacity(0.16)))
                         .foregroundStyle(style.primary)
                 }
                 Text(thread.personaSnapshot.tone.localizedDisplayName + KizunaCopy.text(japanese: " ・ ", english: " · ") + thread.personaSnapshot.personality)
-                    .font(.system(size: 11))
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
             Spacer()
             Menu {
@@ -1223,7 +1225,7 @@ struct PersonaChatView: View {
                         .controlSize(.small)
                 } else {
                     Text(preview)
-                        .font(.system(size: 16, weight: .regular))
+                        .font(.body)
                         .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1247,6 +1249,7 @@ struct PersonaChatView: View {
             japanese: "\(personaProfile.name)が生成中です",
             english: "\(personaProfile.name) is writing"
         ))
+        .accessibilityValue(Text(preview))
     }
 
     private func generationError(_ message: String) -> some View {
@@ -1255,16 +1258,16 @@ struct PersonaChatView: View {
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 4) {
                 Text(KizunaCopy.text(japanese: "応答を生成できませんでした", english: "Could not generate a reply"))
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.headline.weight(.bold))
                 Text(message)
-                    .font(.system(size: 12))
+                    .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(KizunaCopy.text(
                     japanese: "入力欄からもう一度送信できます。",
                     english: "You can send the message again from the composer."
                 ))
-                    .font(.system(size: 11))
+                    .font(.callout)
                     .foregroundStyle(.tertiary)
                 HStack(spacing: 8) {
                     Button(KizunaCopy.text(japanese: "同じ内容を再送信", english: "Try again")) {
@@ -1272,11 +1275,13 @@ struct PersonaChatView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
+                    .frame(minHeight: 44)
                     Button(KizunaCopy.text(japanese: "閉じる", english: "Dismiss")) {
                         service.dismissError()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .frame(minHeight: 44)
                 }
             }
         }
@@ -1542,8 +1547,8 @@ struct PersonaMessageBubble: View {
                 // ユーザーバブル: ダークは少し落とした緑、ライトは LINE 緑風。
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(colorScheme == .dark
-                          ? Color(red: 0.30, green: 0.60, blue: 0.32)
-                          : Color(red: 0.42, green: 0.78, blue: 0.40))
+                          ? Color(red: 0.18, green: 0.48, blue: 0.22)
+                          : Color(red: 0.15, green: 0.46, blue: 0.20))
             } else {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(colorScheme == .dark

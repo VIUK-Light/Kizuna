@@ -37,7 +37,10 @@ private let storyBubble = Color(red: 0.16, green: 0.16, blue: 0.17)
 private let storyPurple = Color(red: 0.08, green: 0.56, blue: 0.52)
 private let storyWarmAccent = Color(red: 0.93, green: 0.66, blue: 0.22)
 private let storyText = Color.white.opacity(0.92)
-private let storyMuted = Color.white.opacity(0.58)
+// Keep secondary story text readable on the dark canvas. The previous 0.58
+// opacity fell below the normal-text contrast target for timestamps and
+// status labels.
+private let storyMuted = Color.white.opacity(0.78)
 
 struct StorySessionChatView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -168,15 +171,15 @@ struct StorySessionChatView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(displayedWorld.title)
-                    .font(.system(size: horizontalSizeClass == .compact ? 17 : 20, weight: .heavy))
+                    .font(.title3.weight(.heavy))
                     .foregroundStyle(storyText)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .minimumScaleFactor(0.78)
                 if !displayedWorld.shortDescription.isEmpty && horizontalSizeClass != .compact {
                     Text(displayedWorld.shortDescription)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(storyMuted)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
             }
             .layoutPriority(1)
@@ -201,6 +204,7 @@ struct StorySessionChatView: View {
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(storyCopy("セッションメニュー", "Session menu"))
         }
         .padding(.horizontal, horizontalSizeClass == .compact ? 14 : 18)
         .padding(.vertical, horizontalSizeClass == .compact ? 7 : 13)
@@ -239,19 +243,19 @@ private struct StoryGenerationModelPill: View {
         } label: {
             HStack(spacing: 5) {
                 Text(vm.generationModel.displayName)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.subheadline.weight(.bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .allowsTightening(true)
-                    .fixedSize(horizontal: true, vertical: false)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.caption2.weight(.bold))
             }
             .foregroundStyle(storyText)
-            .frame(width: 88, height: 44, alignment: .center)
+            .frame(minWidth: 88, minHeight: 44, alignment: .center)
             .background(Capsule().fill(Color.white.opacity(0.16)))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(storyCopy("生成モデル", "Generation model"))
         .help(modelHelpText(vm.generationModel))
         .sheet(isPresented: $isShowingDetails) {
             NavigationStack {
@@ -706,9 +710,9 @@ private struct StorySessionChatBody: View {
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.orange.opacity(0.9))
                     .frame(width: 18)
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(storyCopy("モデル状態", "Model status"))
-                        .font(.system(size: 10, weight: .heavy))
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(storyCopy("モデル状態", "Model status"))
+                        .font(.caption.weight(.heavy))
                         .foregroundStyle(storyMuted)
                     Text(notice.text)
                         .font(.callout.weight(.semibold))
@@ -718,7 +722,7 @@ private struct StorySessionChatBody: View {
                         Button(storyCopy("もう一度試す", "Try again")) {
                             _ = vm.retryRuntimeNotice(notice)
                         }
-                        .font(.system(size: 11.5, weight: .bold))
+                        .font(.body.weight(.bold))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .frame(minHeight: 44)
@@ -733,7 +737,7 @@ private struct StorySessionChatBody: View {
                                         : storyCopy("NAGI APIキー未設定", "NAGI API key not set"),
                                     systemImage: "arrow.triangle.2.circlepath"
                                 )
-                                .font(.system(size: 11.5, weight: .bold))
+                                .font(.body.weight(.bold))
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
@@ -797,10 +801,12 @@ private struct StorySessionChatBody: View {
                         isShowingSafetyResources = true
                     }
                     .buttonStyle(.borderedProminent)
+                    .frame(minHeight: 44)
                     Button(storyCopy("閉じる", "Dismiss")) {
                         service.dismissSafetyConcern()
                     }
                     .buttonStyle(.bordered)
+                    .frame(minHeight: 44)
                 }
             }
             .padding(14)
@@ -1006,6 +1012,8 @@ private struct StorySessionChatBody: View {
     private func messageRow(_ message: StoryMessage) -> some View {
         if case .system = message.author {
             messageRowContent(message)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(storyAccessibilityLabel(for: message))
         } else {
             messageRowContent(message)
                 .accessibilityElement(children: .combine)
@@ -1032,7 +1040,7 @@ private struct StorySessionChatBody: View {
                         )
                     Text(message.createdAt, style: .time)
                         .font(.caption2)
-                        .foregroundStyle(storyMuted.opacity(0.72))
+                        .foregroundStyle(storyMuted)
                 }
             }
         case .system:
@@ -1045,7 +1053,7 @@ private struct StorySessionChatBody: View {
                         .frame(width: 18)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(storyCopy("モデル状態", "Model status"))
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(.caption.weight(.heavy))
                             .foregroundStyle(storyMuted)
                         Text(StoryRetryMetadata.removingMetadata(from: message.text))
                             .font(.callout.weight(.semibold))
@@ -1054,7 +1062,7 @@ private struct StorySessionChatBody: View {
                         Button(storyCopy("もう一度試す", "Try again")) {
                             vm.retryLastMessage(for: message.id)
                         }
-                        .font(.system(size: 11.5, weight: .bold))
+                        .font(.body.weight(.bold))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .frame(minHeight: 44)
@@ -1069,7 +1077,7 @@ private struct StorySessionChatBody: View {
                                         : storyCopy("NAGI APIキー未設定", "NAGI API key not set"),
                                     systemImage: "arrow.triangle.2.circlepath"
                                 )
-                                .font(.system(size: 11.5, weight: .bold))
+                                .font(.body.weight(.bold))
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
@@ -1105,7 +1113,7 @@ private struct StorySessionChatBody: View {
                     .frame(width: 34)
                     Text(message.text)
                         .font(.body.weight(.medium))
-                        .foregroundStyle(storyText.opacity(0.50))
+                        .foregroundStyle(storyText.opacity(0.82))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: 620, alignment: .leading)
@@ -1132,7 +1140,7 @@ private struct StorySessionChatBody: View {
                         )
                     Text(message.createdAt, style: .time)
                         .font(.caption2)
-                        .foregroundStyle(storyMuted.opacity(0.72))
+                        .foregroundStyle(storyMuted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -1238,17 +1246,17 @@ private struct StorySessionChatBody: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
                     Text(speaker?.nonEmpty ?? storyCopy("kizuna", "kizuna"))
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(storyText.opacity(0.88))
                     Text(status)
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(storyMuted)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
                 if !preview.isEmpty, preview != "・・・", preview != "..." {
                     Text(preview)
-                        .font(.system(size: 13.5, weight: .medium))
+                        .font(.body.weight(.medium))
                         .foregroundStyle(storyText.opacity(0.78))
                         .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1268,6 +1276,7 @@ private struct StorySessionChatBody: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(storyCopy("\(speaker ?? "kizuna")が\(status)", "\(speaker ?? "kizuna") is \(status)"))
+        .accessibilityValue(Text(preview))
         .id("streaming-preview")
     }
 
