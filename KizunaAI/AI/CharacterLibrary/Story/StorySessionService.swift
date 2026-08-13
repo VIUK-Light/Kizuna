@@ -393,7 +393,8 @@ final class StorySessionService: ObservableObject {
 
     /// Restores only retries belonging to the currently opened StorySession.
     /// Other sessions remain in the shared queue for their own view to pick
-    /// up, and legacy retry records fall back to their StoryWorld scope.
+    /// up. Legacy records without a trustworthy Session ID remain queued for
+    /// migration, but are never assigned to a Session by World ID alone.
     func restorePendingStoryMemoryRetries(
         storySessionID: UUID,
         storyWorldID: UUID
