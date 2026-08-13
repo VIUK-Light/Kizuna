@@ -107,6 +107,22 @@ enum StoryOutputSafetyPolicy {
             return original
         }
     }
+
+    /// Model-emitted state is coupled to the text that was evaluated. A
+    /// rewritten `.soften` response therefore cannot carry the original
+    /// response's state delta into persistence. Only actions that preserve the
+    /// evaluated text may keep its already-parsed state patch.
+    static func persistableStatePatch(
+        action: SafetyAction,
+        original: StoryStatePatch?
+    ) -> StoryStatePatch? {
+        switch action {
+        case .allow, .warn:
+            return original
+        case .soften, .block, .requireEdit:
+            return nil
+        }
+    }
 }
 
 /// 重要度。

@@ -1164,4 +1164,31 @@ final class KizunaAITests: XCTestCase {
             "allowed with warning"
         )
     }
+
+    func testStoryOutputSafetyPolicyDropsStatePatchWhenTextIsRewritten() {
+        let original = StoryStatePatch(
+            location: "unsafe original location",
+            mood: "tense"
+        )
+
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableStatePatch(
+                action: .soften,
+                original: original
+            )
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableStatePatch(
+                action: .allow,
+                original: original
+            ),
+            original
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableStatePatch(
+                action: .requireEdit,
+                original: original
+            )
+        )
+    }
 }

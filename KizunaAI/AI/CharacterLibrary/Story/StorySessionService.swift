@@ -1280,7 +1280,15 @@ final class StorySessionService: ObservableObject {
                 )
                 return
             }
-            rawFinal = persistableText
+            // A safety rewrite is a new text boundary. Do not retain the
+            // original model's STATE_UPDATE, and do not let a marker embedded
+            // in the rewrite bypass the same metadata parser.
+            modelStatePatch = StoryOutputSafetyPolicy.persistableStatePatch(
+                action: outSafety.action,
+                original: modelStatePatch
+            )
+            let persistableMetadata = parseStateMetadata(from: persistableText)
+            rawFinal = sanitizedFinalText(persistableMetadata.visibleText)
         }
         rawFinal = sanitize(rawFinal)
         guard isMeaningfulStoryText(rawFinal) else {
