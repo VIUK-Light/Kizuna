@@ -91,9 +91,9 @@ struct PersonaThread: Codable, Hashable, Identifiable {
 
 @MainActor
 final class PersonaChatStore: ObservableObject {
-    static let shared = PersonaChatStore()
+    static let shared = PersonaChatStore(defaults: UserDefaults.standard)
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private enum Key {
         static let threads = "persona.threads.v1"
         static let activeThreadID = "persona.activeThreadID.v1"
@@ -124,7 +124,8 @@ final class PersonaChatStore: ObservableObject {
         threads.first { $0.id == id }
     }
 
-    private init() {
+    init(defaults: UserDefaults = UserDefaults.standard) {
+        self.defaults = defaults
         load()
         guard !didFailToLoadPersistedThreads else {
             NSLog("[PersonaChatStore] thread data was not decoded; preserving the source file")
@@ -223,7 +224,7 @@ final class PersonaChatStore: ObservableObject {
         guard threads[index].characterID != nil else { return }
         threads[index].characterID = nil
         threads[index].updatedAt = Date()
-        persist()
+        persistAfterActivityUpdate()
     }
 
     /// キャラクター本体を削除した後に、関連する全Personaスレッドを
