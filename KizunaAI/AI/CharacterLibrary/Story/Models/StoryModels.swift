@@ -708,6 +708,9 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
     var characterUpdates: [StoryCharacterStatePatch]?
     var inventoryChanges: [StoryInventoryChange]?
     var activeGoals: [String]?
+    /// A short exact quote from the visible turn or the user's current input.
+    /// It is validation metadata only and is never persisted in StoryState.
+    var evidence: String? = nil
 
     /// Serialize every state field into the same opaque text channel used by
     /// the output safety checker. Structured state is persisted separately

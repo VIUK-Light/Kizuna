@@ -19,7 +19,8 @@ enum StoryStateMetadataParser {
         "relationshipStage",
         "characterUpdates",
         "inventoryChanges",
-        "activeGoals"
+        "activeGoals",
+        "evidence"
     ]
 
     static func parse(_ text: String) -> StoryStateMetadataParseResult {
