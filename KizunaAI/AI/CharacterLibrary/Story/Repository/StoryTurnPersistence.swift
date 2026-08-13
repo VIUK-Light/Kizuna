@@ -169,6 +169,12 @@ enum StoryTurnJournal {
         baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws {
         try LocalJSONStoreTransaction.withSharedLock {
+            // Read deletion intent before any journal quarantine or repair.
+            // A malformed tombstone must fail closed even when the journal
+            // root is malformed too.
+            let tombstones = try loadTombstonesUnlocked(baseURL: baseURL)
+            try reconcileTombstonesUnlocked(tombstones, baseURL: baseURL)
+
             let decoded: RecoverableEntries
             do {
                 decoded = try loadRecoverableEntries(baseURL: baseURL)
@@ -198,12 +204,6 @@ enum StoryTurnJournal {
                     throw error
                 }
             }
-            // Tombstones are loaded before touching either record. A malformed
-            // tombstone file must fail closed: deleting a record or discarding a
-            // journal entry without knowing the deletion intent could lose data.
-            let tombstones = try loadTombstonesUnlocked(baseURL: baseURL)
-            try reconcileTombstonesUnlocked(tombstones, baseURL: baseURL)
-
             let entries = decoded.entries
             guard !entries.isEmpty else {
                 if decoded.containsInvalidEntries {
@@ -218,6 +218,10 @@ enum StoryTurnJournal {
                         backupURL.lastPathComponent
                     )
                 }
+                try purgeCompletedMemoryRetriesUnlocked(
+                    keepingTurnIDs: [],
+                    baseURL: baseURL
+                )
                 return
             }
 
@@ -329,6 +333,10 @@ enum StoryTurnJournal {
             try LocalJSONStoreTransaction.save(
                 unresolvedEntries,
                 fileName: fileName,
+                baseURL: baseURL
+            )
+            try purgeCompletedMemoryRetriesUnlocked(
+                keepingTurnIDs: Set(unresolvedEntries.map(\.turnID)),
                 baseURL: baseURL
             )
         }
@@ -457,13 +465,33 @@ enum StoryTurnJournal {
         var existing = try loadMemoryRetriesUnlocked(baseURL: baseURL)
         for retry in retries {
             if let index = existing.firstIndex(where: { $0.turnID == retry.turnID }) {
-                existing[index] = retry
+                // A completion marker is newer than the journal payload. Do
+                // not resurrect an already-successful retry after a crash.
+                if !existing[index].isCompleted || retry.isCompleted {
+                    existing[index] = retry
+                }
             } else {
                 existing.append(retry)
             }
         }
         try LocalJSONStoreTransaction.save(
             existing,
+            fileName: memoryRetryFileName,
+            baseURL: baseURL
+        )
+    }
+
+    private static func purgeCompletedMemoryRetriesUnlocked(
+        keepingTurnIDs: Set<UUID>,
+        baseURL: URL
+    ) throws {
+        let existing = try loadMemoryRetriesUnlocked(baseURL: baseURL)
+        let retained = existing.filter { retry in
+            !retry.isCompleted || keepingTurnIDs.contains(retry.turnID)
+        }
+        guard retained.count != existing.count else { return }
+        try LocalJSONStoreTransaction.save(
+            retained,
             fileName: memoryRetryFileName,
             baseURL: baseURL
         )

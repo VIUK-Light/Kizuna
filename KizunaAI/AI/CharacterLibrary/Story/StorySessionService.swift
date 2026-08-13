@@ -158,6 +158,21 @@ struct StoryMemoryRetry: Codable, Equatable {
     /// records decodable.
     let storySessionID: UUID?
     let storyWorldID: UUID?
+    /// A durable completion marker closes the crash window between removing
+    /// the retry queue and removing its turn journal. Older JSON has no key,
+    /// so decoding defaults to false.
+    var isCompleted: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case turnID
+        case userMessageID
+        case userText
+        case characterMemories
+        case storyMemories
+        case storySessionID
+        case storyWorldID
+        case isCompleted
+    }
 
     init(
         turnID: UUID,
@@ -166,7 +181,8 @@ struct StoryMemoryRetry: Codable, Equatable {
         characterMemories: [CharacterMemory],
         storyMemories: [StoryMemory],
         storySessionID: UUID? = nil,
-        storyWorldID: UUID? = nil
+        storyWorldID: UUID? = nil,
+        isCompleted: Bool = false
     ) {
         self.turnID = turnID
         self.userMessageID = userMessageID
@@ -175,6 +191,31 @@ struct StoryMemoryRetry: Codable, Equatable {
         self.storyMemories = storyMemories
         self.storySessionID = storySessionID
         self.storyWorldID = storyWorldID
+        self.isCompleted = isCompleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        turnID = try container.decode(UUID.self, forKey: .turnID)
+        userMessageID = try container.decode(UUID.self, forKey: .userMessageID)
+        userText = try container.decode(String.self, forKey: .userText)
+        characterMemories = try container.decode([CharacterMemory].self, forKey: .characterMemories)
+        storyMemories = try container.decode([StoryMemory].self, forKey: .storyMemories)
+        storySessionID = try container.decodeIfPresent(UUID.self, forKey: .storySessionID)
+        storyWorldID = try container.decodeIfPresent(UUID.self, forKey: .storyWorldID)
+        isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(turnID, forKey: .turnID)
+        try container.encode(userMessageID, forKey: .userMessageID)
+        try container.encode(userText, forKey: .userText)
+        try container.encode(characterMemories, forKey: .characterMemories)
+        try container.encode(storyMemories, forKey: .storyMemories)
+        try container.encodeIfPresent(storySessionID, forKey: .storySessionID)
+        try container.encodeIfPresent(storyWorldID, forKey: .storyWorldID)
+        try container.encode(isCompleted, forKey: .isCompleted)
     }
 }
 
@@ -373,13 +414,15 @@ final class StorySessionService: ObservableObject {
             )
             return false
         }
-        await removeStoryMemoryJournal(for: turnID)
+        _ = await removeStoryMemoryJournal(for: turnID)
         return true
     }
 
-    private func removeStoryMemoryJournal(for turnID: UUID) async {
+    @discardableResult
+    private func removeStoryMemoryJournal(for turnID: UUID) async -> Bool {
         do {
             try await StoryTurnJournal.removeAsync(turnID: turnID)
+            return true
         } catch {
             // The auxiliary write is already complete. Retaining the journal
             // is safe and lets the next recovery retry the idempotent cleanup.
@@ -388,6 +431,48 @@ final class StorySessionService: ObservableObject {
                 turnID.uuidString,
                 error.localizedDescription
             )
+            return false
+        }
+    }
+
+    /// Persist completion before deleting the journal. If the process stops
+    /// after the marker is written, recovery will not reintroduce the already
+    /// successful retry. The queue record is removed only after the journal is
+    /// gone, so a failed cleanup leaves a harmless marker rather than an
+    /// actionable stale retry.
+    @discardableResult
+    private func completeStoryMemoryRetry(_ retry: StoryMemoryRetry) async -> Bool {
+        guard !retry.isCompleted else { return true }
+        var completed = retry
+        completed.isCompleted = true
+        do {
+            try await storyMemoryRetryRepo.saveRetry(completed)
+        } catch {
+            NSLog(
+                "[StorySession] memory retry completion marker failed turn=%@: %@",
+                retry.turnID.uuidString,
+                error.localizedDescription
+            )
+            return false
+        }
+
+        pendingStoryMemoryRetries.removeValue(forKey: retry.turnID)
+        pendingStoryMemoryRetryOrder.removeAll { $0 == retry.turnID }
+        guard await removeStoryMemoryJournal(for: retry.turnID) else {
+            return false
+        }
+        do {
+            try await storyMemoryRetryRepo.deleteRetry(turnID: retry.turnID)
+            return true
+        } catch {
+            // The completion marker remains durable and is filtered during
+            // restore. Journal recovery can purge it once the journal is gone.
+            NSLog(
+                "[StorySession] completed memory retry cleanup deferred turn=%@: %@",
+                retry.turnID.uuidString,
+                error.localizedDescription
+            )
+            return false
         }
     }
 
@@ -1886,14 +1971,14 @@ final class StorySessionService: ObservableObject {
                 storyWorldID: world.id
             )
             if await enqueueStoryMemoryRetry(retry) {
-                await removeStoryMemoryJournal(for: turnID)
+                _ = await removeStoryMemoryJournal(for: turnID)
             }
             memoryRetry = retry
         } else if let pendingMemoryRetry {
             // The journal made the candidates durable before the turn commit.
             // Once every auxiliary write succeeds, remove that handoff so a
             // later restart cannot replay already-persisted memories.
-            await removeStoryMemoryRetry(for: pendingMemoryRetry.turnID)
+            _ = await completeStoryMemoryRetry(pendingMemoryRetry)
         }
 
         let didPublishNotice = await MainActor.run { () -> Bool in
@@ -1998,11 +2083,11 @@ final class StorySessionService: ObservableObject {
             )
             if let remaining = await saveStoryMemoryRetryRecords(candidate) {
                 if await enqueueStoryMemoryRetry(remaining) {
-                    await removeStoryMemoryJournal(for: retry.turnID)
+                    _ = await removeStoryMemoryJournal(for: retry.turnID)
                 }
                 memoryRetry = remaining
             } else {
-                await removeStoryMemoryRetry(for: retry.turnID)
+                _ = await completeStoryMemoryRetry(candidate)
             }
         }
 
@@ -2133,11 +2218,11 @@ final class StorySessionService: ObservableObject {
             if let memoryRetry {
                 if let remaining = await saveStoryMemoryRetryRecords(memoryRetry) {
                     if await enqueueStoryMemoryRetry(remaining) {
-                        await removeStoryMemoryJournal(for: retry.turnID)
+                        _ = await removeStoryMemoryJournal(for: retry.turnID)
                     }
                     latestRuntimeNotice = storyMemoryRetryNotice(remaining)
                 } else {
-                    await removeStoryMemoryRetry(for: retry.turnID)
+                    _ = await completeStoryMemoryRetry(memoryRetry)
                     savedTurnRevision += 1
                 }
             } else {
@@ -2169,7 +2254,7 @@ final class StorySessionService: ObservableObject {
         latestRuntimeNotice = nil
 
         guard let remaining = await saveStoryMemoryRetryRecords(retry) else {
-            await removeStoryMemoryRetry(for: retry.turnID)
+            _ = await completeStoryMemoryRetry(retry)
             savedTurnRevision += 1
             return
         }
@@ -2190,11 +2275,18 @@ final class StorySessionService: ObservableObject {
         }
         var remainingStoryMemories: [StoryMemory] = []
         for memory in retry.storyMemories {
+            var ownedMemory = memory
+            // Legacy retry payloads may carry the owner only on the retry
+            // envelope. Promote it before the repository write so a stale
+            // service cannot save world-scoped memory after Session deletion.
+            if ownedMemory.storySessionId == nil {
+                ownedMemory.storySessionId = retry.storySessionID
+            }
             do {
-                try await storyMemoryRepo.saveMemory(memory)
+                try await storyMemoryRepo.saveMemory(ownedMemory)
             } catch {
-                remainingStoryMemories.append(memory)
-                NSLog("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, memory.id.uuidString, error.localizedDescription)
+                remainingStoryMemories.append(ownedMemory)
+                NSLog("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, ownedMemory.id.uuidString, error.localizedDescription)
             }
         }
 

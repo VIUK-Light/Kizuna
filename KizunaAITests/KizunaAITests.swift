@@ -85,6 +85,31 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryMemoryRetryDecodesLegacyPayloadWithoutCompletionMarker() throws {
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "旧形式の再試行",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(storyWorldId: UUID(), text: "旧形式の記憶")
+            ]
+        )
+        let encoded = try JSONEncoder().encode(retry)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "isCompleted")
+        let legacyData = try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        )
+
+        let decoded = try JSONDecoder().decode(StoryMemoryRetry.self, from: legacyData)
+        XCTAssertEqual(decoded, retry)
+        XCTAssertFalse(decoded.isCompleted)
+    }
+
     func testStoryMemoryProvenanceUsesDurableTurnIDNotGenerationAttemptID() {
         let generationID = UUID()
         let turnID = UUID()
@@ -419,6 +444,35 @@ final class KizunaAITests: XCTestCase {
             .deleteRetry(turnID: retry.turnID)
         let remaining = try await LocalJSONStoryMemoryRetryRepository(storageURL: storageURL).fetchRetries()
         XCTAssertEqual(remaining, [otherRetry])
+    }
+
+    func testStoryMemoryRetryRepositoryPreservesInsertionOrder() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let firstTurnID = UUID(uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")!
+        let secondTurnID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+        let first = StoryMemoryRetry(
+            turnID: firstTurnID,
+            userMessageID: UUID(),
+            userText: "先に失敗した保存",
+            characterMemories: [],
+            storyMemories: []
+        )
+        let second = StoryMemoryRetry(
+            turnID: secondTurnID,
+            userMessageID: UUID(),
+            userText: "後に失敗した保存",
+            characterMemories: [],
+            storyMemories: []
+        )
+        let repository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+
+        try await repository.saveRetry(first)
+        try await repository.saveRetry(second)
+
+        XCTAssertEqual(
+            try await repository.fetchRetries().map(\.turnID),
+            [firstTurnID, secondTurnID]
+        )
     }
 
     func testStoryMemoryRetryFromOlderCommittedTurnSurvivesRestore() async throws {
@@ -1475,6 +1529,73 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryTurnJournalDoesNotReintroduceCompletedMemoryRetry() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let fixture = makeCommittedJournalFixture()
+        let retry = StoryMemoryRetry(
+            turnID: fixture.entry.turnID,
+            userMessageID: fixture.entry.session.latestTurnCheckpoint!.userMessageID,
+            userText: "完了済みの記憶",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: fixture.entry.session.storyWorldId,
+                    text: "すでに保存済み",
+                    storySessionId: fixture.entry.session.id,
+                    sourceTurnIds: [fixture.entry.turnID]
+                )
+            ],
+            storySessionID: fixture.entry.session.id,
+            storyWorldID: fixture.entry.session.storyWorldId,
+            isCompleted: true
+        )
+        let staleJournalEntry = StoryTurnJournalEntry(
+            turnID: fixture.entry.turnID,
+            session: fixture.entry.session,
+            scene: fixture.entry.scene,
+            memoryRetries: [retry]
+        )
+
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [staleJournalEntry],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [retry],
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryMemoryRetry.self,
+                fileName: "story_memory_retries.json",
+                baseURL: storageURL
+            ).isEmpty,
+            "a completed marker must not be replaced by the stale journal retry"
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+    }
+
     func testStoryTurnJournalDoesNotRestoreMemoryRetryAfterSessionTombstone() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
@@ -1583,6 +1704,16 @@ final class KizunaAITests: XCTestCase {
             try await LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
                 .saveRetry(retry)
             XCTFail("a deleted session must not accept a stale memory retry")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(
+                error,
+                .recordDeleted(kind: .session, id: sessionID)
+            )
+        }
+        do {
+            try await LocalJSONStoryMemoryRepository(storageURL: storageURL)
+                .saveMemory(retry.storyMemories[0])
+            XCTFail("a deleted session must not accept a stale direct memory save")
         } catch let error as StoryTurnPersistenceError {
             XCTAssertEqual(
                 error,
@@ -2022,6 +2153,37 @@ final class KizunaAITests: XCTestCase {
             ),
             [fixture.entry]
         )
+    }
+
+    func testMalformedTombstonePreventsJournalQuarantine() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let fixture = makeCommittedJournalFixture()
+        let journalURL = storageURL.appendingPathComponent("story_turn_journal.json")
+        let malformedJournal = Data("{\"invalid\":true}".utf8)
+
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try malformedJournal.write(to: journalURL, options: [.atomic])
+        try Data("{\"unexpected\":true}".utf8).write(
+            to: storageURL.appendingPathComponent("story_turn_journal_tombstones.json"),
+            options: [.atomic]
+        )
+
+        XCTAssertThrowsError(try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL))
+        XCTAssertEqual(try Data(contentsOf: journalURL), malformedJournal)
+        let backups = try FileManager.default.contentsOfDirectory(
+            at: storageURL,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix("story_turn_journal.corrupt-") }
+        XCTAssertTrue(backups.isEmpty)
     }
 
     func testStorySceneBulkDeletionWritesTombstonesForEveryScene() async throws {

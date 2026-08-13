@@ -956,6 +956,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
     }
 
     private let store: LocalJSONStore<StoryMemory>
+    private let storageURL: URL
     private let perScopeLimit: Int
 
     init(
@@ -964,6 +965,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
         perScopeLimit: Int = 120
     ) {
         self.perScopeLimit = max(1, perScopeLimit)
+        self.storageURL = storageURL
         store = LocalJSONStore<StoryMemory>(fileName: fileName, baseURL: storageURL)
     }
 
@@ -988,6 +990,13 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
 
     func saveMemory(_ memory: StoryMemory) async throws {
         try await store.mutate { all in
+            if let sessionID = memory.storySessionId {
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: sessionID,
+                    recordKind: .session,
+                    baseURL: storageURL
+                )
+            }
             let normalized = normalize(memory.text)
             var incoming = memory
             let now = Date()
@@ -1188,8 +1197,10 @@ final class LocalJSONStoryMemoryRetryRepository: StoryMemoryRetryRepository {
     }
 
     func fetchRetries() async throws -> [StoryMemoryRetry] {
+        // LocalJSONStore preserves insertion order. Sorting by UUID changes
+        // the user's oldest-first retry order after an app restart.
         try await store.loadRecoveringCorruptRecords()
-            .sorted { $0.turnID.uuidString < $1.turnID.uuidString }
+            .filter { !$0.isCompleted }
     }
 
     func saveRetry(_ retry: StoryMemoryRetry) async throws {
