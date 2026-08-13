@@ -699,7 +699,11 @@ private struct StorySessionChatBody: View {
                     .foregroundStyle(.orange.opacity(0.9))
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(storyCopy("モデル状態", "Model status"))
+                    Text(
+                        notice.retryAction.isAuxiliarySave
+                            ? storyCopy("保存状態", "Save status")
+                            : storyCopy("モデル状態", "Model status")
+                    )
                         .font(.system(size: 10, weight: .heavy))
                         .foregroundStyle(storyMuted)
                     Text(notice.text)
@@ -707,12 +711,17 @@ private struct StorySessionChatBody: View {
                         .foregroundStyle(storyText.opacity(0.78))
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
-                        Button(storyCopy("もう一度試す", "Try again")) {
+                        Button(
+                            notice.retryAction.isAuxiliarySave
+                                ? storyCopy("保存を再試行", "Retry save")
+                                : storyCopy("もう一度試す", "Try again")
+                        ) {
                             _ = vm.retryRuntimeNotice(notice)
                         }
                         .font(.system(size: 11.5, weight: .bold))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .disabled(service.isRetryingAuxiliarySave)
                         if notice.backend == .local {
                             Button {
                                 vm.generationModel = .b31
@@ -1254,6 +1263,7 @@ private struct StorySessionChatBody: View {
                         .fill(Color.white.opacity(0.08))
                 )
                 .onSubmit(submit)
+                .disabled(service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
             Button {
                 if service.phase == .thinking {
                     vm.cancelGeneration()
@@ -1275,8 +1285,9 @@ private struct StorySessionChatBody: View {
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-            .disabled(service.phase != .thinking && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(service.phase != .thinking && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityLabel(service.phase == .thinking ? storyCopy("生成を停止", "Stop generating") : storyCopy("送信", "Send"))
+            .disabled(service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
         }
         .padding(14)
         .background(storyPanel)

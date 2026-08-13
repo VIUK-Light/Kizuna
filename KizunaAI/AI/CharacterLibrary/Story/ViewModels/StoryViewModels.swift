@@ -1778,12 +1778,28 @@ final class StorySessionViewModel: ObservableObject {
         return enqueueSend(userMessage.text, existingUserMessageID: targetUserMessageID)
     }
 
-    /// 永続化されていない一時ランタイム通知を再試行する。保存済みの
-    /// userMessageIDが現在のセッションにあれば同じターンを再利用し、初回入力の
-    /// 保存自体に失敗していた場合は本文を新しいユーザー発話として送る。
+    /// 永続化されていない一時ランタイム通知を再試行する。補助保存の
+    /// 通知は保存操作だけを再実行し、userTurn通知だけが本文生成へ戻る。
     @discardableResult
     func retryRuntimeNotice(_ notice: StoryRuntimeNotice) -> Bool {
-        service.dismissRuntimeNotice()
+        switch notice.retryAction {
+        case let .storyTurnCommit(retry):
+            Task { [weak self] in
+                guard let self else { return }
+                await self.service.retryStoryTurnCommit(retry)
+                await self.refreshAfterTurn()
+            }
+            return true
+        case let .storyMemory(retry):
+            Task { [weak self] in
+                guard let self else { return }
+                await self.service.retryStoryMemorySave(retry)
+                await self.refreshAfterTurn()
+            }
+            return true
+        case .userTurn, .narration, .restAcknowledgement:
+            service.dismissRuntimeNotice()
+        }
         switch notice.retryAction {
         case let .narration(text):
             Task { [weak self] in
@@ -1818,6 +1834,8 @@ final class StorySessionViewModel: ObservableObject {
             return true
         case .userTurn:
             break
+        case .storyTurnCommit, .storyMemory:
+            return false
         }
         let hasPersistedUserTurn = session.messages.contains { message in
             message.id == notice.userMessageID && message.author.isUser
