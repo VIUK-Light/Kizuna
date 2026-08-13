@@ -460,7 +460,7 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persisted?.persistenceRevision, 1)
     }
 
-    func testStorySessionRepositoryRecoveryPreservesCurrentOwner() async throws {
+    func testStorySessionRepositoryRecoveryInterruptsUnregisteredLegacyOwner() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
         let sessionID = UUID()
@@ -493,7 +493,8 @@ final class KizunaAITests: XCTestCase {
             fileName: "story_sessions.json",
             baseURL: storageURL
         ).first
-        XCTAssertEqual(persisted?.latestTurnCheckpoint?.status, .pending)
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.status, .interrupted)
+        XCTAssertEqual(persisted?.latestTurnCheckpoint?.failureCode, "app_relaunch")
         XCTAssertEqual(persisted?.latestTurnCheckpoint?.ownerID, StoryTurnOwner.currentID)
     }
 
