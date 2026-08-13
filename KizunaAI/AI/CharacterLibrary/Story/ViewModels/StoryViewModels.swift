@@ -1588,6 +1588,22 @@ final class StorySessionViewModel: ObservableObject {
             return
         }
         do {
+            // Auxiliary memory saves are independent from the visible turn,
+            // but their retry payload must survive view dismissal and app
+            // restart. Restore only this Session's queue before enabling chat.
+            try await service.restorePendingStoryMemoryRetries(
+                storySessionID: session.id,
+                storyWorldID: world.id
+            )
+        } catch {
+            bootstrapError = KizunaCopy.text(
+                japanese: "保存待ちの記憶を読み込めませんでした。保存先を確認して再試行してください。",
+                english: "Pending memory saves could not be loaded. Check storage and try again."
+            )
+            NSLog("[StorySessionVM] memory retry restore failed: %@", error.localizedDescription)
+            return
+        }
+        do {
             async let castFetch = castRepo.fetchCast(storyWorldId: world.id)
             async let charsFetch = characterRepo.fetchCharacters()
             let (cast, chars) = try await (castFetch, charsFetch)

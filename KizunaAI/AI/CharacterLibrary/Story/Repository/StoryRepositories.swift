@@ -127,7 +127,8 @@ protocol StorySessionRepository: AnyObject {
         session: StorySession,
         scene: StoryScene,
         turnID: UUID,
-        assistantMessageIDs: [UUID]
+        assistantMessageIDs: [UUID],
+        memoryRetries: [StoryMemoryRetry]
     ) async throws -> StorySession
     func finishTurn(
         sessionID: UUID,
@@ -167,6 +168,16 @@ protocol StoryMemoryRepository: AnyObject {
     func deleteMemory(id: UUID) async throws
     func deleteAllMemories(storyWorldId: UUID) async throws
     func markUsed(ids: [UUID]) async throws
+}
+
+/// Auxiliary memory saves are durable work items, not another user turn.
+/// Keeping this queue behind its own repository lets a newly created
+/// StorySessionService restore retries after an app restart without coupling
+/// the queue to StoryMemory's read/query semantics.
+protocol StoryMemoryRetryRepository: AnyObject {
+    func fetchRetries() async throws -> [StoryMemoryRetry]
+    func saveRetry(_ retry: StoryMemoryRetry) async throws
+    func deleteRetry(turnID: UUID) async throws
 }
 
 // MARK: - Local JSON impls
@@ -488,7 +499,8 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         session: StorySession,
         scene: StoryScene,
         turnID: UUID,
-        assistantMessageIDs: [UUID]
+        assistantMessageIDs: [UUID],
+        memoryRetries: [StoryMemoryRetry]
     ) async throws -> StorySession {
         try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
         return try LocalJSONStoreTransaction.withSharedLock {
@@ -524,6 +536,20 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 throw StoryTurnPersistenceError.turnNotPending
             }
             if checkpoint.status == .committed {
+                if !memoryRetries.isEmpty {
+                    // A prior attempt may have committed both records before
+                    // reporting an error. Keep the exact auxiliary payload
+                    // journaled until the caller finishes or queues it.
+                    try StoryTurnJournal.prepareUnlocked(
+                        StoryTurnJournalEntry(
+                            turnID: turnID,
+                            session: current,
+                            scene: currentScene,
+                            memoryRetries: memoryRetries
+                        ),
+                        baseURL: storageURL
+                    )
+                }
                 return current
             }
             guard checkpoint.status == .pending else {
@@ -577,23 +603,30 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             // ジャーナルを先に置いてから2つのスナップショットを更新する。
             // 途中終了時は次回のfetchで両方を再適用する。
             try StoryTurnJournal.prepareUnlocked(
-                StoryTurnJournalEntry(turnID: turnID, session: committed, scene: committedScene),
+                StoryTurnJournalEntry(
+                    turnID: turnID,
+                    session: committed,
+                    scene: committedScene,
+                    memoryRetries: memoryRetries
+                ),
                 baseURL: storageURL
             )
             sessions[sessionIndex] = committed
             scenes[sceneIndex] = committedScene
             try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
             try LocalJSONStoreTransaction.save(scenes, fileName: "story_scenes.json", baseURL: storageURL)
-            do {
-                try StoryTurnJournal.removeUnlocked(turnID: turnID, baseURL: storageURL)
-            } catch {
-                // Session/Sceneが確定した後のjournal削除失敗は、ターン自体の
-                // 失敗ではない。次回recoveryで同じ確定snapshotを再適用する。
-                NSLog(
-                    "[StoryTurnJournal] committed turn cleanup deferred turn=%@ error=%@",
-                    turnID.uuidString,
-                    error.localizedDescription
-                )
+            if memoryRetries.isEmpty {
+                do {
+                    try StoryTurnJournal.removeUnlocked(turnID: turnID, baseURL: storageURL)
+                } catch {
+                    // Session/Sceneが確定した後のjournal削除失敗は、ターン自体の
+                    // 失敗ではない。次回recoveryで同じ確定snapshotを再適用する。
+                    NSLog(
+                        "[StoryTurnJournal] committed turn cleanup deferred turn=%@ error=%@",
+                        turnID.uuidString,
+                        error.localizedDescription
+                    )
+                }
             }
             return committed
         }
@@ -1017,5 +1050,35 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                     && !keptIDs.contains($0.id)
             }
         }
+    }
+}
+
+/// Persists memory-only retry work independently from the conversation and
+/// memory stores. A failed retry must survive view dismissal and app restart,
+/// while a successful retry can remove only its own turnID atomically.
+final class LocalJSONStoryMemoryRetryRepository: StoryMemoryRetryRepository {
+    private let store: LocalJSONStore<StoryMemoryRetry>
+
+    init(
+        fileName: String = "story_memory_retries.json",
+        storageURL: URL = KizunaDataMigration.characterLibraryURL
+    ) {
+        self.store = LocalJSONStore<StoryMemoryRetry>(
+            fileName: fileName,
+            baseURL: storageURL
+        )
+    }
+
+    func fetchRetries() async throws -> [StoryMemoryRetry] {
+        try await store.loadRecoveringCorruptRecords()
+            .sorted { $0.turnID.uuidString < $1.turnID.uuidString }
+    }
+
+    func saveRetry(_ retry: StoryMemoryRetry) async throws {
+        try await store.appendOrReplace(retry, idEquals: { $0.turnID == $1.turnID })
+    }
+
+    func deleteRetry(turnID: UUID) async throws {
+        try await store.delete(matching: { $0.turnID == turnID })
     }
 }

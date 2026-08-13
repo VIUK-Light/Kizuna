@@ -91,6 +91,41 @@ struct StoryTurnJournalEntry: Codable, Equatable {
     let turnID: UUID
     let session: StorySession
     let scene: StoryScene
+    /// Memory candidates are written with the same journal entry as the
+    /// session/scene snapshot. Recovery can therefore preserve the auxiliary
+    /// work even if the process exits before the post-commit memory writes.
+    let memoryRetries: [StoryMemoryRetry]
+
+    init(
+        turnID: UUID,
+        session: StorySession,
+        scene: StoryScene,
+        memoryRetries: [StoryMemoryRetry] = []
+    ) {
+        self.turnID = turnID
+        self.session = session
+        self.scene = scene
+        self.memoryRetries = memoryRetries
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case turnID
+        case session
+        case scene
+        case memoryRetries
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        turnID = try container.decode(UUID.self, forKey: .turnID)
+        session = try container.decode(StorySession.self, forKey: .session)
+        scene = try container.decode(StoryScene.self, forKey: .scene)
+        // Existing journal files predate durable auxiliary retries.
+        memoryRetries = try container.decodeIfPresent(
+            [StoryMemoryRetry].self,
+            forKey: .memoryRetries
+        ) ?? []
+    }
 }
 
 /// 2つのJSONファイルへ確定結果を書き込む前に、同じディレクトリへ
@@ -98,6 +133,7 @@ struct StoryTurnJournalEntry: Codable, Equatable {
 /// 書き込み直後に起きても、次回の読み込みで同じスナップショットを再適用する。
 enum StoryTurnJournal {
     private static let fileName = "story_turn_journal.json"
+    private static let memoryRetryFileName = "story_memory_retries.json"
 
     private struct RecoverableEntries {
         let entries: [StoryTurnJournalEntry]
@@ -185,6 +221,27 @@ enum StoryTurnJournal {
                     continue
                 }
 
+                if !entry.memoryRetries.isEmpty {
+                    do {
+                        try mergeMemoryRetriesUnlocked(
+                            entry.memoryRetries,
+                            baseURL: baseURL
+                        )
+                    } catch {
+                        // Do not consume a journal entry while its auxiliary
+                        // retry store is unreadable. The conversation
+                        // snapshot and its memory candidates must remain
+                        // recoverable on the next launch.
+                        unresolvedEntries.append(entry)
+                        NSLog(
+                            "[StoryTurnJournal] retained entry while merging memory retries turn=%@: %@",
+                            entry.turnID.uuidString,
+                            error.localizedDescription
+                        )
+                        continue
+                    }
+                }
+
                 let persistedSession = sessions[sessionIndex]
                 if shouldApply(entry.session, over: persistedSession) {
                     sessions[sessionIndex] = entry.session
@@ -226,6 +283,18 @@ enum StoryTurnJournal {
                 fileName: fileName,
                 baseURL: baseURL
             )
+        }
+    }
+
+    /// Removes one already-recovered journal entry. This is intentionally a
+    /// separate operation from recovery: auxiliary memory work keeps the
+    /// journal until it is either persisted in the retry queue or completed.
+    static func remove(
+        turnID: UUID,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
+        try LocalJSONStoreTransaction.withSharedLock {
+            try removeUnlocked(turnID: turnID, baseURL: baseURL)
         }
     }
 
@@ -312,6 +381,104 @@ enum StoryTurnJournal {
 
     private static func shouldApply(_ journal: StoryScene, over persisted: StoryScene) -> Bool {
         journal.updatedAt > persisted.updatedAt
+    }
+
+    /// Merge journal-owned auxiliary work into the durable retry queue while
+    /// the same shared lock is held. This is idempotent by turnID and keeps
+    /// retries from a newer journal snapshot instead of duplicating them.
+    private static func mergeMemoryRetriesUnlocked(
+        _ retries: [StoryMemoryRetry],
+        baseURL: URL
+    ) throws {
+        guard !retries.isEmpty else { return }
+        var existing = try loadMemoryRetriesUnlocked(baseURL: baseURL)
+        for retry in retries {
+            if let index = existing.firstIndex(where: { $0.turnID == retry.turnID }) {
+                existing[index] = retry
+            } else {
+                existing.append(retry)
+            }
+        }
+        try LocalJSONStoreTransaction.save(
+            existing,
+            fileName: memoryRetryFileName,
+            baseURL: baseURL
+        )
+    }
+
+    /// The normal repository can salvage malformed array members through its
+    /// actor-backed store. Journal recovery runs synchronously under the
+    /// shared lock, so it needs the same behavior without awaiting an actor.
+    /// A successful repair keeps valid records, backs up the original, and
+    /// lets the caller merge the new journal-owned candidates atomically.
+    private static func loadMemoryRetriesUnlocked(
+        baseURL: URL
+    ) throws -> [StoryMemoryRetry] {
+        do {
+            return try LocalJSONStoreTransaction.load(
+                StoryMemoryRetry.self,
+                fileName: memoryRetryFileName,
+                baseURL: baseURL
+            )
+        } catch let error as LocalJSONStoreError {
+            guard case .decode = error else { throw error }
+            let url = baseURL.appendingPathComponent(memoryRetryFileName)
+            guard FileManager.default.fileExists(atPath: url.path) else { throw error }
+            let data = try Data(contentsOf: url)
+            guard let rawItems = try JSONSerialization.jsonObject(
+                with: data,
+                options: [.fragmentsAllowed]
+            ) as? [Any] else {
+                let backupURL = try LocalJSONStoreTransaction.backup(
+                    fileName: memoryRetryFileName,
+                    baseURL: baseURL
+                )
+                try LocalJSONStoreTransaction.save(
+                    [StoryMemoryRetry](),
+                    fileName: memoryRetryFileName,
+                    baseURL: baseURL
+                )
+                NSLog(
+                    "[StoryTurnJournal] quarantined malformed memory retry file=%@",
+                    backupURL.lastPathComponent
+                )
+                return []
+            }
+
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            var validItems: [StoryMemoryRetry] = []
+            var invalidCount = 0
+            for rawItem in rawItems {
+                do {
+                    let itemData = try JSONSerialization.data(
+                        withJSONObject: rawItem,
+                        options: [.fragmentsAllowed]
+                    )
+                    validItems.append(try decoder.decode(StoryMemoryRetry.self, from: itemData))
+                } catch {
+                    invalidCount += 1
+                }
+            }
+            guard invalidCount > 0 else { throw error }
+
+            let backupURL = try LocalJSONStoreTransaction.backup(
+                fileName: memoryRetryFileName,
+                baseURL: baseURL
+            )
+            try LocalJSONStoreTransaction.save(
+                validItems,
+                fileName: memoryRetryFileName,
+                baseURL: baseURL
+            )
+            NSLog(
+                "[StoryTurnJournal] repaired memory retry file=%@ valid=%ld invalid=%ld",
+                backupURL.lastPathComponent,
+                validItems.count,
+                invalidCount
+            )
+            return validItems
+        }
     }
 }
 

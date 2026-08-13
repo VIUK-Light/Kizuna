@@ -350,6 +350,138 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persistedRetry, retry)
     }
 
+    func testStoryMemoryRetryPersistsAcrossServiceRecreationAndStaysSessionScoped() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let otherSessionID = UUID()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "保存した記憶を残す",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "再起動後も残る出来事",
+                    storySessionId: sessionID,
+                    sourceTurnIds: [UUID()]
+                )
+            ],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        let otherRetry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "別セッションの記憶",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "別セッションの出来事",
+                    storySessionId: otherSessionID,
+                    sourceTurnIds: [UUID()]
+                )
+            ],
+            storySessionID: otherSessionID,
+            storyWorldID: worldID
+        )
+
+        let firstRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        try await firstRepository.saveRetry(retry)
+        try await firstRepository.saveRetry(otherRetry)
+
+        let committedSession = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            latestTurnCheckpoint: StoryTurnCheckpoint(
+                turnID: retry.turnID,
+                userMessageID: retry.userMessageID,
+                status: .committed
+            )
+        )
+        let recreatedService = StorySessionService(
+            sessionRepo: TestStorySessionRepository(sessions: [committedSession]),
+            storyMemoryRetryRepo: LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        )
+        try await recreatedService.restorePendingStoryMemoryRetries(
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+
+        guard case let .storyMemory(restored)? = recreatedService.latestRuntimeNotice?.retryAction else {
+            return XCTFail("the current session's retry must be restored after service recreation")
+        }
+        XCTAssertEqual(restored, retry)
+
+        try await LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+            .deleteRetry(turnID: retry.turnID)
+        let remaining = try await LocalJSONStoryMemoryRetryRepository(storageURL: storageURL).fetchRetries()
+        XCTAssertEqual(remaining, [otherRetry])
+    }
+
+    func testStoryMemoryRetryFromOlderCommittedTurnSurvivesRestore() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let olderTurnID = UUID()
+        let latestTurnID = UUID()
+        let olderRetry = StoryMemoryRetry(
+            turnID: olderTurnID,
+            userMessageID: UUID(),
+            userText: "古いターンの記憶を保存する",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "古いターンの出来事",
+                    storySessionId: sessionID,
+                    sourceTurnIds: [olderTurnID]
+                )
+            ],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        try await retryRepository.saveRetry(olderRetry)
+
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            messages: [
+                StoryMessage(
+                    author: .narrator,
+                    text: "古いターンは確定済み",
+                    turnID: olderTurnID
+                )
+            ],
+            latestTurnCheckpoint: StoryTurnCheckpoint(
+                turnID: latestTurnID,
+                userMessageID: UUID(),
+                status: .committed
+            )
+        )
+        let memoryRepository = TestStoryMemoryRepository()
+        let service = StorySessionService(
+            sessionRepo: TestStorySessionRepository(sessions: [session]),
+            memoryRepo: memoryRepository,
+            storyMemoryRepo: memoryRepository,
+            storyMemoryRetryRepo: retryRepository
+        )
+
+        try await service.restorePendingStoryMemoryRetries(
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        await service.retryStoryMemorySave(olderRetry)
+
+        let counts = await memoryRepository.saveCounts()
+        XCTAssertEqual(counts.story, 1)
+        let remainingRetries = try await retryRepository.fetchRetries()
+        XCTAssertTrue(remainingRetries.isEmpty)
+    }
+
     func testStoryRuntimeNoticeUserRetryKeepsStableMessageIDWithoutCachedSession() {
         let userMessageID = UUID()
         let notice = StoryRuntimeNotice(
@@ -517,6 +649,40 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(counts.character, 1)
         XCTAssertEqual(counts.story, 1)
         XCTAssertEqual(service.savedTurnRevision, 1)
+        XCTAssertNil(service.latestRuntimeNotice)
+    }
+
+    func testStoryServiceDeletesDurableMemoryRetryAfterSuccessfulSave() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let memoryRepository = TestStoryMemoryRepository()
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "保存済みの記憶を再送しない",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: UUID(),
+                    text: "一度だけ保存する出来事",
+                    category: .event,
+                    source: .summary
+                )
+            ]
+        )
+        try await retryRepository.saveRetry(retry)
+
+        let service = StorySessionService(
+            memoryRepo: memoryRepository,
+            storyMemoryRepo: memoryRepository,
+            storyMemoryRetryRepo: retryRepository,
+            pendingStoryMemoryRetries: [retry]
+        )
+
+        await service.retryStoryMemorySave(retry)
+
+        let remainingRetries = try await retryRepository.fetchRetries()
+        XCTAssertTrue(remainingRetries.isEmpty)
         XCTAssertNil(service.latestRuntimeNotice)
     }
 
@@ -808,13 +974,15 @@ final class KizunaAITests: XCTestCase {
             session: generated,
             scene: scene,
             turnID: turnID,
-            assistantMessageIDs: [assistant.id]
+            assistantMessageIDs: [assistant.id],
+            memoryRetries: []
         )
         let retried = try await repository.commitTurn(
             session: generated,
             scene: scene,
             turnID: turnID,
-            assistantMessageIDs: [assistant.id]
+            assistantMessageIDs: [assistant.id],
+            memoryRetries: []
         )
 
         XCTAssertEqual(committed.latestTurnCheckpoint?.status, .committed)
@@ -875,7 +1043,8 @@ final class KizunaAITests: XCTestCase {
                 session: pending,
                 scene: scene,
                 turnID: turnID,
-                assistantMessageIDs: []
+                assistantMessageIDs: [],
+                memoryRetries: []
             )
             XCTFail("a stale turn snapshot must not commit")
         } catch let error as StoryTurnPersistenceError {
@@ -1026,7 +1195,8 @@ final class KizunaAITests: XCTestCase {
             session: session,
             scene: generatedScene,
             turnID: turnID,
-            assistantMessageIDs: []
+            assistantMessageIDs: [],
+            memoryRetries: []
         )
 
         let persistedScene = try LocalJSONStoreTransaction.load(
@@ -1113,6 +1283,176 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(sessions.first?.persistenceRevision, 3)
         XCTAssertEqual(sessions.first?.lastTurnProgress, "新しい保存")
         XCTAssertEqual(scenes.first?.summary, "新しい保存")
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+    }
+
+    func testStoryTurnJournalMakesMemoryRetryDurableDuringRecovery() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let userMessageID = UUID()
+        let date = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: userMessageID,
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: date,
+                updatedAt: date
+            ),
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 2,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: date
+        )
+        let scene = StoryScene(id: sceneID, storyWorldId: worldID, updatedAt: date)
+        let retry = StoryMemoryRetry(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            userText: "復旧後も記憶を保存する",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "復旧対象の出来事",
+                    storySessionId: sessionID,
+                    sourceTurnIds: [turnID]
+                )
+            ],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [StoryTurnJournalEntry(
+                turnID: turnID,
+                session: session,
+                scene: scene,
+                memoryRetries: [retry]
+            )],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryMemoryRetry.self,
+                fileName: "story_memory_retries.json",
+                baseURL: storageURL
+            ),
+            [retry]
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+    }
+
+    func testStoryTurnJournalRepairsCorruptMemoryRetryFileDuringRecovery() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let date = Date(timeIntervalSince1970: 200)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: date,
+                updatedAt: date
+            ),
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 2,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: date
+        )
+        let scene = StoryScene(id: sceneID, storyWorldId: worldID, updatedAt: date)
+        let retry = StoryMemoryRetry(
+            turnID: turnID,
+            userMessageID: checkpoint.userMessageID,
+            userText: "壊れたキューでも記憶を残す",
+            characterMemories: [],
+            storyMemories: [StoryMemory(storyWorldId: worldID, text: "復旧対象")],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [StoryTurnJournalEntry(turnID: turnID, session: session, scene: scene, memoryRetries: [retry])],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+        try Data("[{\"invalid\":true}]".utf8).write(
+            to: storageURL.appendingPathComponent("story_memory_retries.json"),
+            options: .atomic
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryMemoryRetry.self,
+                fileName: "story_memory_retries.json",
+                baseURL: storageURL
+            ),
+            [retry]
+        )
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(
+                at: storageURL,
+                includingPropertiesForKeys: nil
+            ).contains { $0.lastPathComponent.hasPrefix("story_memory_retries.corrupt-") }
+        )
         XCTAssertTrue(
             try LocalJSONStoreTransaction.load(
                 StoryTurnJournalEntry.self,
@@ -1500,12 +1840,16 @@ private actor TestStoryMemoryRepository: MemoryRepository, StoryMemoryRepository
 
     func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] { [] }
 
+    func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory] { [] }
+
     func saveMemory(_ memory: StoryMemory) async throws {
         if shouldFailSaves { throw TestError.saveFailed }
         storySaveCount += 1
     }
 
     func deleteAllMemories(storyWorldId: UUID) async throws {}
+
+    func removeSourceTurnIds(_ sourceTurnIds: Set<UUID>) async throws {}
 
     func saveCounts() -> (character: Int, story: Int) {
         (characterSaveCount, storySaveCount)
@@ -1518,9 +1862,16 @@ private actor TestStorySessionRepository: StorySessionRepository {
         let assistantMessageIDs: [UUID]
     }
 
+    private let sessions: [StorySession]
     private(set) var lastCommit: Commit?
 
-    func fetchSessions(storyWorldId: UUID) async throws -> [StorySession] { [] }
+    init(sessions: [StorySession] = []) {
+        self.sessions = sessions
+    }
+
+    func fetchSessions(storyWorldId: UUID) async throws -> [StorySession] {
+        sessions.filter { $0.storyWorldId == storyWorldId }
+    }
     func saveSession(_ session: StorySession) async throws {}
 
     func beginTurn(
@@ -1536,7 +1887,8 @@ private actor TestStorySessionRepository: StorySessionRepository {
         session: StorySession,
         scene: StoryScene,
         turnID: UUID,
-        assistantMessageIDs: [UUID]
+        assistantMessageIDs: [UUID],
+        memoryRetries: [StoryMemoryRetry]
     ) async throws -> StorySession {
         lastCommit = Commit(turnID: turnID, assistantMessageIDs: assistantMessageIDs)
         return session
