@@ -869,6 +869,13 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                 }
                 all[index] = existing
             } else {
+                if !incoming.sourceTurnIds.isEmpty {
+                    // New provenance receives a usage timestamp above. Keep
+                    // the aggregate fields in sync before the first write;
+                    // otherwise a newly-created memory would expose a nil
+                    // lastUsedAt until a later merge or cancellation.
+                    incoming.recomputeAggregatesFromSourceMetadata()
+                }
                 all.append(incoming)
             }
 
@@ -965,6 +972,17 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             let now = Date()
             for index in all.indices where ids.contains(all[index].id) {
                 all[index].lastUsedAt = now
+                for sourceTurnId in all[index].sourceTurnIds {
+                    var metadata = all[index].sourceTurnMetadata[sourceTurnId]
+                        ?? StoryMemorySourceMetadata(
+                            importance: all[index].importance,
+                            createdAt: all[index].createdAt,
+                            lastUsedAt: all[index].lastUsedAt
+                        )
+                    metadata.lastUsedAt = now
+                    all[index].sourceTurnMetadata[sourceTurnId] = metadata
+                }
+                all[index].recomputeAggregatesFromSourceMetadata()
             }
         }
     }

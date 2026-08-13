@@ -185,7 +185,24 @@ final class KizunaAITests: XCTestCase {
             storyWorldId: worldID,
             storySessionId: sessionID
         ).first(where: { $0.text == mergedText })
+        XCTAssertNotNil(firstSaved?.lastUsedAt)
+        XCTAssertEqual(
+            firstSaved?.lastUsedAt,
+            firstSaved?.sourceTurnMetadata[firstSourceTurnID]?.lastUsedAt
+        )
         try await repository.saveMemory(secondMerged)
+        let mergedBeforeMark = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: sessionID
+        ).first(where: { $0.text == mergedText })
+        XCTAssertNotNil(mergedBeforeMark)
+        try await repository.markUsed(ids: [mergedBeforeMark!.id])
+        let marked = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: sessionID
+        ).first(where: { $0.text == mergedText })
+        let markedFirstUsedAt = marked?.sourceTurnMetadata[firstSourceTurnID]?.lastUsedAt
+        XCTAssertNotNil(markedFirstUsedAt)
         try await repository.removeSourceTurnIds([secondSourceTurnID])
 
         let merged = try await repository.fetchMemories(storyWorldId: worldID, storySessionId: sessionID)
@@ -194,9 +211,12 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(merged?.importance, firstSaved?.importance)
         XCTAssertEqual(
             merged?.sourceTurnMetadata[firstSourceTurnID]?.lastUsedAt,
-            firstSaved?.sourceTurnMetadata[firstSourceTurnID]?.lastUsedAt
+            markedFirstUsedAt
         )
-        XCTAssertNotNil(merged?.lastUsedAt)
+        XCTAssertEqual(
+            merged?.lastUsedAt,
+            merged?.sourceTurnMetadata[firstSourceTurnID]?.lastUsedAt
+        )
     }
 
     func testPersonaResponseSanitizerPreservesVisibleText() {
