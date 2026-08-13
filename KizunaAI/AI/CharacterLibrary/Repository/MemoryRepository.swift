@@ -98,7 +98,7 @@ final class LocalJSONMemoryRepository: MemoryRepository {
         }
     }
 
-    private func normalize(_ s: String) -> String {
+    private static func normalize(_ s: String) -> String {
         s.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .whitespacesAndNewlines)
