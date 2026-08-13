@@ -1409,8 +1409,12 @@ final class StorySessionService: ObservableObject {
             progressUpdate.unresolvedHooks,
             fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
         )
-        if let statePatch = progressUpdate.storyState {
-            session.storyState = statePatch.applying(
+        if let statePatch = progressUpdate.storyState,
+           let acceptedPatch = StoryNaturalChangePolicy.acceptedPatch(
+               from: statePatch,
+               currentState: session.storyState
+           ) {
+            session.storyState = acceptedPatch.applying(
                 to: session.storyState ?? StoryState(),
                 characterIndex: charIndex,
                 validCharacterIDs: Set(cast.map(\.characterId))
