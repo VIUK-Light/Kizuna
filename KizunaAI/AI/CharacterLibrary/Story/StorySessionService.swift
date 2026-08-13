@@ -822,12 +822,6 @@ final class StorySessionService: ObservableObject {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
         }
-        // 選択結果の適用前にも確認する。cancel()後の遅延結果を
-        // 次回のシーン選択へ持ち越さない。
-        guard isGenerationActive(generationID) else {
-            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
-            return
-        }
         scene = sceneWithSelectedCharacters
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
