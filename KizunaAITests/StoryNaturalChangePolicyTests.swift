@@ -85,6 +85,26 @@ final class StoryNaturalChangePolicyTests: XCTestCase {
         )
     }
 
+    func testResolvedObjectiveClearsSessionDisplayObjective() {
+        let patch = StoryStatePatch(
+            location: nil,
+            timeOfDay: nil,
+            mood: nil,
+            weather: nil,
+            relationshipStage: nil,
+            characterUpdates: nil,
+            inventoryChanges: nil,
+            activeGoals: []
+        )
+
+        XCTAssertNil(
+            StoryNaturalChangePolicy.objectiveAfterAcceptedPatch(
+                currentObjective: "灯台へ向かう",
+                patch: patch
+            )
+        )
+    }
+
     func testDropsNoOpFieldsAgainstCurrentState() {
         let current = StoryState(location: "駅前", weather: "晴れ")
         let patch = StoryStatePatch(

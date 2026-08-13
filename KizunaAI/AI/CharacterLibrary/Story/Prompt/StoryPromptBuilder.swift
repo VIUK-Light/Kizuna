@@ -13,6 +13,46 @@
 import Foundation
 
 struct StoryPromptBuilder {
+    private struct EffectiveSceneValues {
+        let location: String
+        let timeOfDay: String
+        let mood: String
+        let goal: String?
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// StoryState is the mutable source of truth after the first turn. Scene
+    /// still carries the original catalog seed, so emitting both values would
+    /// let the model choose an older location or goal and move the world back.
+    private static func effectiveSceneValues(
+        scene: StoryScene,
+        session: StorySession,
+        storyState: StoryState?
+    ) -> EffectiveSceneValues {
+        let location = nonEmpty(storyState?.location) ?? scene.location
+        let timeOfDay = nonEmpty(storyState?.timeOfDay) ?? scene.timeOfDay
+        let mood = nonEmpty(storyState?.mood) ?? scene.mood
+        let goal: String?
+        if let storyState {
+            // An empty activeGoals array is an explicit resolved state. Do
+            // not fall back to session.currentObjective or scene.sceneGoal.
+            goal = storyState.activeGoals.compactMap { nonEmpty($0) }.first
+        } else {
+            goal = nonEmpty(session.currentObjective) ?? nonEmpty(scene.sceneGoal)
+        }
+        return EffectiveSceneValues(
+            location: location,
+            timeOfDay: timeOfDay,
+            mood: mood,
+            goal: goal
+        )
+    }
+
     /// Speaker/name matching must use the same Unicode and case rules in both
     /// prompt construction and generated-line parsing.  Keeping this helper at
     /// type scope prevents the two paths from drifting apart.
@@ -111,6 +151,11 @@ struct StoryPromptBuilder {
             guard isEnglish else { return rule }
             return StoryEnglishCatalog.localizedSafetyRule(rule)
         }
+        let effectiveScene = Self.effectiveSceneValues(
+            scene: scene,
+            session: session,
+            storyState: storyState
+        )
 
         // ── 冒頭 ──
         sections.append(
@@ -157,17 +202,17 @@ struct StoryPromptBuilder {
         // ── シーン ──
         var sceneLines: [String] = []
         if !scene.title.isEmpty { sceneLines.append("\(copy("シーン名", "Scene")): \(scene.title)") }
-        if !scene.location.isEmpty { sceneLines.append("\(copy("場所", "Location")): \(scene.location)") }
-        if !scene.timeOfDay.isEmpty { sceneLines.append("\(copy("時間", "Time")): \(scene.timeOfDay)") }
-        if !scene.mood.isEmpty { sceneLines.append("\(copy("空気", "Atmosphere")): \(scene.mood)") }
-        if !scene.sceneGoal.isEmpty { sceneLines.append("\(copy("このシーンの目的", "Scene goal")): \(scene.sceneGoal)") }
+        if !effectiveScene.location.isEmpty { sceneLines.append("\(copy("場所", "Location")): \(effectiveScene.location)") }
+        if !effectiveScene.timeOfDay.isEmpty { sceneLines.append("\(copy("時間", "Time")): \(effectiveScene.timeOfDay)") }
+        if !effectiveScene.mood.isEmpty { sceneLines.append("\(copy("空気", "Atmosphere")): \(effectiveScene.mood)") }
+        if let goal = effectiveScene.goal { sceneLines.append("\(copy("このシーンの目的", "Scene goal")): \(goal)") }
         if let conflict = scene.conflict, !conflict.isEmpty { sceneLines.append("\(copy("葛藤", "Conflict")): \(conflict)") }
         if !scene.summary.isEmpty { sceneLines.append("\(copy("ここまでの要約", "Summary so far")): \(scene.summary)") }
         sections.append("## \(copy("現在のシーン", "Current scene"))\n" + sceneLines.joined(separator: "\n"))
 
         var sessionLines: [String] = []
         if let progress = session.progressLabel, !progress.isEmpty { sessionLines.append("\(copy("進行", "Progress")): \(progress)") }
-        if let objective = session.currentObjective, !objective.isEmpty { sessionLines.append("\(copy("現在の目的", "Current objective")): \(objective)") }
+        if let objective = effectiveScene.goal { sessionLines.append("\(copy("現在の目的", "Current objective")): \(objective)") }
         if let turnProgress = session.lastTurnProgress, !turnProgress.isEmpty { sessionLines.append("\(copy("前回動いたこと", "Last turn")): \(turnProgress)") }
         if let summary = session.lastSceneSummary, !summary.isEmpty { sessionLines.append("\(copy("前回までの要約", "Summary so far")): \(summary)") }
         if let hooks = session.unresolvedHooks, !hooks.isEmpty {
@@ -464,6 +509,11 @@ struct StoryPromptBuilder {
         })
         let hasDuplicateActiveNames = normalizedActiveNames.values.contains { $0.count > 1 }
         let isEnglish = KizunaCopy.language == .english
+        let effectiveScene = Self.effectiveSceneValues(
+            scene: scene,
+            session: session,
+            storyState: storyState
+        )
         let npcSpeakerLabel: String = {
             guard let npc, hasDuplicateActiveNames else { return npcName }
             return "<\(npc.id.uuidString)> \(npc.name)"
@@ -501,7 +551,7 @@ struct StoryPromptBuilder {
             world.worldSetting.isEmpty ? nil : "\(isEnglish ? "World" : "世界観"): \(utf8Prefix(world.worldSetting, byteLimit: 220))",
             world.userRole.isEmpty ? nil : "\(isEnglish ? "User role" : "ユーザーの役割"): \(utf8Prefix(world.userRole, byteLimit: 88))",
             world.storyGoal.isEmpty ? nil : "\(isEnglish ? "Story goal" : "物語の目的"): \(utf8Prefix(world.storyGoal, byteLimit: 120))",
-            session.currentObjective?.isEmpty == false ? "\(isEnglish ? "Current objective" : "現在の目的"): \(utf8Prefix(session.currentObjective ?? "", byteLimit: 120))" : nil,
+            effectiveScene.goal.map { "\(isEnglish ? "Current objective" : "現在の目的"): \(utf8Prefix($0, byteLimit: 120))" },
             session.lastTurnProgress?.isEmpty == false ? "\(isEnglish ? "Last progress" : "直前の進行"): \(utf8Prefix(session.lastTurnProgress ?? "", byteLimit: 120))" : nil,
             session.lastSceneSummary?.isEmpty == false ? "\(isEnglish ? "Last scene" : "直前の場面"): \(utf8Prefix(session.lastSceneSummary ?? "", byteLimit: 140))" : nil
         ].compactMap { $0 }
@@ -558,10 +608,10 @@ struct StoryPromptBuilder {
         }
 
         let sceneDetails = [
-            scene.location.isEmpty ? nil : "\(isEnglish ? "Location" : "場所"): \(utf8Prefix(scene.location, byteLimit: 84))",
-            scene.timeOfDay.isEmpty ? nil : "\(isEnglish ? "Time" : "時間"): \(utf8Prefix(scene.timeOfDay, byteLimit: 48))",
-            scene.mood.isEmpty ? nil : "\(isEnglish ? "Atmosphere" : "空気"): \(utf8Prefix(scene.mood, byteLimit: 72))",
-            scene.sceneGoal.isEmpty ? nil : "\(isEnglish ? "Goal" : "目的"): \(utf8Prefix(scene.sceneGoal, byteLimit: 72))"
+            effectiveScene.location.isEmpty ? nil : "\(isEnglish ? "Location" : "場所"): \(utf8Prefix(effectiveScene.location, byteLimit: 84))",
+            effectiveScene.timeOfDay.isEmpty ? nil : "\(isEnglish ? "Time" : "時間"): \(utf8Prefix(effectiveScene.timeOfDay, byteLimit: 48))",
+            effectiveScene.mood.isEmpty ? nil : "\(isEnglish ? "Atmosphere" : "空気"): \(utf8Prefix(effectiveScene.mood, byteLimit: 72))",
+            effectiveScene.goal.map { "\(isEnglish ? "Goal" : "目的"): \(utf8Prefix($0, byteLimit: 72))" }
         ].compactMap { $0 }
         if !sceneDetails.isEmpty { lines.append((isEnglish ? "Current scene: " : "現在の場面: ") + sceneDetails.joined(separator: " / ")) }
 
@@ -618,15 +668,23 @@ struct StoryPromptBuilder {
         from entries: [StoryLorebookEntry],
         scene: StoryScene,
         userInput: String,
-        limit: Int = 6
+        limit: Int = 6,
+        storyState: StoryState? = nil
     ) -> [StoryLorebookEntry] {
+        let location = Self.nonEmpty(storyState?.location) ?? scene.location
+        let timeOfDay = Self.nonEmpty(storyState?.timeOfDay) ?? scene.timeOfDay
+        let mood = Self.nonEmpty(storyState?.mood) ?? scene.mood
+        let goal: String = {
+            guard let storyState else { return scene.sceneGoal }
+            return storyState.activeGoals.compactMap { Self.nonEmpty($0) }.first ?? ""
+        }()
         let haystack = [
             userInput,
             scene.title,
-            scene.location,
-            scene.timeOfDay,
-            scene.mood,
-            scene.sceneGoal,
+            location,
+            timeOfDay,
+            mood,
+            goal,
             scene.conflict ?? ""
         ].joined(separator: " ").localizedLowercase
 

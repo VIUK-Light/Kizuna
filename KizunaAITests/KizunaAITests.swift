@@ -141,6 +141,69 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(nextTurnState.activeGoals, [])
     }
 
+    func testStoryPromptUsesCanonicalStoryStateInsteadOfSceneSeed() {
+        let worldID = UUID()
+        let world = StoryWorld(
+            title: "夜の物語",
+            worldSetting: "静かな街"
+        )
+        let scene = StoryScene(
+            storyWorldId: worldID,
+            title: "古いSceneの題名",
+            location: "港",
+            timeOfDay: "夕方",
+            mood: "静か",
+            sceneGoal: "灯台へ向かう",
+            summary: "港で起きた出来事の要約"
+        )
+        let session = StorySession(
+            storyWorldId: worldID,
+            currentObjective: "灯台へ向かう"
+        )
+        let state = StoryState(
+            location: "駅前",
+            timeOfDay: "深夜",
+            mood: "緊張",
+            activeGoals: []
+        )
+        let builder = StoryPromptBuilder()
+
+        let fullPrompt = builder.build(
+            world: world,
+            scene: scene,
+            activeCast: [],
+            inactiveCast: [],
+            characterIndex: [:],
+            selectedMemories: [],
+            session: session,
+            recentMessages: [],
+            userInput: "立ち止まる",
+            generationModel: .b31,
+            safetyDecision: nil,
+            storyState: state
+        )
+        let localPrompt = builder.buildLocalRuntimePrompt(
+            world: world,
+            scene: scene,
+            activeCast: [],
+            characterIndex: [:],
+            selectedMemories: [],
+            selectedStoryMemories: [],
+            session: session,
+            storyState: state,
+            selectedLorebookEntries: [],
+            userCharacterName: nil
+        )
+
+        XCTAssertTrue(fullPrompt.contains("場所: 駅前"))
+        XCTAssertTrue(localPrompt.contains("場所: 駅前"))
+        XCTAssertFalse(fullPrompt.contains("場所: 港"))
+        XCTAssertFalse(localPrompt.contains("場所: 港"))
+        XCTAssertFalse(fullPrompt.contains("灯台へ向かう"))
+        XCTAssertFalse(localPrompt.contains("灯台へ向かう"))
+        XCTAssertTrue(fullPrompt.contains("港で起きた出来事の要約"))
+    }
+
     func testPersonaResponseSanitizerPreservesVisibleText() {
         let input = "<think>private reasoning</think>Visible response"
 
