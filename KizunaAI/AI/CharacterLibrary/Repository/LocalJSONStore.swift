@@ -63,19 +63,33 @@ final class LocalJSONStoreFileIOExecutor: @unchecked Sendable {
 /// It can prevent work that has not started, but once the body begins the
 /// completed result is returned even if the waiting task is cancelled.
 final class LocalJSONStoreFileIOCancellationState: @unchecked Sendable {
+    private enum State {
+        case queued
+        case started
+        case cancelled
+    }
+
     private let lock = NSLock()
-    private var cancelled = false
+    private var state: State = .queued
 
     nonisolated func cancel() {
         lock.lock()
-        cancelled = true
+        if case .queued = state {
+            state = .cancelled
+        }
         lock.unlock()
     }
 
-    nonisolated var isCancelled: Bool {
+    /// Atomically claims the operation before its synchronous body starts.
+    /// A cancellation that wins this race prevents the body from running;
+    /// cancellation after this method returns cannot replace the operation's
+    /// result because the body may already have committed an atomic write.
+    nonisolated func begin() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return cancelled
+        guard case .queued = state else { return false }
+        state = .started
+        return true
     }
 }
 
@@ -105,7 +119,7 @@ enum LocalJSONStoreTransaction {
             try await withCheckedThrowingContinuation {
                 (continuation: CheckedContinuation<Result, Error>) in
                 LocalJSONStoreFileIOExecutor.shared.submit {
-                    guard !cancellationState.isCancelled else {
+                    guard cancellationState.begin() else {
                         continuation.resume(throwing: CancellationError())
                         return
                     }
