@@ -43,6 +43,37 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(visibleText, text)
     }
 
+    func testStoryRuntimeNoticeKeepsAuxiliarySaveSeparateFromUserTurnRetry() {
+        let turnID = UUID()
+        let memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "港で約束した",
+            category: .event,
+            source: .summary
+        )
+        let retry = StoryMemoryRetry(
+            turnID: turnID,
+            userMessageID: UUID(),
+            userText: "約束を思い出す",
+            characterMemories: [],
+            storyMemories: [memory]
+        )
+        let notice = StoryRuntimeNotice(
+            text: "保存に失敗しました",
+            userMessageID: retry.userMessageID,
+            userText: retry.userText,
+            backendName: "memory save failed",
+            backend: .persistence,
+            retryAction: .storyMemory(retry)
+        )
+
+        XCTAssertTrue(notice.retryAction.isAuxiliarySave)
+        guard case let .storyMemory(persistedRetry) = notice.retryAction else {
+            return XCTFail("memory failures must not use the user-turn retry path")
+        }
+        XCTAssertEqual(persistedRetry, retry)
+    }
+
     func testPersonaResponseSanitizerPreservesVisibleText() {
         let input = "<think>private reasoning</think>Visible response"
 
@@ -206,6 +237,76 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(moved?.storyWorldId, movedWorldID)
         XCTAssertEqual(moved?.persistenceRevision, 5)
         XCTAssertGreaterThan(moved?.updatedAt ?? .distantPast, session.updatedAt)
+    }
+
+    func testStorySessionRepositoryCommitRetryReusesCommittedTurn() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let scene = StoryScene(
+            id: UUID(),
+            storyWorldId: worldID,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let session = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: scene.id
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let userMessage = StoryMessage(author: .user, text: "同じ本文を再利用")
+        let turnID = UUID()
+        let pending = try await repository.beginTurn(
+            session: session,
+            userMessage: userMessage,
+            turnID: turnID,
+            attempt: 1
+        )
+        let assistant = StoryMessage(
+            author: .narrator,
+            text: "生成済みの場面",
+            turnID: turnID
+        )
+        var generated = pending
+        generated.messages.append(assistant)
+
+        let committed = try await repository.commitTurn(
+            session: generated,
+            scene: scene,
+            turnID: turnID,
+            assistantMessageIDs: [assistant.id]
+        )
+        let retried = try await repository.commitTurn(
+            session: generated,
+            scene: scene,
+            turnID: turnID,
+            assistantMessageIDs: [assistant.id]
+        )
+
+        XCTAssertEqual(committed.latestTurnCheckpoint?.status, .committed)
+        XCTAssertEqual(retried.latestTurnCheckpoint?.status, .committed)
+        XCTAssertEqual(retried.latestTurnCheckpoint?.turnID, turnID)
+        XCTAssertEqual(
+            retried.messages.filter { $0.id == assistant.id }.count,
+            1,
+            "a persistence retry must not append another assistant message"
+        )
+        let persisted = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.messages.filter { $0.id == assistant.id }.count, 1)
     }
 
     func testStorySessionRepositoryCommitRejectsStalePersistenceRevision() async throws {
