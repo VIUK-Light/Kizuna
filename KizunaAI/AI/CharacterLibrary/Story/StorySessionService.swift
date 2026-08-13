@@ -209,6 +209,21 @@ final class StorySessionService: ObservableObject {
 
     private var turnOwnerID: UUID { turnOwnerLease.id }
 
+    /// Keep the last resolved cast when the selector has no usable result.
+    /// An empty selector result is an inference failure, not an explicit user
+    /// request to remove every character from the session.
+    nonisolated static func activeCharacterIDsForTurn(
+        selectedIDs: [UUID],
+        previousIDs: [UUID],
+        limit: Int
+    ) -> [UUID] {
+        let cappedSelectedIDs = Array(selectedIDs.prefix(limit))
+        guard !cappedSelectedIDs.isEmpty else {
+            return Array(previousIDs.prefix(limit))
+        }
+        return cappedSelectedIDs
+    }
+
     private struct StoryProgressUpdate: Codable {
         var progressLabel: String?
         var currentObjective: String?
@@ -848,7 +863,11 @@ final class StorySessionService: ObservableObject {
             return
         }
         var sceneWithSelectedCharacters = scene
-        sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
+        sceneWithSelectedCharacters.activeCharacterIds = Self.activeCharacterIDsForTurn(
+            selectedIDs: selectedIDs,
+            previousIDs: scene.activeCharacterIds,
+            limit: activeCharacterLimit
+        )
         session.activeCharacterIds = sceneWithSelectedCharacters.activeCharacterIds
         // 選択結果はターンのcommitまでメモリ上に保持する。生成失敗時に
         // activeCharacterIdsだけが先に保存される部分成功を作らない。

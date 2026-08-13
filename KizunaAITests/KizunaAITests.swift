@@ -125,6 +125,21 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testEmptySceneSelectionKeepsThePreviouslyResolvedCast() {
+        let previousIDs = [UUID(), UUID()]
+        let selectedIDs: [UUID] = []
+
+        XCTAssertEqual(
+            StorySessionService.activeCharacterIDsForTurn(
+                selectedIDs: selectedIDs,
+                previousIDs: previousIDs,
+                limit: StoryConstants.maxActiveCharacters
+            ),
+            previousIDs,
+            "an empty selector result must not persist an empty session cast"
+        )
+    }
+
     func testExistingStoryStateDoesNotReapplySceneValuesWhenObjectiveIsMissing() {
         let existingState = StoryState(
             location: "駅前の屋上",
