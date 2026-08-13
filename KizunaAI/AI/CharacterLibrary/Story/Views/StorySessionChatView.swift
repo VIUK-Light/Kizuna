@@ -296,19 +296,19 @@ private struct StoryGenerationModelPill: View {
     private var modelDetailPopover: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(vm.generationModel.detailLabel)
-                .font(.system(size: 12, weight: .bold))
+                .font(.headline.weight(.bold))
                 .foregroundStyle(.primary)
             Text(modelShortDescription(vm.generationModel))
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(modelAvailabilityText(vm.generationModel))
-                .font(.system(size: 10, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(modelAvailabilityColor(vm.generationModel))
                 .fixedSize(horizontal: false, vertical: true)
             if let lastBackendStatus {
                 Text(lastBackendStatus)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -318,10 +318,10 @@ private struct StoryGenerationModelPill: View {
                     ioriRuntimeStatusLabel,
                     systemImage: ioriRuntimeStatusIcon
                 )
-                .font(.system(size: 11.5, weight: .bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(modelAvailabilityColor(.e4b))
                 Text(ioriRuntimeActionHint)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -569,7 +569,7 @@ private struct StorySessionChatBody: View {
                                         : storyCopy("最新へ", "Latest"),
                                     systemImage: "arrow.down"
                                 )
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.body.weight(.bold))
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 8)
                                 .frame(minHeight: 44)
@@ -924,7 +924,7 @@ private struct StorySessionChatBody: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .center, spacing: 12) {
                 Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.headline.weight(.bold))
                     .foregroundStyle(storyText)
                     .lineLimit(1)
                 Spacer()
@@ -938,7 +938,7 @@ private struct StorySessionChatBody: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 10) {
                 Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.headline.weight(.bold))
                     .foregroundStyle(storyText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
@@ -992,7 +992,7 @@ private struct StorySessionChatBody: View {
                     HStack(spacing: 5) {
                         characterAvatar(character, size: 18)
                         Text(character.visibleName)
-                            .font(.system(size: 10.5, weight: .bold))
+                            .font(.caption.weight(.bold))
                             .lineLimit(1)
                     }
                     .padding(.horizontal, 8)
@@ -1364,7 +1364,7 @@ private struct StoryCharacterSpotlightSheet: View {
                     }
                     if characters.count > 1 {
                         Text(storyCopy("登場キャラ", "Characters"))
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.subheadline.weight(.bold))
                             .foregroundStyle(.secondary)
                         HStack(spacing: 10) {
                             ForEach(characters) { character in
@@ -1376,7 +1376,7 @@ private struct StoryCharacterSpotlightSheet: View {
                                             .frame(width: 72, height: 72)
                                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                                         Text(character.visibleName)
-                                            .font(.system(size: 11, weight: .bold))
+                                            .font(.caption.weight(.bold))
                                             .lineLimit(1)
                                     }
                                     .padding(7)
@@ -1422,11 +1422,11 @@ private struct StoryCharacterHero: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(character.visibleName)
-                    .font(.system(size: 30, weight: .heavy))
+                    .font(.largeTitle.weight(.heavy))
                     .foregroundStyle(storyText)
                 if !character.shortDescription.isEmpty {
                     Text(character.shortDescription)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(storyMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1467,10 +1467,10 @@ private struct StoryCharacterHero: View {
             if !trimmed.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
                     Text(trimmed)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.body.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
