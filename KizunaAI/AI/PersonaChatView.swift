@@ -1112,20 +1112,16 @@ struct PersonaChatView: View {
     }
 
     private func messageList(for thread: PersonaThread) -> some View {
-        // 生成中の最新アシスタント枠は、ストリーミングプレビューと二重に描かない。
-        // 完了後は保存された本文を通常のメッセージとして表示する。
+        // ストリーミングプレビューはサービスが一時表示し、完成後にだけ
+        // 保存済み本文を通常のメッセージとして表示する。旧バージョンの
+        // 空assistant枠も本文がないため、同じ条件で表示しない。
         // `phase` はサービス全体の状態だが、表示対象は thread ID と組み合わせる。
         // IDだけが一瞬残る遷移でも、別スレッドへプレビューを漏らさない。
         let isGeneratingThisThread = service.activeGenerationThreadID == thread.id
             && service.phase == .thinking
         let isErrorThisThread = service.lastErrorThreadID == thread.id
             && isGenerationError
-        let pendingAssistantID: UUID? = {
-            guard isGeneratingThisThread else { return nil }
-            return thread.messages.last(where: { $0.role == .assistant })?.id
-        }()
         let visibleMessages = thread.messages.filter { msg in
-            guard msg.id != pendingAssistantID else { return false }
             return !(msg.role == .assistant && msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         return ScrollViewReader { proxy in

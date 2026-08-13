@@ -1564,6 +1564,51 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testPersonaUnfinishedAssistantIsNotPersistedBeforeFinalization() throws {
+        let suiteName = "KizunaPersonaStoreTests.UnfinishedAssistant.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let thread = try XCTUnwrap(
+            PersonaChatStore(defaults: defaults).createThread(with: profile)
+        )
+        let userMessage = PersonaMessage(role: .user, text: "hello")
+        let generationID = UUID()
+        let store = PersonaChatStore(defaults: defaults)
+        store.appendMessage(userMessage, toThread: thread.id)
+
+        let afterInterruptedGeneration = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(
+            afterInterruptedGeneration.thread(id: thread.id)?.messages.map(\.role),
+            [.user]
+        )
+        XCTAssertTrue(
+            afterInterruptedGeneration.appendFinalizedAssistantMessage(
+                in: thread.id,
+                messageID: generationID,
+                text: "completed"
+            )
+        )
+        XCTAssertFalse(
+            afterInterruptedGeneration.appendFinalizedAssistantMessage(
+                in: thread.id,
+                messageID: generationID,
+                text: "duplicate"
+            )
+        )
+        let reloaded = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(
+            reloaded.thread(id: thread.id)?.messages.map(\.text),
+            ["hello", "completed"]
+        )
+    }
+
     func testPersonaCancellationRemovesMeaningfulUnscreenedPartial() throws {
         let suiteName = "KizunaPersonaStoreTests.PartialCancellation.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

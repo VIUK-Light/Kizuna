@@ -403,9 +403,28 @@ final class PersonaChatStore: ObservableObject {
         return true
     }
 
-    /// 生成開始直後に作った空のアシスタント枠を、別経路へ切り替える時に取り除く。
-    /// 未評価の部分応答は履歴へ残さず、Safety評価済みの完成本文だけを
-    /// 明示的な完了処理で保存する。通常のキャンセル／watchdogは部分応答を保存しない。
+    /// Add a completed assistant response after it has crossed the output
+    /// safety boundary. A generation ID makes the commit idempotent and keeps
+    /// a retry or duplicate completion from appending the same response twice.
+    @discardableResult
+    func appendFinalizedAssistantMessage(in threadID: UUID, messageID: UUID, text: String) -> Bool {
+        guard canMutatePersistedState(),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
+              !threads[threadIdx].messages.contains(where: { $0.id == messageID }) else {
+            return false
+        }
+        threads[threadIdx].messages.append(
+            PersonaMessage(id: messageID, role: .assistant, text: text)
+        )
+        threads[threadIdx].updatedAt = Date()
+        persistAfterActivityUpdate()
+        return true
+    }
+
+    /// 旧バージョンが生成開始時に保存した空のアシスタント枠を、
+    /// 別経路へ切り替える時に取り除く。新しい生成経路は枠を保存せず、
+    /// `appendFinalizedAssistantMessage`でSafety評価済みの本文だけを保存する。
     func removePendingAssistantMessage(in threadID: UUID) {
         guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
@@ -444,7 +463,6 @@ final class PersonaChatStore: ObservableObject {
     }
 
     /// 失敗したターンを再送する前に、直前のユーザー発話だけを取り除く。
-    /// アシスタント側の空枠は `removePendingAssistantMessage` で先に処理する。
     func removeLastUserMessage(in threadID: UUID, matching text: String? = nil) {
         guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),

@@ -37,11 +37,11 @@ enum PersonaOutputSafetyPolicy {
         case .block, .requireEdit:
             return nil
         case .soften:
-            guard let rewritten,
-                  !rewritten.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard let rewritten else {
                 return nil
             }
-            return rewritten.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = rewritten.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
         case .allow, .warn:
             return original
         }
@@ -97,16 +97,13 @@ final class PersonaChatService: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard phase != .thinking else { return }
 
-        // ユーザーメッセージ & 空のアシスタントメッセージを追加 (アシスタント側はストリームで埋める)
+        // ユーザー発話だけを先に保存する。assistant本文はSafety評価を通過した
+        // 完成時にだけ追加し、アプリ終了やキャンセルで未確定の空枠を残さない。
         PersonaChatStore.shared.appendMessage(
             PersonaMessage(role: .user, text: trimmed),
             toThread: thread.id
         )
         let assistantMessageID = UUID()
-        PersonaChatStore.shared.appendMessage(
-            PersonaMessage(id: assistantMessageID, role: .assistant, text: ""),
-            toThread: thread.id
-        )
 
         phase = .thinking
         streamingResponse = ""
@@ -248,27 +245,8 @@ final class PersonaChatService: ObservableObject {
             // キャラ本体が削除されてもスレッドのスナップショットで会話を続ける。
             // 参照だけを残して永久にエラーにするのではなく、旧Personaパスへ移行する。
             PersonaChatStore.shared.detachCharacterReference(threadID: threadID)
-            let canFallback = await MainActor.run { () -> Bool in
-                guard self.isGenerationActive(generationID) else { return false }
-                if let assistantMessageID = self.activeAssistantMessageID {
-                    // History can change while the character repository is
-                    // loading. Remove only the placeholder owned by this
-                    // generation; removing the last assistant message could
-                    // delete a completed response inserted by that update.
-                    PersonaChatStore.shared.removeAssistantMessage(
-                        in: threadID,
-                        messageID: assistantMessageID
-                    )
-                }
-                // 先ほどの削除後に空枠を再追加して、旧応答を上書きせず
-                // このターンを通常のLegacy経路で完了できるようにする。
-                let assistantMessageID = UUID()
-                PersonaChatStore.shared.appendMessage(
-                    PersonaMessage(id: assistantMessageID, role: .assistant, text: ""),
-                    toThread: threadID
-                )
-                self.activeAssistantMessageID = assistantMessageID
-                return true
+            let canFallback = await MainActor.run {
+                self.isGenerationActive(generationID)
             }
             guard canFallback else { return }
             await runLegacyPersonaGeneration(threadID: threadID, userText: userText, generationID: generationID)
@@ -443,15 +421,6 @@ final class PersonaChatService: ObservableObject {
         generationTask = nil
         invalidatePendingStreamSanitization()
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: activeGenerationID)
-        if let threadID = activeThreadID,
-           let assistantMessageID = activeAssistantMessageID {
-            // A stream preview has not crossed the output Safety boundary.
-            // Never turn an interrupted preview into persisted history.
-            PersonaChatStore.shared.removeAssistantMessage(
-                in: threadID,
-                messageID: assistantMessageID
-            )
-        }
         activeGenerationID = nil
         activeThreadID = nil
         activeAssistantMessageID = nil
@@ -689,12 +658,6 @@ final class PersonaChatService: ObservableObject {
 
     private func failGeneration(threadID: UUID, generationID: UUID, message: String) {
         guard activeGenerationID == generationID else { return }
-        if let assistantMessageID = activeAssistantMessageID {
-            PersonaChatStore.shared.removeAssistantMessage(
-                in: threadID,
-                messageID: assistantMessageID
-            )
-        }
         streamingResponse = ""
         phase = .error(message)
         invalidatePendingStreamSanitization()
@@ -708,7 +671,7 @@ final class PersonaChatService: ObservableObject {
     @discardableResult
     private func finalizeAssistantMessage(in threadID: UUID, text: String) -> Bool {
         guard let assistantMessageID = activeAssistantMessageID else { return false }
-        return PersonaChatStore.shared.finalizeAssistantMessage(
+        return PersonaChatStore.shared.appendFinalizedAssistantMessage(
             in: threadID,
             messageID: assistantMessageID,
             text: text
