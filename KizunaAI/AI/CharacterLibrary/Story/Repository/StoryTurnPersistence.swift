@@ -543,6 +543,35 @@ enum StoryTurnJournal {
             return validItems
         }
     }
+
+    /// Explicitly deleting a session also invalidates retry records that name
+    /// that session. Legacy world-only retries are retained because their
+    /// ownership cannot be inferred safely.
+    private static func purgeMemoryRetriesForDeletedSessionsUnlocked(
+        _ tombstones: [StoryTurnJournalTombstone],
+        baseURL: URL
+    ) throws {
+        let deletedSessionIDs = Set(
+            tombstones
+                .filter { $0.recordKind == .session }
+                .map(\.recordID)
+        )
+        guard !deletedSessionIDs.isEmpty else { return }
+
+        let retries = try loadMemoryRetriesUnlocked(baseURL: baseURL)
+        let retained = retries.filter { retry in
+            let directSessionID = retry.storySessionID
+            let embeddedSessionIDs = retry.storyMemories.compactMap(\.storySessionId)
+            return !(directSessionID.map(deletedSessionIDs.contains) == true
+                || embeddedSessionIDs.contains(where: deletedSessionIDs.contains))
+        }
+        guard retained.count != retries.count else { return }
+        try LocalJSONStoreTransaction.save(
+            retained,
+            fileName: memoryRetryFileName,
+            baseURL: baseURL
+        )
+    }
 }
 
 extension StoryTurnJournal {
@@ -674,6 +703,10 @@ extension StoryTurnJournal {
         )
         let retainedSessions = sessions.filter { !sessionIDs.contains($0.id) }
         let retainedScenes = scenes.filter { !sceneIDs.contains($0.id) }
+        try purgeMemoryRetriesForDeletedSessionsUnlocked(
+            tombstones,
+            baseURL: baseURL
+        )
         if retainedSessions.count != sessions.count {
             sessions = retainedSessions
             try LocalJSONStoreTransaction.save(

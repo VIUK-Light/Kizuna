@@ -1436,7 +1436,7 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
-    func testStoryTurnJournalDoesNotRestoreMemoryRetryAfterSessionTombstone() throws {
+    func testStoryTurnJournalDoesNotRestoreMemoryRetryAfterSessionTombstone() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
         let sessionID = UUID()
@@ -1503,6 +1503,11 @@ final class KizunaAITests: XCTestCase {
             fileName: "story_turn_journal.json",
             baseURL: storageURL
         )
+        try LocalJSONStoreTransaction.save(
+            [retry],
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
         try LocalJSONStoreTransaction.withSharedLock {
             try StoryTurnJournal.recordDeletionUnlocked(
                 recordID: sessionID,
@@ -1535,6 +1540,16 @@ final class KizunaAITests: XCTestCase {
                 baseURL: storageURL
             ).isEmpty
         )
+        do {
+            try await LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+                .saveRetry(retry)
+            XCTFail("a deleted session must not accept a stale memory retry")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(
+                error,
+                .recordDeleted(kind: .session, id: sessionID)
+            )
+        }
         XCTAssertTrue(
             try LocalJSONStoreTransaction.load(
                 StoryTurnJournalEntry.self,

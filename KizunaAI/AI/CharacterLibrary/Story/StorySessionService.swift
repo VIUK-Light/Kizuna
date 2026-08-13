@@ -398,9 +398,13 @@ final class StorySessionService: ObservableObject {
         storySessionID: UUID,
         storyWorldID: UUID
     ) async throws {
-        let persisted = try await storyMemoryRetryRepo.fetchRetries()
         let sessions = try await sessionRepo.fetchSessions(storyWorldId: storyWorldID)
         let session = sessions.first { $0.id == storySessionID }
+        // Fetch the auxiliary queue after session recovery. Tombstone
+        // reconciliation may have purged retries belonging to a deliberately
+        // deleted session; loading the queue first would retain a stale copy
+        // in this ViewModel for the remainder of the bootstrap.
+        let persisted = try await storyMemoryRetryRepo.fetchRetries()
         let scoped = persisted.filter { retry in
             if let retrySessionID = retry.storySessionID {
                 return retrySessionID == storySessionID

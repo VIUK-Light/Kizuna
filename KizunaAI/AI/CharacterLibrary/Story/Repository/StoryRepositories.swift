@@ -1174,11 +1174,13 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
 /// while a successful retry can remove only its own turnID atomically.
 final class LocalJSONStoryMemoryRetryRepository: StoryMemoryRetryRepository {
     private let store: LocalJSONStore<StoryMemoryRetry>
+    private let storageURL: URL
 
     init(
         fileName: String = "story_memory_retries.json",
         storageURL: URL = KizunaDataMigration.characterLibraryURL
     ) {
+        self.storageURL = storageURL
         self.store = LocalJSONStore<StoryMemoryRetry>(
             fileName: fileName,
             baseURL: storageURL
@@ -1191,7 +1193,24 @@ final class LocalJSONStoryMemoryRetryRepository: StoryMemoryRetryRepository {
     }
 
     func saveRetry(_ retry: StoryMemoryRetry) async throws {
-        try await store.appendOrReplace(retry, idEquals: { $0.turnID == $1.turnID })
+        try await store.mutate { retries in
+            let sessionIDs = Set(
+                [retry.storySessionID].compactMap { $0 }
+                    + retry.storyMemories.compactMap(\.storySessionId)
+            )
+            for sessionID in sessionIDs {
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: sessionID,
+                    recordKind: .session,
+                    baseURL: storageURL
+                )
+            }
+            if let index = retries.firstIndex(where: { $0.turnID == retry.turnID }) {
+                retries[index] = retry
+            } else {
+                retries.append(retry)
+            }
+        }
     }
 
     func deleteRetry(turnID: UUID) async throws {
