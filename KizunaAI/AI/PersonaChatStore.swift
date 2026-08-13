@@ -397,8 +397,9 @@ final class PersonaChatStore: ObservableObject {
         return true
     }
 
-    /// 生成開始直後に作った空のアシスタント枠を、ユーザーが停止した時だけ取り除く。
-    /// 部分応答がある場合は呼び出し側がその本文を保存するため、ここでは削除しない。
+    /// 生成開始直後に作った空のアシスタント枠を、別経路へ切り替える時に取り除く。
+    /// 未評価の部分応答を履歴へ残す場合は、このメソッドではなく明示的な
+    /// 完了処理を使う。通常のキャンセル／watchdogは部分応答を保存しない。
     func removePendingAssistantMessage(in threadID: UUID) {
         guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
