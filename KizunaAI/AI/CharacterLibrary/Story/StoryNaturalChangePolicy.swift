@@ -59,21 +59,16 @@ enum StoryNaturalChangePolicy {
         } else {
             normalizedGoals = nil
         }
-        let objectiveChanged: Bool
-        if let normalizedGoals, let currentState {
-            objectiveChanged = normalizedGoals
-                != Array(currentState.activeGoals.compactMap(normalizedText).prefix(6))
-        } else {
-            objectiveChanged = normalizedGoals != nil
-        }
-
         var groups: [ChangeGroup] = []
         if [environment.location, environment.timeOfDay, environment.mood, environment.weather]
             .contains(where: { $0 != nil }) { groups.append(.environment) }
         if relationship != nil { groups.append(.relationship) }
         if !characterChanges.isEmpty { groups.append(.character) }
         if !inventoryChanges.isEmpty { groups.append(.inventory) }
-        if objectiveChanged { groups.append(.objective) }
+        // The key itself is meaningful even when the value is already equal
+        // to the current state: an explicit [] also clears the display-only
+        // session objective, and a no-op objective patch remains harmless.
+        if normalizedGoals != nil { groups.append(.objective) }
         guard groups.count == 1, let group = groups.first else { return nil }
 
         var accepted = patch
@@ -125,6 +120,18 @@ enum StoryNaturalChangePolicy {
             accepted.activeGoals = normalizedGoals
         }
         return accepted
+    }
+
+    /// The display objective follows the canonical StoryState when a patch
+    /// explicitly carries activeGoals. In particular, an empty array resolves
+    /// the old objective instead of allowing the session display field to
+    /// resurrect it on the next turn.
+    static func objectiveAfterAcceptedPatch(
+        currentObjective: String?,
+        patch: StoryStatePatch?
+    ) -> String? {
+        guard let goals = patch?.activeGoals else { return currentObjective }
+        return goals.compactMap(normalizedText).first
     }
 
     private static func normalizedText(_ value: String?) -> String? {
