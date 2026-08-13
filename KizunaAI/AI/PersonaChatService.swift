@@ -541,8 +541,7 @@ final class PersonaChatService: ObservableObject {
         let persistableText: String
         switch outputSafety.action {
         case .block:
-            let rewritten = outputSafety.rewrittenText?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let rewritten, !rewritten.isEmpty {
+            if let rewritten = PersonaOutputSafetyPolicy.sanitizedRewrite(outputSafety.rewrittenText) {
                 persistableText = rewritten
             } else {
                 persistableText = KizunaCopy.text(
@@ -568,10 +567,17 @@ final class PersonaChatService: ObservableObject {
             }
             persistableText = safeText
         case .warn, .allow:
-            persistableText = cleaned
+                persistableText = cleaned
         }
-        streamingResponse = persistableText
-        finalizeAssistantMessage(in: threadID, text: persistableText)
+        guard finalizeAssistantMessage(in: threadID, text: persistableText) else {
+            failGeneration(
+                threadID: threadID,
+                generationID: generationID,
+                message: persistenceFailureMessage
+            )
+            return
+        }
+        streamingResponse = ""
         phase = .idle
         invalidatePendingStreamSanitization()
         activeGenerationID = nil
