@@ -255,11 +255,19 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
             .sorted { $0.createdAt < $1.createdAt }
     }
     func saveScene(_ scene: StoryScene) async throws {
-        var s = scene
-        s.updatedAt = Date()
-        // active キャラ数の上限を遵守
-        s.activeCharacterIds = Array(s.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters))
-        try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
+        try await store.mutate { scenes in
+            var next = scene
+            next.updatedAt = Date()
+            // active キャラ数の上限を遵守
+            next.activeCharacterIds = Array(next.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters))
+            if let index = scenes.firstIndex(where: { $0.id == next.id }) {
+                next.persistenceRevision = scenes[index].effectivePersistenceRevision + 1
+                scenes[index] = next
+            } else {
+                next.persistenceRevision = max(1, next.effectivePersistenceRevision)
+                scenes.append(next)
+            }
+        }
     }
 
     func repairMissingImageKey(storyWorldId: UUID, sceneId: UUID, imageKey: String) async throws -> Bool {
@@ -274,6 +282,7 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
             }
             // Keep every user-edited field and update only the missing key.
             scenes[index].imageKey = trimmedKey
+            scenes[index].persistenceRevision = scenes[index].effectivePersistenceRevision + 1
             repaired = true
         }
         return repaired
@@ -286,6 +295,7 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         try await store.mutate { scenes in
             guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
             scenes[index].storyWorldId = toStoryWorldId
+            scenes[index].persistenceRevision = scenes[index].effectivePersistenceRevision + 1
         }
     }
 
@@ -568,12 +578,14 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             // このターンが生成したsummary/activeキャラだけを、生成開始時点
             // から外部編集されていない場合に反映し、imageKey等の最新編集は残す。
             var committedScene = currentScene
-            if currentScene.updatedAt == scene.updatedAt {
+            if currentScene.updatedAt == scene.updatedAt,
+               currentScene.effectivePersistenceRevision == scene.effectivePersistenceRevision {
                 committedScene.summary = scene.summary
                 committedScene.activeCharacterIds = Array(
                     scene.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
                 )
                 committedScene.updatedAt = now
+                committedScene.persistenceRevision = currentScene.effectivePersistenceRevision + 1
             }
 
             // ジャーナルを先に置いてから2つのスナップショットを更新する。

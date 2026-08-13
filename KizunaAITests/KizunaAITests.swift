@@ -853,6 +853,87 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryTurnJournalUsesSceneRevisionWhenDatesShareAnISOSecond() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let baseDate = Date(timeIntervalSince1970: 100.1)
+        let laterSameSecond = Date(timeIntervalSince1970: 100.9)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: baseDate,
+                updatedAt: baseDate
+            ),
+            assistantMessageIDs: [],
+            updatedAt: laterSameSecond
+        )
+        let session = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: baseDate
+        )
+        let persistedScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "old scene",
+            persistenceRevision: 4,
+            updatedAt: baseDate
+        )
+        var journalScene = persistedScene
+        journalScene.summary = "recovered scene"
+        journalScene.persistenceRevision = 5
+        journalScene.updatedAt = laterSameSecond
+
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [StoryTurnJournalEntry(turnID: turnID, session: session, scene: journalScene)],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        let storedScene = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        let storedJournalScene = try LocalJSONStoreTransaction.load(
+            StoryTurnJournalEntry.self,
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        ).first?.scene
+        XCTAssertEqual(storedScene?.updatedAt, storedJournalScene?.updatedAt)
+        XCTAssertEqual(storedScene?.persistenceRevision, 4)
+        XCTAssertEqual(storedJournalScene?.persistenceRevision, 5)
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        let recoveredScene = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(recoveredScene?.summary, "recovered scene")
+        XCTAssertEqual(recoveredScene?.persistenceRevision, 5)
+    }
+
     func testStoryTurnJournalRecoversValidEntryWhenMalformedRecordIsMixed() throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
