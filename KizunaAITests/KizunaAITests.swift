@@ -192,9 +192,14 @@ final class KizunaAITests: XCTestCase {
             StoryMemory(storyWorldId: worldID, text: "legacy 2")
         ]
 
-        for memory in existingSessionMemories + legacyMemories {
-            try await repository.saveMemory(memory)
-        }
+        // Seed the pre-existing scopes directly. Saving those records through
+        // the repository would intentionally apply the configured per-scope
+        // limit to each scope and would not test the regression boundary.
+        try LocalJSONStoreTransaction.save(
+            existingSessionMemories + legacyMemories,
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
         try await repository.saveMemory(
             StoryMemory(storyWorldId: worldID, text: "new session", storySessionId: newSessionID)
         )
