@@ -1797,11 +1797,8 @@ final class StorySessionViewModel: ObservableObject {
                 await self.refreshAfterTurn()
             }
             return true
-        case .userTurn, .narration, .restAcknowledgement:
-            service.dismissRuntimeNotice()
-        }
-        switch notice.retryAction {
         case let .narration(text):
+            service.dismissRuntimeNotice()
             Task { [weak self] in
                 guard let self else { return }
                 await self.service.addNarration(text, session: self.session)
@@ -1809,6 +1806,7 @@ final class StorySessionViewModel: ObservableObject {
             }
             return true
         case let .restAcknowledgement(characterID, characterName):
+            service.dismissRuntimeNotice()
             Task { [weak self] in
                 guard let self else { return }
                 do {
@@ -1833,17 +1831,15 @@ final class StorySessionViewModel: ObservableObject {
             }
             return true
         case .userTurn:
-            break
-        case .storyTurnCommit, .storyMemory:
-            return false
+            service.dismissRuntimeNotice()
+            let hasPersistedUserTurn = session.messages.contains { message in
+                message.id == notice.userMessageID && message.author.isUser
+            }
+            return enqueueSend(
+                notice.userText,
+                existingUserMessageID: hasPersistedUserTurn ? notice.userMessageID : nil
+            )
         }
-        let hasPersistedUserTurn = session.messages.contains { message in
-            message.id == notice.userMessageID && message.author.isUser
-        }
-        return enqueueSend(
-            notice.userText,
-            existingUserMessageID: hasPersistedUserTurn ? notice.userMessageID : nil
-        )
     }
 
     /// Resolves a system card to its persisted user turn. The metadata path is
