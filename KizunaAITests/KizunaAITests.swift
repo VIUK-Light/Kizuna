@@ -603,10 +603,8 @@ final class KizunaAITests: XCTestCase {
         try await repository.saveRetry(first)
         try await repository.saveRetry(second)
 
-        XCTAssertEqual(
-            try await repository.fetchRetries().map(\.turnID),
-            [firstTurnID, secondTurnID]
-        )
+        let persistedTurnIDs = try await repository.fetchRetries().map(\.turnID)
+        XCTAssertEqual(persistedTurnIDs, [firstTurnID, secondTurnID])
     }
 
     func testStoryMemoryRetryFromOlderCommittedTurnSurvivesRestore() async throws {
@@ -652,8 +650,8 @@ final class KizunaAITests: XCTestCase {
         )
         let memoryRepository = TestStoryMemoryRepository()
         let service = StorySessionService(
-            sessionRepo: TestStorySessionRepository(sessions: [session]),
             memoryRepo: memoryRepository,
+            sessionRepo: TestStorySessionRepository(sessions: [session]),
             storyMemoryRepo: memoryRepository,
             storyMemoryRetryRepo: retryRepository
         )
