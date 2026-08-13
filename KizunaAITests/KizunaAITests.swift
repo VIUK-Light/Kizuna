@@ -94,9 +94,18 @@ final class KizunaAITests: XCTestCase {
         let turnID = UUID()
         let userMessageID = UUID()
         let assistantMessageID = UUID()
+        let sceneID = UUID()
+        let activeCharacterID = UUID()
+        let scene = StoryScene(
+            id: sceneID,
+            storyWorldId: storyWorldID,
+            activeCharacterIds: [activeCharacterID],
+            summary: "保存済みの場面"
+        )
         let session = StorySession(
             id: sessionID,
             storyWorldId: storyWorldID,
+            currentSceneId: sceneID,
             latestTurnCheckpoint: StoryTurnCheckpoint(
                 turnID: turnID,
                 userMessageID: userMessageID,
@@ -105,8 +114,12 @@ final class KizunaAITests: XCTestCase {
             )
         )
         let retry = StoryTurnCommitRetry(
-            session: StorySession(id: sessionID, storyWorldId: storyWorldID),
-            scene: StoryScene(storyWorldId: storyWorldID),
+            session: StorySession(
+                id: sessionID,
+                storyWorldId: storyWorldID,
+                currentSceneId: sceneID
+            ),
+            scene: scene,
             turnID: turnID,
             attempt: 1,
             assistantMessageIDs: [assistantMessageID],
@@ -117,7 +130,11 @@ final class KizunaAITests: XCTestCase {
         )
 
         XCTAssertEqual(
-            StoryTurnCommitRecovery.committedSession(matching: retry, in: [session]),
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [session],
+                scenes: [scene]
+            ),
             session
         )
 
@@ -128,7 +145,13 @@ final class KizunaAITests: XCTestCase {
             status: .committed,
             assistantMessageIDs: [assistantMessageID]
         )
-        XCTAssertNil(StoryTurnCommitRecovery.committedSession(matching: retry, in: [differentTurn]))
+        XCTAssertNil(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [differentTurn],
+                scenes: [scene]
+            )
+        )
 
         var pending = session
         pending.latestTurnCheckpoint = StoryTurnCheckpoint(
@@ -137,7 +160,33 @@ final class KizunaAITests: XCTestCase {
             status: .pending,
             assistantMessageIDs: [assistantMessageID]
         )
-        XCTAssertNil(StoryTurnCommitRecovery.committedSession(matching: retry, in: [pending]))
+        XCTAssertNil(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [pending],
+                scenes: [scene]
+            )
+        )
+
+        XCTAssertNil(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [session],
+                scenes: []
+            ),
+            "a committed session without its scene must remain retryable"
+        )
+
+        var staleScene = scene
+        staleScene.summary = "古い場面"
+        XCTAssertNil(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [session],
+                scenes: [staleScene]
+            ),
+            "a committed session with a stale scene must remain retryable"
+        )
     }
 
     func testStoryServiceRetriesMemoryWithoutGeneratingAnotherTurn() async throws {
