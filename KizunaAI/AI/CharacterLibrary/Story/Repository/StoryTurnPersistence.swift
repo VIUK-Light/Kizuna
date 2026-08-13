@@ -30,7 +30,11 @@ final class StoryTurnOwnerRegistry: @unchecked Sendable {
 
     @discardableResult
     func register() -> UUID {
-        let ownerID = UUID()
+        register(UUID())
+    }
+
+    @discardableResult
+    func register(_ ownerID: UUID) -> UUID {
         lock.lock()
         owners.insert(ownerID)
         lock.unlock()
@@ -47,6 +51,28 @@ final class StoryTurnOwnerRegistry: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return owners
+    }
+}
+
+/// A service-owned registration that can be released from a nonisolated
+/// teardown path. The registry itself is lock-protected, so deinit and the
+/// MainActor lifecycle methods can safely perform the same idempotent release.
+final class StoryTurnOwnerLease: @unchecked Sendable {
+    let id: UUID
+    private let registry: StoryTurnOwnerRegistry
+
+    init(registry: StoryTurnOwnerRegistry = .shared) {
+        self.id = UUID()
+        self.registry = registry
+        registry.register(id)
+    }
+
+    func register() {
+        registry.register(id)
+    }
+
+    func unregister() {
+        registry.unregister(id)
     }
 }
 

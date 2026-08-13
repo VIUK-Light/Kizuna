@@ -1560,9 +1560,11 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     deinit {
-        // ViewModel deinit is nonisolated. Keep shutdown on the service's
-        // MainActor while retaining only the service needed for that cleanup.
+        // ViewModel deinit is nonisolated. Release the owner synchronously so
+        // a replacement view can recover a pending turn immediately; keep the
+        // remaining cancellation/persistence cleanup on the MainActor.
         let service = service
+        service.releaseOwnerForTeardown()
         Task { @MainActor in
             service.shutdown()
         }

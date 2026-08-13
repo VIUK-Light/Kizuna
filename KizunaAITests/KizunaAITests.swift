@@ -165,6 +165,19 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(probe.hasCompleted)
     }
 
+    func testStoryTurnOwnerLeaseCanReleaseAndReRegisterSafely() {
+        let registry = StoryTurnOwnerRegistry()
+        let lease = StoryTurnOwnerLease(registry: registry)
+
+        XCTAssertTrue(registry.activeOwnerIDs().contains(lease.id))
+        lease.unregister()
+        lease.unregister()
+        XCTAssertFalse(registry.activeOwnerIDs().contains(lease.id))
+
+        lease.register()
+        XCTAssertTrue(registry.activeOwnerIDs().contains(lease.id))
+    }
+
     func testLegacyStorySessionWithoutTurnFieldsStillDecodes() throws {
         let message = StoryMessage(author: .user, text: "legacy")
         let session = StorySession(

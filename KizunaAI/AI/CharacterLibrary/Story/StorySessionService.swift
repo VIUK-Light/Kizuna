@@ -145,7 +145,9 @@ final class StorySessionService: ObservableObject {
     private let promptBuilder = StoryPromptBuilder()
     /// Serviceインスタンスごとのowner。プロセス共通IDにすると、画面を
     /// 作り直したServiceが、まだ生きている別Serviceと区別できない。
-    private var turnOwnerID = StoryTurnOwnerRegistry.shared.register()
+    /// nonisolated leaseにすることで、ViewModelのnonisolated deinitから
+    /// cleanup Taskの起動前にownerを解除できる。
+    private nonisolated let turnOwnerLease = StoryTurnOwnerLease()
     private var isOwnerRegistered = true
 
     private var generationTask: Task<Void, Never>?
@@ -177,10 +179,12 @@ final class StorySessionService: ObservableObject {
     private let progressDecoder = JSONDecoder()
 
     deinit {
-        // Deinitializers are nonisolated. The registry is lock-protected, so
-        // unregister the current owner directly instead of calling the
-        // MainActor-isolated helper from this context.
-        StoryTurnOwnerRegistry.shared.unregister(turnOwnerID)
+        turnOwnerLease.unregister()
+    }
+
+    /// ViewModel deinit用。Taskを作る前に同期的にownerを解放する。
+    nonisolated func releaseOwnerForTeardown() {
+        turnOwnerLease.unregister()
     }
 
     /// ViewModelが画面から外れる時に呼び出し、保存済みpending turnを
@@ -194,14 +198,16 @@ final class StorySessionService: ObservableObject {
     private func releaseTurnOwner() {
         guard isOwnerRegistered else { return }
         isOwnerRegistered = false
-        StoryTurnOwnerRegistry.shared.unregister(turnOwnerID)
+        turnOwnerLease.unregister()
     }
 
     private func ensureTurnOwnerRegistered() {
         guard !isOwnerRegistered else { return }
-        turnOwnerID = StoryTurnOwnerRegistry.shared.register()
+        turnOwnerLease.register()
         isOwnerRegistered = true
     }
+
+    private var turnOwnerID: UUID { turnOwnerLease.id }
 
     private struct StoryProgressUpdate: Codable {
         var progressLabel: String?
