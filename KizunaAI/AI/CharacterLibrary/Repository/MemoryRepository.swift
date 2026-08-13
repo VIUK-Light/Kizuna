@@ -54,10 +54,10 @@ final class LocalJSONMemoryRepository: MemoryRepository {
         perCharacterLimit: Int = 60
     ) {
         // dedupe: 同じ characterId で text 正規化が一致するものは置き換え
-        let normalized = normalize(memory.text)
+        let normalized = Self.normalize(memory.text)
         if let idx = all.firstIndex(where: {
             $0.characterId == memory.characterId
-                && normalize($0.text) == normalized
+                && Self.normalize($0.text) == normalized
         }) {
             var existing = all[idx]
             // importance は上書き (max を取る)、lastUsedAt は今に更新
