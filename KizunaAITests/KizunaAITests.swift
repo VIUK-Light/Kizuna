@@ -165,6 +165,17 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(probe.hasCompleted)
     }
 
+    func testLocalJSONFileIOCancellationStateTransitionsAreAtomic() {
+        let cancelled = LocalJSONStoreFileIOCancellationState()
+        cancelled.cancel()
+        XCTAssertFalse(cancelled.begin())
+
+        let started = LocalJSONStoreFileIOCancellationState()
+        XCTAssertTrue(started.begin())
+        started.cancel()
+        XCTAssertFalse(started.begin())
+    }
+
     func testLegacyStorySessionWithoutTurnFieldsStillDecodes() throws {
         let message = StoryMessage(author: .user, text: "legacy")
         let session = StorySession(
