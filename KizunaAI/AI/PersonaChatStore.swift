@@ -145,7 +145,7 @@ final class PersonaChatStore: ObservableObject {
 
     /// テストや復旧画面が保存先を明示できる初期化経路。
     /// 本番は `shared` から同じUserDefaults.standardを使う。
-    init(defaults: UserDefaults) {
+    init(defaults: UserDefaults = UserDefaults.standard) {
         self.defaults = defaults
         load()
         guard !didFailToLoadPersistedThreads else {
@@ -323,7 +323,7 @@ final class PersonaChatStore: ObservableObject {
         guard threads[index].characterID != nil else { return }
         threads[index].characterID = nil
         threads[index].updatedAt = Date()
-        persist()
+        persistAfterActivityUpdate()
     }
 
     /// キャラクター本体を削除した後に、関連する全Personaスレッドを
