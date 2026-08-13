@@ -250,7 +250,16 @@ final class PersonaChatService: ObservableObject {
             PersonaChatStore.shared.detachCharacterReference(threadID: threadID)
             let canFallback = await MainActor.run { () -> Bool in
                 guard self.isGenerationActive(generationID) else { return false }
-                PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
+                if let assistantMessageID = self.activeAssistantMessageID {
+                    // History can change while the character repository is
+                    // loading. Remove only the placeholder owned by this
+                    // generation; removing the last assistant message could
+                    // delete a completed response inserted by that update.
+                    PersonaChatStore.shared.removeAssistantMessage(
+                        in: threadID,
+                        messageID: assistantMessageID
+                    )
+                }
                 // 先ほどの削除後に空枠を再追加して、旧応答を上書きせず
                 // このターンを通常のLegacy経路で完了できるようにする。
                 let assistantMessageID = UUID()
