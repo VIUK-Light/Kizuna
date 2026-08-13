@@ -111,7 +111,9 @@ final class LocalJSONStoreFileIOCancellationState: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private var state: State = .queued
+    nonisolated(unsafe) private var state: State = .queued
+
+    nonisolated init() {}
 
     nonisolated func cancel() {
         lock.lock()
