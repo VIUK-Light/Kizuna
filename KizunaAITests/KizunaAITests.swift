@@ -1564,6 +1564,48 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testPersonaCancellationRemovesMeaningfulUnscreenedPartial() throws {
+        let suiteName = "KizunaPersonaStoreTests.PartialCancellation.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let threadID = UUID()
+        let thread = PersonaThread(
+            id: threadID,
+            personaSnapshot: profile,
+            title: "Partial",
+            messages: [
+                PersonaMessage(role: .user, text: "first"),
+                PersonaMessage(role: .assistant, text: "completed response"),
+                PersonaMessage(role: .user, text: "second"),
+                PersonaMessage(role: .assistant, text: "unscreened partial response")
+            ]
+        )
+        defaults.set(
+            try JSONEncoder().encode([thread]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults)
+        store.removeLastAssistantMessage(in: threadID)
+
+        XCTAssertEqual(
+            store.thread(id: threadID)?.messages.map(\.text),
+            ["first", "completed response", "second"]
+        )
+        let reloaded = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(
+            reloaded.thread(id: threadID)?.messages.map(\.text),
+            ["first", "completed response", "second"]
+        )
+    }
+
     func testPersonaOutputSafetyPolicyNeverFallsBackToUnsafeText() {
         XCTAssertNil(
             PersonaOutputSafetyPolicy.persistableText(

@@ -416,13 +416,9 @@ final class PersonaChatService: ObservableObject {
         invalidatePendingStreamSanitization()
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: activeGenerationID)
         if let threadID = activeThreadID {
-            let partial = (latestRawStreamingText ?? streamingResponse)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if let meaningful = meaningfulResponse(partial) {
-                PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: meaningful)
-            } else {
-                PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
-            }
+            // A stream preview has not crossed the output Safety boundary.
+            // Never turn an interrupted preview into persisted history.
+            PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
         }
         activeGenerationID = nil
         activeThreadID = nil
@@ -589,26 +585,17 @@ final class PersonaChatService: ObservableObject {
                 self.generationTask?.cancel()
                 self.generationTask = nil
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
-                if let partial = self.meaningfulResponse(
-                    self.latestRawStreamingText ?? self.streamingResponse
-                ) {
-                    PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: partial)
-                    self.streamingResponse = partial
-                    self.phase = .idle
-                    self.invalidatePendingStreamSanitization()
-                    self.activeGenerationID = nil
-                    self.activeThreadID = nil
-                    self.activeGenerationThreadID = nil
-                } else {
-                    self.failGeneration(
-                        threadID: threadID,
-                        generationID: generationID,
-                        message: KizunaCopy.text(
-                            japanese: "応答が時間内に完了しませんでした。もう一度試してください。",
-                            english: "The reply did not finish in time. Try again."
-                        )
+                // The partial stream was never evaluated by output Safety.
+                // Remove it before exposing the retryable timeout state.
+                PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "応答が時間内に完了しませんでした。もう一度試してください。",
+                        english: "The reply did not finish in time. Try again."
                     )
-                }
+                )
             }
         }
     }
