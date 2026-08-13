@@ -99,15 +99,33 @@ struct StoryTurnCommitRetry: Equatable {
 }
 
 /// A commit can throw after the journal has already made the session/scene
-/// snapshot durable. Only treat that recovery as successful when the persisted
-/// checkpoint identifies the exact generated turn.
+/// snapshot durable. Only treat that recovery as successful when both records
+/// identify the exact generated turn and the scene fields owned by that turn
+/// are present. A committed session by itself is not enough: the scene write
+/// may still be missing or may have been left at an older snapshot.
 enum StoryTurnCommitRecovery {
     static func committedSession(
         matching retry: StoryTurnCommitRetry,
-        in sessions: [StorySession]
+        in sessions: [StorySession],
+        scenes: [StoryScene]
     ) -> StorySession? {
-        sessions.first { session in
+        guard let scene = scenes.first(where: {
+            $0.id == retry.scene.id && $0.storyWorldId == retry.scene.storyWorldId
+        }) else {
+            return nil
+        }
+
+        let expectedActiveCharacterIDs = Array(
+            retry.scene.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
+        )
+        guard scene.summary == retry.scene.summary,
+              scene.activeCharacterIds == expectedActiveCharacterIDs else {
+            return nil
+        }
+
+        return sessions.first { session in
             guard session.id == retry.session.id,
+                  session.currentSceneId == retry.scene.id,
                   let checkpoint = session.latestTurnCheckpoint,
                   checkpoint.turnID == retry.turnID,
                   checkpoint.userMessageID == retry.userMessageID,
@@ -202,6 +220,7 @@ final class StorySessionService: ObservableObject {
     private let worldRepo: StoryWorldRepository
     private let castRepo: CastRepository
     private let sessionRepo: StorySessionRepository
+    private let sceneRepo: StorySceneRepository
     // Lorebookは必要な項目だけを選択してプロンプトへ渡す。
     private let lorebookRepo: StoryLorebookRepository
     // 物語内メモリーは全体メモリー(CharacterMemory)と別ストアで管理する。
@@ -259,6 +278,7 @@ final class StorySessionService: ObservableObject {
         worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository(),
         castRepo: CastRepository = LocalJSONCastRepository(),
         sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository(),
+        sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository(),
         lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository(),
         storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository(),
         pendingStoryTurnCommitRetries: [StoryTurnCommitRetry] = [],
@@ -269,6 +289,7 @@ final class StorySessionService: ObservableObject {
         self.worldRepo = worldRepo
         self.castRepo = castRepo
         self.sessionRepo = sessionRepo
+        self.sceneRepo = sceneRepo
         self.lorebookRepo = lorebookRepo
         self.storyMemoryRepo = storyMemoryRepo
         for retry in pendingStoryTurnCommitRetries {
@@ -1773,10 +1794,16 @@ final class StorySessionService: ObservableObject {
     private func recoveredCommittedSession(for retry: StoryTurnCommitRetry) async -> StorySession? {
         do {
             let sessions = try await sessionRepo.fetchSessions(storyWorldId: retry.session.storyWorldId)
-            return StoryTurnCommitRecovery.committedSession(matching: retry, in: sessions)
+            let scenes = try await sceneRepo.fetchScenes(storyWorldId: retry.scene.storyWorldId)
+            return StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: sessions,
+                scenes: scenes
+            )
         } catch {
             // A failed recovery must keep the exact-snapshot retry path. Do not
-            // turn an unreadable store into a false success.
+            // turn an unreadable or partially recovered store into a false
+            // success.
             NSLog(
                 "[StorySession] commit recovery check failed turn=%@: %@",
                 retry.turnID.uuidString,
