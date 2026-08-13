@@ -1436,6 +1436,114 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryTurnJournalDoesNotRestoreMemoryRetryAfterSessionTombstone() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let userMessageID = UUID()
+        let date = Date(timeIntervalSince1970: 150)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: userMessageID,
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: date,
+                updatedAt: date
+            ),
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 2,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: date
+        )
+        let scene = StoryScene(id: sceneID, storyWorldId: worldID, updatedAt: date)
+        let retry = StoryMemoryRetry(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            userText: "削除された物語へ記憶を戻さない",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "削除されたセッションの記憶",
+                    storySessionId: sessionID,
+                    sourceTurnIds: [turnID]
+                )
+            ],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [StoryTurnJournalEntry(
+                turnID: turnID,
+                session: session,
+                scene: scene,
+                memoryRetries: [retry]
+            )],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.withSharedLock {
+            try StoryTurnJournal.recordDeletionUnlocked(
+                recordID: sessionID,
+                recordKind: .session,
+                baseURL: storageURL
+            )
+        }
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryScene.self,
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            ),
+            [scene]
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryMemoryRetry.self,
+                fileName: "story_memory_retries.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+    }
+
     func testStoryTurnJournalRepairsCorruptMemoryRetryFileDuringRecovery() throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
@@ -1622,6 +1730,280 @@ final class KizunaAITests: XCTestCase {
                 fileName: "story_turn_journal.json",
                 baseURL: storageURL
             ).isEmpty
+        )
+    }
+
+    func testStoryTurnJournalDiscardsEntryAfterIntentionalSceneDeletion() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let fixture = makeCommittedJournalFixture()
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.entry],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySceneRepository(storageURL: storageURL)
+        try await repository.deleteScene(id: fixture.persistedScene.id)
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).first?.lastTurnProgress,
+            fixture.persistedSession.lastTurnProgress
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryScene.self,
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+        let tombstones = try LocalJSONStoreTransaction.load(
+            StoryTurnJournalTombstone.self,
+            fileName: "story_turn_journal_tombstones.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(tombstones.count, 1)
+        XCTAssertEqual(tombstones.first?.recordID, fixture.persistedScene.id)
+        XCTAssertEqual(tombstones.first?.recordKind, .scene)
+
+        do {
+            try await repository.saveScene(fixture.persistedScene)
+            XCTFail("a deleted scene must not be recreated by a stale save")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(
+                error,
+                .recordDeleted(kind: .scene, id: fixture.persistedScene.id)
+            )
+        }
+    }
+
+    func testSceneDeletionRecordsTombstoneWhenRecordIsAlreadyMissing() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let fixture = makeCommittedJournalFixture()
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        // The scene record is already absent, but the journal still identifies
+        // the UUID that the user explicitly deleted.
+        try LocalJSONStoreTransaction.save(
+            [fixture.entry],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySceneRepository(storageURL: storageURL)
+        try await repository.deleteScene(id: fixture.persistedScene.id)
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalTombstone.self,
+                fileName: "story_turn_journal_tombstones.json",
+                baseURL: storageURL
+            ).first?.recordID,
+            fixture.persistedScene.id
+        )
+    }
+
+    func testStoryTurnJournalReconcilesTombstoneWhenRecordDeletionWasInterrupted() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let fixture = makeCommittedJournalFixture()
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [
+                StoryTurnJournalTombstone(
+                    recordID: fixture.persistedScene.id,
+                    recordKind: .scene,
+                    deletedAt: Date(timeIntervalSince1970: 200)
+                )
+            ],
+            fileName: "story_turn_journal_tombstones.json",
+            baseURL: storageURL
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryScene.self,
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).first?.id,
+            fixture.persistedSession.id
+        )
+    }
+
+    func testStoryTurnJournalDiscardsEntryAfterIntentionalSessionDeletion() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let fixture = makeCommittedJournalFixture()
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.entry],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        try await repository.deleteSession(id: fixture.persistedSession.id)
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryScene.self,
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            ).first?.summary,
+            fixture.persistedScene.summary
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+
+        do {
+            try await repository.saveSession(fixture.persistedSession)
+            XCTFail("a deleted session must not be recreated by a stale save")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(
+                error,
+                .recordDeleted(kind: .session, id: fixture.persistedSession.id)
+            )
+        }
+    }
+
+    func testStoryTurnJournalRetainsJournalWhenTombstoneFileIsUnreadable() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let fixture = makeCommittedJournalFixture()
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [fixture.entry],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+        try Data("{\"unexpected\":true}".utf8).write(
+            to: storageURL.appendingPathComponent("story_turn_journal_tombstones.json"),
+            options: [.atomic]
+        )
+
+        XCTAssertThrowsError(try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL))
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ),
+            [fixture.entry]
+        )
+    }
+
+    func testStorySceneBulkDeletionWritesTombstonesForEveryScene() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let scenes = [
+            StoryScene(storyWorldId: worldID),
+            StoryScene(storyWorldId: worldID),
+            StoryScene(storyWorldId: UUID())
+        ]
+        try LocalJSONStoreTransaction.save(
+            scenes,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySceneRepository(storageURL: storageURL)
+        try await repository.deleteAllScenes(storyWorldId: worldID)
+
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryScene.self,
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            ).map(\.id),
+            [scenes[2].id]
+        )
+        XCTAssertEqual(
+            Set(
+                try LocalJSONStoreTransaction.load(
+                    StoryTurnJournalTombstone.self,
+                    fileName: "story_turn_journal_tombstones.json",
+                    baseURL: storageURL
+                ).map(\.recordID)
+            ),
+            Set(scenes.prefix(2).map(\.id))
         )
     }
 
@@ -1858,6 +2240,63 @@ final class KizunaAITests: XCTestCase {
             includingPropertiesForKeys: nil
         ).filter { $0.lastPathComponent.hasPrefix("story_turn_journal.corrupt-") }
         XCTAssertTrue(backups.isEmpty)
+    }
+
+    private func makeCommittedJournalFixture() -> (
+        persistedSession: StorySession,
+        persistedScene: StoryScene,
+        entry: StoryTurnJournalEntry
+    ) {
+        let worldID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let date = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: date,
+                updatedAt: date
+            ),
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+        let persistedSession = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            lastTurnProgress: "保存済み",
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: date
+        )
+        let persistedScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "保存済みの場面",
+            persistenceRevision: 1,
+            updatedAt: date
+        )
+        var journalSession = persistedSession
+        journalSession.lastTurnProgress = "復旧されるはずの保存"
+        journalSession.persistenceRevision = 2
+        journalSession.updatedAt = date.addingTimeInterval(10)
+        var journalScene = persistedScene
+        journalScene.summary = "復旧されるはずの場面"
+        journalScene.persistenceRevision = 2
+        journalScene.updatedAt = date.addingTimeInterval(10)
+        return (
+            persistedSession,
+            persistedScene,
+            StoryTurnJournalEntry(
+                turnID: turnID,
+                session: journalSession,
+                scene: journalScene
+            )
+        )
     }
 
     private func makeStoryPersistenceTestDirectory() throws -> URL {

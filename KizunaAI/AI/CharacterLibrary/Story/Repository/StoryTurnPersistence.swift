@@ -9,6 +9,17 @@
 
 import Foundation
 
+enum StoryTurnJournalRecordKind: String, Codable, Equatable, Hashable {
+    case session
+    case scene
+}
+
+struct StoryTurnJournalTombstone: Codable, Equatable, Hashable {
+    let recordID: UUID
+    let recordKind: StoryTurnJournalRecordKind
+    let deletedAt: Date
+}
+
 enum StoryTurnPersistenceError: Error, Equatable {
     case sessionNotFound
     case revisionConflict(expected: UInt64, actual: UInt64)
@@ -16,6 +27,7 @@ enum StoryTurnPersistenceError: Error, Equatable {
     case turnNotPending
     case worldMismatch
     case sceneConflict
+    case recordDeleted(kind: StoryTurnJournalRecordKind, id: UUID)
     case corruptJournal
 }
 
@@ -134,6 +146,7 @@ struct StoryTurnJournalEntry: Codable, Equatable {
 enum StoryTurnJournal {
     nonisolated private static let fileName = "story_turn_journal.json"
     nonisolated private static let memoryRetryFileName = "story_memory_retries.json"
+    nonisolated private static let tombstoneFileName = "story_turn_journal_tombstones.json"
 
     private struct RecoverableEntries {
         let entries: [StoryTurnJournalEntry]
@@ -185,6 +198,12 @@ enum StoryTurnJournal {
                     throw error
                 }
             }
+            // Tombstones are loaded before touching either record. A malformed
+            // tombstone file must fail closed: deleting a record or discarding a
+            // journal entry without knowing the deletion intent could lose data.
+            let tombstones = try loadTombstonesUnlocked(baseURL: baseURL)
+            try reconcileTombstonesUnlocked(tombstones, baseURL: baseURL)
+
             let entries = decoded.entries
             guard !entries.isEmpty else {
                 if decoded.containsInvalidEntries {
@@ -223,6 +242,23 @@ enum StoryTurnJournal {
             var scenesChanged = false
 
             for entry in validEntries {
+                if hasTombstone(
+                    recordID: entry.session.id,
+                    recordKind: .session,
+                    in: tombstones
+                ) || hasTombstone(
+                    recordID: entry.scene.id,
+                    recordKind: .scene,
+                    in: tombstones
+                ) {
+                    // A turn snapshot is a pair. If either side was explicitly
+                    // deleted, never replay the other side by itself.
+                    NSLog(
+                        "[StoryTurnJournal] discarded tombstoned entry turn=%@",
+                        entry.turnID.uuidString
+                    )
+                    continue
+                }
                 guard let sessionIndex = sessions.firstIndex(where: { $0.id == entry.session.id }),
                       let sceneIndex = scenes.firstIndex(where: { $0.id == entry.scene.id }) else {
                     unresolvedEntries.append(entry)
@@ -510,12 +546,178 @@ enum StoryTurnJournal {
 }
 
 extension StoryTurnJournal {
+    /// Load the deletion markers while the caller already owns the shared lock.
+    /// A missing file is the backward-compatible empty state; malformed or
+    /// unreadable data is propagated so callers fail closed.
+    nonisolated static func loadTombstonesUnlocked(
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws -> [StoryTurnJournalTombstone] {
+        try LocalJSONStoreTransaction.load(
+            StoryTurnJournalTombstone.self,
+            fileName: tombstoneFileName,
+            baseURL: baseURL
+        )
+    }
+
+    nonisolated static func saveTombstonesUnlocked(
+        _ tombstones: [StoryTurnJournalTombstone],
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
+        try LocalJSONStoreTransaction.save(
+            tombstones,
+            fileName: tombstoneFileName,
+            baseURL: baseURL
+        )
+    }
+
+    nonisolated static func hasTombstoneUnlocked(
+        recordID: UUID,
+        recordKind: StoryTurnJournalRecordKind,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws -> Bool {
+        hasTombstone(
+            recordID: recordID,
+            recordKind: recordKind,
+            in: try loadTombstonesUnlocked(baseURL: baseURL)
+        )
+    }
+
+    nonisolated static func ensureRecordIsNotDeletedUnlocked(
+        recordID: UUID,
+        recordKind: StoryTurnJournalRecordKind,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
+        guard !hasTombstoneUnlocked(
+            recordID: recordID,
+            recordKind: recordKind,
+            baseURL: baseURL
+        ) else {
+            throw StoryTurnPersistenceError.recordDeleted(kind: recordKind, id: recordID)
+        }
+    }
+
+    /// Record an intentional deletion. This is idempotent and must be called
+    /// while the caller owns LocalJSONStoreFileLock.shared. Callers persist the
+    /// tombstone before removing the record; recovery then completes the delete
+    /// if the process stops between those two writes.
+    nonisolated static func recordDeletionUnlocked(
+        recordID: UUID,
+        recordKind: StoryTurnJournalRecordKind,
+        deletedAt: Date = Date(),
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
+        try recordDeletionsUnlocked(
+            recordIDs: [recordID],
+            recordKind: recordKind,
+            deletedAt: deletedAt,
+            baseURL: baseURL
+        )
+    }
+
+    nonisolated static func recordDeletionsUnlocked(
+        recordIDs: [UUID],
+        recordKind: StoryTurnJournalRecordKind,
+        deletedAt: Date = Date(),
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
+        let uniqueRecordIDs = Array(Set(recordIDs))
+        guard !uniqueRecordIDs.isEmpty else { return }
+        var tombstones = try loadTombstonesUnlocked(baseURL: baseURL)
+        var changed = false
+        for recordID in uniqueRecordIDs where !hasTombstone(
+            recordID: recordID,
+            recordKind: recordKind,
+            in: tombstones
+        ) {
+            tombstones.append(
+                StoryTurnJournalTombstone(
+                    recordID: recordID,
+                    recordKind: recordKind,
+                    deletedAt: deletedAt
+                )
+            )
+            changed = true
+        }
+        if changed {
+            try saveTombstonesUnlocked(tombstones, baseURL: baseURL)
+        }
+    }
+
+    /// Complete deletion intents that were durable before the corresponding
+    /// record file was updated. Tombstones are never removed, so a retry cannot
+    /// recreate a deliberately deleted UUID.
+    nonisolated private static func reconcileTombstonesUnlocked(
+        _ tombstones: [StoryTurnJournalTombstone],
+        baseURL: URL
+    ) throws {
+        guard !tombstones.isEmpty else { return }
+
+        var sessions = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: baseURL
+        )
+        var scenes = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: baseURL
+        )
+        let sessionIDs = Set(
+            tombstones
+                .filter { $0.recordKind == .session }
+                .map(\.recordID)
+        )
+        let sceneIDs = Set(
+            tombstones
+                .filter { $0.recordKind == .scene }
+                .map(\.recordID)
+        )
+        let retainedSessions = sessions.filter { !sessionIDs.contains($0.id) }
+        let retainedScenes = scenes.filter { !sceneIDs.contains($0.id) }
+        if retainedSessions.count != sessions.count {
+            sessions = retainedSessions
+            try LocalJSONStoreTransaction.save(
+                sessions,
+                fileName: "story_sessions.json",
+                baseURL: baseURL
+            )
+        }
+        if retainedScenes.count != scenes.count {
+            scenes = retainedScenes
+            try LocalJSONStoreTransaction.save(
+                scenes,
+                fileName: "story_scenes.json",
+                baseURL: baseURL
+            )
+        }
+    }
+
+    nonisolated private static func hasTombstone(
+        recordID: UUID,
+        recordKind: StoryTurnJournalRecordKind,
+        in tombstones: [StoryTurnJournalTombstone]
+    ) -> Bool {
+        tombstones.contains {
+            $0.recordID == recordID && $0.recordKind == recordKind
+        }
+    }
+
     /// Repository実装だけがジャーナルの全体を扱うための短い書き込みAPI。
     /// 同じファイルロックの中から呼び出す前提で、二重ロックはしない。
     nonisolated static func prepareUnlocked(
         _ entry: StoryTurnJournalEntry,
         baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws {
+        try ensureRecordIsNotDeletedUnlocked(
+            recordID: entry.session.id,
+            recordKind: .session,
+            baseURL: baseURL
+        )
+        try ensureRecordIsNotDeletedUnlocked(
+            recordID: entry.scene.id,
+            recordKind: .scene,
+            baseURL: baseURL
+        )
         var entries = try LocalJSONStoreTransaction.load(
             StoryTurnJournalEntry.self,
             fileName: fileName,

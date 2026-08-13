@@ -272,7 +272,13 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
             .sorted { $0.createdAt < $1.createdAt }
     }
     func saveScene(_ scene: StoryScene) async throws {
+        let storageURL = self.storageURL
         try await store.mutate { scenes in
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: scene.id,
+                recordKind: .scene,
+                baseURL: storageURL
+            )
             var next = scene
             next.updatedAt = Date()
             // active キャラ数の上限を遵守
@@ -291,7 +297,13 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         let trimmedKey = imageKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else { return false }
         var repaired = false
+        let storageURL = self.storageURL
         try await store.mutate { scenes in
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: sceneId,
+                recordKind: .scene,
+                baseURL: storageURL
+            )
             guard let index = scenes.firstIndex(where: {
                 $0.id == sceneId && $0.storyWorldId == storyWorldId
             }), scenes[index].imageKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
@@ -309,7 +321,13 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
     /// 元シーンのcreatedAt/updatedAtやactiveキャラの内容はそのまま保持する。
     /// 通常の編集経路（saveScene）はupdatedAtを更新するため、移行では使わない。
     func moveScene(id: UUID, toStoryWorldId: UUID) async throws {
+        let storageURL = self.storageURL
         try await store.mutate { scenes in
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: id,
+                recordKind: .scene,
+                baseURL: storageURL
+            )
             guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
             scenes[index].storyWorldId = toStoryWorldId
             scenes[index].persistenceRevision = scenes[index].effectivePersistenceRevision + 1
@@ -317,10 +335,29 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
     }
 
     func deleteScene(id: UUID) async throws {
-        try await store.delete(matching: { $0.id == id })
+        let storageURL = self.storageURL
+        try await store.mutate { scenes in
+            try StoryTurnJournal.recordDeletionUnlocked(
+                recordID: id,
+                recordKind: .scene,
+                baseURL: storageURL
+            )
+            scenes.removeAll { $0.id == id }
+        }
     }
     func deleteAllScenes(storyWorldId: UUID) async throws {
-        try await store.delete(matching: { $0.storyWorldId == storyWorldId })
+        let storageURL = self.storageURL
+        try await store.mutate { scenes in
+            let deletedIDs = scenes
+                .filter { $0.storyWorldId == storyWorldId }
+                .map(\.id)
+            try StoryTurnJournal.recordDeletionsUnlocked(
+                recordIDs: deletedIDs,
+                recordKind: .scene,
+                baseURL: storageURL
+            )
+            scenes.removeAll { $0.storyWorldId == storyWorldId }
+        }
     }
 }
 
@@ -375,6 +412,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: session.id,
+                    recordKind: .session,
+                    baseURL: storageURL
+                )
                 var sessions = try LocalJSONStoreTransaction.load(
                     StorySession.self,
                     fileName: "story_sessions.json",
@@ -418,6 +460,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         return try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: session.id,
+                recordKind: .session,
+                baseURL: storageURL
+            )
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
                 fileName: "story_sessions.json",
@@ -522,6 +569,16 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         return try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: session.id,
+                recordKind: .session,
+                baseURL: storageURL
+            )
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: scene.id,
+                recordKind: .scene,
+                baseURL: storageURL
+            )
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
                 fileName: "story_sessions.json",
@@ -665,6 +722,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: sessionID,
+                recordKind: .session,
+                baseURL: storageURL
+            )
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
                 fileName: "story_sessions.json",
@@ -739,6 +801,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: id,
+                    recordKind: .session,
+                    baseURL: storageURL
+                )
                 var sessions = try LocalJSONStoreTransaction.load(
                     StorySession.self,
                     fileName: "story_sessions.json",
@@ -758,7 +825,15 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
     }
 
     func deleteSession(id: UUID) async throws {
-        try await store.delete(matching: { $0.id == id })
+        let storageURL = self.storageURL
+        try await store.mutate { sessions in
+            try StoryTurnJournal.recordDeletionUnlocked(
+                recordID: id,
+                recordKind: .session,
+                baseURL: storageURL
+            )
+            sessions.removeAll { $0.id == id }
+        }
     }
 }
 
