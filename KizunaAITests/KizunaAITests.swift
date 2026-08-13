@@ -933,13 +933,13 @@ final class KizunaAITests: XCTestCase {
             id: sessionID,
             storyWorldId: worldID,
             currentSceneId: sceneID,
-            latestTurnCheckpoint: checkpoint,
             storyState: StoryState(
                 location: "駅前",
                 timeOfDay: "深夜",
                 mood: "緊張"
             ),
             persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint,
             updatedAt: date
         )
         let scene = StoryScene(
