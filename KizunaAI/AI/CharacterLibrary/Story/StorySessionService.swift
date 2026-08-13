@@ -1406,7 +1406,8 @@ final class StorySessionService: ObservableObject {
         let acceptedStatePatch = progressStatePatch.flatMap {
             StoryNaturalChangePolicy.acceptedPatch(
                 from: $0,
-                currentState: session.storyState
+                currentState: session.storyState,
+                evidenceText: [rawFinal, effectiveUserText]
             )
         }
         let stateAfterAcceptedPatch: StoryState? = {

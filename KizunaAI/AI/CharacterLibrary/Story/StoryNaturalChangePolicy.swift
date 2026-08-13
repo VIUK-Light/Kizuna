@@ -14,8 +14,22 @@ enum StoryNaturalChangePolicy {
 
     static func acceptedPatch(
         from patch: StoryStatePatch,
-        currentState: StoryState? = nil
+        currentState: StoryState? = nil,
+        evidenceText: [String] = []
     ) -> StoryStatePatch? {
+        // Production callers pass the visible assistant turn and the current
+        // user input. A state delta without a short exact quote from either
+        // surface is only a model assertion, not an observable story change.
+        // Keep the default empty context for pure structural callers and
+        // migration tests; the StorySessionService always supplies context.
+        if !evidenceText.isEmpty {
+            guard let evidence = normalizedText(patch.evidence),
+                  evidence.count <= 120,
+                  evidenceText.contains(where: { containsEvidence(evidence, in: $0) }) else {
+                return nil
+            }
+        }
+
         // A scene transition can coherently update several environmental
         // fields (for example, moving location also changing the weather).
         // It still counts as one change group. Unrelated groups are rejected
@@ -138,6 +152,23 @@ enum StoryNaturalChangePolicy {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func containsEvidence(_ evidence: String, in text: String) -> Bool {
+        let normalizedEvidence = normalizeEvidence(evidence)
+        guard !normalizedEvidence.isEmpty else { return false }
+        return normalizeEvidence(text).contains(normalizedEvidence)
+    }
+
+    private static func normalizeEvidence(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(
+                of: "\\s+",
+                with: " ",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func changedText(_ value: String?, from current: String?) -> String? {

@@ -702,6 +702,9 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
     var characterUpdates: [StoryCharacterStatePatch]?
     var inventoryChanges: [StoryInventoryChange]?
     var activeGoals: [String]?
+    /// A short exact quote from the visible turn or the user's current input.
+    /// It is validation metadata only and is never persisted in StoryState.
+    var evidence: String? = nil
 
     /// 既存値を保ちつつ、空文字の更新は無視する。
     func applying(

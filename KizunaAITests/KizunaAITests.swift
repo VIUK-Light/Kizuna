@@ -5,7 +5,7 @@ import XCTest
 final class KizunaAITests: XCTestCase {
     func testStoryStateMetadataParserParsesOneValidUpdate() throws {
         let result = StoryStateMetadataParser.parse(
-            "ナギ: 港を見つめた\n状態更新: {\"mood\":\"calm\",\"activeGoals\":[]}"
+            "ナギ: 港を見つめた\n状態更新: {\"mood\":\"calm\",\"activeGoals\":[],\"evidence\":\"港を見つめた\"}"
         )
 
         guard case let .valid(visibleText, payload) = result else {
@@ -15,6 +15,7 @@ final class KizunaAITests: XCTestCase {
         let patch = try JSONDecoder().decode(StoryStatePatch.self, from: payload)
         XCTAssertEqual(patch.mood, "calm")
         XCTAssertEqual(patch.activeGoals, [])
+        XCTAssertEqual(patch.evidence, "港を見つめた")
     }
 
     func testStoryStateMetadataParserRejectsMalformedMetadataAndRemovesIt() {
