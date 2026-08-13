@@ -222,18 +222,9 @@ final class StorySessionService: ObservableObject {
     /// Scene/Worldの初期値を、既存Sessionの状態へ毎ターン再注入しない。
     /// Sceneの目標はSession作成時だけseedされ、以後はSessionが正本になる。
     static func deterministicStateForTurn(
-        existing state: StoryState?,
-        currentObjective: String?
+        existing state: StoryState?
     ) -> StoryState {
         var next = state ?? StoryState()
-        if let objective = currentObjective?.nonEmpty {
-            next.activeGoals = Array(([objective] + next.activeGoals)
-                .filter { !$0.isEmpty }
-                .reduce(into: [String]()) { result, value in
-                    if !result.contains(value) { result.append(value) }
-                }
-                .prefix(6))
-        }
         next.updatedAt = Date()
         return next
     }
@@ -565,15 +556,18 @@ final class StorySessionService: ObservableObject {
         // copy without allowing that copy to leak into StorySession storage.
         let promptWorld = world.localizedForCurrentLanguage
 
-        // 初回ターンだけ現在シーンを構造化状態へseedする。既存Stateは
-        // 前ターンのPatch／世界変化を含む正本なので、Sceneの初期値で戻さない。
-        session.storyState = StoryStateBootstrap.preservingExistingState(
-            session.storyState,
-            scene: scene
-        )
         if session.currentObjective?.nonEmpty == nil {
             session.currentObjective = scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty
         }
+        // 初回ターンだけ現在シーンと初期目的を構造化状態へseedする。
+        // 既存Stateは前ターンのPatch／世界変化を含む正本なので、Sceneや
+        // 表示用currentObjectiveの初期値で戻さない。特にactiveGoals=[]で
+        // 解決した目的を、次ターンに再追加してはいけない。
+        session.storyState = StoryStateBootstrap.preservingExistingState(
+            session.storyState,
+            scene: scene,
+            initialObjective: session.currentObjective
+        )
 
         // user メッセージとpending checkpointを1回の保存境界で確保する。
         // 再試行では既存の保存済み入力を再利用し、同じIDの発話を重複保存しない。
@@ -1474,8 +1468,7 @@ final class StorySessionService: ObservableObject {
         // ordinary dialogue does not decode and stays on the deterministic
         // path, while structured state is applied without a second LLM call.
         session.storyState = Self.deterministicStateForTurn(
-            existing: session.storyState,
-            currentObjective: session.currentObjective
+            existing: session.storyState
         )
 
         let progressStatePatch = modelStatePatch ?? acceptedStructuredProgressUpdate?.storyState
