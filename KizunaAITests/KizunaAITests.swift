@@ -945,7 +945,7 @@ final class KizunaAITests: XCTestCase {
             startedAt: date,
             updatedAt: date
         )
-        let session = StorySession(
+        let failedSession = StorySession(
             id: sessionID,
             storyWorldId: worldID,
             currentSceneId: sceneID,
@@ -958,6 +958,17 @@ final class KizunaAITests: XCTestCase {
             ),
             updatedAt: date
         )
+        // The live Session may already have been marked failed by a stale
+        // cleanup, while the journal still contains the earlier committed
+        // snapshot. The journal must validate the snapshot, not the newer
+        // failure state, so a missing Scene keeps the recovery material.
+        var journalSession = failedSession
+        journalSession.latestTurnCheckpoint = StoryTurnReducer.commit(
+            pending: pending,
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+        journalSession.persistenceRevision = 2
         let scene = StoryScene(id: sceneID, storyWorldId: worldID, updatedAt: date)
         let retry = StoryMemoryRetry(
             turnID: turnID,
@@ -977,7 +988,7 @@ final class KizunaAITests: XCTestCase {
         )
 
         try LocalJSONStoreTransaction.save(
-            [session],
+            [failedSession],
             fileName: "story_sessions.json",
             baseURL: storageURL
         )
@@ -987,7 +998,7 @@ final class KizunaAITests: XCTestCase {
         try LocalJSONStoreTransaction.save(
             [StoryTurnJournalEntry(
                 turnID: turnID,
-                session: session,
+                session: journalSession,
                 scene: scene,
                 memoryRetries: [retry]
             )],
@@ -1030,7 +1041,7 @@ final class KizunaAITests: XCTestCase {
         )
         XCTAssertEqual(retainedJournal, [StoryTurnJournalEntry(
             turnID: turnID,
-            session: session,
+            session: journalSession,
             scene: scene,
             memoryRetries: [retry]
         )])
@@ -2418,20 +2429,28 @@ final class KizunaAITests: XCTestCase {
         journalScene.persistenceRevision = 5
         journalScene.updatedAt = laterSameSecond
 
-        try LocalJSONStoreTransaction.save(
-            [session],
-            fileName: "story_sessions.json",
-            baseURL: storageURL
+        // Exercise the legacy ISO8601 representation explicitly. New writes
+        // preserve sub-second precision, so two distinct numeric timestamps
+        // would no longer represent the old same-second collision.
+        let legacyEncoder = JSONEncoder()
+        legacyEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        legacyEncoder.dateEncodingStrategy = .iso8601
+        let legacySessionData = try legacyEncoder.encode([session])
+        try legacySessionData.write(
+            to: storageURL.appendingPathComponent("story_sessions.json"),
+            options: [.atomic]
         )
-        try LocalJSONStoreTransaction.save(
-            [persistedScene],
-            fileName: "story_scenes.json",
-            baseURL: storageURL
+        let legacySceneData = try legacyEncoder.encode([persistedScene])
+        try legacySceneData.write(
+            to: storageURL.appendingPathComponent("story_scenes.json"),
+            options: [.atomic]
         )
-        try LocalJSONStoreTransaction.save(
-            [StoryTurnJournalEntry(turnID: turnID, session: session, scene: journalScene)],
-            fileName: "story_turn_journal.json",
-            baseURL: storageURL
+        let legacyJournalData = try legacyEncoder.encode([
+            StoryTurnJournalEntry(turnID: turnID, session: session, scene: journalScene)
+        ])
+        try legacyJournalData.write(
+            to: storageURL.appendingPathComponent("story_turn_journal.json"),
+            options: [.atomic]
         )
 
         let storedScene = try LocalJSONStoreTransaction.load(
