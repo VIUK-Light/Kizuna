@@ -822,7 +822,7 @@ final class StorySessionService: ObservableObject {
         var sceneWithSelectedCharacters = scene
         sceneWithSelectedCharacters.activeCharacterIds = Self.activeCharacterIDsForTurn(
             selectedIDs: selectedIDs,
-            previousIDs: scene.activeCharacterIds,
+            previousIDs: session.resolvedActiveCharacterIds(fallback: scene),
             limit: activeCharacterLimit
         )
         session.activeCharacterIds = sceneWithSelectedCharacters.activeCharacterIds
@@ -1409,6 +1409,14 @@ final class StorySessionService: ObservableObject {
                 currentState: session.storyState
             )
         }
+        let stateAfterAcceptedPatch: StoryState? = {
+            guard let acceptedStatePatch else { return session.storyState }
+            return acceptedStatePatch.applying(
+                to: session.storyState ?? StoryState(),
+                characterIndex: charIndex,
+                validCharacterIDs: Set(cast.map(\.characterId))
+            )
+        }()
         let hasExplicitObjectiveState = acceptedStatePatch?.activeGoals != nil
         let objectiveFromState = StoryNaturalChangePolicy.objectiveAfterAcceptedPatch(
             currentObjective: session.currentObjective,
@@ -1429,7 +1437,12 @@ final class StorySessionService: ObservableObject {
                 ?? session.lastSceneSummary.nonEmpty,
             unresolvedHooks: normalizedHooks(
                 structuredProgressUpdate?.unresolvedHooks,
-                fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
+                fallback: Self.unresolvedHooks(
+                    world: world,
+                    scene: scene,
+                    previous: session.unresolvedHooks,
+                    storyState: stateAfterAcceptedPatch
+                )
             ),
             storyState: acceptedStatePatch
         )
@@ -1449,15 +1462,14 @@ final class StorySessionService: ObservableObject {
             ?? session.lastSceneSummary.nonEmpty
         session.unresolvedHooks = normalizedHooks(
             progressUpdate.unresolvedHooks,
-            fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
-        )
-        if let acceptedStatePatch {
-            session.storyState = acceptedStatePatch.applying(
-                to: session.storyState ?? StoryState(),
-                characterIndex: charIndex,
-                validCharacterIDs: Set(cast.map(\.characterId))
+            fallback: Self.unresolvedHooks(
+                world: world,
+                scene: scene,
+                previous: session.unresolvedHooks,
+                storyState: stateAfterAcceptedPatch
             )
-        }
+        )
+        session.storyState = stateAfterAcceptedPatch
         do {
             session = try await sessionRepo.commitTurn(
                 session: session,
@@ -2573,7 +2585,12 @@ final class StorySessionService: ObservableObject {
         }
     }
 
-    private func unresolvedHooks(world: StoryWorld, scene: StoryScene, previous: [String]?) -> [String] {
+    static func unresolvedHooks(
+        world: StoryWorld,
+        scene: StoryScene,
+        previous: [String]?,
+        storyState: StoryState? = nil
+    ) -> [String] {
         var hooks: [String] = []
         var seen = Set<String>()
         func push(_ value: String?) {
@@ -2581,10 +2598,37 @@ final class StorySessionService: ObservableObject {
             guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { return }
             hooks.append(trimmed)
         }
-        previous?.forEach(push)
+        let activeGoals = Set(
+            (storyState?.activeGoals ?? []).map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        )
+        let seedGoals = Set(
+            [scene.sceneGoal, world.storyGoal].map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty }
+        )
+        previous?.forEach { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if storyState != nil,
+               seedGoals.contains(trimmed),
+               !activeGoals.contains(trimmed) {
+                return
+            }
+            push(trimmed)
+        }
         push(scene.conflict)
-        push(scene.sceneGoal)
-        push(world.storyGoal)
+        func pushSeedGoal(_ goal: String) {
+            let trimmed = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            // Once StoryState exists, an empty activeGoals array is an
+            // explicit resolution. Do not reintroduce the catalog's initial
+            // goal as an unresolved hook on the next turn.
+            guard storyState == nil || activeGoals.contains(trimmed) else { return }
+            push(trimmed)
+        }
+        pushSeedGoal(scene.sceneGoal)
+        pushSeedGoal(world.storyGoal)
         if !world.openingScene.isEmpty, hooks.count < 6 {
             push("オープニングの出来事: \(world.openingScene)")
         }
