@@ -448,7 +448,7 @@ struct StoryWorldCreateView: View {
                 TextField(KizunaCopy.text(japanese: "ひとこと説明", english: "Short description"), text: $vm.draft.shortDescription).textFieldStyle(.roundedBorder)
 
                 HStack {
-                    Text(KizunaCopy.text(japanese: "ジャンル", english: "Genre")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "ジャンル", english: "Genre")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(minWidth: 90, alignment: .leading)
                     Menu {
                         ForEach(CategoryGroup.allCases) { g in
                             Menu(g.localizedDisplayName) {
@@ -471,16 +471,16 @@ struct StoryWorldCreateView: View {
                 }
 
                 HStack {
-                    Text(KizunaCopy.text(japanese: "関係性", english: "Relationship")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
-                    Picker("", selection: $vm.draft.relationshipGenre) {
+                    Text(KizunaCopy.text(japanese: "関係性", english: "Relationship")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(minWidth: 90, alignment: .leading)
+                    Picker(KizunaCopy.text(japanese: "関係性", english: "Relationship"), selection: $vm.draft.relationshipGenre) {
                         ForEach(RelationshipGenre.allCases) { g in Text(g.localizedDisplayName).tag(g) }
-                    }.labelsHidden().pickerStyle(.menu)
+                    }.pickerStyle(.menu)
                 }
 
                 HStack(alignment: .top) {
-                    Text(KizunaCopy.text(japanese: "物語形式", english: "Story format")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                    Text(KizunaCopy.text(japanese: "物語形式", english: "Story format")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(minWidth: 90, alignment: .leading)
                     Picker(
-                        "",
+                        KizunaCopy.text(japanese: "物語形式", english: "Story format"),
                         selection: Binding(
                             get: { vm.draft.resolvedCastMode },
                             set: { vm.setCastMode($0) }
@@ -490,7 +490,6 @@ struct StoryWorldCreateView: View {
                             Text(mode.localizedDisplayName).tag(mode)
                         }
                     }
-                    .labelsHidden()
                     .pickerStyle(.menu)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(vm.draft.resolvedCastMode.localizedDetail)
@@ -500,10 +499,10 @@ struct StoryWorldCreateView: View {
                 }
 
                 HStack {
-                    Text(KizunaCopy.text(japanese: "公開状態", english: "Visibility")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
-                    Picker("", selection: $vm.draft.visibility) {
+                    Text(KizunaCopy.text(japanese: "公開状態", english: "Visibility")).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(minWidth: 90, alignment: .leading)
+                    Picker(KizunaCopy.text(japanese: "公開状態", english: "Visibility"), selection: $vm.draft.visibility) {
                         ForEach(CharacterVisibility.allCases) { v in Label(v.localizedDisplayName, systemImage: v.iconName).tag(v) }
-                    }.labelsHidden().pickerStyle(.menu)
+                    }.pickerStyle(.menu)
                 }
             }
         }
@@ -530,6 +529,7 @@ struct StoryWorldCreateView: View {
                     .frame(minHeight: 74)
                     .padding(6)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12)))
+                    .accessibilityLabel(KizunaCopy.text(japanese: "Lorebookの内容", english: "Lorebook content"))
                 HStack {
                     Spacer()
                     Button {
@@ -567,6 +567,8 @@ struct StoryWorldCreateView: View {
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityLabel(KizunaCopy.text(japanese: "Lorebook設定を削除", english: "Delete lorebook rule"))
                     }
                     .padding(9)
                     .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.035)))
@@ -806,7 +808,12 @@ struct StoryWorldCreateView: View {
                 Text(pair.toName)
                     .font(.subheadline.weight(.bold))
                 Spacer()
-                Picker("", selection: Binding(
+                Picker(
+                    KizunaCopy.text(
+                        japanese: "\(pair.fromName)から\(pair.toName)への関係",
+                        english: "Relationship from \(pair.fromName) to \(pair.toName)"
+                    ),
+                    selection: Binding(
                     get: { rel.relationshipType },
                     set: { vm.updateRelationship(from: pair.from.characterId, to: pair.to.characterId, type: $0) }
                 )) {
@@ -814,7 +821,6 @@ struct StoryWorldCreateView: View {
                         Text(type.localizedDisplayName).tag(type)
                     }
                 }
-                .labelsHidden()
                 .pickerStyle(.menu)
             }
             TextField(KizunaCopy.text(japanese: "関係メモ (例: 古い相棒だが、互いに秘密を持っている)", english: "Relationship note (e.g. old partners with secrets)"), text: Binding(
