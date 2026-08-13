@@ -545,15 +545,12 @@ final class StorySessionService: ObservableObject {
         // copy without allowing that copy to leak into StorySession storage.
         let promptWorld = world.localizedForCurrentLanguage
 
-        // 初回ターンでも、現在シーンを構造化状態としてAIへ渡せるようにする。
-        if session.storyState == nil {
-            session.storyState = StoryState(
-                location: scene.location,
-                timeOfDay: scene.timeOfDay,
-                mood: scene.mood,
-                activeGoals: scene.sceneGoal.isEmpty ? [] : [scene.sceneGoal]
-            )
-        }
+        // 初回ターンだけ現在シーンを構造化状態へseedする。既存Stateは
+        // 前ターンのPatch／世界変化を含む正本なので、Sceneの初期値で戻さない。
+        session.storyState = StoryStateBootstrap.preservingExistingState(
+            session.storyState,
+            scene: scene
+        )
 
         // user メッセージとpending checkpointを1回の保存境界で確保する。
         // 再試行では既存の保存済み入力を再利用し、同じIDの発話を重複保存しない。
@@ -1453,9 +1450,6 @@ final class StorySessionService: ObservableObject {
         // ordinary dialogue does not decode and stays on the deterministic
         // path, while structured state is applied without a second LLM call.
         var deterministicState = session.storyState ?? StoryState()
-        if !scene.location.isEmpty { deterministicState.location = scene.location }
-        if !scene.timeOfDay.isEmpty { deterministicState.timeOfDay = scene.timeOfDay }
-        if !scene.mood.isEmpty { deterministicState.mood = scene.mood }
         let objective = session.currentObjective?.nonEmpty ?? scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty
         if let objective {
             deterministicState.activeGoals = Array(([objective] + deterministicState.activeGoals).filter { !$0.isEmpty }.reduce(into: [String]()) { result, value in
