@@ -132,9 +132,6 @@ final class StorySessionService: ObservableObject {
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
     private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
-    // Scene summaries are persisted by the same service that owns the turn,
-    // so keep the repository explicit instead of reaching into a ViewModel.
-    private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
     // Lorebookは必要な項目だけを選択してプロンプトへ渡す。
     private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
     // 物語内メモリーは全体メモリー(CharacterMemory)と別ストアで管理する。
@@ -520,7 +517,6 @@ final class StorySessionService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         var session = session
         var scene = scene
-        let sceneStorageActiveCharacterIds = scene.activeCharacterIds
         scene.activeCharacterIds = session.resolvedActiveCharacterIds(fallback: scene)
         // Keep `world` raw for every repository write.  Prompt construction is
         // the presentation/generation boundary, so it may use the translated
@@ -1381,26 +1377,6 @@ final class StorySessionService: ObservableObject {
         }
         if newSummary != scene.summary {
             scene.summary = newSummary
-            var sceneForSummarySave = scene
-            // Sceneは初期値・表示用のミラーであり、現在キャストの正本ではない。
-            // ここでSession未保存の選定結果をSceneだけへ先に書かない。
-            sceneForSummarySave.activeCharacterIds = sceneStorageActiveCharacterIds
-            do {
-                try await sceneRepo.saveScene(sceneForSummarySave)
-            } catch {
-                latestRuntimeNotice = StoryRuntimeNotice(
-                    text: localizedNotice(
-                        "場面の要約を保存できませんでした。本文は保存済みですが、再読み込み前にもう一度試してください。",
-                        "The scene summary could not be saved. The reply was saved, but try again before reloading."
-                    ),
-                    userMessageID: userMessageID,
-                    userText: userText,
-                    backendName: "scene summary save failed",
-                    backend: .persistence
-                )
-                NSLog("[StorySession] scene summary save failed: %@", error.localizedDescription)
-            }
-            guard isGenerationActive(generationID) else { return }
         }
         // 12) 進行状態は本文の完了を遅らせない。
         // 以前はここで同じローカルモデルへ進行JSONを追加生成していたため、
