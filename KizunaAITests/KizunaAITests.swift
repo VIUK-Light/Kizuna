@@ -1972,7 +1972,7 @@ final class KizunaAITests: XCTestCase {
         )
 
         XCTAssertTrue(service.send("stop this", to: thread))
-        await waitForPersonaService(service) { runtime.generatedRequestCount > 0 }
+        await waitForPersonaService(service) { _ in runtime.generatedRequestCount > 0 }
         service.cancel()
         try? await Task.sleep(nanoseconds: 50_000_000)
 
