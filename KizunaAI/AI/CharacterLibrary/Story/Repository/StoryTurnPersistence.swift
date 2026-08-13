@@ -102,7 +102,6 @@ enum StoryTurnJournal {
     private struct RecoverableEntries {
         let entries: [StoryTurnJournalEntry]
         let containsInvalidEntries: Bool
-
     }
 
     /// Async repositories use the dedicated file-I/O executor. The original
@@ -327,7 +326,7 @@ enum StoryTurnJournal {
         if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
         }
-        journal.updatedAt > persisted.updatedAt
+        return journal.updatedAt > persisted.updatedAt
     }
 }
 
