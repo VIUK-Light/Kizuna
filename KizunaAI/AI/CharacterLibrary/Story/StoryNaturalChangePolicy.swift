@@ -177,13 +177,16 @@ enum StoryNaturalChangePolicy {
             guard current != nil else { return nil }
             return StoryInventoryChange(action: .remove, name: name, detail: nil, owner: nil)
         case .add, .update:
-            let detail = normalizedText(change.detail)
-            let owner = normalizedText(change.owner)
+            // An add for an existing item is an upsert. Preserve fields that
+            // the model did not mention instead of turning a partial change
+            // into data loss when StoryStatePatch.applying replaces the item.
+            let detail = normalizedText(change.detail) ?? normalizedText(current?.detail)
+            let owner = normalizedText(change.owner) ?? normalizedText(current?.owner)
             let isSame = normalizedText(current?.detail) == detail
                 && normalizedText(current?.owner) == owner
             guard current == nil || !isSame else { return nil }
             return StoryInventoryChange(
-                action: change.action,
+                action: current == nil ? .add : .update,
                 name: name,
                 detail: detail,
                 owner: owner

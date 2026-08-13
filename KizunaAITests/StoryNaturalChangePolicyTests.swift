@@ -108,6 +108,43 @@ final class StoryNaturalChangePolicyTests: XCTestCase {
         XCTAssertEqual(accepted?.timeOfDay, "夕方")
     }
 
+    func testPartialInventoryUpsertPreservesUnmentionedFields() throws {
+        let current = StoryState(
+            inventory: [
+                StoryInventoryItem(name: "鍵", detail: "銀色", owner: "ナギ")
+            ]
+        )
+        let patch = StoryStatePatch(
+            location: nil,
+            timeOfDay: nil,
+            mood: nil,
+            weather: nil,
+            relationshipStage: nil,
+            characterUpdates: nil,
+            inventoryChanges: [
+                StoryInventoryChange(
+                    action: .add,
+                    name: "鍵",
+                    detail: "古びた銀色",
+                    owner: nil
+                )
+            ],
+            activeGoals: nil
+        )
+
+        let accepted = try XCTUnwrap(
+            StoryNaturalChangePolicy.acceptedPatch(
+                from: patch,
+                currentState: current
+            )
+        )
+        XCTAssertEqual(accepted.inventoryChanges?.first?.action, .update)
+
+        let next = accepted.applying(to: current, characterIndex: [:])
+        XCTAssertEqual(next.inventory.first?.detail, "古びた銀色")
+        XCTAssertEqual(next.inventory.first?.owner, "ナギ")
+    }
+
     func testIgnoresWhitespaceOnlyObjectivePayload() {
         let patch = StoryStatePatch(
             location: nil,
