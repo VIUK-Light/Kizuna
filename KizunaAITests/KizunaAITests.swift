@@ -143,28 +143,33 @@ final class KizunaAITests: XCTestCase {
 
     func testLocalJSONFileIOCancellationWaitsForOperationToFinish() async throws {
         let probe = FileIOTestProbe()
-        let bodyStarted = DispatchSemaphore(value: 0)
         let bodyMayFinish = DispatchSemaphore(value: 0)
         // XCTestCase is MainActor-isolated. A plain Task would inherit that
-        // actor, while the semaphore below intentionally blocks the main
-        // thread until the file-I/O body starts. Use a detached task so the
-        // operation can reach the dedicated queue before the test exercises
-        // cancellation.
+        // actor, so use a detached task to let the operation reach the
+        // dedicated queue while this test yields during start-up polling.
         let task = Task.detached { () -> Bool in
             try await LocalJSONStoreTransaction.performOnFileIO {
                 probe.markStarted()
-                bodyStarted.signal()
                 bodyMayFinish.wait()
                 probe.markCompleted()
                 return true
             }
         }
 
-        XCTAssertEqual(
-            bodyStarted.wait(timeout: .now() + 1),
-            .success,
-            "the file operation must reach its started state before cancellation"
-        )
+        // Yield the MainActor while the detached task reaches the dedicated
+        // file-I/O queue. Blocking the test actor on a semaphore here would
+        // prevent a scheduling-sensitive start signal from being observed.
+        let deadline = Date().addingTimeInterval(1)
+        while !probe.hasStarted && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        guard probe.hasStarted else {
+            task.cancel()
+            bodyMayFinish.signal()
+            _ = try? await task.value
+            XCTFail("the file operation must reach its started state before cancellation")
+            return
+        }
 
         task.cancel()
         bodyMayFinish.signal()
