@@ -593,6 +593,33 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(StoryTurnOwnerRegistry.shared.activeOwnerIDs().contains(second))
     }
 
+    func testStorySessionServiceOwnerCanBeReleasedBeforeReplacementServiceStarts() {
+        let registry = StoryTurnOwnerRegistry.shared
+        let ownersBefore = registry.activeOwnerIDs()
+        var first: StorySessionService? = StorySessionService()
+        let firstOwners = registry.activeOwnerIDs().subtracting(ownersBefore)
+        XCTAssertEqual(firstOwners.count, 1)
+        guard let firstOwner = firstOwners.first else {
+            return XCTFail("the first StorySessionService must register one owner")
+        }
+
+        first?.releaseOwnerForTeardown()
+        first = nil
+        XCTAssertFalse(registry.activeOwnerIDs().contains(firstOwner))
+
+        var replacement: StorySessionService? = StorySessionService()
+        let replacementOwners = registry.activeOwnerIDs().subtracting(ownersBefore)
+        XCTAssertEqual(replacementOwners.count, 1)
+        guard let replacementOwner = replacementOwners.first else {
+            return XCTFail("the replacement StorySessionService must register one owner")
+        }
+        XCTAssertNotEqual(firstOwner, replacementOwner)
+
+        replacement?.releaseOwnerForTeardown()
+        replacement = nil
+        XCTAssertEqual(registry.activeOwnerIDs(), ownersBefore)
+    }
+
     func testStorySessionRepositoryCommitPreservesExternallyEditedScene() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
