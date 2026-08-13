@@ -141,6 +141,55 @@ final class KizunaAITests: XCTestCase {
         XCTAssertNil(service.latestRuntimeNotice)
     }
 
+    func testStoryServiceCommitRetryHandsFailedMemoriesToMemoryRetry() async throws {
+        let sessionRepository = TestStorySessionRepository()
+        let memoryRepository = TestStoryMemoryRepository(shouldFailSaves: true)
+        let session = StorySession(storyWorldId: UUID())
+        let scene = StoryScene(storyWorldId: session.storyWorldId)
+        let characterMemory = CharacterMemory(
+            characterId: UUID(),
+            text: "港で交わした約束",
+            category: .event,
+            source: .aiOutput
+        )
+        let storyMemory = StoryMemory(
+            storyWorldId: session.storyWorldId,
+            text: "約束が残った",
+            category: .event,
+            source: .summary
+        )
+        let retry = StoryTurnCommitRetry(
+            session: session,
+            scene: scene,
+            turnID: UUID(),
+            attempt: 3,
+            assistantMessageIDs: [UUID()],
+            characterMemories: [characterMemory],
+            storyMemories: [storyMemory],
+            userMessageID: UUID(),
+            userText: "同じターンを保存する"
+        )
+        let service = StorySessionService(
+            sessionRepo: sessionRepository,
+            memoryRepo: memoryRepository,
+            storyMemoryRepo: memoryRepository,
+            pendingStoryTurnCommitRetries: [retry]
+        )
+
+        await service.retryStoryTurnCommit(retry)
+
+        let commit = await sessionRepository.lastCommit
+        XCTAssertEqual(commit?.turnID, retry.turnID)
+        XCTAssertEqual(commit?.assistantMessageIDs, retry.assistantMessageIDs)
+        XCTAssertEqual(service.savedTurnRevision, 0)
+        guard case let .storyMemory(memoryRetry) = service.latestRuntimeNotice?.retryAction else {
+            return XCTFail("failed memory writes must become a memory-only retry")
+        }
+        XCTAssertEqual(memoryRetry.turnID, retry.turnID)
+        XCTAssertEqual(memoryRetry.characterMemories, retry.characterMemories)
+        XCTAssertEqual(memoryRetry.storyMemories, retry.storyMemories)
+    }
+
     func testPersonaResponseSanitizerPreservesVisibleText() {
         let input = "<think>private reasoning</think>Visible response"
 
@@ -1016,12 +1065,22 @@ final class KizunaAITests: XCTestCase {
 }
 
 private actor TestStoryMemoryRepository: MemoryRepository, StoryMemoryRepository {
+    private enum TestError: Error {
+        case saveFailed
+    }
+
+    private let shouldFailSaves: Bool
     private var characterSaveCount = 0
     private var storySaveCount = 0
+
+    init(shouldFailSaves: Bool = false) {
+        self.shouldFailSaves = shouldFailSaves
+    }
 
     func fetchMemories(characterId: UUID) async throws -> [CharacterMemory] { [] }
 
     func saveMemory(_ memory: CharacterMemory) async throws {
+        if shouldFailSaves { throw TestError.saveFailed }
         characterSaveCount += 1
     }
 
@@ -1032,6 +1091,7 @@ private actor TestStoryMemoryRepository: MemoryRepository, StoryMemoryRepository
     func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] { [] }
 
     func saveMemory(_ memory: StoryMemory) async throws {
+        if shouldFailSaves { throw TestError.saveFailed }
         storySaveCount += 1
     }
 
