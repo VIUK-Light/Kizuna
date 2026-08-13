@@ -421,9 +421,6 @@ final class StorySessionService: ObservableObject {
             )
             let explicitlyBelongsToSession = retry.storySessionID == storySessionID
                 || retryMemorySessionIDs.contains(storySessionID)
-            let isLegacyWorldScoped = retry.storySessionID == nil
-                && retryMemorySessionIDs.isEmpty
-                && retry.storyWorldID == storyWorldID
             let isLatestTurnKnownUncommitted = latestCheckpoint?.turnID == retry.turnID
                 && latestCheckpoint?.status != .committed
 
@@ -444,11 +441,11 @@ final class StorySessionService: ObservableObject {
                 continue
             }
 
-            // A retry with an explicit session/world scope is already tied to
-            // this restored session. Legacy world-only records are retained
-            // for the world rather than guessed away; the memory repository's
-            // stable IDs make a later retry idempotent.
-            guard explicitlyBelongsToSession || isLegacyWorldScoped else { continue }
+            // A retry with an explicit session scope is tied to this restored
+            // session. Legacy world-only records remain durable for possible
+            // migration, but must not be assigned to an arbitrary session:
+            // Issue #202 requires unknown ownership to stay unassigned.
+            guard explicitlyBelongsToSession else { continue }
             guard pendingStoryMemoryRetries[retry.turnID] == nil else { continue }
             pendingStoryMemoryRetries[retry.turnID] = retry
             pendingStoryMemoryRetryOrder.append(retry.turnID)

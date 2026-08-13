@@ -482,6 +482,45 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(remainingRetries.isEmpty)
     }
 
+    func testLegacyWorldScopedMemoryRetryStaysUnassignedAfterRestore() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "旧形式の保留記憶",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "所属Session不明の出来事"
+                )
+            ],
+            storyWorldID: worldID
+        )
+        let session = StorySession(id: sessionID, storyWorldId: worldID)
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        try await retryRepository.saveRetry(retry)
+
+        let service = StorySessionService(
+            sessionRepo: TestStorySessionRepository(sessions: [session]),
+            storyMemoryRetryRepo: retryRepository
+        )
+
+        try await service.restorePendingStoryMemoryRetries(
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+
+        XCTAssertNil(
+            service.latestRuntimeNotice,
+            "legacy world-only retries must not be guessed into the current session"
+        )
+        let remainingRetries = try await retryRepository.fetchRetries()
+        XCTAssertEqual(remainingRetries, [retry])
+    }
+
     func testStoryRuntimeNoticeUserRetryKeepsStableMessageIDWithoutCachedSession() {
         let userMessageID = UUID()
         let notice = StoryRuntimeNotice(
