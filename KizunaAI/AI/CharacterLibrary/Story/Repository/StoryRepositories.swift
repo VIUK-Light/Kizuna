@@ -590,6 +590,21 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 committedScene.activeCharacterIds = Array(
                     scene.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
                 )
+                // StoryState is the runtime source of truth after the first
+                // turn. Keep the scene strip and its fallback visual in sync
+                // with that state, while retaining user edits made after the
+                // turn started via the timestamp guard above.
+                if let storyState = committed.storyState {
+                    if !storyState.location.isEmpty {
+                        committedScene.location = storyState.location
+                    }
+                    if !storyState.timeOfDay.isEmpty {
+                        committedScene.timeOfDay = storyState.timeOfDay
+                    }
+                    if !storyState.mood.isEmpty {
+                        committedScene.mood = storyState.mood
+                    }
+                }
                 committedScene.updatedAt = now
                 committedScene.persistenceRevision = currentScene.effectivePersistenceRevision + 1
             }

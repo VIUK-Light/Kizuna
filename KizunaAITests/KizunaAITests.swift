@@ -187,6 +187,28 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(nextTurnState.activeGoals, [])
     }
 
+    func testResolvedStoryObjectiveIsNotReintroducedAsAnUnresolvedHook() {
+        let world = StoryWorld(
+            title: "夜の物語",
+            storyGoal: "灯台へ向かう"
+        )
+        let scene = StoryScene(
+            storyWorldId: world.id,
+            sceneGoal: "灯台へ向かう"
+        )
+        let resolvedState = StoryState(activeGoals: [])
+
+        let hooks = StorySessionService.unresolvedHooks(
+            world: world,
+            scene: scene,
+            previous: ["灯台へ向かう", "港の違和感"],
+            storyState: resolvedState
+        )
+
+        XCTAssertFalse(hooks.contains("灯台へ向かう"))
+        XCTAssertTrue(hooks.contains("港の違和感"))
+    }
+
     func testStoryPromptUsesCanonicalStoryStateInsteadOfSceneSeed() {
         let worldID = UUID()
         let world = StoryWorld(
@@ -888,6 +910,71 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(committed.latestTurnCheckpoint?.status, .committed)
         XCTAssertEqual(persistedScene?.summary, "ユーザーが編集した場面")
         XCTAssertEqual(persistedScene?.updatedAt, editedAt)
+    }
+
+    func testStorySessionRepositoryCommitReflectsCanonicalStoryStateInScene() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let sessionID = UUID()
+        let turnID = UUID()
+        let date = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.begin(
+            turnID: turnID,
+            userMessageID: UUID(),
+            attempt: 1,
+            ownerID: StoryTurnOwner.currentID,
+            baseRevision: 1,
+            startedAt: date,
+            updatedAt: date
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint,
+            storyState: StoryState(
+                location: "駅前",
+                timeOfDay: "深夜",
+                mood: "緊張"
+            ),
+            updatedAt: date
+        )
+        let scene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            location: "港",
+            timeOfDay: "夕方",
+            mood: "静か",
+            updatedAt: date
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        _ = try await LocalJSONStorySessionRepository(storageURL: storageURL).commitTurn(
+            session: session,
+            scene: scene,
+            turnID: turnID,
+            assistantMessageIDs: []
+        )
+
+        let persistedScene = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persistedScene?.location, "駅前")
+        XCTAssertEqual(persistedScene?.timeOfDay, "深夜")
+        XCTAssertEqual(persistedScene?.mood, "緊張")
     }
 
     func testStoryTurnJournalDoesNotOverwriteNewerSceneWithOlderJournalSameSecond() throws {
