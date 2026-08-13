@@ -145,7 +145,12 @@ final class KizunaAITests: XCTestCase {
         let probe = FileIOTestProbe()
         let bodyStarted = DispatchSemaphore(value: 0)
         let bodyMayFinish = DispatchSemaphore(value: 0)
-        let task = Task { () -> Bool in
+        // XCTestCase is MainActor-isolated. A plain Task would inherit that
+        // actor, while the semaphore below intentionally blocks the main
+        // thread until the file-I/O body starts. Use a detached task so the
+        // operation can reach the dedicated queue before the test exercises
+        // cancellation.
+        let task = Task.detached { () -> Bool in
             try await LocalJSONStoreTransaction.performOnFileIO {
                 probe.markStarted()
                 bodyStarted.signal()
