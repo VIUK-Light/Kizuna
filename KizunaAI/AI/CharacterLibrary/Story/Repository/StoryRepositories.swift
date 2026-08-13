@@ -1273,6 +1273,11 @@ private enum LocalJSONStoryMemoryRetryMemoryTransaction {
                 // a cross-session partial result.
                 return retry
             }
+            if sessionIDs.isEmpty, !ownedStoryMemories.isEmpty {
+                // A world-scoped legacy StoryMemory has no safe owner. It may
+                // not be guessed into whichever Session happens to retry it.
+                return retry
+            }
             if let sessionID = sessionIDs.first {
                 if tombstones.contains(where: {
                     $0.recordID == sessionID && $0.recordKind == .session
@@ -1291,13 +1296,24 @@ private enum LocalJSONStoryMemoryRetryMemoryTransaction {
                 guard let session = sessions.first(where: { $0.id == sessionID }) else {
                     // A retry without a live owner is not safe to apply. This
                     // also covers a session removed before its tombstone was
-                    // observed by the current process.
-                    return nil
+                    // observed by the current process. Keep it durable until
+                    // the owner is restored or an explicit tombstone makes it
+                    // terminal; nil here would make the service delete a
+                    // recoverable retry as if the write had succeeded.
+                    return retry
                 }
                 if let worldID = retry.storyWorldID,
                    session.storyWorldId != worldID {
                     // Preserve the retry for diagnosis/recovery, but do not
                     // write a payload into a different StoryWorld.
+                    return retry
+                }
+                guard ownedStoryMemories.allSatisfy({
+                    $0.storyWorldId == session.storyWorldId
+                }) else {
+                    // The envelope cannot authorize a StoryMemory for another
+                    // World. Keep the complete retry for diagnosis instead of
+                    // writing a partial cross-World result.
                     return retry
                 }
             }

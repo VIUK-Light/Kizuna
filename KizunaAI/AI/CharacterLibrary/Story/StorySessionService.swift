@@ -109,6 +109,78 @@ enum StoryTurnCommitRecovery {
         return ids.filter { seen.insert($0).inserted }
     }
 
+    private static func storyStatesMatch(_ lhs: StoryState?, _ rhs: StoryState?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (lhs?, rhs?):
+            // updatedAt is deliberately excluded: the JSON date codec may
+            // round fractional seconds while the logical state remains the
+            // exact snapshot produced by this turn.
+            return lhs.location == rhs.location
+                && lhs.timeOfDay == rhs.timeOfDay
+                && lhs.mood == rhs.mood
+                && lhs.weather == rhs.weather
+                && lhs.relationshipStage == rhs.relationshipStage
+                && lhs.characterStates == rhs.characterStates
+                && lhs.inventory == rhs.inventory
+                && lhs.activeGoals == rhs.activeGoals
+        default:
+            return false
+        }
+    }
+
+    private static func generatedSessionFieldsMatch(
+        _ expected: StorySession,
+        _ persisted: StorySession,
+        retry: StoryTurnCommitRetry
+    ) -> Bool {
+        guard expected.id == persisted.id,
+              expected.storyWorldId == persisted.storyWorldId,
+              expected.currentSceneId == persisted.currentSceneId,
+              expected.progressLabel == persisted.progressLabel,
+              expected.currentObjective == persisted.currentObjective,
+              expected.relationshipStage == persisted.relationshipStage,
+              expected.lastTurnProgress == persisted.lastTurnProgress,
+              expected.lastSceneSummary == persisted.lastSceneSummary,
+              expected.unresolvedHooks == persisted.unresolvedHooks,
+              storyStatesMatch(expected.storyState, persisted.storyState),
+              expected.lastSelectedModelName == persisted.lastSelectedModelName,
+              expected.lastUsedBackendName == persisted.lastUsedBackendName else {
+            return false
+        }
+
+        // A retry owns only this turn's messages. Later system/narration
+        // messages may legitimately be appended after the commit, so compare
+        // the user and assistant records by stable ID instead of requiring an
+        // identical whole-message array.
+        var expectedMessages: [UUID: StoryMessage] = [:]
+        for message in expected.messages {
+            expectedMessages[message.id] = message
+        }
+        guard !expectedMessages.isEmpty else { return true }
+        var persistedMessages: [UUID: StoryMessage] = [:]
+        for message in persisted.messages {
+            persistedMessages[message.id] = message
+        }
+        let ownedMessageIDs = normalizedMessageIDs(
+            [retry.userMessageID] + retry.assistantMessageIDs
+        )
+        return ownedMessageIDs.allSatisfy { messageID in
+            guard let expectedMessage = expectedMessages[messageID],
+                  let persistedMessage = persistedMessages[messageID] else {
+                return false
+            }
+            return expectedMessage.author == persistedMessage.author
+                && expectedMessage.text == persistedMessage.text
+                && expectedMessage.generationID == persistedMessage.generationID
+                && persistedMessage.turnID == retry.turnID
+                && (expectedMessage.turnID == nil
+                    || expectedMessage.turnID == persistedMessage.turnID)
+                && expectedMessage.retryBackend == persistedMessage.retryBackend
+        }
+    }
+
     static func committedSession(
         matching retry: StoryTurnCommitRetry,
         in sessions: [StorySession],
@@ -130,15 +202,27 @@ enum StoryTurnCommitRecovery {
 
         return sessions.first { session in
             guard session.id == retry.session.id,
+                  session.storyWorldId == retry.session.storyWorldId,
                   session.currentSceneId == retry.scene.id,
                   let checkpoint = session.latestTurnCheckpoint,
                   checkpoint.turnID == retry.turnID,
                   checkpoint.userMessageID == retry.userMessageID,
+                  checkpoint.attempt == retry.attempt,
                   checkpoint.status == .committed else {
                 return false
             }
-            return normalizedMessageIDs(checkpoint.assistantMessageIDs)
-                == normalizedMessageIDs(retry.assistantMessageIDs)
+            guard normalizedMessageIDs(checkpoint.assistantMessageIDs)
+                    == normalizedMessageIDs(retry.assistantMessageIDs) else {
+                return false
+            }
+            if let expectedCheckpoint = retry.session.latestTurnCheckpoint {
+                guard checkpoint.baseRevision == expectedCheckpoint.baseRevision,
+                      checkpoint.ownerID == expectedCheckpoint.ownerID,
+                      checkpoint.userMessageID == expectedCheckpoint.userMessageID else {
+                    return false
+                }
+            }
+            return generatedSessionFieldsMatch(retry.session, session, retry: retry)
         }
     }
 }
@@ -538,13 +622,20 @@ final class StorySessionService: ObservableObject {
         // in this ViewModel for the remainder of the bootstrap.
         let persisted = try await storyMemoryRetryRepo.fetchRetries()
         let scoped = persisted.filter { retry in
-            if let retrySessionID = retry.storySessionID {
-                return retrySessionID == storySessionID
+            let retrySessionIDs = Set(
+                [retry.storySessionID].compactMap { $0 }
+                    + retry.storyMemories.compactMap(\.storySessionId)
+            )
+            guard retrySessionIDs == Set([storySessionID]) else {
+                // A legacy record without a trustworthy owner, or a malformed
+                // record that mixes sessions, must remain queued for diagnosis
+                // and must never appear as this Session's retry notice.
+                return false
             }
-            if let retryWorldID = retry.storyWorldID {
-                return retryWorldID == storyWorldID
+            guard retry.storyWorldID == nil || retry.storyWorldID == storyWorldID else {
+                return false
             }
-            return retry.storyMemories.contains { $0.storyWorldId == storyWorldID }
+            return retry.storyMemories.allSatisfy { $0.storyWorldId == storyWorldID }
         }
         let latestCheckpoint = session.latestTurnCheckpoint
         for retry in scoped {
@@ -552,8 +643,6 @@ final class StorySessionService: ObservableObject {
             let retryMemorySessionIDs = Set(
                 retry.storyMemories.compactMap(\.storySessionId)
             )
-            let explicitlyBelongsToSession = retry.storySessionID == storySessionID
-                || retryMemorySessionIDs.contains(storySessionID)
             let isLatestTurnKnownUncommitted = latestCheckpoint?.turnID == retry.turnID
                 && latestCheckpoint?.status != .committed
 
@@ -574,11 +663,12 @@ final class StorySessionService: ObservableObject {
                 continue
             }
 
-            // A retry with an explicit session scope is tied to this restored
-            // session. Legacy world-only records remain durable for possible
-            // migration, but must not be assigned to an arbitrary session:
-            // Issue #202 requires unknown ownership to stay unassigned.
-            guard explicitlyBelongsToSession else { continue }
+            // The filter above already established that every known owner is
+            // exactly this Session. Keep this second assertion close to the
+            // enqueue boundary so a future filter change cannot accidentally
+            // reintroduce cross-Session assignment.
+            guard retry.storySessionID == storySessionID
+                || retryMemorySessionIDs == Set([storySessionID]) else { continue }
             guard pendingStoryMemoryRetries[retry.turnID] == nil else { continue }
             pendingStoryMemoryRetries[retry.turnID] = retry
             pendingStoryMemoryRetryOrder.append(retry.turnID)

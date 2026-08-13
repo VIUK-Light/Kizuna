@@ -839,6 +839,134 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(remainingRetries, [retry])
     }
 
+    func testMixedSessionMemoryRetryIsNotAssignedToEitherSession() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let currentSessionID = UUID()
+        let otherSessionID = UUID()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "混在した所属を現在Sessionへ戻さない",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "別Sessionの記憶",
+                    storySessionId: otherSessionID
+                )
+            ],
+            storySessionID: currentSessionID,
+            storyWorldID: worldID
+        )
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        try await retryRepository.saveRetry(retry)
+
+        let service = StorySessionService(
+            sessionRepo: TestStorySessionRepository(
+                sessions: [StorySession(id: currentSessionID, storyWorldId: worldID)]
+            ),
+            storyMemoryRetryRepo: retryRepository
+        )
+
+        try await service.restorePendingStoryMemoryRetries(
+            storySessionID: currentSessionID,
+            storyWorldID: worldID
+        )
+
+        XCTAssertNil(service.latestRuntimeNotice)
+        let remainingRetries = try await retryRepository.fetchRetries()
+        XCTAssertEqual(remainingRetries, [retry])
+    }
+
+    func testMissingLiveSessionMemoryRetryRemainsDurableWithoutDeletingMemory() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "まだ復元されていないSessionの記憶",
+            characterMemories: [
+                CharacterMemory(
+                    characterId: UUID(),
+                    text: "後で保存できる記憶",
+                    category: .event,
+                    source: .aiOutput
+                )
+            ],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "後で保存できる物語記憶",
+                    storySessionId: sessionID
+                )
+            ],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        try await retryRepository.saveRetry(retry)
+
+        let deferredResult = try await retryRepository.saveMemoryRetryRecords(retry)
+        XCTAssertEqual(
+            deferredResult,
+            retry,
+            "a missing non-tombstoned Session must defer rather than acknowledge the retry"
+        )
+
+        let memoryRepository = TestStoryMemoryRepository()
+        let service = StorySessionService(
+            memoryRepo: memoryRepository,
+            storyMemoryRepo: memoryRepository,
+            storyMemoryRetryRepo: retryRepository,
+            storyMemoryRetryMemoryTransaction: retryRepository,
+            pendingStoryMemoryRetries: [retry]
+        )
+
+        await service.retryStoryMemorySave(retry)
+
+        let counts = await memoryRepository.saveCounts()
+        XCTAssertEqual(counts.character, 0)
+        XCTAssertEqual(counts.story, 0)
+        XCTAssertNotNil(service.latestRuntimeNotice)
+        let remainingRetries = try await retryRepository.fetchRetries()
+        XCTAssertEqual(remainingRetries, [retry])
+    }
+
+    func testLegacyWorldOnlyStoryMemoryRetryRemainsUnwrittenInTransaction() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "所属Session不明の直接transaction",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "推測で保存してはいけない記憶"
+                )
+            ],
+            storyWorldID: worldID
+        )
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+
+        let deferredResult = try await retryRepository.saveMemoryRetryRecords(retry)
+        XCTAssertEqual(
+            deferredResult,
+            retry,
+            "a legacy world-only StoryMemory must remain queued"
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryMemory.self,
+                fileName: "story_memories.json",
+                baseURL: storageURL
+            ).isEmpty
+        )
+    }
+
     func testDeletedSessionMemoryRetryDoesNotCallMemoryRepositories() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
@@ -1087,6 +1215,20 @@ final class KizunaAITests: XCTestCase {
                 scenes: [staleScene]
             ),
             "a committed session with a stale scene must remain retryable"
+        )
+
+        var changedStoryState = session
+        changedStoryState.storyState = StoryState(
+            location: "別の場所",
+            mood: "別の状態"
+        )
+        XCTAssertNil(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [changedStoryState],
+                scenes: [scene]
+            ),
+            "a committed checkpoint with a different StoryState must remain retryable"
         )
     }
 
