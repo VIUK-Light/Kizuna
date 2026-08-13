@@ -1379,6 +1379,56 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryTurnCommitRecoveryAcceptsRepositorySceneIDNormalization() {
+        let worldID = UUID()
+        let sessionID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let userMessageID = UUID()
+        let assistantMessageID = UUID()
+        let scene = StoryScene(id: sceneID, storyWorldId: worldID, summary: "保存済み")
+        let retrySession = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: nil,
+            latestTurnCheckpoint: StoryTurnCheckpoint(
+                turnID: turnID,
+                userMessageID: userMessageID,
+                status: .pending,
+                attempt: 1
+            )
+        )
+        var persistedSession = retrySession
+        persistedSession.currentSceneId = sceneID
+        persistedSession.latestTurnCheckpoint = StoryTurnCheckpoint(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            status: .committed,
+            attempt: 1,
+            assistantMessageIDs: [assistantMessageID]
+        )
+        let retry = StoryTurnCommitRetry(
+            session: retrySession,
+            scene: scene,
+            turnID: turnID,
+            attempt: 1,
+            assistantMessageIDs: [assistantMessageID],
+            characterMemories: [],
+            storyMemories: [],
+            userMessageID: userMessageID,
+            userText: "続ける"
+        )
+
+        XCTAssertNotNil(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [persistedSession],
+                scenes: [scene]
+            ),
+            "repository normalization of a nil currentSceneId must not create a false failure"
+        )
+    }
+
     func testStoryServiceRetriesMemoryWithoutGeneratingAnotherTurn() async throws {
         let memoryRepository = TestStoryMemoryRepository()
         let retry = StoryMemoryRetry(

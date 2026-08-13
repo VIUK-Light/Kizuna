@@ -137,7 +137,6 @@ enum StoryTurnCommitRecovery {
     ) -> Bool {
         guard expected.id == persisted.id,
               expected.storyWorldId == persisted.storyWorldId,
-              expected.currentSceneId == persisted.currentSceneId,
               expected.progressLabel == persisted.progressLabel,
               expected.currentObjective == persisted.currentObjective,
               expected.relationshipStage == persisted.relationshipStage,
