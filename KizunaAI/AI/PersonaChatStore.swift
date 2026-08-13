@@ -293,8 +293,7 @@ final class PersonaChatStore: ObservableObject {
                 threads[index].personaSnapshot = persona
                 threads[index].title = persona.name
                 threads[index].updatedAt = Date()
-                threads.sort { $0.updatedAt > $1.updatedAt }
-                persist()
+                persistAfterActivityUpdate()
             }
             activeThreadID = existing.id
             return threads.first(where: { $0.id == existing.id }) ?? existing
@@ -389,6 +388,7 @@ final class PersonaChatStore: ObservableObject {
     /// sort/persist work happens only once per completed turn.
     @discardableResult
     func finalizeLastAssistantMessage(in threadID: UUID, text: String) -> Bool {
+        guard canMutatePersistedState() else { return false }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return false }
         guard let lastIdx = threads[threadIdx].messages.lastIndex(where: { $0.role == .assistant }) else { return false }
         threads[threadIdx].messages[lastIdx].text = text

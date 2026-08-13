@@ -204,33 +204,35 @@ struct KizunaConversationHomeView: View {
     }
 
     private var recoveryPrompt: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(KizunaCopy.text(
-                    japanese: "Persona履歴の復旧が必要です",
-                    english: "Persona history recovery is required"
-                ))
-                    .font(.subheadline.weight(.semibold))
-                Text(KizunaCopy.text(
-                    japanese: "保存データは保持されています。復旧画面からバックアップまたはリセットを選べます。",
-                    english: "Your saved data is preserved. Open recovery to export a backup or reset it."
-                ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(KizunaCopy.text(
+                        japanese: "Persona履歴の復旧が必要です",
+                        english: "Persona history recovery is required"
+                    ))
+                        .font(.subheadline.weight(.semibold))
+                    Text(KizunaCopy.text(
+                        japanese: "保存データは保持されています。復旧画面からバックアップまたはリセットを選べます。",
+                        english: "Your saved data is preserved. Open recovery to export a backup or reset it."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-
-            Spacer(minLength: 6)
 
             Button(KizunaCopy.text(japanese: "復旧を開く", english: "Open recovery")) {
                 isShowingAllConversations = true
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
+            .controlSize(.regular)
+            .frame(minHeight: 44)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

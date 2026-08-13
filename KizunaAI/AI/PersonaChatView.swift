@@ -292,7 +292,7 @@ struct PersonaChatView: View {
                         english: "Persona history could not be loaded"
                     )
                 )
-                .font(.system(size: 12, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
@@ -304,11 +304,14 @@ struct PersonaChatView: View {
                     english: "The original saved data is preserved and changes are paused. Export a backup or review it before resetting."
                 )
             )
-            .font(.system(size: 11))
+            .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
+            // Keep recovery actions vertically stacked so Japanese labels and
+            // larger Dynamic Type sizes never squeeze three controls into a
+            // single compact-width row.
+            VStack(alignment: .leading, spacing: 8) {
                 Button {
                     exportPersonaRecoveryData()
                 } label: {
@@ -318,7 +321,7 @@ struct PersonaChatView: View {
                     )
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.regular)
 
                 if let personaRecoveryExportURL {
                     ShareLink(item: personaRecoveryExportURL) {
@@ -328,7 +331,7 @@ struct PersonaChatView: View {
                         )
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(.regular)
                 }
 
                 Button(
@@ -338,9 +341,10 @@ struct PersonaChatView: View {
                     isShowingPersonaRecoveryResetConfirmation = true
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.regular)
             }
-            .frame(minHeight: 40, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: 44, alignment: .leading)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

@@ -942,6 +942,49 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(second.threads.first?.messages.first?.text, "keep this")
     }
 
+    @MainActor
+    func testPersonaStoreDetachingCharacterReferenceKeepsRecentOrder() throws {
+        let suiteName = "KizunaPersonaStoreTests.Detach.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let characterID = UUID()
+        let olderDate = Date(timeIntervalSince1970: 100)
+        let newerDate = Date(timeIntervalSince1970: 200)
+        let older = PersonaThread(
+            id: UUID(),
+            personaSnapshot: profile,
+            characterID: characterID,
+            title: "Older",
+            createdAt: olderDate,
+            updatedAt: olderDate
+        )
+        let newer = PersonaThread(
+            id: UUID(),
+            personaSnapshot: profile,
+            characterID: UUID(),
+            title: "Newer",
+            createdAt: newerDate,
+            updatedAt: newerDate
+        )
+        defaults.set(
+            try JSONEncoder().encode([older, newer]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults)
+        store.detachCharacterReference(threadID: older.id)
+
+        XCTAssertEqual(store.threads.first?.id, older.id)
+        XCTAssertNil(store.thread(id: older.id)?.characterID)
+    }
+
     func testPersonaThreadOrderingPlacesCompletedConversationFirst() {
         let olderID = UUID()
         let newerID = UUID()
