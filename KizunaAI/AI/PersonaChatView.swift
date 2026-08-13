@@ -835,6 +835,9 @@ struct PersonaChatView: View {
     private func threadRow(_ thread: PersonaThread) -> some View {
         let isActive = store.activeThreadID == thread.id
         let style = PersonaAvatarStyle(profile: thread.personaSnapshot)
+        let previewText = thread.messages.last {
+            !($0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text))
+        }?.text ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation")
         return Button {
             store.selectThread(id: thread.id)
             if horizontalSizeClass == .compact {
@@ -848,7 +851,7 @@ struct PersonaChatView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                Text(thread.messages.last?.text ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation"))
+                Text(previewText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
