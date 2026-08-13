@@ -1071,6 +1071,12 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
     /// Recalculate aggregate fields from the provenance that remains after a
     /// cancellation or source removal.
     mutating func recomputeAggregatesFromSourceMetadata() {
+        // A merge or an older JSON file may contain metadata for a source
+        // that is no longer listed in sourceTurnIds. Orphan metadata must not
+        // influence the aggregate fields or survive a cancellation cleanup.
+        sourceTurnMetadata = sourceTurnMetadata.filter {
+            sourceTurnIds.contains($0.key)
+        }
         guard !sourceTurnMetadata.isEmpty else { return }
         importance = sourceTurnMetadata.values.map(\.importance).max() ?? importance
         lastUsedAt = sourceTurnMetadata.values
