@@ -98,6 +98,27 @@ struct StoryTurnCommitRetry: Equatable {
     let userText: String
 }
 
+/// A commit can throw after the journal has already made the session/scene
+/// snapshot durable. Only treat that recovery as successful when the persisted
+/// checkpoint identifies the exact generated turn.
+enum StoryTurnCommitRecovery {
+    static func committedSession(
+        matching retry: StoryTurnCommitRetry,
+        in sessions: [StorySession]
+    ) -> StorySession? {
+        sessions.first { session in
+            guard session.id == retry.session.id,
+                  let checkpoint = session.latestTurnCheckpoint,
+                  checkpoint.turnID == retry.turnID,
+                  checkpoint.userMessageID == retry.userMessageID,
+                  checkpoint.status == .committed else {
+                return false
+            }
+            return Set(checkpoint.assistantMessageIDs) == Set(retry.assistantMessageIDs)
+        }
+    }
+}
+
 /// Memory writes happen after the conversation turn is committed. A failed
 /// memory write is therefore an auxiliary retry and must never regenerate the
 /// already-saved assistant response.
@@ -1739,11 +1760,99 @@ final class StorySessionService: ObservableObject {
     /// scene, and assistant message IDs produced by the completed generation.
     /// Calling finishTurn here would make the checkpoint non-pending and force
     /// the next attempt through the model-generation path.
+    private func recoveredCommittedSession(for retry: StoryTurnCommitRetry) async -> StorySession? {
+        do {
+            let sessions = try await sessionRepo.fetchSessions(storyWorldId: retry.session.storyWorldId)
+            return StoryTurnCommitRecovery.committedSession(matching: retry, in: sessions)
+        } catch {
+            // A failed recovery must keep the exact-snapshot retry path. Do not
+            // turn an unreadable store into a false success.
+            NSLog(
+                "[StorySession] commit recovery check failed turn=%@: %@",
+                retry.turnID.uuidString,
+                error.localizedDescription
+            )
+            return nil
+        }
+    }
+
+    /// Journal recovery may have completed a partially successful commit
+    /// before the original commit call reported its later save error. In that
+    /// case the user-visible result is already durable: refresh normally and
+    /// retry only auxiliary memories, without presenting a misleading save
+    /// failure or invoking the model again.
+    private func finishRecoveredCommittedTurn(
+        generationID: UUID,
+        retry: StoryTurnCommitRetry
+    ) async {
+        pendingStoryTurnCommitRetries.removeValue(forKey: retry.turnID)
+
+        var memoryRetry: StoryMemoryRetry?
+        if !retry.characterMemories.isEmpty || !retry.storyMemories.isEmpty {
+            let candidate = StoryMemoryRetry(
+                turnID: retry.turnID,
+                userMessageID: retry.userMessageID,
+                userText: retry.userText,
+                characterMemories: retry.characterMemories,
+                storyMemories: retry.storyMemories
+            )
+            if let remaining = await saveStoryMemoryRetryRecords(candidate) {
+                enqueueStoryMemoryRetry(remaining)
+                memoryRetry = remaining
+            } else {
+                removeStoryMemoryRetry(for: retry.turnID)
+            }
+        }
+
+        let didPublish = await MainActor.run { () -> Bool in
+            guard self.activeGenerationID == generationID else { return false }
+            if let memoryRetry {
+                self.latestRuntimeNotice = self.storyMemoryRetryNotice(memoryRetry)
+            } else if let pendingRetry = self.oldestPendingStoryMemoryRetry {
+                self.latestRuntimeNotice = self.storyMemoryRetryNotice(pendingRetry)
+            } else {
+                self.latestRuntimeNotice = nil
+            }
+            // The persisted session is the source of truth. The ViewModel's
+            // normal saved-turn refresh will show the recovered messages.
+            self.streamingResponse = ""
+            self.streamingSpeakerName = nil
+            self.streamingStatusText = ""
+            self.savedTurnRevision += 1
+            self.generationWatchdogDeadline = nil
+            self.phase = .idle
+            self.activeGenerationID = nil
+            self.activeGenerationModel = nil
+            self.activeTurnID = nil
+            self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
+            return true
+        }
+
+        if !didPublish {
+            NSLog(
+                "[StorySession] recovered committed turn without active UI owner turn=%@",
+                retry.turnID.uuidString
+            )
+        }
+    }
+
     private func finishGenerationWithCommitRetry(
         generationID: UUID,
         notice: String,
         retry: StoryTurnCommitRetry
     ) async {
+        if await recoveredCommittedSession(for: retry) != nil {
+            NSLog(
+                "[StorySession] commit failure already recovered turn=%@",
+                retry.turnID.uuidString
+            )
+            await finishRecoveredCommittedTurn(generationID: generationID, retry: retry)
+            return
+        }
+
         let didPublishNotice = await MainActor.run { () -> Bool in
             guard self.activeGenerationID == generationID else { return false }
             self.pendingStoryTurnCommitRetries[retry.turnID] = retry

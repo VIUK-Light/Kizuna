@@ -350,6 +350,58 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persistedRetry, retry)
     }
 
+    func testStoryTurnCommitRecoveryMatchesOnlyTheExactCommittedTurn() {
+        let storyWorldID = UUID()
+        let sessionID = UUID()
+        let turnID = UUID()
+        let userMessageID = UUID()
+        let assistantMessageID = UUID()
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: storyWorldID,
+            latestTurnCheckpoint: StoryTurnCheckpoint(
+                turnID: turnID,
+                userMessageID: userMessageID,
+                status: .committed,
+                assistantMessageIDs: [assistantMessageID]
+            )
+        )
+        let retry = StoryTurnCommitRetry(
+            session: StorySession(id: sessionID, storyWorldId: storyWorldID),
+            scene: StoryScene(storyWorldId: storyWorldID),
+            turnID: turnID,
+            attempt: 1,
+            assistantMessageIDs: [assistantMessageID],
+            characterMemories: [],
+            storyMemories: [],
+            userMessageID: userMessageID,
+            userText: "保存済みのターン"
+        )
+
+        XCTAssertEqual(
+            StoryTurnCommitRecovery.committedSession(matching: retry, in: [session]),
+            session
+        )
+
+        var differentTurn = session
+        differentTurn.latestTurnCheckpoint = StoryTurnCheckpoint(
+            turnID: UUID(),
+            userMessageID: userMessageID,
+            status: .committed,
+            assistantMessageIDs: [assistantMessageID]
+        )
+        XCTAssertNil(StoryTurnCommitRecovery.committedSession(matching: retry, in: [differentTurn]))
+
+        var pending = session
+        pending.latestTurnCheckpoint = StoryTurnCheckpoint(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            status: .pending,
+            assistantMessageIDs: [assistantMessageID]
+        )
+        XCTAssertNil(StoryTurnCommitRecovery.committedSession(matching: retry, in: [pending]))
+    }
+
     func testStoryServiceRetriesMemoryWithoutGeneratingAnotherTurn() async throws {
         let memoryRepository = TestStoryMemoryRepository()
         let retry = StoryMemoryRetry(
