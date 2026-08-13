@@ -132,6 +132,9 @@ final class StorySessionService: ObservableObject {
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
     private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
+    // Scene summaries are persisted by the same service that owns the turn,
+    // so keep the repository explicit instead of reaching into a ViewModel.
+    private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
     // Lorebookは必要な項目だけを選択してプロンプトへ渡す。
     private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
     // 物語内メモリーは全体メモリー(CharacterMemory)と別ストアで管理する。
