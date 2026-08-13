@@ -117,6 +117,26 @@ protocol StorySceneRepository: AnyObject {
 protocol StorySessionRepository: AnyObject {
     func fetchSessions(storyWorldId: UUID) async throws -> [StorySession]
     func saveSession(_ session: StorySession) async throws
+    func beginTurn(
+        session: StorySession,
+        userMessage: StoryMessage,
+        turnID: UUID,
+        attempt: Int
+    ) async throws -> StorySession
+    func commitTurn(
+        session: StorySession,
+        scene: StoryScene,
+        turnID: UUID,
+        assistantMessageIDs: [UUID]
+    ) async throws -> StorySession
+    func finishTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int,
+        status: StoryTurnStatus,
+        failureCode: String?
+    ) async throws
+    func recoverInterruptedTurns(storyWorldId: UUID) async throws
     func deleteSession(id: UUID) async throws
 }
 
@@ -220,9 +240,17 @@ final class LocalJSONCastRepository: CastRepository {
 }
 
 final class LocalJSONStorySceneRepository: StorySceneRepository {
-    private let store = LocalJSONStore<StoryScene>(fileName: "story_scenes.json")
+    private let store: LocalJSONStore<StoryScene>
+    private let storageURL: URL
+
+    init(storageURL: URL = KizunaDataMigration.characterLibraryURL) {
+        self.storageURL = storageURL
+        self.store = LocalJSONStore<StoryScene>(fileName: "story_scenes.json", baseURL: storageURL)
+    }
+
     func fetchScenes(storyWorldId: UUID) async throws -> [StoryScene] {
-        try await store.loadRecoveringCorruptRecords()
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+        return try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.createdAt < $1.createdAt }
     }
@@ -270,8 +298,16 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
 }
 
 final class LocalJSONStorySessionRepository: StorySessionRepository {
-    private let store = LocalJSONStore<StorySession>(fileName: "story_sessions.json")
+    private let store: LocalJSONStore<StorySession>
+    private let storageURL: URL
+
+    init(storageURL: URL = KizunaDataMigration.characterLibraryURL) {
+        self.storageURL = storageURL
+        self.store = LocalJSONStore<StorySession>(fileName: "story_sessions.json", baseURL: storageURL)
+    }
+
     func fetchSessions(storyWorldId: UUID) async throws -> [StorySession] {
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
         let sessions = try await store.loadRecoveringCorruptRecords()
             .filter { $0.storyWorldId == storyWorldId }
             .sorted { $0.updatedAt > $1.updatedAt }
@@ -308,18 +344,336 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         return repairedSessions
     }
     func saveSession(_ session: StorySession) async throws {
-        var s = StorySessionMessageRepair.repaired(session)
-        s.updatedAt = Date()
-        try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+        try LocalJSONStoreTransaction.withSharedLock {
+            var sessions = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+            if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+                let current = sessions[index]
+                guard current.effectivePersistenceRevision == session.effectivePersistenceRevision else {
+                    throw StoryTurnPersistenceError.revisionConflict(
+                        expected: session.effectivePersistenceRevision,
+                        actual: current.effectivePersistenceRevision
+                    )
+                }
+                var next = StorySessionMessageRepair.repaired(session)
+                // The checkpoint is owned by the persistence boundary, not by
+                // an auxiliary caller's possibly older snapshot. Preserve the
+                // current turn state so narration/rest saves cannot erase a
+                // pending or committed checkpoint.
+                next.latestTurnCheckpoint = current.latestTurnCheckpoint
+                next.persistenceRevision = current.effectivePersistenceRevision + 1
+                next.updatedAt = Date()
+                sessions[index] = next
+            } else {
+                var next = StorySessionMessageRepair.repaired(session)
+                next.persistenceRevision = max(1, next.effectivePersistenceRevision)
+                next.updatedAt = Date()
+                sessions.append(next)
+            }
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
+        }
     }
 
-    /// 重複Worldの移行専用。セッションの所属Worldだけを変更し、
-    /// 会話のcreatedAt/updatedAtを移行時刻で上書きしない。
-    /// 通常の編集経路（saveSession）はupdatedAtを更新するため、移行では使わない。
+    func beginTurn(
+        session: StorySession,
+        userMessage: StoryMessage,
+        turnID: UUID,
+        attempt: Int
+    ) async throws -> StorySession {
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+        return try LocalJSONStoreTransaction.withSharedLock {
+            var sessions = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+            guard let index = sessions.firstIndex(where: { $0.id == session.id }) else {
+                throw StoryTurnPersistenceError.sessionNotFound
+            }
+            let current = sessions[index]
+            let actualRevision = current.effectivePersistenceRevision
+
+            if let checkpoint = current.latestTurnCheckpoint {
+                if checkpoint.status == .pending && checkpoint.turnID != turnID {
+                    throw StoryTurnPersistenceError.turnInProgress
+                }
+                if checkpoint.turnID == turnID {
+                    switch checkpoint.status {
+                    case .committed:
+                        // 同じターンの再適用は、現在の保存済み結果を返す。
+                        return current
+                    case .pending:
+                        // 同じ生成処理の再入場はそのまま返す。失敗後の
+                        // 再試行でattemptが進んだ場合だけcheckpointを更新し、
+                        // 古いcancel/timeout cleanupが新しい試行を終了しないようにする。
+                        guard attempt > checkpoint.attempt else { return current }
+                    case .failed, .cancelled, .interrupted:
+                        // 失敗・キャンセル後の再試行も、古い呼び出し元
+                        // Snapshotのrevisionではなくcheckpointを正本にする。
+                        guard attempt > checkpoint.attempt else { return current }
+                    }
+
+                    var retried = current
+                    let now = Date()
+                    retried.latestTurnCheckpoint = StoryTurnReducer.begin(
+                        turnID: turnID,
+                        userMessageID: checkpoint.userMessageID,
+                        attempt: attempt,
+                        ownerID: StoryTurnOwner.currentID,
+                        baseRevision: actualRevision,
+                        startedAt: checkpoint.startedAt,
+                        updatedAt: now
+                    )
+                    retried.persistenceRevision = actualRevision + 1
+                    retried.updatedAt = now
+                    sessions[index] = retried
+                    try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
+                    return retried
+                }
+            }
+
+            let expectedRevision = session.effectivePersistenceRevision
+            guard expectedRevision == actualRevision else {
+                throw StoryTurnPersistenceError.revisionConflict(
+                    expected: expectedRevision,
+                    actual: actualRevision
+                )
+            }
+
+            var next = current
+            if next.storyState == nil {
+                // runPipelineが現在Sceneから作った初期StoryStateだけは、
+                // 同じrevisionの呼び出し元スナップショットから引き継ぐ。
+                next.storyState = session.storyState
+            }
+            var normalizedMessage = userMessage
+            normalizedMessage.turnID = turnID
+            if let messageIndex = next.messages.firstIndex(where: { $0.id == userMessage.id }) {
+                // 旧データから再試行する場合も、既存の本文を保持したまま
+                // 新しいターン境界だけを付与する。
+                next.messages[messageIndex].turnID = turnID
+            } else {
+                next.messages.append(normalizedMessage)
+            }
+            let now = Date()
+            next.latestTurnCheckpoint = StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: userMessage.id,
+                attempt: attempt,
+                baseRevision: actualRevision,
+                startedAt: current.latestTurnCheckpoint?.turnID == turnID
+                    ? current.latestTurnCheckpoint?.startedAt ?? now
+                    : now,
+                updatedAt: now
+            )
+            next.persistenceRevision = actualRevision + 1
+            next.updatedAt = now
+            sessions[index] = next
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
+            return next
+        }
+    }
+
+    func commitTurn(
+        session: StorySession,
+        scene: StoryScene,
+        turnID: UUID,
+        assistantMessageIDs: [UUID]
+    ) async throws -> StorySession {
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+        return try LocalJSONStoreTransaction.withSharedLock {
+            var sessions = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+            var scenes = try LocalJSONStoreTransaction.load(
+                StoryScene.self,
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            )
+            guard let sessionIndex = sessions.firstIndex(where: { $0.id == session.id }) else {
+                throw StoryTurnPersistenceError.sessionNotFound
+            }
+            guard let sceneIndex = scenes.firstIndex(where: { $0.id == scene.id }) else {
+                throw StoryTurnPersistenceError.worldMismatch
+            }
+            let currentScene = scenes[sceneIndex]
+            guard currentScene.storyWorldId == session.storyWorldId,
+                  scene.storyWorldId == session.storyWorldId else {
+                throw StoryTurnPersistenceError.worldMismatch
+            }
+            guard session.currentSceneId == nil || session.currentSceneId == scene.id,
+                  sessions[sessionIndex].currentSceneId == nil || sessions[sessionIndex].currentSceneId == scene.id else {
+                throw StoryTurnPersistenceError.sceneConflict
+            }
+
+            let current = sessions[sessionIndex]
+            guard let checkpoint = current.latestTurnCheckpoint,
+                  checkpoint.turnID == turnID else {
+                throw StoryTurnPersistenceError.turnNotPending
+            }
+            if checkpoint.status == .committed {
+                return current
+            }
+            guard checkpoint.status == .pending else {
+                throw StoryTurnPersistenceError.turnNotPending
+            }
+            let expectedRevision = session.effectivePersistenceRevision
+            let actualRevision = current.effectivePersistenceRevision
+            guard expectedRevision == actualRevision else {
+                throw StoryTurnPersistenceError.revisionConflict(
+                    expected: expectedRevision,
+                    actual: actualRevision
+                )
+            }
+
+            var committed = StorySessionMessageRepair.repaired(session)
+            let now = Date()
+            var seenAssistantIDs = Set<UUID>()
+            let assistantIDs = assistantMessageIDs.filter { seenAssistantIDs.insert($0).inserted }
+            committed.messages = committed.messages.map { message in
+                guard assistantIDs.contains(message.id) || message.id == checkpoint.userMessageID else {
+                    return message
+                }
+                var message = message
+                message.turnID = turnID
+                return message
+            }
+            let retainedAssistantIDs = committed.messages
+                .filter { assistantIDs.contains($0.id) }
+                .map(\.id)
+            committed.latestTurnCheckpoint = StoryTurnReducer.commit(
+                pending: checkpoint,
+                assistantMessageIDs: retainedAssistantIDs,
+                updatedAt: now
+            )
+            committed.currentSceneId = sessions[sessionIndex].currentSceneId ?? scene.id
+            committed.persistenceRevision = actualRevision + 1
+            committed.updatedAt = now
+
+            // Scene全体を古い呼び出し側スナップショットで置き換えない。
+            // このターンが生成したsummary/activeキャラだけを、生成開始時点
+            // から外部編集されていない場合に反映し、imageKey等の最新編集は残す。
+            var committedScene = currentScene
+            if currentScene.updatedAt == scene.updatedAt {
+                committedScene.summary = scene.summary
+                committedScene.activeCharacterIds = Array(
+                    scene.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
+                )
+                committedScene.updatedAt = now
+            }
+
+            // ジャーナルを先に置いてから2つのスナップショットを更新する。
+            // 途中終了時は次回のfetchで両方を再適用する。
+            try StoryTurnJournal.prepareUnlocked(
+                StoryTurnJournalEntry(turnID: turnID, session: committed, scene: committedScene),
+                baseURL: storageURL
+            )
+            sessions[sessionIndex] = committed
+            scenes[sceneIndex] = committedScene
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
+            try LocalJSONStoreTransaction.save(scenes, fileName: "story_scenes.json", baseURL: storageURL)
+            do {
+                try StoryTurnJournal.removeUnlocked(turnID: turnID, baseURL: storageURL)
+            } catch {
+                // Session/Sceneが確定した後のjournal削除失敗は、ターン自体の
+                // 失敗ではない。次回recoveryで同じ確定snapshotを再適用する。
+                NSLog(
+                    "[StoryTurnJournal] committed turn cleanup deferred turn=%@ error=%@",
+                    turnID.uuidString,
+                    error.localizedDescription
+                )
+            }
+            return committed
+        }
+    }
+
+    func finishTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int,
+        status: StoryTurnStatus,
+        failureCode: String?
+    ) async throws {
+        guard status != .pending && status != .committed else { return }
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+        try LocalJSONStoreTransaction.withSharedLock {
+            var sessions = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+            guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
+                throw StoryTurnPersistenceError.sessionNotFound
+            }
+            var current = sessions[index]
+            guard var checkpoint = current.latestTurnCheckpoint,
+                  checkpoint.turnID == turnID,
+                  checkpoint.attempt == attempt else {
+                return
+            }
+            if checkpoint.status == .committed || checkpoint.status == status {
+                return
+            }
+            guard checkpoint.status == .pending else { return }
+            checkpoint = StoryTurnReducer.finish(
+                pending: checkpoint,
+                status: status,
+                failureCode: failureCode,
+                updatedAt: Date()
+            )
+            current.latestTurnCheckpoint = checkpoint
+            current.persistenceRevision = current.effectivePersistenceRevision + 1
+            current.updatedAt = checkpoint.updatedAt
+            sessions[index] = current
+            try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
+        }
+    }
+
+    func recoverInterruptedTurns(storyWorldId: UUID) async throws {
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+        try LocalJSONStoreTransaction.withSharedLock {
+            var sessions = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+            var changed = false
+            for index in sessions.indices where sessions[index].storyWorldId == storyWorldId {
+                guard var checkpoint = sessions[index].latestTurnCheckpoint,
+                      checkpoint.status == .pending,
+                      checkpoint.ownerID != StoryTurnOwner.currentID else { continue }
+                checkpoint = StoryTurnReducer.finish(
+                    pending: checkpoint,
+                    status: .interrupted,
+                    failureCode: "app_relaunch",
+                    updatedAt: Date()
+                )
+                sessions[index].latestTurnCheckpoint = checkpoint
+                sessions[index].persistenceRevision = sessions[index].effectivePersistenceRevision + 1
+                sessions[index].updatedAt = checkpoint.updatedAt
+                changed = true
+            }
+            if changed {
+                try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
+            }
+        }
+    }
+
+    /// 重複Worldの移行専用。セッションの所属Worldを変更し、
+    /// 進行中turnの古いsnapshotが移行を巻き戻さないようrevisionを進める。
+    /// 会話本文のcreatedAtは変更せず、updatedAtだけを移行時刻へ更新する。
     func moveSession(id: UUID, toStoryWorldId: UUID) async throws {
         try await store.mutate { sessions in
             guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
             sessions[index].storyWorldId = toStoryWorldId
+            sessions[index].persistenceRevision = sessions[index].effectivePersistenceRevision + 1
+            sessions[index].updatedAt = Date()
         }
     }
 

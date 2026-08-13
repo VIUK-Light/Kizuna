@@ -131,7 +131,6 @@ final class StorySessionService: ObservableObject {
     private let memoryRepo: MemoryRepository = LocalJSONMemoryRepository()
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
-    private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
     private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
     // Lorebookは必要な項目だけを選択してプロンプトへ渡す。
     private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
@@ -146,12 +145,24 @@ final class StorySessionService: ObservableObject {
     private let promptBuilder = StoryPromptBuilder()
 
     private var generationTask: Task<Void, Never>?
+    /// cancel()/watchdogが開始したcheckpoint終了処理。次の送信は、
+    /// pendingが確実にfailed/cancelledへ遷移してからbeginTurnする。
+    private var pendingTurnFinishTask: Task<Void, Never>?
+    /// A newer cancellation may enqueue another cleanup while an older one is
+    /// still running. The token prevents the older waiter from clearing the
+    /// newer task reference.
+    private var pendingTurnFinishToken: UUID?
     private var lastVisibleText: String = ""
     private var activeGenerationID: UUID?
     /// 共有LiteRTランタイムを停止してよいのは、現在の生成がioriの時だけ。
     /// NAGI（Gemma API）のキャンセルで共有ランタイムまで止めると、次の
     /// iori会話が巻き込まれるため、生成世代とモデルを一緒に追跡する。
     private var activeGenerationModel: StoryGenerationModel?
+    private var activeTurnID: UUID?
+    private var activeSessionID: UUID?
+    private var activeTurnAttempt: Int?
+    private var activeUserMessageID: UUID?
+    private var activeUserText = ""
     /// Timeout notice persistence has its own validity token. A watchdog may
     /// suspend at a repository await; cancellation or a newer turn must then
     /// invalidate the pending save before it can write a stale snapshot.
@@ -195,8 +206,25 @@ final class StorySessionService: ObservableObject {
         let generationID = UUID()
         activeGenerationID = generationID
         activeGenerationModel = generationModel
+        let turnID: UUID
+        let attempt: Int
+        if let existingUserMessageID,
+           let checkpoint = session.latestTurnCheckpoint,
+           checkpoint.userMessageID == existingUserMessageID,
+           checkpoint.status != .committed {
+            turnID = checkpoint.turnID
+            attempt = checkpoint.attempt + 1
+        } else {
+            turnID = UUID()
+            attempt = 1
+        }
+        activeTurnID = turnID
+        activeSessionID = session.id
+        activeTurnAttempt = attempt
         timeoutSaveToken = nil
         let userMessageID = existingUserMessageID ?? UUID()
+        activeUserMessageID = userMessageID
+        activeUserText = trimmed
 
         generationTask = Task { [weak self] in
             await self?.runPipeline(
@@ -207,7 +235,8 @@ final class StorySessionService: ObservableObject {
                 generationModel: generationModel,
                 generationID: generationID,
                 userMessageID: userMessageID,
-                existingUserMessageID: existingUserMessageID
+                turnID: turnID,
+                attempt: attempt
             )
         }
         return userMessageID
@@ -391,14 +420,62 @@ final class StorySessionService: ObservableObject {
         // the backend. Repository calls may already be suspended at await and
         // cannot be assumed to observe Task cancellation immediately.
         timeoutSaveToken = nil
+        let sessionID = activeSessionID
+        let turnID = activeTurnID
+        let attempt = activeTurnAttempt
+        let userMessageID = activeUserMessageID
+        let userText = activeUserText
         generationTask?.cancel()
         generationTask = nil
+        if let sessionID, let turnID, let attempt {
+            let previousCleanup = pendingTurnFinishTask
+            let cleanupToken = UUID()
+            pendingTurnFinishToken = cleanupToken
+            pendingTurnFinishTask = Task { [weak self, sessionRepo] in
+                if let previousCleanup {
+                    await previousCleanup.value
+                }
+                do {
+                    try await sessionRepo.finishTurn(
+                        sessionID: sessionID,
+                        turnID: turnID,
+                        attempt: attempt,
+                        status: .cancelled,
+                        failureCode: "user_cancelled"
+                    )
+                } catch {
+                    NSLog("[StorySession] cancel cleanup failed: %@", error.localizedDescription)
+                    guard let userMessageID, let self else { return }
+                    await MainActor.run {
+                        // cancel() clears the active IDs immediately. Do not
+                        // surface a stale cleanup failure over a newer send.
+                        guard self.activeGenerationID == nil,
+                              self.pendingTurnFinishToken == cleanupToken else { return }
+                        self.latestRuntimeNotice = StoryRuntimeNotice(
+                            text: self.localizedNotice(
+                                "キャンセル状態を保存できませんでした。保存先を確認してから同じ発言を再試行してください。",
+                                "The cancelled state could not be saved. Check storage and retry the same message."
+                            ),
+                            userMessageID: userMessageID,
+                            userText: userText,
+                            backendName: "cancel cleanup failed",
+                            backend: .persistence
+                        )
+                    }
+                }
+            }
+        }
         if activeGenerationModel == .e4b {
             LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: activeGenerationID)
         }
         activeGenerationID = nil
         activeGenerationModel = nil
         generationWatchdogDeadline = nil
+        activeTurnID = nil
+        activeSessionID = nil
+        activeTurnAttempt = nil
+        activeUserMessageID = nil
+        activeUserText = ""
         phase = .idle
         streamingSpeakerName = nil
         streamingStatusText = ""
@@ -414,8 +491,10 @@ final class StorySessionService: ObservableObject {
         generationModel: StoryGenerationModel,
         generationID: UUID,
         userMessageID: UUID,
-        existingUserMessageID: UUID?
+        turnID: UUID,
+        attempt: Int
     ) async {
+        await waitForPendingTurnFinish()
         guard isGenerationActive(generationID) else { return }
         var session = session
         var scene = scene
@@ -434,46 +513,60 @@ final class StorySessionService: ObservableObject {
             )
         }
 
-        // user メッセージ append + 空 narration ストリーム先を確保。
+        // user メッセージとpending checkpointを1回の保存境界で確保する。
         // 再試行では既存の保存済み入力を再利用し、同じIDの発話を重複保存しない。
         streamingStatusText = statusText("会話を保存中", "Saving conversation")
-        if let existingUserMessageID {
-            guard session.messages.contains(where: { message in
-                message.id == existingUserMessageID && message.author.isUser
-            }) else {
-                NSLog("[StorySession] retry target user message not found: %@", existingUserMessageID.uuidString)
-                await finishGenerationWithoutSaving(
-                    generationID: generationID,
-                    notice: localizedNotice(
-                        "再試行対象の発言を復元できませんでした。新しいメッセージを送信してください。",
-                        "The message to retry could not be restored. Send a new message."
-                    ),
-                    backend: generationModel == .e4b ? .local : .gemmaAPI
-                )
-                return
-            }
-        } else {
-            let userMsg = StoryMessage(id: userMessageID, author: .user, text: userText)
-            session.messages.append(userMsg)
-            do {
-                try await sessionRepo.saveSession(session)
-            } catch {
-                await finishGenerationWithoutSaving(
-                    generationID: generationID,
-                    notice: localizedNotice(
-                        "会話を保存できなかったため、応答を開始できませんでした。もう一度送信してください。",
-                        "The conversation could not be saved, so the reply was not started. Send it again."
-                    ),
-                    backend: .persistence,
-                    userMessageID: userMessageID,
-                    userText: userText,
-                    backendName: "session save"
-                )
-                NSLog("[StorySession] user turn save failed: %@", error.localizedDescription)
-                return
-            }
+        let userMsg = StoryMessage(id: userMessageID, author: .user, text: userText, turnID: turnID)
+        do {
+            session = try await sessionRepo.beginTurn(
+                session: session,
+                userMessage: userMsg,
+                turnID: turnID,
+                attempt: attempt
+            )
+        } catch {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "このターンを開始できませんでした。保存状態を確認してからもう一度試してください。",
+                    "This turn could not be started. Check saved data and try again."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "turn begin failed"
+            )
+            NSLog("[StorySession] turn begin failed: %@", error.localizedDescription)
+            return
         }
-        guard isGenerationActive(generationID) else { return }
+        guard session.latestTurnCheckpoint?.status == .pending else {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "このターンはすでに確定または終了しています。履歴を再読み込みしてください。",
+                    "This turn is already committed or finished. Reload the conversation."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "turn already finished"
+            )
+            return
+        }
+        guard isGenerationActive(generationID) else {
+            do {
+                try await sessionRepo.finishTurn(
+                    sessionID: session.id,
+                    turnID: turnID,
+                    attempt: attempt,
+                    status: .cancelled,
+                    failureCode: "cancelled_before_pipeline"
+                )
+            } catch {
+                NSLog("[StorySession] pre-pipeline cancel cleanup failed: %@", error.localizedDescription)
+            }
+            return
+        }
 
         // 1) キャラ index / cast 取得
         streamingStatusText = statusText("登場キャラを確認中", "Checking characters")
@@ -520,14 +613,20 @@ final class StorySessionService: ObservableObject {
         let reconciledCast = reconciledCast(cast, for: world, scene: scene)
         // castの読込後にcancel()されても、古い生成が関連データを
         // 書き換えないよう、永続化の直前に所有権を再確認する。
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         if Set(cast.map(\.characterId)) != Set(reconciledCast.map(\.characterId)) || cast.count != reconciledCast.count {
             do {
                 try await castRepo.replaceCast(reconciledCast, storyWorldId: world.id)
                 // cancel()はrepository await中にも呼ばれ得る。完了後に
                 // 生成世代を再確認し、古いローカルスナップショットを
                 // このTaskの後続処理へ渡さない。
-                guard isGenerationActive(generationID) else { return }
+                guard isGenerationActive(generationID) else {
+                    await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                    return
+                }
                 cast = reconciledCast
             } catch {
                 await finishGenerationWithoutSaving(
@@ -581,7 +680,10 @@ final class StorySessionService: ObservableObject {
         // 3) 入力 safety
         // 相談分類は入力/出力を変更しない。本文生成と並行するUI用の情報だけを作る。
         let safetyConcern = await safetyPipeline.classifyConcern(userText)
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         // 生成完了を待たず、分類できた時点でUIへ通知する。
         // モデルが遅い／利用できない場合でも相談先を表示できるようにする。
         if let safetyConcern {
@@ -594,7 +696,10 @@ final class StorySessionService: ObservableObject {
             )
         }
         let inSafety = await safetyPipeline.evaluateInput(userText, character: representativeCharacter)
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         if inSafety.action == .block {
             let polite = inSafety.rewrittenText ?? localizedNotice(
                 "(ナレーション) その話題はここではそっと脇に置いて、別の場面に進もう。",
@@ -603,11 +708,17 @@ final class StorySessionService: ObservableObject {
             let narration = StoryMessage(
                 author: .narrator,
                 text: polite,
-                generationID: generationID
+                generationID: generationID,
+                turnID: turnID
             )
             session.messages.append(narration)
             do {
-                try await sessionRepo.saveSession(session)
+                session = try await sessionRepo.commitTurn(
+                    session: session,
+                    scene: scene,
+                    turnID: turnID,
+                    assistantMessageIDs: [narration.id]
+                )
             } catch {
                 // 入力自体は先の保存で確定しているが、安全ブロックの案内を
                 // 保存できなかった場合は成功ターンとして扱わない。本文を
@@ -633,6 +744,11 @@ final class StorySessionService: ObservableObject {
                 self.phase = .idle
                 self.activeGenerationID = nil
                 self.activeGenerationModel = nil
+                self.activeTurnID = nil
+                self.activeSessionID = nil
+                self.activeTurnAttempt = nil
+                self.activeUserMessageID = nil
+                self.activeUserText = ""
             }
             return
         }
@@ -670,34 +786,23 @@ final class StorySessionService: ObservableObject {
             characterIndex: charIndex,
             maxActive: activeCharacterLimit
         )
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         var sceneWithSelectedCharacters = scene
         sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
-        // 選択結果の適用前にも確認する。cancel()後の遅延結果を
-        // 次回のシーン選択へ持ち越さない。
-        guard isGenerationActive(generationID) else { return }
-        do {
-            try await sceneRepo.saveScene(sceneWithSelectedCharacters)
-            // 保存処理が中断を即時観測しない実装でも、完了後の古いTaskが
-            // 現在のシーンとして扱われないよう所有権を再確認する。
-            guard isGenerationActive(generationID) else { return }
-        } catch {
-            await finishGenerationWithoutSaving(
-                generationID: generationID,
-                notice: localizedNotice(
-                    "今回の登場キャラクターを保存できなかったため、応答を開始しませんでした。もう一度試してください。",
-                    "The selected story characters could not be saved, so the reply was not started. Try again."
-                ),
-                backend: .persistence,
-                userMessageID: userMessageID,
-                userText: userText,
-                backendName: "scene save failed"
-            )
-            NSLog("[StorySession] active character save failed: %@", error.localizedDescription)
+        // 選択結果はターンのcommitまでメモリ上に保持する。生成失敗時に
+        // activeCharacterIdsだけが先に保存される部分成功を作らない。
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
         }
         scene = sceneWithSelectedCharacters
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
 
         let activeCast = cast.filter { scene.activeCharacterIds.contains($0.characterId) }
         let inactiveCast = cast.filter { !scene.activeCharacterIds.contains($0.characterId) }
@@ -736,7 +841,10 @@ final class StorySessionService: ObservableObject {
         } else {
             selectedMemories = candidates
         }
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         if !selectedMemories.isEmpty {
             try? await memoryRepo.markUsed(ids: selectedMemories.map(\.id))
         }
@@ -755,7 +863,10 @@ final class StorySessionService: ObservableObject {
                 return validCastCharacterIDs.contains(characterID)
                     && contextualCharacterIDs.contains(characterID)
             }
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         let selectedStoryMemories = selectStoryMemories(
             query: effectiveUserText,
             candidates: storyMemoryCandidates,
@@ -768,7 +879,10 @@ final class StorySessionService: ObservableObject {
         // 6) Lorebook: キーワード一致した設定だけを選択する。
         streamingStatusText = statusText("Lorebookを選択中", "Selecting lorebook entries")
         var lorebookEntries = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         // 既存のCharacterLorebookも移行期間は同じ選択器に流し込む。
         for member in cast {
             guard let legacy = try? await characterRepo.fetchLorebook(characterId: member.characterId),
@@ -875,7 +989,10 @@ final class StorySessionService: ObservableObject {
                 userCharacterName: userCharacterName
             )
         }
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
 
         // 8) Story model 生成。31B を明示選択した時だけ Gemma4 API を使う。
         // 端末内モデルは、保存直後の自動 self-check が終わるまで同じターンを待つ。
@@ -1002,7 +1119,10 @@ final class StorySessionService: ObservableObject {
         var retryWhenLocalReady = generated.retryWhenLocalReady
 
         // キャンセルやウォッチドッグ後に、古い生成結果を後段へ保存しない。
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
 
         // 9) 出力 safety
         streamingStatusText = statusText("発話を整形中", "Formatting response")
@@ -1045,7 +1165,9 @@ final class StorySessionService: ObservableObject {
                 let retryRawOutput = (reply?.isEmpty == false ? reply! : streamingResponse)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let retryStateMetadata = parseStateMetadata(from: retryRawOutput)
-                modelStatePatch = retryStateMetadata.patch ?? modelStatePatch
+                // 破棄した1回目の本文のSTATE_UPDATEを、採用候補の本文へ
+                // 持ち越さない。状態差分も本文と同じ生成試行に属する。
+                modelStatePatch = retryStateMetadata.patch
                 rawFinal = sanitizedFinalText(retryStateMetadata.visibleText)
 
                 if !isRuntimeNotice,
@@ -1086,31 +1208,28 @@ final class StorySessionService: ObservableObject {
                 : localStoryGenerationFailureMessage(runtimeError: "記号だけの本文")
         }
         if isRuntimeNotice {
-            guard isGenerationActive(generationID) else { return }
-            let noticeText = textAfterSpeakerDelimiter(rawFinal)
-            await MainActor.run {
-                guard self.activeGenerationID == generationID else { return }
-                self.latestRuntimeNotice = StoryRuntimeNotice(
-                    text: noticeText,
-                    userMessageID: userMessageID,
-                    userText: userText,
-                    backendName: usedBackendName,
-                    backend: generationModel == .e4b ? .local : .gemmaAPI,
-                    retryWhenLocalReady: retryWhenLocalReady
-                )
-                self.latestSafetyConcern = safetyConcern
-                self.streamingResponse = rawFinal
-                self.streamingSpeakerName = "システム"
-                self.streamingStatusText = ""
-                self.savedTurnRevision += 1
-                self.phase = .idle
-                self.activeGenerationID = nil
-                self.activeGenerationModel = nil
+            guard isGenerationActive(generationID) else {
+                await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                return
             }
+            let noticeText = textAfterSpeakerDelimiter(rawFinal)
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: noticeText,
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: usedBackendName,
+                safetyConcern: safetyConcern,
+                retryWhenLocalReady: retryWhenLocalReady
+            )
             return
         }
         let outSafety = await safetyPipeline.evaluateOutput(rawFinal, character: representativeCharacter)
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         switch outSafety.action {
         case .block:
             // 安全ブロックを物語内の沈黙や台詞に偽装しない。モデル本文は保存せず、
@@ -1119,26 +1238,20 @@ final class StorySessionService: ObservableObject {
                 "安全上の理由でこの応答は保存しませんでした。別の表現で続けてください。",
                 "This response was not saved for safety reasons. Try a different way to continue."
             )
-            await MainActor.run {
-                guard self.activeGenerationID == generationID else { return }
-                self.latestRuntimeNotice = StoryRuntimeNotice(
-                    text: notice,
-                    userMessageID: userMessageID,
-                    userText: userText,
-                    backendName: usedBackendName + "・安全ブロック",
-                    backend: generationModel == .e4b ? .local : .gemmaAPI
-                )
-                self.latestSafetyConcern = safetyConcern
-                self.streamingResponse = notice
-                self.streamingSpeakerName = "システム"
-                self.streamingStatusText = ""
-                self.savedTurnRevision += 1
-                self.phase = .idle
-                self.activeGenerationID = nil
-                self.activeGenerationModel = nil
-            }
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: notice,
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: usedBackendName + "・安全ブロック",
+                safetyConcern: safetyConcern
+            )
             return
         case .soften, .requireEdit:
+            // Safety rewrite後の本文と、書き換え前本文から抽出したSTATE_UPDATEは
+            // 同じ意味を保証できない。元のPatchを破棄し、見えている本文だけを保存する。
+            modelStatePatch = nil
             if let rewritten = outSafety.rewrittenText, !rewritten.isEmpty { rawFinal = rewritten }
         case .warn, .allow:
             break
@@ -1149,23 +1262,14 @@ final class StorySessionService: ObservableObject {
                 "整形後の本文が空になったため保存していません。もう一度試すか、NAGIで続けられます。",
                 "The formatted response was empty, so it was not saved. Try again or continue with NAGI."
             )
-            await MainActor.run {
-                guard self.activeGenerationID == generationID else { return }
-                self.latestRuntimeNotice = StoryRuntimeNotice(
-                    text: notice,
-                    userMessageID: userMessageID,
-                    userText: userText,
-                    backendName: usedBackendName + "・無効出力",
-                    backend: generationModel == .e4b ? .local : .gemmaAPI
-                )
-                self.streamingResponse = notice
-                self.streamingSpeakerName = "システム"
-                self.streamingStatusText = ""
-                self.savedTurnRevision += 1
-                self.phase = .idle
-                self.activeGenerationID = nil
-                self.activeGenerationModel = nil
-            }
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: notice,
+                backend: generationModel == .e4b ? .local : .gemmaAPI,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: usedBackendName + "・無効出力"
+            )
             return
         }
 
@@ -1197,10 +1301,15 @@ final class StorySessionService: ObservableObject {
             )
             return
         }
-        for m in newMessages {
-            session.messages.append(m)
+        let turnMessages = newMessages.map { message -> StoryMessage in
+            var message = message
+            message.turnID = turnID
+            return message
         }
-        let savedMessageIDs = newMessages.map(\.id.uuidString).joined(separator: ",")
+        for message in turnMessages {
+            session.messages.append(message)
+        }
+        let savedMessageIDs = turnMessages.map(\.id.uuidString).joined(separator: ",")
         NSLog(
             "[StorySession] saved generated messages count=%ld ids=%@ backend=%@",
             newMessages.count,
@@ -1209,24 +1318,10 @@ final class StorySessionService: ObservableObject {
         )
         session.lastSelectedModelName = generationModel.displayName
         session.lastUsedBackendName = usedBackendName
-        do {
-            try await sessionRepo.saveSession(session)
-        } catch {
-            NSLog("[StorySession] generated turn save failed: %@", error.localizedDescription)
-            await finishGenerationWithoutSaving(
-                generationID: generationID,
-                notice: localizedNotice(
-                    "応答を保存できなかったため、会話には追加していません。もう一度試してください。",
-                    "The reply could not be saved, so it was not added to the conversation. Try again."
-                ),
-                backend: .persistence,
-                userMessageID: userMessageID,
-                userText: userText,
-                backendName: usedBackendName + "・save failed"
-            )
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
         }
-        guard isGenerationActive(generationID) else { return }
 
         // 11) Scene summary 更新 (270M)
         streamingStatusText = statusText("場面要約を更新中", "Updating scene summary")
@@ -1235,25 +1330,12 @@ final class StorySessionService: ObservableObject {
             recentMessages: Array(storyContentMessages(from: session.messages).suffix(18)),
             characterIndex: charIndex
         )
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
         if newSummary != scene.summary {
             scene.summary = newSummary
-            do {
-                try await sceneRepo.saveScene(scene)
-            } catch {
-                latestRuntimeNotice = StoryRuntimeNotice(
-                    text: localizedNotice(
-                        "場面の要約を保存できませんでした。本文は保存済みですが、再読み込み前にもう一度試してください。",
-                        "The scene summary could not be saved. The reply was saved, but try again before reloading."
-                    ),
-                    userMessageID: userMessageID,
-                    userText: userText,
-                    backendName: "scene summary save failed",
-                    backend: .persistence
-                )
-                NSLog("[StorySession] scene summary save failed: %@", error.localizedDescription)
-            }
-            guard isGenerationActive(generationID) else { return }
         }
         // 12) 進行状態は本文の完了を遅らせない。
         // 以前はここで同じローカルモデルへ進行JSONを追加生成していたため、
@@ -1324,21 +1406,31 @@ final class StorySessionService: ObservableObject {
             )
         }
         do {
-            try await sessionRepo.saveSession(session)
+            session = try await sessionRepo.commitTurn(
+                session: session,
+                scene: scene,
+                turnID: turnID,
+                assistantMessageIDs: turnMessages.map(\.id)
+            )
         } catch {
-            latestRuntimeNotice = StoryRuntimeNotice(
-                text: localizedNotice(
-                    "進行状態を保存できませんでした。本文は保存済みですが、状態表示は再試行が必要です。",
-                    "The story progress could not be saved. The reply was saved, but progress needs a retry."
+            NSLog("[StorySession] turn commit failed: %@", error.localizedDescription)
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "今回の応答を一貫して保存できませんでした。AI本文は再生成せず、保存状態を確認してから同じ発言を再試行してください。",
+                    "The turn could not be committed consistently. The AI reply was not regenerated; check storage and retry the same message."
                 ),
+                backend: .persistence,
                 userMessageID: userMessageID,
                 userText: userText,
-                backendName: "progress save failed",
-                backend: .persistence
+                backendName: "turn commit failed"
             )
-            NSLog("[StorySession] progress save failed: %@", error.localizedDescription)
+            return
         }
-        guard isGenerationActive(generationID) else { return }
+        guard isGenerationActive(generationID) else {
+            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+            return
+        }
 
         // 13) メモリー抽出。ユーザー事実は全体、出来事は物語内へ保存する。
         // ここを phase=.idle / activeGenerationID=nil より後に置くと、下の
@@ -1349,7 +1441,10 @@ final class StorySessionService: ObservableObject {
         }.joined(separator: "\n")
         var extractedStoryMemoryTexts = Set<String>()
         for member in activeCast {
-            guard isGenerationActive(generationID) else { return }
+            guard isGenerationActive(generationID) else {
+                await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                return
+            }
             guard let profile = charIndex[member.characterId] else { continue }
             let mems = await memorySummarizer.extract(
                 userText: userText,
@@ -1357,7 +1452,10 @@ final class StorySessionService: ObservableObject {
                 character: profile
             )
             for memory in mems {
-                guard isGenerationActive(generationID) else { return }
+                guard isGenerationActive(generationID) else {
+                    await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                    return
+                }
                 if isGlobalMemoryCategory(memory.category) {
                     // ユーザーのプロフィール・好みは、別の物語でも使える全体メモリー。
                     try? await memoryRepo.saveMemory(memory)
@@ -1383,7 +1481,10 @@ final class StorySessionService: ObservableObject {
             .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             .nonEmpty,
            extractedStoryMemoryTexts.insert(progress).inserted {
-            guard isGenerationActive(generationID) else { return }
+            guard isGenerationActive(generationID) else {
+                await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
+                return
+            }
             try? await storyMemoryRepo.saveMemory(
                 StoryMemory(
                     storyWorldId: world.id,
@@ -1405,6 +1506,11 @@ final class StorySessionService: ObservableObject {
             self.phase = .idle
             self.activeGenerationID = nil
             self.activeGenerationModel = nil
+            self.activeTurnID = nil
+            self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
         }
     }
 
@@ -1428,21 +1534,52 @@ final class StorySessionService: ObservableObject {
         backend: StoryGenerationBackend,
         userMessageID: UUID? = nil,
         userText: String? = nil,
-        backendName: String = ""
+        backendName: String = "",
+        safetyConcern: SafetyConcern? = nil,
+        retryWhenLocalReady: Bool = false
     ) async {
         guard isGenerationActive(generationID) else { return }
+        let sessionID = activeSessionID
+        let turnID = activeTurnID
+        let attempt = activeTurnAttempt
+        var finishFailed = false
+        if let sessionID, let turnID, let attempt {
+            do {
+                try await sessionRepo.finishTurn(
+                    sessionID: sessionID,
+                    turnID: turnID,
+                    attempt: attempt,
+                    status: .failed,
+                    failureCode: backendName.isEmpty ? "generation_failed" : backendName
+                )
+            } catch {
+                finishFailed = true
+                NSLog("[StorySession] generation failure cleanup failed: %@", error.localizedDescription)
+            }
+        }
+        let displayedNotice = finishFailed
+            ? localizedNotice(
+                "応答は保存しませんでしたが、ターンの終了状態を保存できませんでした。保存先を確認してから同じ発言を再試行してください。",
+                "The response was not saved, but the turn could not be finalized. Check storage and retry the same message."
+            )
+            : notice
+        let displayedBackendName = finishFailed
+            ? "turn finalization failed"
+            : backendName
         await MainActor.run {
             guard self.activeGenerationID == generationID else { return }
             if let userMessageID, let userText {
                 self.latestRuntimeNotice = StoryRuntimeNotice(
-                    text: notice,
+                    text: displayedNotice,
                     userMessageID: userMessageID,
                     userText: userText,
-                    backendName: backendName,
-                    backend: backend
+                    backendName: displayedBackendName,
+                    backend: backend,
+                    retryWhenLocalReady: retryWhenLocalReady
                 )
             }
-            self.streamingResponse = notice
+            self.latestSafetyConcern = safetyConcern
+            self.streamingResponse = displayedNotice
             self.streamingSpeakerName = "システム"
             self.streamingStatusText = ""
             self.savedTurnRevision += 1
@@ -1450,6 +1587,47 @@ final class StorySessionService: ObservableObject {
             self.phase = .idle
             self.activeGenerationID = nil
             self.activeGenerationModel = nil
+            self.activeTurnID = nil
+            self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
+        }
+    }
+
+    /// `Task` cancellation makes the normal notice path ineligible because
+    /// `isGenerationActive` also checks `Task.isCancelled`. Finalize the
+    /// persisted checkpoint directly so cancellation cannot leave a pending
+    /// turn behind for the next launch.
+    private func finishCancelledTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int
+    ) async {
+        await waitForPendingTurnFinish()
+        do {
+            try await sessionRepo.finishTurn(
+                sessionID: sessionID,
+                turnID: turnID,
+                attempt: attempt,
+                status: .cancelled,
+                failureCode: "generation_cancelled"
+            )
+        } catch {
+            NSLog("[StorySession] cancellation cleanup failed: %@", error.localizedDescription)
+        }
+    }
+
+    /// Wait through a cleanup chain. If another cancel/timeout queued a newer
+    /// task while the awaited task was running, keep waiting instead of
+    /// starting a new turn or clearing the newer task reference.
+    private func waitForPendingTurnFinish() async {
+        while let pendingTask = pendingTurnFinishTask {
+            let token = pendingTurnFinishToken
+            await pendingTask.value
+            guard pendingTurnFinishToken == token else { continue }
+            pendingTurnFinishTask = nil
+            pendingTurnFinishToken = nil
         }
     }
 
@@ -1614,9 +1792,38 @@ final class StorySessionService: ObservableObject {
             // append a story turn after the timeout card was saved.
             self.generationTask?.cancel()
             self.generationTask = nil
+            let timedOutSessionID = self.activeSessionID
+            let timedOutTurnID = self.activeTurnID
+            let timedOutAttempt = self.activeTurnAttempt
+            if let timedOutSessionID, let timedOutTurnID, let timedOutAttempt {
+                let previousCleanup = self.pendingTurnFinishTask
+                let cleanupToken = UUID()
+                self.pendingTurnFinishToken = cleanupToken
+                self.pendingTurnFinishTask = Task { [sessionRepo = self.sessionRepo] in
+                    if let previousCleanup {
+                        await previousCleanup.value
+                    }
+                    do {
+                        try await sessionRepo.finishTurn(
+                            sessionID: timedOutSessionID,
+                            turnID: timedOutTurnID,
+                            attempt: timedOutAttempt,
+                            status: .failed,
+                            failureCode: "generation_timeout"
+                        )
+                    } catch {
+                        NSLog("[StorySession] timeout cleanup failed: %@", error.localizedDescription)
+                    }
+                }
+            }
             self.activeGenerationID = nil
             self.activeGenerationModel = nil
             self.generationWatchdogDeadline = nil
+            self.activeTurnID = nil
+            self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
             if generationModel == .e4b {
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
             }
@@ -1662,6 +1869,11 @@ final class StorySessionService: ObservableObject {
             self.phase = .idle
             self.activeGenerationID = nil
             self.activeGenerationModel = nil
+            self.activeTurnID = nil
+            self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
         }
     }
 

@@ -14,7 +14,7 @@ enum LocalJSONStoreError: Error {
     case decode(underlying: Error)
 }
 
-private final class LocalJSONStoreFileLock: @unchecked Sendable {
+final class LocalJSONStoreFileLock: @unchecked Sendable {
     nonisolated static let shared = LocalJSONStoreFileLock()
     private let lock = NSLock()
 
@@ -22,6 +22,76 @@ private final class LocalJSONStoreFileLock: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return try body()
+    }
+}
+
+/// 複数のJSONファイルへまたがる短いコミットで、通常のLocalJSONStoreと
+/// 同じプロセス内ロックを共有するための低レベルヘルパー。
+///
+/// ここでは読み込み・エンコード・atomic writeだけを行い、LLM生成や
+/// ネットワーク待ちをロック内で実行しない。Storyのターンジャーナルが
+/// session/sceneを一緒に確定するために使う。
+enum LocalJSONStoreTransaction {
+    static func withSharedLock<Result>(_ body: () throws -> Result) rethrows -> Result {
+        try LocalJSONStoreFileLock.shared.withLock(body)
+    }
+
+    static func load<T: Codable>(
+        _ type: T.Type,
+        fileName: String,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws -> [T] {
+        let url = baseURL.appendingPathComponent(fileName)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode([T].self, from: data)
+        } catch let decodingError as DecodingError {
+            throw LocalJSONStoreError.decode(underlying: decodingError)
+        } catch {
+            throw LocalJSONStoreError.ioFailure(underlying: error)
+        }
+    }
+
+    static func save<T: Codable>(
+        _ items: [T],
+        fileName: String,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws {
+        let base = baseURL
+        let url = base.appendingPathComponent(fileName)
+        do {
+            try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(items)
+            try data.write(to: url, options: [.atomic])
+        } catch let encodingError as EncodingError {
+            throw LocalJSONStoreError.encode(underlying: encodingError)
+        } catch {
+            throw LocalJSONStoreError.ioFailure(underlying: error)
+        }
+    }
+
+    /// 壊れた補助ファイルを上書きせずに同じ保存先へ退避する。
+    /// 呼び出し側は退避後に新しい空ファイルを作るか、失敗を利用者へ返す。
+    static func backup(
+        fileName: String,
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) throws -> URL {
+        let base = baseURL
+        let sourceURL = base.appendingPathComponent(fileName)
+        let backupName = "\(sourceURL.deletingPathExtension().lastPathComponent).corrupt-\(UUID().uuidString).json"
+        let backupURL = base.appendingPathComponent(backupName)
+        do {
+            try FileManager.default.copyItem(at: sourceURL, to: backupURL)
+            return backupURL
+        } catch {
+            throw LocalJSONStoreError.ioFailure(underlying: error)
+        }
     }
 }
 
@@ -35,10 +105,10 @@ actor LocalJSONStore<T: Codable> {
     private let decoder: JSONDecoder
     private let fm = FileManager.default
 
-    init(fileName: String) {
+    init(fileName: String, baseURL: URL = KizunaDataMigration.characterLibraryURL) {
         self.fileName = fileName
 
-        let base = KizunaDataMigration.characterLibraryURL
+        let base = baseURL
         self.fileURL = base.appendingPathComponent(fileName)
 
         let enc = JSONEncoder()
