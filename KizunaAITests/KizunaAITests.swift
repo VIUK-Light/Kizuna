@@ -143,21 +143,26 @@ final class KizunaAITests: XCTestCase {
 
     func testLocalJSONFileIOCancellationWaitsForOperationToFinish() async throws {
         let probe = FileIOTestProbe()
+        let bodyStarted = DispatchSemaphore(value: 0)
+        let bodyMayFinish = DispatchSemaphore(value: 0)
         let task = Task { () -> Bool in
             try await LocalJSONStoreTransaction.performOnFileIO {
                 probe.markStarted()
-                Thread.sleep(forTimeInterval: 0.05)
+                bodyStarted.signal()
+                bodyMayFinish.wait()
                 probe.markCompleted()
                 return true
             }
         }
 
-        for _ in 0..<1_000 where !probe.hasStarted {
-            try await Task.sleep(nanoseconds: 1_000_000)
-        }
-        XCTAssertTrue(probe.hasStarted)
+        XCTAssertEqual(
+            bodyStarted.wait(timeout: .now() + 1),
+            .success,
+            "the file operation must reach its started state before cancellation"
+        )
 
         task.cancel()
+        bodyMayFinish.signal()
         let completed = try await task.value
         XCTAssertTrue(completed)
         // The operation started before cancellation, so its completed result
@@ -972,6 +977,75 @@ final class KizunaAITests: XCTestCase {
             baseURL: storageURL
         ).first
         XCTAssertEqual(recoveredScene?.summary, "recovered scene")
+        XCTAssertEqual(recoveredScene?.persistenceRevision, 5)
+    }
+
+    func testStoryTurnJournalDoesNotOverwriteNewerSceneWithOlderJournalSameSecond() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let date = Date(timeIntervalSince1970: 200.25)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 4,
+                startedAt: date,
+                updatedAt: date
+            ),
+            assistantMessageIDs: [],
+            updatedAt: date
+        )
+        let session = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 5,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: date
+        )
+        let persistedScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "新しいScene",
+            persistenceRevision: 5,
+            updatedAt: date
+        )
+        var olderJournalScene = persistedScene
+        olderJournalScene.summary = "古いjournal"
+        olderJournalScene.persistenceRevision = 4
+
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [StoryTurnJournalEntry(
+                turnID: turnID,
+                session: session,
+                scene: olderJournalScene
+            )],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        let recoveredScene = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(recoveredScene?.summary, "新しいScene")
         XCTAssertEqual(recoveredScene?.persistenceRevision, 5)
     }
 
