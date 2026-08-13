@@ -104,6 +104,11 @@ struct StoryTurnCommitRetry: Equatable {
 /// are present. A committed session by itself is not enough: the scene write
 /// may still be missing or may have been left at an older snapshot.
 enum StoryTurnCommitRecovery {
+    private static func normalizedMessageIDs(_ ids: [UUID]) -> [UUID] {
+        var seen = Set<UUID>()
+        return ids.filter { seen.insert($0).inserted }
+    }
+
     static func committedSession(
         matching retry: StoryTurnCommitRetry,
         in sessions: [StorySession],
@@ -132,7 +137,8 @@ enum StoryTurnCommitRecovery {
                   checkpoint.status == .committed else {
                 return false
             }
-            return Set(checkpoint.assistantMessageIDs) == Set(retry.assistantMessageIDs)
+            return normalizedMessageIDs(checkpoint.assistantMessageIDs)
+                == normalizedMessageIDs(retry.assistantMessageIDs)
         }
     }
 }

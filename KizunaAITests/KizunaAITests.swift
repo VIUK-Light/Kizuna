@@ -370,6 +370,7 @@ final class KizunaAITests: XCTestCase {
         let turnID = UUID()
         let userMessageID = UUID()
         let assistantMessageID = UUID()
+        let secondAssistantMessageID = UUID()
         let sceneID = UUID()
         let activeCharacterID = UUID()
         let scene = StoryScene(
@@ -386,7 +387,7 @@ final class KizunaAITests: XCTestCase {
                 turnID: turnID,
                 userMessageID: userMessageID,
                 status: .committed,
-                assistantMessageIDs: [assistantMessageID]
+                assistantMessageIDs: [assistantMessageID, secondAssistantMessageID]
             )
         )
         let retry = StoryTurnCommitRetry(
@@ -398,7 +399,7 @@ final class KizunaAITests: XCTestCase {
             scene: scene,
             turnID: turnID,
             attempt: 1,
-            assistantMessageIDs: [assistantMessageID],
+            assistantMessageIDs: [assistantMessageID, secondAssistantMessageID],
             characterMemories: [],
             storyMemories: [],
             userMessageID: userMessageID,
@@ -419,7 +420,7 @@ final class KizunaAITests: XCTestCase {
             turnID: UUID(),
             userMessageID: userMessageID,
             status: .committed,
-            assistantMessageIDs: [assistantMessageID]
+            assistantMessageIDs: [assistantMessageID, secondAssistantMessageID]
         )
         XCTAssertNil(
             StoryTurnCommitRecovery.committedSession(
@@ -434,7 +435,7 @@ final class KizunaAITests: XCTestCase {
             turnID: turnID,
             userMessageID: userMessageID,
             status: .pending,
-            assistantMessageIDs: [assistantMessageID]
+            assistantMessageIDs: [assistantMessageID, secondAssistantMessageID]
         )
         XCTAssertNil(
             StoryTurnCommitRecovery.committedSession(
@@ -442,6 +443,22 @@ final class KizunaAITests: XCTestCase {
                 in: [pending],
                 scenes: [scene]
             )
+        )
+
+        var reordered = session
+        reordered.latestTurnCheckpoint = StoryTurnCheckpoint(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            status: .committed,
+            assistantMessageIDs: [secondAssistantMessageID, assistantMessageID]
+        )
+        XCTAssertNil(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [reordered],
+                scenes: [scene]
+            ),
+            "assistant message order is part of the committed snapshot"
         )
 
         XCTAssertNil(
