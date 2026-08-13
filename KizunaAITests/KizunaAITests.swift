@@ -1110,4 +1110,38 @@ final class KizunaAITests: XCTestCase {
             [firstID, secondID]
         )
     }
+
+    func testPersonaCancellationRemovesMeaningfulUnscreenedPartial() throws {
+        let suiteName = "KizunaPersonaStoreTests.PartialCancellation.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let threadID = UUID()
+        let thread = PersonaThread(
+            id: threadID,
+            personaSnapshot: profile,
+            title: "Partial",
+            messages: [
+                PersonaMessage(role: .user, text: "hello"),
+                PersonaMessage(role: .assistant, text: "unscreened partial response")
+            ]
+        )
+        defaults.set(
+            try JSONEncoder().encode([thread]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults)
+        store.removeLastAssistantMessage(in: threadID)
+
+        XCTAssertEqual(store.thread(id: threadID)?.messages.map(\.role), [.user])
+        let reloaded = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(reloaded.thread(id: threadID)?.messages.map(\.role), [.user])
+    }
 }
