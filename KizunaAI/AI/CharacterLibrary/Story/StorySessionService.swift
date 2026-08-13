@@ -651,7 +651,16 @@ final class StorySessionService: ObservableObject {
             // evidence that its memory work is stale.
             if isLatestTurnKnownUncommitted {
                 do {
-                    try await storyMemoryRetryRepo.deleteRetry(turnID: retry.turnID)
+                    // Keep the source journal as a recovery record, but fence
+                    // its auxiliary retry before removing it from the active
+                    // queue. If the journal is retained because the paired
+                    // Scene is missing, the next recovery must not resurrect
+                    // discarded memory work.
+                    var discarded = retry
+                    discarded.isCompleted = true
+                    try await storyMemoryRetryRepo.saveRetry(discarded)
+                    pendingStoryMemoryRetries.removeValue(forKey: retry.turnID)
+                    pendingStoryMemoryRetryOrder.removeAll { $0 == retry.turnID }
                 } catch {
                     NSLog(
                         "[StorySession] stale memory retry cleanup failed turn=%@: %@",

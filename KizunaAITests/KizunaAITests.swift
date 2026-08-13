@@ -839,6 +839,124 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(remainingRetries, [retry])
     }
 
+    func testStaleMemoryRetryUsesCompletionFenceWhenJournalRetainsMissingScene() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let userMessageID = UUID()
+        let date = Date(timeIntervalSince1970: 300)
+        let pending = StoryTurnReducer.begin(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            attempt: 1,
+            ownerID: nil,
+            baseRevision: 1,
+            startedAt: date,
+            updatedAt: date
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: StoryTurnReducer.finish(
+                pending: pending,
+                status: .failed,
+                failureCode: "interrupted",
+                updatedAt: date
+            ),
+            updatedAt: date
+        )
+        let scene = StoryScene(id: sceneID, storyWorldId: worldID, updatedAt: date)
+        let retry = StoryMemoryRetry(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            userText: "欠落したSceneのretryを破棄する",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "未コミットターンの記憶",
+                    storySessionId: sessionID,
+                    sourceTurnIds: [turnID]
+                )
+            ],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        // The journal intentionally references a missing Scene. Recovery must
+        // retain the snapshot, which exercises the fence rather than relying
+        // on journal deletion as the cleanup mechanism.
+        try LocalJSONStoreTransaction.save(
+            [StoryTurnJournalEntry(
+                turnID: turnID,
+                session: session,
+                scene: scene,
+                memoryRetries: [retry]
+            )],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [retry],
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
+
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        let service = StorySessionService(
+            sessionRepo: LocalJSONStorySessionRepository(storageURL: storageURL),
+            storyMemoryRetryRepo: retryRepository
+        )
+
+        try await service.restorePendingStoryMemoryRetries(
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+
+        XCTAssertNil(service.latestRuntimeNotice)
+        let actionableRetries = try await retryRepository.fetchRetries()
+        XCTAssertTrue(actionableRetries.isEmpty)
+
+        let completedRetry = try LocalJSONStoreTransaction.load(
+            StoryMemoryRetry.self,
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(completedRetry.count, 1)
+        XCTAssertTrue(completedRetry[0].isCompleted)
+
+        let retainedJournal = try LocalJSONStoreTransaction.load(
+            StoryTurnJournalEntry.self,
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(retainedJournal, [StoryTurnJournalEntry(
+            turnID: turnID,
+            session: session,
+            scene: scene,
+            memoryRetries: [retry]
+        )])
+
+        // A later recovery must preserve the completion fence instead of
+        // re-creating an actionable retry from the retained journal.
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+        let afterSecondRecovery = try LocalJSONStoreTransaction.load(
+            StoryMemoryRetry.self,
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(afterSecondRecovery, completedRetry)
+    }
+
     func testMixedSessionMemoryRetryIsNotAssignedToEitherSession() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
