@@ -387,6 +387,22 @@ final class PersonaChatStore: ObservableObject {
         return true
     }
 
+    /// Commit a specific assistant placeholder. Generation cleanup must use
+    /// the message identity it created instead of whichever assistant happens
+    /// to be last after a concurrent history update.
+    @discardableResult
+    func finalizeAssistantMessage(in threadID: UUID, messageID: UUID, text: String) -> Bool {
+        guard canMutatePersistedState() else { return false }
+        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return false }
+        guard let messageIdx = threads[threadIdx].messages.firstIndex(where: {
+            $0.id == messageID && $0.role == .assistant
+        }) else { return false }
+        threads[threadIdx].messages[messageIdx].text = text
+        threads[threadIdx].updatedAt = Date()
+        persistAfterActivityUpdate()
+        return true
+    }
+
     /// 生成開始直後に作った空のアシスタント枠を、別経路へ切り替える時に取り除く。
     /// 未評価の部分応答は履歴へ残さず、Safety評価済みの完成本文だけを
     /// 明示的な完了処理で保存する。通常のキャンセル／watchdogは部分応答を保存しない。
@@ -409,6 +425,22 @@ final class PersonaChatStore: ObservableObject {
         threads[threadIdx].messages.removeLast()
         threads[threadIdx].updatedAt = Date()
         persistAfterActivityUpdate()
+    }
+
+    /// Remove only the assistant placeholder owned by the active generation.
+    /// Requiring the message ID prevents cancellation from deleting a prior
+    /// completed response when the placeholder append was lost in a race.
+    @discardableResult
+    func removeAssistantMessage(in threadID: UUID, messageID: UUID) -> Bool {
+        guard canMutatePersistedState() else { return false }
+        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
+              let messageIdx = threads[threadIdx].messages.firstIndex(where: {
+                  $0.id == messageID && $0.role == .assistant
+              }) else { return false }
+        threads[threadIdx].messages.remove(at: messageIdx)
+        threads[threadIdx].updatedAt = Date()
+        persistAfterActivityUpdate()
+        return true
     }
 
     /// 失敗したターンを再送する前に、直前のユーザー発話だけを取り除く。

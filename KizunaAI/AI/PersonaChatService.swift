@@ -75,6 +75,7 @@ final class PersonaChatService: ObservableObject {
     private var streamPreviewRevision = 0
     private var activeGenerationID: UUID?
     private var activeThreadID: UUID?
+    private var activeAssistantMessageID: UUID?
     private var lastRequestThreadID: UUID?
     private var lastRequestText: String?
 
@@ -101,8 +102,9 @@ final class PersonaChatService: ObservableObject {
             PersonaMessage(role: .user, text: trimmed),
             toThread: thread.id
         )
+        let assistantMessageID = UUID()
         PersonaChatStore.shared.appendMessage(
-            PersonaMessage(role: .assistant, text: ""),
+            PersonaMessage(id: assistantMessageID, role: .assistant, text: ""),
             toThread: thread.id
         )
 
@@ -115,6 +117,7 @@ final class PersonaChatService: ObservableObject {
         let generationID = UUID()
         activeGenerationID = generationID
         activeThreadID = thread.id
+        activeAssistantMessageID = assistantMessageID
         activeGenerationThreadID = thread.id
 
         if let charID = thread.characterID {
@@ -250,10 +253,12 @@ final class PersonaChatService: ObservableObject {
                 PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
                 // 先ほどの削除後に空枠を再追加して、旧応答を上書きせず
                 // このターンを通常のLegacy経路で完了できるようにする。
+                let assistantMessageID = UUID()
                 PersonaChatStore.shared.appendMessage(
-                    PersonaMessage(role: .assistant, text: ""),
+                    PersonaMessage(id: assistantMessageID, role: .assistant, text: ""),
                     toThread: threadID
                 )
+                self.activeAssistantMessageID = assistantMessageID
                 return true
             }
             guard canFallback else { return }
@@ -274,12 +279,13 @@ final class PersonaChatService: ObservableObject {
             )
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
-                PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: polite)
+                self.finalizeAssistantMessage(in: threadID, text: polite)
                 self.streamingResponse = polite
                 self.phase = .idle
                 self.invalidatePendingStreamSanitization()
                 self.activeGenerationID = nil
                 self.activeThreadID = nil
+                self.activeAssistantMessageID = nil
                 self.activeGenerationThreadID = nil
             }
             return
@@ -403,11 +409,12 @@ final class PersonaChatService: ObservableObject {
         await MainActor.run {
             guard self.activeGenerationID == generationID else { return }
             self.streamingResponse = finalText
-            PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: finalText)
+            self.finalizeAssistantMessage(in: threadID, text: finalText)
             self.phase = .idle
             self.invalidatePendingStreamSanitization()
             self.activeGenerationID = nil
             self.activeThreadID = nil
+            self.activeAssistantMessageID = nil
             self.activeGenerationThreadID = nil
         }
 
@@ -427,13 +434,18 @@ final class PersonaChatService: ObservableObject {
         generationTask = nil
         invalidatePendingStreamSanitization()
         LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: activeGenerationID)
-        if let threadID = activeThreadID {
+        if let threadID = activeThreadID,
+           let assistantMessageID = activeAssistantMessageID {
             // A stream preview has not crossed the output Safety boundary.
             // Never turn an interrupted preview into persisted history.
-            PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
+            PersonaChatStore.shared.removeAssistantMessage(
+                in: threadID,
+                messageID: assistantMessageID
+            )
         }
         activeGenerationID = nil
         activeThreadID = nil
+        activeAssistantMessageID = nil
         activeGenerationThreadID = nil
         lastErrorThreadID = nil
         streamingResponse = ""
@@ -556,11 +568,12 @@ final class PersonaChatService: ObservableObject {
             persistableText = cleaned
         }
         streamingResponse = persistableText
-        PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: persistableText)
+        finalizeAssistantMessage(in: threadID, text: persistableText)
         phase = .idle
         invalidatePendingStreamSanitization()
         activeGenerationID = nil
         activeThreadID = nil
+        activeAssistantMessageID = nil
         activeGenerationThreadID = nil
         lastErrorThreadID = nil
     }
@@ -667,14 +680,30 @@ final class PersonaChatService: ObservableObject {
 
     private func failGeneration(threadID: UUID, generationID: UUID, message: String) {
         guard activeGenerationID == generationID else { return }
-        PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
+        if let assistantMessageID = activeAssistantMessageID {
+            PersonaChatStore.shared.removeAssistantMessage(
+                in: threadID,
+                messageID: assistantMessageID
+            )
+        }
         streamingResponse = ""
         phase = .error(message)
         invalidatePendingStreamSanitization()
         activeGenerationID = nil
         activeThreadID = nil
+        activeAssistantMessageID = nil
         activeGenerationThreadID = nil
         lastErrorThreadID = threadID
+    }
+
+    @discardableResult
+    private func finalizeAssistantMessage(in threadID: UUID, text: String) -> Bool {
+        guard let assistantMessageID = activeAssistantMessageID else { return false }
+        return PersonaChatStore.shared.finalizeAssistantMessage(
+            in: threadID,
+            messageID: assistantMessageID,
+            text: text
+        )
     }
 
     /// ペルソナ会話用 advancedSettings。ツール/検索を切り、内部システム指示を最小化する。

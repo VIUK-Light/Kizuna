@@ -1606,6 +1606,47 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testPersonaActiveAssistantRemovalDoesNotDeleteCompletedResponse() throws {
+        let suiteName = "KizunaPersonaStoreTests.IdentityCleanup.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let threadID = UUID()
+        let completedID = UUID()
+        let thread = PersonaThread(
+            id: threadID,
+            personaSnapshot: profile,
+            title: "Completed",
+            messages: [
+                PersonaMessage(role: .user, text: "first"),
+                PersonaMessage(
+                    id: completedID,
+                    role: .assistant,
+                    text: "completed response"
+                )
+            ]
+        )
+        defaults.set(
+            try JSONEncoder().encode([thread]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults)
+        XCTAssertFalse(
+            store.removeAssistantMessage(in: threadID, messageID: UUID())
+        )
+        XCTAssertEqual(
+            store.thread(id: threadID)?.messages.map(\.text),
+            ["first", "completed response"]
+        )
+    }
+
     func testPersonaOutputSafetyPolicyNeverFallsBackToUnsafeText() {
         XCTAssertNil(PersonaOutputSafetyPolicy.completedText(from: nil))
         XCTAssertNil(PersonaOutputSafetyPolicy.completedText(from: "   "))
