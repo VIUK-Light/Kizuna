@@ -255,11 +255,23 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
             .sorted { $0.createdAt < $1.createdAt }
     }
     func saveScene(_ scene: StoryScene) async throws {
-        var s = scene
-        s.updatedAt = Date()
-        // active キャラ数の上限を遵守
-        s.activeCharacterIds = Array(s.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters))
-        try await store.appendOrReplace(s, idEquals: { $0.id == $1.id })
+        try await store.mutate { scenes in
+            var updated = scene
+            updated.updatedAt = Date()
+            // active キャラ数の上限を遵守
+            updated.activeCharacterIds = Array(
+                updated.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
+            )
+            if let index = scenes.firstIndex(where: { $0.id == updated.id }) {
+                // 呼び出し元の古いsnapshotを信用せず、保存済み世代から
+                // revisionを進める。updatedAtが同値でも編集順を失わない。
+                updated.persistenceRevision = scenes[index].effectivePersistenceRevision + 1
+                scenes[index] = updated
+            } else {
+                updated.persistenceRevision = max(1, updated.effectivePersistenceRevision)
+                scenes.append(updated)
+            }
+        }
     }
 
     func repairMissingImageKey(storyWorldId: UUID, sceneId: UUID, imageKey: String) async throws -> Bool {
@@ -274,6 +286,8 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
             }
             // Keep every user-edited field and update only the missing key.
             scenes[index].imageKey = trimmedKey
+            scenes[index].persistenceRevision = scenes[index].effectivePersistenceRevision + 1
+            scenes[index].updatedAt = Date()
             repaired = true
         }
         return repaired
@@ -286,6 +300,9 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         try await store.mutate { scenes in
             guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
             scenes[index].storyWorldId = toStoryWorldId
+            // 移行は表示用日時を保つが、保存世代は進める。これにより
+            // 同じupdatedAtのturn journalが移行前Sceneを復元しない。
+            scenes[index].persistenceRevision = scenes[index].effectivePersistenceRevision + 1
         }
     }
 
@@ -560,11 +577,21 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             // このターンが生成したsummary/activeキャラだけを、生成開始時点
             // から外部編集されていない場合に反映し、imageKey等の最新編集は残す。
             var committedScene = currentScene
-            if currentScene.updatedAt == scene.updatedAt {
+            // 新形式ではrevisionを第一比較にする。両方が旧形式の場合だけ
+            // updatedAtへ戻し、revision未導入時代の外部編集保護も維持する。
+            let sceneSnapshotMatches: Bool
+            if currentScene.persistenceRevision != nil || scene.persistenceRevision != nil {
+                sceneSnapshotMatches = currentScene.effectivePersistenceRevision
+                    == scene.effectivePersistenceRevision
+            } else {
+                sceneSnapshotMatches = currentScene.updatedAt == scene.updatedAt
+            }
+            if sceneSnapshotMatches {
                 committedScene.summary = scene.summary
                 committedScene.activeCharacterIds = Array(
                     scene.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
                 )
+                committedScene.persistenceRevision = currentScene.effectivePersistenceRevision + 1
                 committedScene.updatedAt = now
             }
 

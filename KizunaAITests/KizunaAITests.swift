@@ -133,6 +133,29 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(decoded.messages.first?.text, "legacy")
     }
 
+    func testLegacyStorySceneWithoutRevisionDecodesWithZeroEffectiveRevision() throws {
+        let scene = StoryScene(
+            storyWorldId: UUID(),
+            persistenceRevision: 4,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let encoded = try encoder.encode(scene)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "persistenceRevision")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(StoryScene.self, from: legacyData)
+
+        XCTAssertNil(decoded.persistenceRevision)
+        XCTAssertEqual(decoded.effectivePersistenceRevision, 0)
+    }
+
     func testStorySessionRepositoryBeginTurnIsIdempotentForSameTurnID() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
@@ -206,6 +229,63 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(moved?.storyWorldId, movedWorldID)
         XCTAssertEqual(moved?.persistenceRevision, 5)
         XCTAssertGreaterThan(moved?.updatedAt ?? .distantPast, session.updatedAt)
+    }
+
+    func testStorySceneRepositoryAdvancesRevisionAcrossEditPaths() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let originalWorldID = UUID()
+        let movedWorldID = UUID()
+        let sceneID = UUID()
+        let repository = LocalJSONStorySceneRepository(storageURL: storageURL)
+        let initial = StoryScene(
+            id: sceneID,
+            storyWorldId: originalWorldID,
+            summary: "初期",
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+
+        try await repository.saveScene(initial)
+        var persisted = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.persistenceRevision, 1)
+
+        XCTAssertTrue(
+            try await repository.repairMissingImageKey(
+                storyWorldId: originalWorldID,
+                sceneId: sceneID,
+                imageKey: "scene-image"
+            )
+        )
+        persisted = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.persistenceRevision, 2)
+        XCTAssertEqual(persisted?.imageKey, "scene-image")
+
+        try await repository.moveScene(id: sceneID, toStoryWorldId: movedWorldID)
+        persisted = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.persistenceRevision, 3)
+        XCTAssertEqual(persisted?.storyWorldId, movedWorldID)
+
+        var edited = try XCTUnwrap(persisted)
+        edited.summary = "編集後"
+        try await repository.saveScene(edited)
+        persisted = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persisted?.persistenceRevision, 4)
+        XCTAssertEqual(persisted?.summary, "編集後")
     }
 
     func testStorySessionRepositoryCommitRejectsStalePersistenceRevision() async throws {
@@ -414,6 +494,73 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persistedScene?.updatedAt, editedAt)
     }
 
+    func testStorySessionRepositoryUsesSceneRevisionForSameTimestampConflicts() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let sessionID = UUID()
+        let turnID = UUID()
+        let sameDate = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.begin(
+            turnID: turnID,
+            userMessageID: UUID(),
+            attempt: 1,
+            ownerID: StoryTurnOwner.currentID,
+            baseRevision: 0,
+            startedAt: sameDate,
+            updatedAt: sameDate
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: sameDate
+        )
+        let externallyEditedScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "同時刻のユーザー編集",
+            persistenceRevision: 2,
+            updatedAt: sameDate
+        )
+        let staleGeneratedScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "古い生成側要約",
+            persistenceRevision: 1,
+            updatedAt: sameDate
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [externallyEditedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let committed = try await repository.commitTurn(
+            session: session,
+            scene: staleGeneratedScene,
+            turnID: turnID,
+            assistantMessageIDs: []
+        )
+
+        let persistedScene = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(committed.latestTurnCheckpoint?.status, .committed)
+        XCTAssertEqual(persistedScene?.summary, "同時刻のユーザー編集")
+        XCTAssertEqual(persistedScene?.persistenceRevision, 2)
+    }
+
     func testStoryTurnJournalDoesNotOverwriteNewerPersistedRecords() throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
@@ -495,6 +642,140 @@ final class KizunaAITests: XCTestCase {
                 baseURL: storageURL
             ).isEmpty
         )
+    }
+
+    func testStoryTurnJournalDoesNotOverwriteNewerSceneRevisionAtSameTimestamp() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let sameDate = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: sameDate,
+                updatedAt: sameDate
+            ),
+            assistantMessageIDs: [],
+            updatedAt: sameDate
+        )
+        let journalSession = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 2,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: sameDate
+        )
+        let journalScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "古いjournal",
+            persistenceRevision: 2,
+            updatedAt: sameDate
+        )
+        var persistedScene = journalScene
+        persistedScene.summary = "新しい保存"
+        persistedScene.persistenceRevision = 3
+
+        try LocalJSONStoreTransaction.save(
+            [journalSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [StoryTurnJournalEntry(turnID: turnID, session: journalSession, scene: journalScene)],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        let recoveredScene = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(recoveredScene?.summary, "新しい保存")
+        XCTAssertEqual(recoveredScene?.persistenceRevision, 3)
+    }
+
+    func testStoryTurnJournalAppliesNewerSceneRevisionAtSameTimestamp() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let sameDate = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.commit(
+            pending: StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: UUID(),
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: sameDate,
+                updatedAt: sameDate
+            ),
+            assistantMessageIDs: [],
+            updatedAt: sameDate
+        )
+        let journalSession = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            persistenceRevision: 2,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: sameDate
+        )
+        let persistedScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "古い保存",
+            persistenceRevision: 1,
+            updatedAt: sameDate
+        )
+        let journalScene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "新しいjournal",
+            persistenceRevision: 2,
+            updatedAt: sameDate
+        )
+
+        try LocalJSONStoreTransaction.save(
+            [journalSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [persistedScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [StoryTurnJournalEntry(turnID: turnID, session: journalSession, scene: journalScene)],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        let recoveredScene = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(recoveredScene?.summary, "新しいjournal")
+        XCTAssertEqual(recoveredScene?.persistenceRevision, 2)
     }
 
     func testStoryTurnJournalRetainsMissingSessionUntilItReturns() throws {

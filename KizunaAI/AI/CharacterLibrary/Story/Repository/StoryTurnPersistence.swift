@@ -311,6 +311,9 @@ enum StoryTurnJournal {
     }
 
     private static func shouldApply(_ journal: StoryScene, over persisted: StoryScene) -> Bool {
+        if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
+            return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
+        }
         journal.updatedAt > persisted.updatedAt
     }
 }

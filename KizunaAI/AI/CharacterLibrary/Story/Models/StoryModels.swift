@@ -549,6 +549,9 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
     var summary: String
     /// シーン背景のアセットキー。旧保存データでは nil のまま読み込める。
     var imageKey: String?
+    /// 保存成功ごとに単調増加するSceneの世代。旧JSONはnilを0として扱い、
+    /// updatedAtが同値でも古いjournalを新しい編集へ適用しないために使う。
+    var persistenceRevision: UInt64?
     var createdAt: Date
     var updatedAt: Date
 
@@ -564,6 +567,7 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
         conflict: String? = nil,
         summary: String = "",
         imageKey: String? = nil,
+        persistenceRevision: UInt64? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -578,8 +582,16 @@ struct StoryScene: Codable, Identifiable, Equatable, Hashable {
         self.conflict = conflict
         self.summary = summary
         self.imageKey = imageKey
+        self.persistenceRevision = persistenceRevision
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+}
+
+extension StoryScene {
+    /// 旧保存データのnil revisionを、比較可能な初期世代へ正規化する。
+    var effectivePersistenceRevision: UInt64 {
+        persistenceRevision ?? 0
     }
 }
 
