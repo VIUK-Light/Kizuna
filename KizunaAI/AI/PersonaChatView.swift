@@ -1578,6 +1578,7 @@ struct PersonaMessageBubble: View {
 
 struct PersonaComposer: View {
     let thread: PersonaThread
+    @ObservedObject private var store = PersonaChatStore.shared
     @StateObject private var service = PersonaChatService.shared
     @Binding private var text: String
     @FocusState private var focused: Bool
