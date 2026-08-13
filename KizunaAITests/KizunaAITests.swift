@@ -1121,6 +1121,27 @@ final class KizunaAITests: XCTestCase {
         )
         XCTAssertNil(
             StoryOutputSafetyPolicy.persistableText(
+                action: .requireEdit,
+                original: "unsafe original",
+                rewritten: "apparently safe rewrite"
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: nil
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: ""
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
                 action: .soften,
                 original: "unsafe original",
                 rewritten: "   "
