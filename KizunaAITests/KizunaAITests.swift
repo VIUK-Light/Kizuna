@@ -2630,6 +2630,143 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryTurnJournalRetainsConflictingPairBeforeMemoryHandoff() throws {
+        func assertConflictIsRetained(sessionIsNewer: Bool) throws {
+            let storageURL = try makeStoryPersistenceTestDirectory()
+            let worldID = UUID()
+            let sessionID = UUID()
+            let sceneID = UUID()
+            let turnID = UUID()
+            let userMessageID = UUID()
+            let oldDate = Date(timeIntervalSince1970: 100)
+            let newDate = Date(timeIntervalSince1970: 200)
+            let pending = StoryTurnReducer.begin(
+                turnID: turnID,
+                userMessageID: userMessageID,
+                attempt: 1,
+                ownerID: nil,
+                baseRevision: 1,
+                startedAt: oldDate,
+                updatedAt: oldDate
+            )
+            let committedCheckpoint = StoryTurnReducer.commit(
+                pending: pending,
+                assistantMessageIDs: [],
+                updatedAt: oldDate
+            )
+            let journalSession = StorySession(
+                id: sessionID,
+                storyWorldId: worldID,
+                currentSceneId: sceneID,
+                persistenceRevision: 2,
+                latestTurnCheckpoint: committedCheckpoint,
+                updatedAt: oldDate
+            )
+            let journalScene = StoryScene(
+                id: sceneID,
+                storyWorldId: worldID,
+                summary: "journalの場面",
+                persistenceRevision: 2,
+                updatedAt: oldDate
+            )
+            var persistedSession = journalSession
+            var persistedScene = journalScene
+            if sessionIsNewer {
+                persistedSession.persistenceRevision = 3
+                persistedSession.lastTurnProgress = "新しいSession"
+                persistedSession.updatedAt = newDate
+                persistedScene.persistenceRevision = 1
+                persistedScene.summary = "古いScene"
+            } else {
+                persistedSession.persistenceRevision = 1
+                persistedSession.lastTurnProgress = "古いSession"
+                persistedScene.persistenceRevision = 3
+                persistedScene.summary = "新しいScene"
+                persistedScene.updatedAt = newDate
+            }
+            let retry = StoryMemoryRetry(
+                turnID: turnID,
+                userMessageID: userMessageID,
+                userText: "pair conflict",
+                characterMemories: [],
+                storyMemories: [
+                    StoryMemory(
+                        storyWorldId: worldID,
+                        text: "復旧前にqueueへ移してはいけない記憶",
+                        storySessionId: sessionID,
+                        sourceTurnIds: [turnID]
+                    )
+                ],
+                storySessionID: sessionID,
+                storyWorldID: worldID
+            )
+            let entry = StoryTurnJournalEntry(
+                turnID: turnID,
+                session: journalSession,
+                scene: journalScene,
+                memoryRetries: [retry]
+            )
+
+            try LocalJSONStoreTransaction.save(
+                [persistedSession],
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+            try LocalJSONStoreTransaction.save(
+                [persistedScene],
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            )
+            try LocalJSONStoreTransaction.save(
+                [entry],
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            )
+            try LocalJSONStoreTransaction.save(
+                [StoryMemoryRetry](),
+                fileName: "story_memory_retries.json",
+                baseURL: storageURL
+            )
+
+            try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+            let recoveredSession = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).first
+            let recoveredScene = try LocalJSONStoreTransaction.load(
+                StoryScene.self,
+                fileName: "story_scenes.json",
+                baseURL: storageURL
+            ).first
+            XCTAssertEqual(recoveredSession?.persistenceRevision, persistedSession.persistenceRevision)
+            XCTAssertEqual(recoveredSession?.lastTurnProgress, persistedSession.lastTurnProgress)
+            XCTAssertEqual(recoveredScene?.persistenceRevision, persistedScene.persistenceRevision)
+            XCTAssertEqual(recoveredScene?.summary, persistedScene.summary)
+            XCTAssertEqual(
+                try LocalJSONStoreTransaction.load(
+                    StoryTurnJournalEntry.self,
+                    fileName: "story_turn_journal.json",
+                    baseURL: storageURL
+                ),
+                [entry],
+                "a conflicting pair must remain recoverable as a complete journal entry"
+            )
+            XCTAssertTrue(
+                try LocalJSONStoreTransaction.load(
+                    StoryMemoryRetry.self,
+                    fileName: "story_memory_retries.json",
+                    baseURL: storageURL
+                ).isEmpty,
+                "memory retries must not be handed off before the pair conflict is resolved"
+            )
+        }
+
+        try assertConflictIsRetained(sessionIsNewer: true)
+        try assertConflictIsRetained(sessionIsNewer: false)
+    }
+
     func testStoryTurnJournalDecodesLegacyEntryWithoutMemoryRetries() throws {
         let worldID = UUID()
         let sceneID = UUID()

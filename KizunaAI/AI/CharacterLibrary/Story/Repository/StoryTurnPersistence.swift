@@ -175,6 +175,18 @@ enum StoryTurnJournal {
         let containsInvalidEntries: Bool
     }
 
+    private enum RecordOrdering: Equatable {
+        case older
+        case equal
+        case newer
+    }
+
+    private enum PairRecoveryDecision {
+        case apply(session: RecordOrdering, scene: RecordOrdering)
+        case consume
+        case retain
+    }
+
     /// Async repositories use the dedicated file-I/O executor. The original
     /// synchronous entry point remains available for low-level recovery tests.
     /// Do not call this method from inside `performOnFileIO`: that method uses
@@ -295,6 +307,26 @@ enum StoryTurnJournal {
                     continue
                 }
 
+                let persistedSession = sessions[sessionIndex]
+                let persistedScene = scenes[sceneIndex]
+                let decision = pairRecoveryDecision(
+                    entry: entry,
+                    persistedSession: persistedSession,
+                    persistedScene: persistedScene
+                )
+                if case .retain = decision {
+                    // A turn snapshot is a pair. If one journal record is
+                    // newer while the other persisted record is newer, the
+                    // journal cannot safely establish either side alone.
+                    // Keep the complete entry and defer memory handoff too.
+                    unresolvedEntries.append(entry)
+                    NSLog(
+                        "[StoryTurnJournal] retained conflicting pair turn=%@",
+                        entry.turnID.uuidString
+                    )
+                    continue
+                }
+
                 if !entry.memoryRetries.isEmpty {
                     do {
                         try mergeMemoryRetriesUnlocked(
@@ -316,15 +348,15 @@ enum StoryTurnJournal {
                     }
                 }
 
-                let persistedSession = sessions[sessionIndex]
-                if shouldApply(entry.session, over: persistedSession) {
-                    sessions[sessionIndex] = entry.session
-                    sessionsChanged = true
-                }
-                let persistedScene = scenes[sceneIndex]
-                if shouldApply(entry.scene, over: persistedScene) {
-                    scenes[sceneIndex] = entry.scene
-                    scenesChanged = true
+                if case let .apply(sessionOrdering, sceneOrdering) = decision {
+                    if sessionOrdering == .newer {
+                        sessions[sessionIndex] = entry.session
+                        sessionsChanged = true
+                    }
+                    if sceneOrdering == .newer {
+                        scenes[sceneIndex] = entry.scene
+                        scenesChanged = true
+                    }
                 }
             }
 
@@ -451,11 +483,35 @@ enum StoryTurnJournal {
         case rootIsNotArray
     }
 
-    nonisolated private static func shouldApply(_ journal: StorySession, over persisted: StorySession) -> Bool {
+    nonisolated private static func pairRecoveryDecision(
+        entry: StoryTurnJournalEntry,
+        persistedSession: StorySession,
+        persistedScene: StoryScene
+    ) -> PairRecoveryDecision {
+        let sessionOrdering = ordering(entry.session, over: persistedSession)
+        let sceneOrdering = ordering(entry.scene, over: persistedScene)
+
+        switch (sessionOrdering, sceneOrdering) {
+        case (.newer, .older), (.older, .newer):
+            return .retain
+        case (.newer, _), (_, .newer):
+            return .apply(session: sessionOrdering, scene: sceneOrdering)
+        default:
+            return .consume
+        }
+    }
+
+    nonisolated private static func ordering(
+        _ journal: StorySession,
+        over persisted: StorySession
+    ) -> RecordOrdering {
         if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
+                ? .newer
+                : .older
         }
-        return journal.updatedAt > persisted.updatedAt
+        if journal.updatedAt == persisted.updatedAt { return .equal }
+        return journal.updatedAt > persisted.updatedAt ? .newer : .older
     }
 
     nonisolated private static func isValid(_ entry: StoryTurnJournalEntry) -> Bool {
@@ -468,11 +524,17 @@ enum StoryTurnJournal {
         return true
     }
 
-    nonisolated private static func shouldApply(_ journal: StoryScene, over persisted: StoryScene) -> Bool {
+    nonisolated private static func ordering(
+        _ journal: StoryScene,
+        over persisted: StoryScene
+    ) -> RecordOrdering {
         if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
+                ? .newer
+                : .older
         }
-        return journal.updatedAt > persisted.updatedAt
+        if journal.updatedAt == persisted.updatedAt { return .equal }
+        return journal.updatedAt > persisted.updatedAt ? .newer : .older
     }
 
     /// Merge journal-owned auxiliary work into the durable retry queue while
