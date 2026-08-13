@@ -823,7 +823,6 @@ struct PersonaChatView: View {
                         .frame(minHeight: 44)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(Color.accentColor)
-                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.plain)
             }
@@ -1520,7 +1519,10 @@ struct PersonaMessageBubble: View {
             }
             Text(timestamp)
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                // Timestamps are visible content, not decorative metadata.
+                // Use the semantic secondary color so they remain readable
+                // against both message bubble backgrounds in light/dark mode.
+                .foregroundStyle(.secondary)
                 .padding(message.role == .user ? .trailing : .leading, 4)
         }
         .contextMenu {
