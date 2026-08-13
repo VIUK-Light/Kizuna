@@ -1832,12 +1832,14 @@ final class StorySessionViewModel: ObservableObject {
             return true
         case .userTurn:
             service.dismissRuntimeNotice()
-            let hasPersistedUserTurn = session.messages.contains { message in
-                message.id == notice.userMessageID && message.author.isUser
-            }
+            // enqueueSend refreshes the persisted session immediately before
+            // calling the service. Always carry the stable notice ID instead
+            // of deciding from this possibly stale ViewModel snapshot; the
+            // repository beginTurn path is idempotent whether the message is
+            // already persisted or needs to be appended.
             return enqueueSend(
                 notice.userText,
-                existingUserMessageID: hasPersistedUserTurn ? notice.userMessageID : nil
+                existingUserMessageID: notice.persistedUserMessageIDForRetry
             )
         }
     }

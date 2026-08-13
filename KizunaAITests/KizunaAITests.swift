@@ -350,6 +350,20 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persistedRetry, retry)
     }
 
+    func testStoryRuntimeNoticeUserRetryKeepsStableMessageIDWithoutCachedSession() {
+        let userMessageID = UUID()
+        let notice = StoryRuntimeNotice(
+            text: "応答を再試行できます",
+            userMessageID: userMessageID,
+            userText: "前の発言を続ける",
+            backendName: "generation failed",
+            backend: .local,
+            retryAction: .userTurn
+        )
+
+        XCTAssertEqual(notice.persistedUserMessageIDForRetry, userMessageID)
+    }
+
     func testStoryTurnCommitRecoveryMatchesOnlyTheExactCommittedTurn() {
         let storyWorldID = UUID()
         let sessionID = UUID()

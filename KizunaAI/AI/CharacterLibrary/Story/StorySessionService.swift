@@ -166,6 +166,16 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
     }
 }
 
+extension StoryRuntimeNotice {
+    /// The user-turn retry ID comes from the notice, not a possibly stale
+    /// ViewModel session snapshot. The send preparation refreshes persistence
+    /// before using this ID.
+    var persistedUserMessageIDForRetry: UUID? {
+        guard case .userTurn = retryAction else { return nil }
+        return userMessageID
+    }
+}
+
 @MainActor
 final class StorySessionService: ObservableObject {
     enum Phase: Equatable {
