@@ -446,8 +446,8 @@ final class KizunaAITests: XCTestCase {
             userText: "同じターンを保存する"
         )
         let service = StorySessionService(
-            sessionRepo: sessionRepository,
             memoryRepo: memoryRepository,
+            sessionRepo: sessionRepository,
             storyMemoryRepo: memoryRepository,
             pendingStoryTurnCommitRetries: [retry]
         )
