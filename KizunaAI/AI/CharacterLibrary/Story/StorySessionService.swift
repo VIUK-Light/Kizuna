@@ -1241,7 +1241,9 @@ final class StorySessionService: ObservableObject {
         // reach StoryState. An unsafe metadata patch is discarded while a safe
         // visible reply can still be saved.
         let structuredProgressUpdate = parseProgressUpdate(rawFinal)
-        let statePatchForSafety = modelStatePatch ?? structuredProgressUpdate?.storyState
+        var acceptedStructuredProgressUpdate = structuredProgressUpdate
+        let modelStatePatchForSafety = modelStatePatch
+        let statePatchForSafety = modelStatePatchForSafety ?? structuredProgressUpdate?.storyState
         var stateSafetyAction: SafetyAction?
         if let statePatchForSafety {
             if let safetyText = statePatchForSafety.safetyEvaluationText() {
@@ -1307,12 +1309,34 @@ final class StorySessionService: ObservableObject {
                     original: patch
                 )
             } ?? nil
+            // If the structured state itself was softened, blocked, or could
+            // not be evaluated, remove it from the progress fallback too.
+            // Otherwise `modelStatePatch == nil` below could accidentally
+            // re-adopt the same unsafe patch from `structuredProgressUpdate`.
+            if modelStatePatchForSafety != nil {
+                // The dedicated STATE_UPDATE patch was evaluated above; do
+                // not retain a second, independently parsed progress patch as
+                // a fallback for the same generated response.
+                acceptedStructuredProgressUpdate?.storyState = nil
+            } else {
+                switch stateSafetyAction {
+                case .allow, .warn:
+                    break
+                default:
+                    acceptedStructuredProgressUpdate?.storyState = nil
+                }
+            }
             modelStatePatch = StoryOutputSafetyPolicy.persistableStatePatch(
                 action: outSafety.action,
                 original: statePatchAfterSafety
             )
             let persistableMetadata = parseStateMetadata(from: persistableText)
             rawFinal = sanitizedFinalText(persistableMetadata.visibleText)
+            if case .soften = outSafety.action {
+                // A rewrite is a new text boundary. Do not carry progress
+                // fields parsed from the original model output into it.
+                acceptedStructuredProgressUpdate = nil
+            }
         }
         rawFinal = sanitize(rawFinal)
         guard isMeaningfulStoryText(rawFinal) else {
@@ -1419,22 +1443,22 @@ final class StorySessionService: ObservableObject {
         deterministicState.updatedAt = Date()
         session.storyState = deterministicState
 
-        let progressStatePatch = modelStatePatch ?? structuredProgressUpdate?.storyState
+        let progressStatePatch = modelStatePatch ?? acceptedStructuredProgressUpdate?.storyState
         let progressUpdate = StoryProgressUpdate(
-            progressLabel: structuredProgressUpdate?.progressLabel.nonEmpty
+            progressLabel: acceptedStructuredProgressUpdate?.progressLabel.nonEmpty
                 ?? session.progressLabel.nonEmpty
                 ?? "第1章 きっかけ",
-            currentObjective: structuredProgressUpdate?.currentObjective.nonEmpty
+            currentObjective: acceptedStructuredProgressUpdate?.currentObjective.nonEmpty
                 ?? session.currentObjective.nonEmpty
                 ?? scene.sceneGoal.nonEmpty
                 ?? world.storyGoal.nonEmpty,
-            lastTurnProgress: structuredProgressUpdate?.lastTurnProgress.nonEmpty
+            lastTurnProgress: acceptedStructuredProgressUpdate?.lastTurnProgress.nonEmpty
                 ?? synthesizeTurnProgress(from: newMessages),
-            lastSceneSummary: structuredProgressUpdate?.lastSceneSummary.nonEmpty
+            lastSceneSummary: acceptedStructuredProgressUpdate?.lastSceneSummary.nonEmpty
                 ?? newSummary.nonEmpty
                 ?? session.lastSceneSummary.nonEmpty,
             unresolvedHooks: normalizedHooks(
-                structuredProgressUpdate?.unresolvedHooks,
+                acceptedStructuredProgressUpdate?.unresolvedHooks,
                 fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
             ),
             storyState: progressStatePatch
