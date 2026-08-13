@@ -1022,10 +1022,33 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         source = try container.decode(MemorySource.self, forKey: .source)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
-        var metadata = try container.decodeIfPresent(
-            [UUID: StoryMemorySourceMetadata].self,
-            forKey: .sourceTurnMetadata
-        ) ?? [:]
+        var metadata: [UUID: StoryMemorySourceMetadata] = [:]
+        if container.contains(.sourceTurnMetadata) {
+            let isMetadataNil = try container.decodeNil(forKey: .sourceTurnMetadata)
+            if !isMetadataNil {
+                do {
+                    // New files use a JSON object because JSON object keys are
+                    // strings. UUID-keyed Swift dictionaries otherwise encode as
+                    // an alternating key/value array, which is needlessly fragile
+                    // for tooling and schema inspection.
+                    let stringKeyed = try container.decode(
+                        [String: StoryMemorySourceMetadata].self,
+                        forKey: .sourceTurnMetadata
+                    )
+                    metadata = stringKeyed.reduce(into: [:]) { result, pair in
+                        guard let sourceTurnID = UUID(uuidString: pair.key) else { return }
+                        result[sourceTurnID] = pair.value
+                    }
+                } catch {
+                    // StoryMemory predates the string-keyed representation. Keep
+                    // the old UUID dictionary encoding readable during migration.
+                    metadata = try container.decode(
+                        [UUID: StoryMemorySourceMetadata].self,
+                        forKey: .sourceTurnMetadata
+                    )
+                }
+            }
+        }
         for sourceTurnId in sourceTurnIds where metadata[sourceTurnId] == nil {
             metadata[sourceTurnId] = StoryMemorySourceMetadata(
                 importance: importance,
@@ -1042,7 +1065,10 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         try container.encode(storyWorldId, forKey: .storyWorldId)
         try container.encodeIfPresent(storySessionId, forKey: .storySessionId)
         try container.encode(sourceTurnIds, forKey: .sourceTurnIds)
-        try container.encode(sourceTurnMetadata, forKey: .sourceTurnMetadata)
+        let stringKeyedMetadata: [String: StoryMemorySourceMetadata] = Dictionary(
+            uniqueKeysWithValues: sourceTurnMetadata.map { ($0.key.uuidString, $0.value) }
+        )
+        try container.encode(stringKeyedMetadata, forKey: .sourceTurnMetadata)
         try container.encodeIfPresent(characterId, forKey: .characterId)
         try container.encode(text, forKey: .text)
         try container.encode(category, forKey: .category)
@@ -1059,27 +1085,37 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         memories.filter { $0.storySessionId == storySessionId }
     }
 
-    /// A session memory is eligible for prompt injection only while at least
-    /// one source turn still exists in that session's message history.
+    /// A session memory is eligible for prompt injection while it belongs to
+    /// this session and either has no provenance (legacy session-scoped data)
+    /// or still references a turn in the session's message history.
     static func scoped(
         to storySessionId: UUID,
         sourceTurnIds: Set<UUID>,
         from memories: [StoryMemory]
     ) -> [StoryMemory] {
-        guard !sourceTurnIds.isEmpty else { return [] }
         return memories.filter {
-            $0.storySessionId == storySessionId
-                && !$0.sourceTurnIds.isEmpty
-                && !$0.sourceTurnIds.isDisjoint(with: sourceTurnIds)
+            guard $0.storySessionId == storySessionId else { return false }
+            if $0.sourceTurnIds.isEmpty { return true }
+            guard !sourceTurnIds.isEmpty else { return false }
+            return !$0.sourceTurnIds.isDisjoint(with: sourceTurnIds)
         }
     }
 
     /// Recalculate aggregate fields from the provenance that remains after a
     /// cancellation or source removal.
     mutating func recomputeAggregatesFromSourceMetadata() {
-        // A merge or an older JSON file may contain metadata for a source
-        // that is no longer listed in sourceTurnIds. Orphan metadata must not
-        // influence the aggregate fields or survive a cancellation cleanup.
+        // A merge or an older JSON file may omit metadata for a source that is
+        // still listed in sourceTurnIds. Rebuild that entry from the aggregate
+        // fields before filtering so a partial legacy payload does not silently
+        // lose provenance. Orphan metadata must not influence the aggregates
+        // or survive cancellation cleanup.
+        for sourceTurnID in sourceTurnIds where sourceTurnMetadata[sourceTurnID] == nil {
+            sourceTurnMetadata[sourceTurnID] = StoryMemorySourceMetadata(
+                importance: importance,
+                createdAt: createdAt,
+                lastUsedAt: lastUsedAt
+            )
+        }
         sourceTurnMetadata = sourceTurnMetadata.filter {
             sourceTurnIds.contains($0.key)
         }

@@ -515,11 +515,22 @@ enum StoryTurnJournal {
             guard case .decode = error else { throw error }
             let url = baseURL.appendingPathComponent(memoryRetryFileName)
             guard FileManager.default.fileExists(atPath: url.path) else { throw error }
-            let data = try Data(contentsOf: url)
-            guard let rawItems = try JSONSerialization.jsonObject(
-                with: data,
-                options: [.fragmentsAllowed]
-            ) as? [Any] else {
+            let data: Data
+            do {
+                data = try Data(contentsOf: url)
+            } catch {
+                throw LocalJSONStoreError.ioFailure(underlying: error)
+            }
+            let rawObject: Any
+            do {
+                rawObject = try JSONSerialization.jsonObject(
+                    with: data,
+                    options: [.fragmentsAllowed]
+                )
+            } catch {
+                throw LocalJSONStoreError.decode(underlying: error)
+            }
+            guard let rawItems = rawObject as? [Any] else {
                 let backupURL = try LocalJSONStoreTransaction.backup(
                     fileName: memoryRetryFileName,
                     baseURL: baseURL
@@ -644,10 +655,23 @@ extension StoryTurnJournal {
         recordKind: StoryTurnJournalRecordKind,
         baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws {
-        guard try !hasTombstoneUnlocked(
+        let tombstones = try loadTombstonesUnlocked(baseURL: baseURL)
+        try ensureRecordIsNotDeletedUnlocked(
             recordID: recordID,
             recordKind: recordKind,
-            baseURL: baseURL
+            tombstones: tombstones
+        )
+    }
+
+    nonisolated static func ensureRecordIsNotDeletedUnlocked(
+        recordID: UUID,
+        recordKind: StoryTurnJournalRecordKind,
+        tombstones: [StoryTurnJournalTombstone]
+    ) throws {
+        guard !hasTombstone(
+            recordID: recordID,
+            recordKind: recordKind,
+            in: tombstones
         ) else {
             throw StoryTurnPersistenceError.recordDeleted(kind: recordKind, id: recordID)
         }
@@ -767,17 +791,24 @@ extension StoryTurnJournal {
     /// 同じファイルロックの中から呼び出す前提で、二重ロックはしない。
     nonisolated static func prepareUnlocked(
         _ entry: StoryTurnJournalEntry,
-        baseURL: URL = KizunaDataMigration.characterLibraryURL
+        baseURL: URL = KizunaDataMigration.characterLibraryURL,
+        tombstones: [StoryTurnJournalTombstone]? = nil
     ) throws {
+        let resolvedTombstones: [StoryTurnJournalTombstone]
+        if let tombstones {
+            resolvedTombstones = tombstones
+        } else {
+            resolvedTombstones = try loadTombstonesUnlocked(baseURL: baseURL)
+        }
         try ensureRecordIsNotDeletedUnlocked(
             recordID: entry.session.id,
             recordKind: .session,
-            baseURL: baseURL
+            tombstones: resolvedTombstones
         )
         try ensureRecordIsNotDeletedUnlocked(
             recordID: entry.scene.id,
             recordKind: .scene,
-            baseURL: baseURL
+            tombstones: resolvedTombstones
         )
         var entries = try LocalJSONStoreTransaction.load(
             StoryTurnJournalEntry.self,

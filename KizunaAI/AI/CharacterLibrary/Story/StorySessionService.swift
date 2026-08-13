@@ -692,6 +692,11 @@ final class StorySessionService: ObservableObject {
         backend: StoryGenerationBackend,
         retryAction: StoryRuntimeNoticeRetryAction
     ) {
+        // A failed turn commit is the only retry that keeps the composer
+        // disabled. Never replace that recovery path with a less critical
+        // narration/acknowledgement failure; doing so would leave the user
+        // unable to reach the exact generated snapshot.
+        guard pendingStoryTurnCommitRetries.isEmpty else { return }
         let lastUserMessage = session.messages.last(where: { $0.author.isUser })
         latestRuntimeNotice = StoryRuntimeNotice(
             text: text,
@@ -715,7 +720,20 @@ final class StorySessionService: ObservableObject {
     }
 
     func dismissRuntimeNotice() {
+        if let retry = oldestPendingStoryTurnCommitRetry {
+            latestRuntimeNotice = storyTurnCommitRetryNotice(retry)
+            return
+        }
         latestRuntimeNotice = nil
+    }
+
+    private var oldestPendingStoryTurnCommitRetry: StoryTurnCommitRetry? {
+        pendingStoryTurnCommitRetries.values.min { lhs, rhs in
+            if lhs.session.updatedAt != rhs.session.updatedAt {
+                return lhs.session.updatedAt < rhs.session.updatedAt
+            }
+            return lhs.turnID.uuidString < rhs.turnID.uuidString
+        }
     }
 
     /// A pending turn commit must be completed before another user turn can
@@ -2093,7 +2111,9 @@ final class StorySessionService: ObservableObject {
 
         let didPublish = await MainActor.run { () -> Bool in
             guard self.activeGenerationID == generationID else { return false }
-            if let memoryRetry {
+            if let pendingRetry = self.oldestPendingStoryTurnCommitRetry {
+                self.latestRuntimeNotice = self.storyTurnCommitRetryNotice(pendingRetry)
+            } else if let memoryRetry {
                 self.latestRuntimeNotice = self.storyMemoryRetryNotice(memoryRetry)
             } else if let pendingRetry = self.oldestPendingStoryMemoryRetry {
                 self.latestRuntimeNotice = self.storyMemoryRetryNotice(pendingRetry)
@@ -2220,13 +2240,25 @@ final class StorySessionService: ObservableObject {
                     if await enqueueStoryMemoryRetry(remaining) {
                         _ = await removeStoryMemoryJournal(for: retry.turnID)
                     }
-                    latestRuntimeNotice = storyMemoryRetryNotice(remaining)
+                    if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+                        latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+                    } else {
+                        latestRuntimeNotice = storyMemoryRetryNotice(remaining)
+                    }
                 } else {
                     _ = await completeStoryMemoryRetry(memoryRetry)
-                    savedTurnRevision += 1
+                    if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+                        latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+                    } else {
+                        savedTurnRevision += 1
+                    }
                 }
             } else {
-                savedTurnRevision += 1
+                if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+                    latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+                } else {
+                    savedTurnRevision += 1
+                }
             }
         } catch {
             NSLog("[StorySession] auxiliary turn commit retry failed turn=%@: %@", retry.turnID.uuidString, error.localizedDescription)
@@ -2247,6 +2279,12 @@ final class StorySessionService: ObservableObject {
     /// Retries only failed memory writes. The committed conversation is never
     /// sent back through `send` or the model pipeline.
     func retryStoryMemorySave(_ retry: StoryMemoryRetry) async {
+        guard pendingStoryTurnCommitRetries.isEmpty else {
+            if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+                latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+            }
+            return
+        }
         guard !isRetryingAuxiliarySave,
               pendingStoryMemoryRetries[retry.turnID] == retry else { return }
         isRetryingAuxiliarySave = true
@@ -2313,6 +2351,20 @@ final class StorySessionService: ObservableObject {
             backendName: "memory save failed",
             backend: .persistence,
             retryAction: .storyMemory(retry)
+        )
+    }
+
+    private func storyTurnCommitRetryNotice(_ retry: StoryTurnCommitRetry) -> StoryRuntimeNotice {
+        StoryRuntimeNotice(
+            text: localizedNotice(
+                "保存を完了できませんでした。AI本文は再生成せず、同じ結果の保存だけ再試行できます。",
+                "The turn could not be committed. Retry saving the same generated result without regenerating it."
+            ),
+            userMessageID: retry.userMessageID,
+            userText: retry.userText,
+            backendName: "turn commit failed",
+            backend: .persistence,
+            retryAction: .storyTurnCommit(retry)
         )
     }
 
@@ -2423,29 +2475,6 @@ final class StorySessionService: ObservableObject {
 
     private func isGenerationActive(_ generationID: UUID) -> Bool {
         !Task.isCancelled && activeGenerationID == generationID
-    }
-
-    /// A repository write may finish after cancellation because file I/O is
-    /// not itself cancellable. This method is called only after commitTurn
-    /// succeeds, so the conversation turn is already durable. Keep a memory
-    /// written for that committed turn even if generation is cancelled while
-    /// the auxiliary write is in flight; removing its provenance here would
-    /// make a committed turn disappear from the next prompt.
-    @discardableResult
-    private func saveStoryMemory(_ memory: StoryMemory, generationID: UUID) async -> Bool {
-        guard isGenerationActive(generationID) else { return false }
-        do {
-            try await storyMemoryRepo.saveMemory(memory)
-        } catch {
-            NSLog("[StorySession] story memory save failed: %@", error.localizedDescription)
-            // Memory is auxiliary state. A failed write must not strand the
-            // already-committed conversation in an active generation state.
-            return true
-        }
-        // The turn has already passed the durable commit boundary. A later
-        // cancellation stops further extraction, but must not erase this
-        // committed turn's memory.
-        return true
     }
 
     // 全体へ持ち越してよい情報だけを明示する。

@@ -569,15 +569,16 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         return try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
             try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                 recordID: session.id,
                 recordKind: .session,
-                baseURL: storageURL
+                tombstones: tombstones
             )
             try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                 recordID: scene.id,
                 recordKind: .scene,
-                baseURL: storageURL
+                tombstones: tombstones
             )
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
@@ -622,7 +623,8 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                             scene: currentScene,
                             memoryRetries: memoryRetries
                         ),
-                        baseURL: storageURL
+                        baseURL: storageURL,
+                        tombstones: tombstones
                     )
                 }
                 return current
@@ -686,7 +688,8 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                     scene: committedScene,
                     memoryRetries: memoryRetries
                 ),
-                baseURL: storageURL
+                baseURL: storageURL,
+                tombstones: tombstones
             )
             sessions[sessionIndex] = committed
             scenes[sceneIndex] = committedScene
@@ -950,7 +953,7 @@ final class LocalJSONStoryLorebookRepository: StoryLorebookRepository {
 
 /// 現在はローカルJSON。将来クラウド同期へ差し替えてもService側の呼び出しは変えない。
 final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
-    private struct MemoryScope: Hashable {
+    private struct MemoryScope: Hashable, Sendable {
         let storyWorldId: UUID
         let storySessionId: UUID?
     }
@@ -989,15 +992,18 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
     }
 
     func saveMemory(_ memory: StoryMemory) async throws {
+        let storageURL = self.storageURL
+        let perScopeLimit = self.perScopeLimit
         try await store.mutate { all in
             if let sessionID = memory.storySessionId {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
                 try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                     recordID: sessionID,
                     recordKind: .session,
-                    baseURL: storageURL
+                    tombstones: tombstones
                 )
             }
-            let normalized = normalize(memory.text)
+            let normalized = Self.normalize(memory.text)
             var incoming = memory
             let now = Date()
             for sourceTurnId in incoming.sourceTurnIds {
@@ -1019,7 +1025,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                     && $0.characterId == incoming.characterId
                     && $0.category == incoming.category
                     && $0.source == incoming.source
-                    && normalize($0.text) == normalized
+                    && Self.normalize($0.text) == normalized
             }) {
                 var existing = all[index]
                 if incoming.sourceTurnIds.isEmpty {
@@ -1045,10 +1051,14 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             // Sessionごとに上限を設ける。今回の保存対象以外のScopeまで
             // 切り詰めると、新しいSessionの保存が別Sessionやnilの
             // レガシー記録を削除してしまうため、対象Scopeだけを整理する。
-            trim(&all, to: [MemoryScope(
-                storyWorldId: incoming.storyWorldId,
-                storySessionId: incoming.storySessionId
-            )])
+            Self.trim(
+                &all,
+                to: [MemoryScope(
+                    storyWorldId: incoming.storyWorldId,
+                    storySessionId: incoming.storySessionId
+                )],
+                perScopeLimit: perScopeLimit
+            )
         }
     }
 
@@ -1058,9 +1068,10 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
     /// This operation keeps the move atomic inside the JSON store and merges
     /// an existing same-text memory in the destination world.
     func moveMemory(_ memory: StoryMemory, to storyWorldId: UUID) async throws {
+        let perScopeLimit = self.perScopeLimit
         try await store.mutate { all in
             guard let sourceIndex = all.firstIndex(where: { $0.id == memory.id }) else { return }
-            let normalized = normalize(memory.text)
+            let normalized = Self.normalize(memory.text)
             if let targetIndex = all.indices.first(where: {
                     $0 != sourceIndex
                         && all[$0].storyWorldId == storyWorldId
@@ -1068,7 +1079,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                         && all[$0].characterId == memory.characterId
                     && all[$0].category == memory.category
                     && all[$0].source == memory.source
-                    && normalize(all[$0].text) == normalized
+                    && Self.normalize(all[$0].text) == normalized
             }) {
                 var target = all[targetIndex]
                 if memory.sourceTurnIds.isEmpty {
@@ -1089,7 +1100,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
 
             // 移動元で空いた枠と移動先の上限だけを整理する。他のWorldや
             // Sessionの保持順序・件数には触れない。
-            trim(
+            Self.trim(
                 &all,
                 to: [
                     MemoryScope(
@@ -1100,7 +1111,8 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                         storyWorldId: storyWorldId,
                         storySessionId: memory.storySessionId
                     )
-                ]
+                ],
+                perScopeLimit: perScopeLimit
             )
         }
     }
@@ -1152,7 +1164,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
         }
     }
 
-    private func normalize(_ text: String) -> String {
+    private static func normalize(_ text: String) -> String {
         text.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .whitespacesAndNewlines)
@@ -1160,7 +1172,11 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             .joined(separator: " ")
     }
 
-    private func trim(_ all: inout [StoryMemory], to scopes: Set<MemoryScope>) {
+    private static func trim(
+        _ all: inout [StoryMemory],
+        to scopes: Set<MemoryScope>,
+        perScopeLimit: Int
+    ) {
         for scope in scopes {
             let scoped = all
                 .filter { MemoryScope(storyWorldId: $0.storyWorldId, storySessionId: $0.storySessionId) == scope }
@@ -1204,17 +1220,21 @@ final class LocalJSONStoryMemoryRetryRepository: StoryMemoryRetryRepository {
     }
 
     func saveRetry(_ retry: StoryMemoryRetry) async throws {
+        let storageURL = self.storageURL
         try await store.mutate { retries in
             let sessionIDs = Set(
                 [retry.storySessionID].compactMap { $0 }
                     + retry.storyMemories.compactMap(\.storySessionId)
             )
-            for sessionID in sessionIDs {
-                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
-                    recordID: sessionID,
-                    recordKind: .session,
-                    baseURL: storageURL
-                )
+            if !sessionIDs.isEmpty {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+                for sessionID in sessionIDs {
+                    try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                        recordID: sessionID,
+                        recordKind: .session,
+                        tombstones: tombstones
+                    )
+                }
             }
             if let index = retries.firstIndex(where: { $0.turnID == retry.turnID }) {
                 retries[index] = retry

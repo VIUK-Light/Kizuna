@@ -85,6 +85,47 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testSessionScopedLegacyMemoryWithNoProvenanceRemainsEligible() {
+        let worldID = UUID()
+        let sessionID = UUID()
+        let otherSessionID = UUID()
+        let activeTurnID = UUID()
+        let current = StoryMemory(
+            storyWorldId: worldID,
+            text: "current event",
+            storySessionId: sessionID,
+            sourceTurnIds: [activeTurnID]
+        )
+        let matchingLegacy = StoryMemory(
+            storyWorldId: worldID,
+            text: "legacy event from this session",
+            storySessionId: sessionID
+        )
+        let otherLegacy = StoryMemory(
+            storyWorldId: worldID,
+            text: "legacy event from another session",
+            storySessionId: otherSessionID
+        )
+        let worldOnlyLegacy = StoryMemory(storyWorldId: worldID, text: "world-only legacy")
+
+        XCTAssertEqual(
+            StoryMemory.scoped(
+                to: sessionID,
+                sourceTurnIds: [activeTurnID],
+                from: [current, matchingLegacy, otherLegacy, worldOnlyLegacy]
+            ),
+            [current, matchingLegacy]
+        )
+        XCTAssertEqual(
+            StoryMemory.scoped(
+                to: sessionID,
+                sourceTurnIds: [],
+                from: [current, matchingLegacy, otherLegacy, worldOnlyLegacy]
+            ),
+            [matchingLegacy]
+        )
+    }
+
     func testStoryMemoryRetryDecodesLegacyPayloadWithoutCompletionMarker() throws {
         let retry = StoryMemoryRetry(
             turnID: UUID(),
@@ -194,6 +235,99 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(Set(memory.sourceTurnMetadata.keys), Set([validSourceTurnID]))
         XCTAssertEqual(memory.importance, 0.2)
         XCTAssertEqual(memory.lastUsedAt, createdAt)
+    }
+
+    func testStoryMemoryRebuildsMissingSourceMetadataBeforeRecomputing() {
+        let sourceTurnID = UUID()
+        let createdAt = Date(timeIntervalSince1970: 100)
+        var memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "partial provenance",
+            importance: 0.7,
+            createdAt: createdAt,
+            lastUsedAt: createdAt.addingTimeInterval(10),
+            sourceTurnIds: [sourceTurnID],
+            sourceTurnMetadata: [:]
+        )
+
+        memory.recomputeAggregatesFromSourceMetadata()
+
+        XCTAssertEqual(
+            memory.sourceTurnMetadata[sourceTurnID],
+            StoryMemorySourceMetadata(
+                importance: 0.7,
+                createdAt: createdAt,
+                lastUsedAt: createdAt.addingTimeInterval(10)
+            )
+        )
+        XCTAssertEqual(memory.importance, 0.7)
+        XCTAssertEqual(memory.lastUsedAt, createdAt.addingTimeInterval(10))
+    }
+
+    func testStoryMemorySourceMetadataUsesObjectAndReadsLegacyUUIDDictionary() throws {
+        let sourceTurnID = UUID()
+        let metadata = StoryMemorySourceMetadata(
+            importance: 0.8,
+            createdAt: Date(timeIntervalSince1970: 100),
+            lastUsedAt: Date(timeIntervalSince1970: 200)
+        )
+        let memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "metadata format",
+            sourceTurnIds: [sourceTurnID],
+            sourceTurnMetadata: [sourceTurnID: metadata]
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let encoded = try encoder.encode(memory)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        let currentMetadata = try XCTUnwrap(
+            object["sourceTurnMetadata"] as? [String: Any]
+        )
+        XCTAssertEqual(Set(currentMetadata.keys), Set([sourceTurnID.uuidString]))
+
+        let legacyMetadata = try JSONSerialization.jsonObject(
+            with: encoder.encode([sourceTurnID: metadata])
+        )
+        object["sourceTurnMetadata"] = legacyMetadata
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(StoryMemory.self, from: legacyData)
+        XCTAssertEqual(decoded.sourceTurnMetadata[sourceTurnID], metadata)
+    }
+
+    func testStoryMemoryMissingMetadataIsFilledDuringLegacyDecode() throws {
+        let sourceTurnID = UUID()
+        let memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "legacy metadata missing",
+            importance: 0.6,
+            createdAt: Date(timeIntervalSince1970: 100),
+            sourceTurnIds: [sourceTurnID]
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoder.encode(memory)) as? [String: Any]
+        )
+        object.removeValue(forKey: "sourceTurnMetadata")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(StoryMemory.self, from: legacyData)
+
+        XCTAssertEqual(
+            decoded.sourceTurnMetadata[sourceTurnID],
+            StoryMemorySourceMetadata(
+                importance: memory.importance,
+                createdAt: memory.createdAt,
+                lastUsedAt: memory.lastUsedAt
+            )
+        )
     }
 
     func testSavingNewSessionDoesNotTrimOtherSessionOrLegacyScope() async throws {
@@ -705,6 +839,37 @@ final class KizunaAITests: XCTestCase {
             ),
             "a committed session with a stale scene must remain retryable"
         )
+    }
+
+    func testPendingTurnCommitRetryRemainsReachableAfterNoticeDismissal() {
+        let worldID = UUID()
+        let sessionID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let userMessageID = UUID()
+        let retry = StoryTurnCommitRetry(
+            session: StorySession(
+                id: sessionID,
+                storyWorldId: worldID,
+                currentSceneId: sceneID
+            ),
+            scene: StoryScene(id: sceneID, storyWorldId: worldID),
+            turnID: turnID,
+            attempt: 1,
+            assistantMessageIDs: [],
+            characterMemories: [],
+            storyMemories: [],
+            userMessageID: userMessageID,
+            userText: "保存を続ける"
+        )
+        let service = StorySessionService(pendingStoryTurnCommitRetries: [retry])
+
+        service.dismissRuntimeNotice()
+
+        guard case let .storyTurnCommit(restored)? = service.latestRuntimeNotice?.retryAction else {
+            return XCTFail("pending turn commits must keep an actionable notice")
+        }
+        XCTAssertEqual(restored, retry)
     }
 
     func testStoryServiceRetriesMemoryWithoutGeneratingAnotherTurn() async throws {

@@ -474,6 +474,7 @@ private struct StorySessionChatBody: View {
                                 if service.phase == .thinking {
                                     streamingPreview
                                 }
+                                bootstrapWarningCard
                                 // 最新のキャラクター発話の後ろに、会話の一部として表示する。
                                 restSuggestionCard
                                 safetySupportCard
@@ -611,6 +612,39 @@ private struct StorySessionChatBody: View {
             // persisted user-message ID so the same turn resumes once the
             // background self-check finishes, without duplicating input.
             _ = vm.retryRuntimeNotice(notice)
+        }
+    }
+
+    /// Auxiliary memory-retry restoration is useful but not required to read
+    /// or continue the conversation. Keep the warning in the chat surface so
+    /// bootstrap can remain non-blocking without silently hiding a persistence
+    /// problem.
+    @ViewBuilder
+    private var bootstrapWarningCard: some View {
+        if let warning = vm.bootstrapWarning {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.orange.opacity(0.9))
+                    .frame(width: 18)
+                Text(warning)
+                    .font(.footnote)
+                    .foregroundStyle(storyText.opacity(0.78))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.orange.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.orange.opacity(0.16), lineWidth: 1)
+            )
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(warning)
         }
     }
 

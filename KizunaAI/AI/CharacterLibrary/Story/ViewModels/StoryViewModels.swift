@@ -1509,6 +1509,10 @@ final class StorySessionViewModel: ObservableObject {
     @Published private(set) var cast: [CastMember] = []
     @Published private(set) var characterIndex: [UUID: CharacterProfile] = [:]
     @Published private(set) var bootstrapError: String?
+    /// Optional auxiliary retry state must not block the conversation. Keep a
+    /// lightweight warning so the user can distinguish "loaded" from
+    /// "loaded, but retry work could not be restored".
+    @Published private(set) var bootstrapWarning: String?
     /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
     @Published var restSuggestion: StoryRestSuggestion?
     /// 了承メッセージの保存中は通常送信を止め、保存結果を待つ。
@@ -1574,6 +1578,7 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     func bootstrap() async {
+        bootstrapWarning = nil
         do {
             // 前回のプロセス終了時に残ったpendingターンは、生成を再開せず
             // interruptedとして明示的に終了させる。通常ターンのpolling中に
@@ -1596,12 +1601,11 @@ final class StorySessionViewModel: ObservableObject {
                 storyWorldID: world.id
             )
         } catch {
-            bootstrapError = KizunaCopy.text(
+            bootstrapWarning = KizunaCopy.text(
                 japanese: "保存待ちの記憶を読み込めませんでした。保存先を確認して再試行してください。",
                 english: "Pending memory saves could not be loaded. Check storage and try again."
             )
             NSLog("[StorySessionVM] memory retry restore failed: %@", error.localizedDescription)
-            return
         }
         do {
             async let castFetch = castRepo.fetchCast(storyWorldId: world.id)
