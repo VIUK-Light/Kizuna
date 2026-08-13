@@ -1236,6 +1236,22 @@ final class StorySessionService: ObservableObject {
             )
             return
         }
+        // The structured STATE_UPDATE is persisted outside the visible text,
+        // so evaluate it through the same output-safety boundary before it can
+        // reach StoryState. An unsafe metadata patch is discarded while a safe
+        // visible reply can still be saved.
+        let structuredProgressUpdate = parseProgressUpdate(rawFinal)
+        let statePatchForSafety = modelStatePatch ?? structuredProgressUpdate?.storyState
+        var stateSafetyAction: SafetyAction?
+        if let statePatchForSafety {
+            if let safetyText = statePatchForSafety.safetyEvaluationText() {
+                stateSafetyAction = await safetyPipeline
+                    .evaluateOutput(safetyText, character: representativeCharacter)
+                    .action
+            } else {
+                NSLog("[StorySession] STATE_UPDATE could not be serialized for safety evaluation; dropping patch")
+            }
+        }
         let outSafety = await safetyPipeline.evaluateOutput(rawFinal, character: representativeCharacter)
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
@@ -1282,10 +1298,18 @@ final class StorySessionService: ObservableObject {
             }
             // A safety rewrite is a new text boundary. Do not retain the
             // original model's STATE_UPDATE, and do not let a marker embedded
-            // in the rewrite bypass the same metadata parser.
+            // in the rewrite bypass the same metadata parser. A patch that was
+            // not serializable or did not pass its own safety check is also
+            // omitted, without discarding an otherwise safe visible reply.
+            let statePatchAfterSafety = statePatchForSafety.flatMap { patch in
+                StoryOutputSafetyPolicy.persistableStatePatch(
+                    action: stateSafetyAction ?? .block,
+                    original: patch
+                )
+            } ?? nil
             modelStatePatch = StoryOutputSafetyPolicy.persistableStatePatch(
                 action: outSafety.action,
-                original: modelStatePatch
+                original: statePatchAfterSafety
             )
             let persistableMetadata = parseStateMetadata(from: persistableText)
             rawFinal = sanitizedFinalText(persistableMetadata.visibleText)
@@ -1382,7 +1406,6 @@ final class StorySessionService: ObservableObject {
         // same response, reuse it here. This is intentionally opportunistic:
         // ordinary dialogue does not decode and stays on the deterministic
         // path, while structured state is applied without a second LLM call.
-        let structuredProgressUpdate = parseProgressUpdate(rawFinal)
         var deterministicState = session.storyState ?? StoryState()
         if !scene.location.isEmpty { deterministicState.location = scene.location }
         if !scene.timeOfDay.isEmpty { deterministicState.timeOfDay = scene.timeOfDay }

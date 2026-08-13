@@ -678,6 +678,19 @@ struct StoryStatePatch: Codable, Equatable, Hashable {
     var inventoryChanges: [StoryInventoryChange]?
     var activeGoals: [String]?
 
+    /// Serialize every state field into the same opaque text channel used by
+    /// the output safety checker. Structured state is persisted separately
+    /// from the visible reply, so it must not bypass output evaluation.
+    func safetyEvaluationText() -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(self),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return "STATE_UPDATE: \(json)"
+    }
+
     /// 既存値を保ちつつ、空文字の更新は無視する。
     func applying(
         to state: StoryState,
