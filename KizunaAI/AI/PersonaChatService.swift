@@ -279,6 +279,7 @@ final class PersonaChatService: ObservableObject {
             }
             return
         }
+        guard isGenerationActive(generationID) else { return }
         let outputSafety = await safetyPipeline.evaluateOutput(
             rawFinalText,
             character: safetyCharacter(for: thread.personaSnapshot)
