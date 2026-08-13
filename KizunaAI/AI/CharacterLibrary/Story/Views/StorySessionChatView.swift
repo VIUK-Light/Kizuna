@@ -256,6 +256,9 @@ private struct StoryGenerationModelPill: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(storyCopy("生成モデル", "Generation model"))
+        .accessibilityValue(Text(
+            "\(vm.generationModel.displayName), \(modelAvailabilityText(vm.generationModel))"
+        ))
         .help(modelHelpText(vm.generationModel))
         .sheet(isPresented: $isShowingDetails) {
             NavigationStack {
@@ -1390,6 +1393,7 @@ private struct StoryCharacterSpotlightSheet: View {
                                     )
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityAddTraits(character.id == selected?.id ? .isSelected : [])
                             }
                         }
                     }

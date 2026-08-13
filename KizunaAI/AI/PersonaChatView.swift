@@ -584,6 +584,7 @@ struct PersonaChatView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .accessibilityLabel(KizunaCopy.text(japanese: "キャラクター操作メニュー", english: "Character actions menu"))
             .help(KizunaCopy.text(japanese: "キャラクターなどの補助メニュー", english: "More character options"))
 
             if !showsStoryActions {
@@ -627,6 +628,7 @@ struct PersonaChatView: View {
                             .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(KizunaCopy.text(japanese: "シナリオライブラリーを開く", english: "Open scenario library"))
                     .help(KizunaCopy.text(japanese: "kizunaライブラリーを開く", english: "Open the kizuna library"))
                 }
             }
@@ -1057,6 +1059,7 @@ struct PersonaChatView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .accessibilityLabel(KizunaCopy.text(japanese: "会話メニュー", english: "Conversation menu"))
             .help(KizunaCopy.text(japanese: "シナリオとキャラクターの操作", english: "Scenario and character actions"))
         }
         .padding(.horizontal, 16)
