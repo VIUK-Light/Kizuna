@@ -85,6 +85,27 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryMemoryProvenanceUsesDurableTurnIDNotGenerationAttemptID() {
+        let generationID = UUID()
+        let turnID = UUID()
+        let message = StoryMessage(
+            author: .narrator,
+            text: "保存された場面",
+            generationID: generationID,
+            turnID: turnID
+        )
+        let memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "場面の記憶",
+            storySessionId: UUID(),
+            sourceTurnIds: [turnID]
+        )
+
+        XCTAssertEqual(message.turnID, turnID)
+        XCTAssertEqual(memory.sourceTurnIds, [turnID])
+        XCTAssertFalse(memory.sourceTurnIds.contains(generationID))
+    }
+
     func testStoryMemorySessionIDIsBackwardCompatibleWhenAbsent() throws {
         let sessionID = UUID()
         let sourceTurnID = UUID()

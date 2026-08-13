@@ -866,7 +866,10 @@ final class StorySessionService: ObservableObject {
                 return validCastCharacterIDs.contains(characterID)
                     && contextualCharacterIDs.contains(characterID)
             }
-        let activeSourceTurnIDs = Set(session.messages.compactMap(\.generationID))
+        // Memory provenance uses the durable turn identity. generationID is an
+        // execution-attempt ID and must not decide whether a saved memory still
+        // belongs to the visible session history.
+        let activeSourceTurnIDs = Set(session.messages.compactMap(\.turnID))
         let storyMemoryCandidates = scopedStoryMemoryCandidates.filter { memory in
             // MemoryのSession IDだけでなく、出典ターンが現在の履歴に
             // 残っていることも確認する。旧形式やUndo済みターン由来の
@@ -1491,7 +1494,7 @@ final class StorySessionService: ObservableObject {
                         importance: memory.importance,
                         source: memory.source,
                         storySessionId: session.id,
-                        sourceTurnIds: [generationID]
+                        sourceTurnIds: [turnID]
                     )
                     guard await saveStoryMemory(storyMemory, generationID: generationID) else { return }
                     extractedStoryMemoryTexts.insert(memory.text)
@@ -1516,7 +1519,7 @@ final class StorySessionService: ObservableObject {
                 importance: 0.6,
                 source: .summary,
                 storySessionId: session.id,
-                sourceTurnIds: [generationID]
+                sourceTurnIds: [turnID]
             )
             guard await saveStoryMemory(progressMemory, generationID: generationID) else { return }
         }
@@ -1676,7 +1679,7 @@ final class StorySessionService: ObservableObject {
         }
         guard isGenerationActive(generationID) else {
             do {
-                try await storyMemoryRepo.removeSourceTurnIds([generationID])
+                try await storyMemoryRepo.removeSourceTurnIds(memory.sourceTurnIds)
             } catch {
                 NSLog("[StorySession] cancelled story memory cleanup failed: %@", error.localizedDescription)
             }
