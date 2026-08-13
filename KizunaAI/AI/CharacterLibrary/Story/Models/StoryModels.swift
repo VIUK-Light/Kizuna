@@ -626,14 +626,22 @@ struct StoryState: Codable, Equatable, Hashable {
 enum StoryStateBootstrap {
     static func preservingExistingState(
         _ existing: StoryState?,
-        scene: StoryScene
+        scene: StoryScene,
+        initialObjective: String? = nil
     ) -> StoryState {
         if let existing { return existing }
+        var goals: [String] = []
+        for value in [initialObjective, scene.sceneGoal] {
+            guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !trimmed.isEmpty,
+                  !goals.contains(trimmed) else { continue }
+            goals.append(trimmed)
+        }
         return StoryState(
             location: scene.location,
             timeOfDay: scene.timeOfDay,
             mood: scene.mood,
-            activeGoals: scene.sceneGoal.isEmpty ? [] : [scene.sceneGoal]
+            activeGoals: Array(goals.prefix(6))
         )
     }
 }

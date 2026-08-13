@@ -103,14 +103,42 @@ final class KizunaAITests: XCTestCase {
         )
 
         let completedTurnState = StorySessionService.deterministicStateForTurn(
-            existing: existingState,
-            currentObjective: nil
+            existing: existingState
         )
 
         XCTAssertEqual(completedTurnState.location, existingState.location)
         XCTAssertEqual(completedTurnState.timeOfDay, existingState.timeOfDay)
         XCTAssertEqual(completedTurnState.mood, existingState.mood)
         XCTAssertEqual(completedTurnState.activeGoals, existingState.activeGoals)
+    }
+
+    func testResolvedStoryObjectiveIsNotReintroducedOnTheNextTurn() {
+        let scene = StoryScene(
+            storyWorldId: UUID(),
+            sceneGoal: "灯台へ向かう"
+        )
+        let seeded = StoryStateBootstrap.preservingExistingState(
+            nil,
+            scene: scene,
+            initialObjective: "灯台へ向かう"
+        )
+        let resolved = StoryStatePatch(
+            location: nil,
+            timeOfDay: nil,
+            mood: nil,
+            weather: nil,
+            relationshipStage: nil,
+            characterUpdates: nil,
+            inventoryChanges: nil,
+            activeGoals: []
+        ).applying(to: seeded, characterIndex: [:])
+
+        let nextTurnState = StorySessionService.deterministicStateForTurn(
+            existing: resolved
+        )
+
+        XCTAssertEqual(resolved.activeGoals, [])
+        XCTAssertEqual(nextTurnState.activeGoals, [])
     }
 
     func testPersonaResponseSanitizerPreservesVisibleText() {
