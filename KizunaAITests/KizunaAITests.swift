@@ -1263,6 +1263,122 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(restored, retry)
     }
 
+    func testStoryTurnCommitRecoveryMatchesGeneratedStateAndMessages() {
+        let worldID = UUID()
+        let sessionID = UUID()
+        let sceneID = UUID()
+        let turnID = UUID()
+        let userMessageID = UUID()
+        let assistantMessageID = UUID()
+        let ownerID = UUID()
+        let startedAt = Date(timeIntervalSince1970: 100)
+        let generatedState = StoryState(
+            location: "港",
+            timeOfDay: "夕方",
+            mood: "静か",
+            activeGoals: ["灯台へ向かう"],
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        let userMessage = StoryMessage(
+            id: userMessageID,
+            author: .user,
+            text: "灯台へ行こう",
+            turnID: turnID
+        )
+        let assistantMessage = StoryMessage(
+            id: assistantMessageID,
+            author: .narrator,
+            text: "港の灯りが揺れた。",
+            generationID: UUID(),
+            turnID: turnID
+        )
+        let pendingCheckpoint = StoryTurnCheckpoint(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            status: .pending,
+            attempt: 2,
+            ownerID: ownerID,
+            baseRevision: 7,
+            startedAt: startedAt,
+            updatedAt: startedAt
+        )
+        let generatedSession = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            messages: [userMessage, assistantMessage],
+            progressLabel: "第1章",
+            currentObjective: "灯台へ向かう",
+            relationshipStage: "信頼",
+            lastTurnProgress: "灯台へ向かうことになった",
+            lastSceneSummary: "夕方の港",
+            unresolvedHooks: ["灯台の明かり"],
+            storyState: generatedState,
+            lastSelectedModelName: "iori",
+            lastUsedBackendName: "local",
+            latestTurnCheckpoint: pendingCheckpoint
+        )
+        var committedSession = generatedSession
+        committedSession.latestTurnCheckpoint = StoryTurnCheckpoint(
+            turnID: turnID,
+            userMessageID: userMessageID,
+            status: .committed,
+            attempt: 2,
+            ownerID: ownerID,
+            baseRevision: 7,
+            assistantMessageIDs: [assistantMessageID],
+            startedAt: startedAt,
+            updatedAt: Date(timeIntervalSince1970: 300)
+        )
+        committedSession.persistenceRevision = 8
+        committedSession.updatedAt = Date(timeIntervalSince1970: 300)
+        let scene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            summary: "夕方の港"
+        )
+        let retry = StoryTurnCommitRetry(
+            session: generatedSession,
+            scene: scene,
+            turnID: turnID,
+            attempt: 2,
+            assistantMessageIDs: [assistantMessageID],
+            characterMemories: [],
+            storyMemories: [],
+            userMessageID: userMessageID,
+            userText: "灯台へ行こう"
+        )
+
+        XCTAssertEqual(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [committedSession],
+                scenes: [scene]
+            ),
+            committedSession
+        )
+
+        var changedMessage = committedSession
+        changedMessage.messages[1].text = "別の展開になった。"
+        XCTAssertNil(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [changedMessage],
+                scenes: [scene]
+            )
+        )
+
+        var changedState = committedSession
+        changedState.storyState?.mood = "嵐"
+        XCTAssertNil(
+            StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: [changedState],
+                scenes: [scene]
+            )
+        )
+    }
+
     func testStoryServiceRetriesMemoryWithoutGeneratingAnotherTurn() async throws {
         let memoryRepository = TestStoryMemoryRepository()
         let retry = StoryMemoryRetry(
