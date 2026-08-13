@@ -858,12 +858,6 @@ final class StorySessionService: ObservableObject {
         session.activeCharacterIds = sceneWithSelectedCharacters.activeCharacterIds
         // 選択結果はターンのcommitまでメモリ上に保持する。生成失敗時に
         // activeCharacterIdsだけが先に保存される部分成功を作らない。
-        guard isGenerationActive(generationID) else {
-            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
-            return
-        }
-        // 選択結果の適用前にも確認する。cancel()後の遅延結果を
-        // 次回のシーン選択へ持ち越さない。
         scene = sceneWithSelectedCharacters
 
         let activeCast = cast.filter { scene.activeCharacterIds.contains($0.characterId) }
