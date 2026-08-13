@@ -34,7 +34,9 @@ private extension Image {
 private let storyCanvas = Color(red: 0.07, green: 0.07, blue: 0.08)
 private let storyPanel = Color(red: 0.12, green: 0.12, blue: 0.13)
 private let storyBubble = Color(red: 0.16, green: 0.16, blue: 0.17)
-private let storyPurple = Color(red: 0.08, green: 0.56, blue: 0.52)
+// Keep the Kizuna teal identity while meeting normal-text contrast when the
+// user message is rendered in white on this bubble.
+private let storyPurple = Color(red: 0.06, green: 0.46, blue: 0.43)
 private let storyWarmAccent = Color(red: 0.93, green: 0.66, blue: 0.22)
 private let storyText = Color.white.opacity(0.92)
 // Keep secondary story text readable on the dark canvas. The previous 0.58
@@ -1008,8 +1010,9 @@ private struct StorySessionChatBody: View {
                     .foregroundStyle(storyText)
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(selectedCharacterID == character.id ? .isSelected : [])
             }
-            }
+        }
         }
     }
 
