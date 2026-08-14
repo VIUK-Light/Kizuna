@@ -399,8 +399,7 @@ actor LocalJSONStore<T: Codable> {
                 // 退避できなければ現行データを上書きしない。
                 let recovery = try recoverRecordsUnlocked(fallback: decodeError)
                 let backupURL = try backupCorruptFileUnlocked()
-                try saveUnlocked(recovery.items)
-                NSLog("[LocalJSONStore] repaired %@ before write: %ld valid, %ld invalid; backup=%@", fileName, recovery.items.count, recovery.invalidCount, backupURL.lastPathComponent)
+                NSLog("[LocalJSONStore] recovered %@ for write: %ld valid, %ld invalid; backup=%@", fileName, recovery.items.count, recovery.invalidCount, backupURL.lastPathComponent)
                 items = recovery.items
             }
             try mutation(&items)

@@ -34,6 +34,10 @@ private final class FileIOTestProbe: @unchecked Sendable {
 
 @MainActor
 final class KizunaAITests: XCTestCase {
+    private enum LocalJSONStoreTestError: Error {
+        case mutationFailed
+    }
+
     func testStoryStateMetadataParserParsesOneValidUpdate() throws {
         let result = StoryStateMetadataParser.parse(
             "ナギ: 港を見つめた\n状態更新: {\"mood\":\"calm\",\"activeGoals\":[],\"evidence\":\"港を見つめた\"}"
@@ -370,6 +374,61 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testLocalJSONStoreMutationKeepsCorruptSourceWhenMutationFails() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let valid = StoryMemory(
+            storyWorldId: UUID(),
+            text: "復旧できるレコード"
+        )
+        let fileName = "story_memories.json"
+        try LocalJSONStoreTransaction.save(
+            [valid],
+            fileName: fileName,
+            baseURL: storageURL
+        )
+
+        let fileURL = storageURL.appendingPathComponent(fileName)
+        let encodedRecords = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fileURL),
+            options: [.fragmentsAllowed]
+        ) as? [Any]
+        var records = try XCTUnwrap(encodedRecords)
+        records.append(["malformed": true])
+        let corruptData = try JSONSerialization.data(
+            withJSONObject: records,
+            options: [.sortedKeys]
+        )
+        try corruptData.write(to: fileURL, options: [.atomic])
+
+        let store = LocalJSONStore<StoryMemory>(
+            fileName: fileName,
+            baseURL: storageURL
+        )
+        do {
+            try await store.mutate { _ in
+                throw LocalJSONStoreTestError.mutationFailed
+            }
+            XCTFail("a mutation failure must be propagated")
+        } catch LocalJSONStoreTestError.mutationFailed {
+            // Expected. The corrupt source must remain the active file until
+            // the recovery mutation can be committed successfully.
+        }
+
+        XCTAssertEqual(
+            try Data(contentsOf: fileURL),
+            corruptData,
+            "a failed recovery mutation must not replace the active source"
+        )
+        let backups = try FileManager.default.contentsOfDirectory(
+            at: storageURL,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix("story_memories.corrupt-") }
+        XCTAssertEqual(backups.count, 1)
+
+        let recovered = try await store.loadRecoveringCorruptRecords()
+        XCTAssertEqual(recovered.map(\.id), [valid.id])
+    }
+
     func testStoryMemoryScopeExcludesOtherSessionsAndLegacyRecords() {
         let worldID = UUID()
         let sessionID = UUID()
@@ -645,7 +704,7 @@ final class KizunaAITests: XCTestCase {
         let legacy = StoryMemory(storyWorldId: worldID, text: "Session追加待ちの旧メモリー")
 
         try LocalJSONStoreTransaction.save(
-            [],
+            [StorySession](),
             fileName: "story_sessions.json",
             baseURL: storageURL
         )
