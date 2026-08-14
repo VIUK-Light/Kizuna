@@ -2951,6 +2951,213 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persisted?.latestTurnCheckpoint?.failureCode, "app_relaunch")
     }
 
+    func testStorySessionRepositoryRetriesInterruptedTurnWithoutDuplicatingUserMessage() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let scene = StoryScene(
+            id: UUID(),
+            storyWorldId: worldID,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let session = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: scene.id
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let userMessage = StoryMessage(author: .user, text: "中断後もこの発言を続ける")
+        let turnID = UUID()
+        _ = try await repository.beginTurn(
+            session: session,
+            userMessage: userMessage,
+            turnID: turnID,
+            attempt: 1
+        )
+        try await repository.recoverInterruptedTurns(
+            storyWorldId: worldID,
+            activeOwnerIDs: []
+        )
+
+        let interrupted = try XCTUnwrap(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).first
+        )
+        XCTAssertEqual(interrupted.latestTurnCheckpoint?.status, .interrupted)
+
+        let retried = try await repository.beginTurn(
+            session: interrupted,
+            userMessage: userMessage,
+            turnID: turnID,
+            attempt: 2
+        )
+        XCTAssertEqual(retried.latestTurnCheckpoint?.status, .pending)
+        XCTAssertEqual(retried.latestTurnCheckpoint?.attempt, 2)
+        XCTAssertEqual(
+            retried.messages.filter { $0.id == userMessage.id }.count,
+            1,
+            "retrying an interrupted turn must reuse the persisted user message"
+        )
+    }
+
+    func testStorySessionRepositoryDiscardsInterruptedTurnAndRejectsLateCommit() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let scene = StoryScene(
+            id: UUID(),
+            storyWorldId: worldID,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let session = StorySession(
+            id: UUID(),
+            storyWorldId: worldID,
+            currentSceneId: scene.id
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let userMessage = StoryMessage(author: .user, text: "破棄する中断発言")
+        let turnID = UUID()
+        let pending = try await repository.beginTurn(
+            session: session,
+            userMessage: userMessage,
+            turnID: turnID,
+            attempt: 1
+        )
+        try await repository.recoverInterruptedTurns(
+            storyWorldId: worldID,
+            activeOwnerIDs: []
+        )
+        let interrupted = try XCTUnwrap(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).first
+        )
+        do {
+            _ = try await repository.discardInterruptedTurn(
+                sessionID: session.id,
+                turnID: turnID,
+                attempt: 1,
+                expectedRevision: interrupted.effectivePersistenceRevision - 1
+            )
+            XCTFail("discard must use the caller's current persistence revision")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(
+                error,
+                .revisionConflict(
+                    expected: interrupted.effectivePersistenceRevision - 1,
+                    actual: interrupted.effectivePersistenceRevision
+                )
+            )
+        }
+        let discarded = try await repository.discardInterruptedTurn(
+            sessionID: session.id,
+            turnID: turnID,
+            attempt: 1,
+            expectedRevision: interrupted.effectivePersistenceRevision
+        )
+        XCTAssertNil(discarded.latestTurnCheckpoint)
+        XCTAssertFalse(discarded.messages.contains { $0.id == userMessage.id })
+
+        var lateSnapshot = pending
+        let assistant = StoryMessage(
+            author: .narrator,
+            text: "遅れて届いた生成結果",
+            turnID: turnID
+        )
+        lateSnapshot.messages.append(assistant)
+        do {
+            _ = try await repository.commitTurn(
+                session: lateSnapshot,
+                scene: scene,
+                turnID: turnID,
+                assistantMessageIDs: [assistant.id],
+                memoryRetries: []
+            )
+            XCTFail("a discarded interrupted turn must reject a late commit")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(error, .turnNotPending)
+        }
+
+        let persisted = try XCTUnwrap(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).first
+        )
+        XCTAssertNil(persisted.latestTurnCheckpoint)
+        XCTAssertFalse(persisted.messages.contains { $0.id == userMessage.id })
+        XCTAssertFalse(persisted.messages.contains { $0.id == assistant.id })
+    }
+
+    func testStorySessionRepositoryDoesNotDiscardPendingTurn() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let session = StorySession(id: UUID(), storyWorldId: worldID)
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let userMessage = StoryMessage(author: .user, text: "進行中の発言を消さない")
+        let turnID = UUID()
+        let pending = try await repository.beginTurn(
+            session: session,
+            userMessage: userMessage,
+            turnID: turnID,
+            attempt: 1
+        )
+
+        do {
+            _ = try await repository.discardInterruptedTurn(
+                sessionID: session.id,
+                turnID: turnID,
+                attempt: 1,
+                expectedRevision: pending.effectivePersistenceRevision
+            )
+            XCTFail("a pending turn must not be discarded")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(error, .turnNotPending)
+        }
+
+        let persisted = try XCTUnwrap(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).first
+        )
+        XCTAssertEqual(persisted.latestTurnCheckpoint?.status, .pending)
+        XCTAssertTrue(persisted.messages.contains { $0.id == userMessage.id })
+    }
+
     func testStorySessionRepositoryDoesNotInterruptRegisteredOwner() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
@@ -6476,5 +6683,16 @@ private actor TestStorySessionRepository: StorySessionRepository {
         storyWorldId: UUID,
         activeOwnerIDs: Set<UUID>
     ) async throws {}
+    func discardInterruptedTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int,
+        expectedRevision: UInt64
+    ) async throws -> StorySession {
+        guard let session = sessions.first(where: { $0.id == sessionID }) else {
+            throw StoryTurnPersistenceError.sessionNotFound
+        }
+        return session
+    }
     func deleteSession(id: UUID) async throws {}
 }
