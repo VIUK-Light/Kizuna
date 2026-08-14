@@ -44,6 +44,8 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             XCTFail("KIZUNA_ACCEPTANCE_OUTPUT must point outside the repository.")
             return
         }
+        let outputURL = URL(fileURLWithPath: outputPath)
+        try initializeJSONLOutput(at: outputURL)
 
         let previousLanguage = UserDefaults.standard.string(forKey: "kizuna.language")
         let previousInitiativeFlags: [String: Any?] = [
@@ -69,7 +71,6 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             }
         }
 
-        var records: [StoryAcceptanceGenerationRecord] = []
         for language in languages {
             UserDefaults.standard.set(language.rawValue, forKey: "kizuna.language")
             for model in models {
@@ -95,27 +96,25 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                         )
 
                         for condition in StoryAcceptanceCondition.allCases {
-                            records.append(
-                                await runTurn(
-                                    language: language,
-                                    model: model,
-                                    scenario: scenario,
-                                    localized: localized,
-                                    entities: entities,
-                                    condition: condition,
-                                    seed: seed,
-                                    pairInputSHA256: pairInputSHA256,
-                                    fixtureSHA256: fixtureSHA256,
-                                    turnTimeout: turnTimeout
-                                )
+                            let record = await runTurn(
+                                language: language,
+                                model: model,
+                                scenario: scenario,
+                                localized: localized,
+                                entities: entities,
+                                condition: condition,
+                                seed: seed,
+                                pairInputSHA256: pairInputSHA256,
+                                fixtureSHA256: fixtureSHA256,
+                                turnTimeout: turnTimeout
                             )
+                            try appendJSONL(record, to: outputURL)
                         }
                     }
                 }
             }
         }
 
-        try writeJSONL(records, to: URL(fileURLWithPath: outputPath))
     }
 
     private func runTurn(
@@ -125,7 +124,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         localized: StoryAcceptanceLocalizedScenario,
         entities: StoryAcceptanceEntities,
         condition: StoryAcceptanceCondition,
-        seed: Int,
+        seed: UInt32,
         pairInputSHA256: String,
         fixtureSHA256: String,
         turnTimeout: TimeInterval
@@ -163,12 +162,18 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 world: entitiesForTurn.world,
                 scene: entitiesForTurn.scene,
                 generationModel: model,
-                seedOverride: UInt32(clamping: seed)
+                seedOverride: seed
             )
 
             guard sentUserMessageID != nil else {
                 failureCode = "send_rejected"
                 status = .error
+                let runtimeObservation = runtimeRecord(
+                    model: model,
+                    trace: nil,
+                    service: createdService,
+                    failureCode: failureCode
+                )
                 return makeRecord(
                     pairID: pairID,
                     language: language,
@@ -186,12 +191,8 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                     stateUpdate: nil,
                     startedAt: startedAt,
                     modelLatencyMilliseconds: 0,
-                    runtime: runtimeRecord(
-                        model: model,
-                        trace: nil,
-                        service: createdService,
-                        failureCode: failureCode
-                    )
+                    observedPrompt: runtimeObservation.observedPrompt,
+                    runtime: runtimeObservation.record
                 )
             }
 
@@ -283,6 +284,12 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             failureCode = "runner_setup_or_persistence_error"
         }
 
+        let runtimeObservation = runtimeRecord(
+            model: model,
+            trace: trace,
+            service: service,
+            failureCode: failureCode
+        )
         return makeRecord(
             pairID: pairID,
             language: language,
@@ -300,12 +307,8 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             stateUpdate: status == .completed ? stateUpdate : nil,
             startedAt: startedAt,
             modelLatencyMilliseconds: modelLatencyMilliseconds,
-            runtime: runtimeRecord(
-                model: model,
-                trace: trace,
-                service: service,
-                failureCode: failureCode
-            )
+            observedPrompt: runtimeObservation.observedPrompt,
+            runtime: runtimeObservation.record
         )
     }
 
@@ -330,7 +333,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         scenario: StoryAcceptanceScenario,
         localized: StoryAcceptanceLocalizedScenario,
         condition: StoryAcceptanceCondition,
-        seed: Int,
+        seed: UInt32,
         fixtureSHA256: String,
         pairInputSHA256: String,
         actualInitiative: Bool,
@@ -340,10 +343,12 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         stateUpdate: StoryStatePatch?,
         startedAt: Date,
         modelLatencyMilliseconds: Double,
+        observedPrompt: String?,
         runtime: StoryAcceptanceRuntimeRecord
     ) -> StoryAcceptanceGenerationRecord {
         let promptSHA256: String
-        if let prompt = runtime.observedPrompt {
+        if let observedPrompt {
+            let prompt = observedPrompt
             promptSHA256 = Self.sha256(Data(prompt.utf8))
         } else {
             // No model prompt exists when the app rejects input before model
@@ -352,7 +357,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             promptSHA256 = Self.sha256(Data("kizuna-no-model-prompt".utf8))
         }
 
-        let effectiveSeed = Int(runtime.effectiveSeed ?? UInt32(clamping: seed))
+        let effectiveSeed = Int(runtime.effectiveSeed ?? seed)
         let seedMode = runtime.seedMode ?? "draw"
         return StoryAcceptanceGenerationRecord(
             schemaVersion: Self.schemaVersion,
@@ -366,7 +371,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             promptSHA256: promptSHA256,
             pairInputSHA256: pairInputSHA256,
             seed: StoryAcceptanceSeedRecord(
-                requested: seed,
+                requested: Int(seed),
                 effective: effectiveSeed,
                 mode: seedMode
             ),
@@ -392,7 +397,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         trace: StoryAcceptanceGenerationTrace?,
         service: StorySessionService?,
         failureCode: String?
-    ) -> StoryAcceptanceRuntimeRecord {
+    ) -> StoryAcceptanceRuntimeObservation {
         let environment = ProcessInfo.processInfo.environment
         let configuredModelPath = environment["KIZUNA_IORI_MODEL_PATH"]
         let modelIdentity: String
@@ -414,18 +419,20 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             provider = "google-generative-language-api"
         }
         let observedPrompt: String? = trace.map { $0.systemPrompt + "\n---user---\n" + $0.userPrompt }
-        return StoryAcceptanceRuntimeRecord(
-            provider: provider,
-            backend: trace?.backend ?? service?.latestRuntimeNotice?.backendName ?? "not-observed",
-            modelIdentity: modelIdentity,
-            modelIdentityObserved: modelIdentityObserved,
-            configuredModelPath: configuredModelPath,
-            modelSHA256: environment["KIZUNA_IORI_MODEL_SHA256"],
-            observedPrompt: observedPrompt,
-            promptObserved: observedPrompt != nil,
-            effectiveSeed: trace?.effectiveSeed,
-            seedMode: trace?.seedMode,
-            failureCode: failureCode
+        return StoryAcceptanceRuntimeObservation(
+            record: StoryAcceptanceRuntimeRecord(
+                provider: provider,
+                backend: trace?.backend ?? service?.latestRuntimeNotice?.backendName ?? "not-observed",
+                modelIdentity: modelIdentity,
+                modelIdentityObserved: modelIdentityObserved,
+                configuredModelPath: configuredModelPath,
+                modelSHA256: environment["KIZUNA_IORI_MODEL_SHA256"],
+                promptObserved: observedPrompt != nil,
+                effectiveSeed: trace?.effectiveSeed,
+                seedMode: trace?.seedMode,
+                failureCode: failureCode
+            ),
+            observedPrompt: observedPrompt
         )
     }
 
@@ -579,10 +586,13 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         return values
     }
 
-    private func selectedSeeds() throws -> [Int] {
+    private func selectedSeeds() throws -> [UInt32] {
         let values = selectionValues(key: "KIZUNA_ACCEPTANCE_SEEDS", defaults: ["1", "2", "3"])
-        let seeds = values.compactMap(Int.init)
-        guard seeds.count == values.count, !seeds.isEmpty, seeds.allSatisfy({ $0 >= 0 }) else {
+        let seeds = values.compactMap { value -> UInt32? in
+            guard let raw = UInt64(value), raw <= UInt64(UInt32.max) else { return nil }
+            return UInt32(raw)
+        }
+        guard seeds.count == values.count, !seeds.isEmpty else {
             throw StoryAcceptanceRunnerError.invalidSelection("seeds")
         }
         return seeds
@@ -601,21 +611,35 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         return raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
-    private func writeJSONL(
-        _ records: [StoryAcceptanceGenerationRecord],
-        to url: URL
-    ) throws {
+    private static func makeJSONEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let lines = try records.map { record in
-            String(data: try encoder.encode(record), encoding: .utf8) ?? "{}"
-        }
-        let data = Data((lines.joined(separator: "\n") + "\n").utf8)
+        return encoder
+    }
+
+    private func initializeJSONLOutput(at url: URL) throws {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try data.write(to: url, options: .atomic)
+        try Data().write(to: url, options: .atomic)
+    }
+
+    private func appendJSONL(
+        _ record: StoryAcceptanceGenerationRecord,
+        to url: URL
+    ) throws {
+        let data = try Self.makeJSONEncoder().encode(record)
+        let handle = try FileHandle(forWritingTo: url)
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+            try handle.write(contentsOf: Data([0x0A]))
+            try handle.close()
+        } catch {
+            try? handle.close()
+            throw error
+        }
     }
 
     private static func sha256(_ data: Data) -> String {
@@ -635,7 +659,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         model: StoryGenerationModel,
         scenario: StoryAcceptanceScenario,
         localized: StoryAcceptanceLocalizedScenario,
-        seed: Int
+        seed: UInt32
     ) throws -> String {
         let contextData = try JSONEncoder().encode(StoryAcceptanceContext(localized: localized))
         let contextObject = try JSONSerialization.jsonObject(with: contextData)
@@ -645,7 +669,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             "model": model.acceptanceName,
             "scenario_id": scenario.scenarioID,
             "scenario_version": scenario.scenarioVersion,
-            "seed": seed
+            "seed": Int(seed)
         ]
         return try sha256CanonicalJSONObject(object)
     }
@@ -791,7 +815,7 @@ private struct StoryAcceptanceEntities {
 
     func withSession(
         condition: StoryAcceptanceCondition,
-        seed: Int
+        seed: UInt32
     ) -> StoryAcceptanceEntities {
         let sessionID = StoryInitiativeAcceptanceRunnerTests.stableUUID(
             for: "\(world.id.uuidString):\(condition.rawValue):seed:\(seed):session"
@@ -938,6 +962,11 @@ private struct StoryAcceptanceLatencyRecord: Encodable {
     }
 }
 
+private struct StoryAcceptanceRuntimeObservation {
+    let record: StoryAcceptanceRuntimeRecord
+    let observedPrompt: String?
+}
+
 private struct StoryAcceptanceRuntimeRecord: Encodable {
     let provider: String
     let backend: String
@@ -945,7 +974,6 @@ private struct StoryAcceptanceRuntimeRecord: Encodable {
     let modelIdentityObserved: Bool
     let configuredModelPath: String?
     let modelSHA256: String?
-    let observedPrompt: String?
     let promptObserved: Bool
     let effectiveSeed: UInt32?
     let seedMode: String?

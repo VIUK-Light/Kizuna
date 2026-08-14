@@ -89,16 +89,6 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
         validated = validate_generation_records(records, **self.matrix_kwargs)
         self.assertEqual(len(validated), 8)
 
-        records[0] = dict(
-            records[0],
-            runtime=dict(
-                records[0]["runtime"],
-                model_identity_observed=False,
-            ),
-        )
-        with self.assertRaisesRegex(EvaluationError, "identify the model"):
-            validate_generation_records(records, **self.matrix_kwargs)
-
         with self.assertRaisesRegex(EvaluationError, "missing generation"):
             validate_generation_records(make_matrix()[:-1], **self.matrix_kwargs)
 
@@ -106,6 +96,70 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
         mismatched_records[-1] = dict(mismatched_records[-1], pair_input_sha256="b" * 64)
         with self.assertRaisesRegex(EvaluationError, "inputs differ"):
             validate_generation_records(mismatched_records, **self.matrix_kwargs)
+
+    def test_runtime_metadata_is_required_and_well_formed(self):
+        cases = (
+            (
+                "non-dict runtime",
+                lambda record: dict(record, runtime=[]),
+                "runtime must contain app-path identity metadata",
+            ),
+            (
+                "empty provider",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], provider=""),
+                ),
+                "runtime.provider must be a non-empty string",
+            ),
+            (
+                "empty backend",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], backend=""),
+                ),
+                "runtime.backend must be a non-empty string",
+            ),
+            (
+                "empty model identity",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_identity=""),
+                ),
+                "runtime.model_identity must be a non-empty string",
+            ),
+            (
+                "model identity not observed",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_identity_observed=False),
+                ),
+                "identify the model",
+            ),
+            (
+                "prompt not observed",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], prompt_observed=False),
+                ),
+                "observe the app prompt",
+            ),
+            (
+                "invalid model sha256",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_sha256="not-a-sha"),
+                ),
+                "runtime.model_sha256 must be a SHA-256 hex digest",
+            ),
+        )
+
+        for name, mutate, message in cases:
+            with self.subTest(name=name):
+                records = make_matrix()
+                records[0] = mutate(records[0])
+                with self.assertRaisesRegex(EvaluationError, message):
+                    validate_generation_records(records, **self.matrix_kwargs)
 
     def test_scenario_fixture_is_complete_and_versioned(self):
         fixture, digest = load_scenario_fixture()

@@ -1193,12 +1193,13 @@ final class StorySessionService: ObservableObject {
         let raw: String?
         switch generationModel {
         case .b31:
-            raw = try? await StoryGemma31BAPIService.shared.generate(
+            let generation = try? await StoryGemma31BAPIService.shared.generate(
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 temperature: 0.7,
                 maxOutputTokens: 96
             )
+            raw = generation?.text
         case .e4b:
             let manager = LocalAssistantModelManager.shared
             let selectedModelURL = generationModel.installedModelURL ?? manager.installedModelURL
@@ -1907,21 +1908,29 @@ final class StorySessionService: ObservableObject {
         let selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
         let modelGenerationStartedAt = Date()
 
-        func generateStoryReply(systemPrompt: String) async -> (reply: String?, runtimeNotice: Bool, backend: String, retryWhenLocalReady: Bool) {
+        func generateStoryReply(systemPrompt: String) async -> (
+            reply: String?,
+            runtimeNotice: Bool,
+            backend: String,
+            retryWhenLocalReady: Bool,
+            modelIdentity: String?
+        ) {
             if generationModel == .b31 {
                 if StoryGemma31BAPIService.shared.hasAPIKey {
-                    let reply = await generateWithGemma31BAPI(
+                    let generatedAPI = await generateWithGemma31BAPI(
                         systemPrompt: systemPrompt,
                         userPrompt: effectiveUserText,
                         generationID: generationID,
                         seedOverride: seedOverride
                     )
+                    let reply = generatedAPI.reply
                     let isNotice = isGemma31BRuntimeNotice(reply)
                     return (
                         reply: reply,
                         runtimeNotice: isNotice,
                         backend: isNotice ? "Gemma4 31B API失敗" : "Gemma4 31B API",
-                        retryWhenLocalReady: false
+                        retryWhenLocalReady: false,
+                        modelIdentity: isNotice ? nil : generatedAPI.modelIdentity
                     )
                 }
 
@@ -1933,7 +1942,8 @@ final class StorySessionService: ObservableObject {
                     ),
                     runtimeNotice: true,
                     backend: "Gemma4 31B API未設定",
-                    retryWhenLocalReady: false
+                    retryWhenLocalReady: false,
+                    modelIdentity: nil
                 )
             }
 
@@ -1946,7 +1956,13 @@ final class StorySessionService: ObservableObject {
             // watchdogへ足し戻すと、60秒の起動確認 + 75秒の生成で
             // 1ターンが最大135秒まで伸びてしまう。
             guard isGenerationActive(generationID) else {
-                return (reply: nil, runtimeNotice: true, backend: "iori 生成キャンセル", retryWhenLocalReady: false)
+                return (
+                    reply: nil,
+                    runtimeNotice: true,
+                    backend: "iori 生成キャンセル",
+                    retryWhenLocalReady: false,
+                    modelIdentity: nil
+                )
             }
 
             // self-check が保存状態を復元した後のURLを再取得する。起動直後に
@@ -1965,7 +1981,8 @@ final class StorySessionService: ObservableObject {
                         availability: availability,
                         selectedModelURL: availableModelURL
                     ),
-                    retryWhenLocalReady: availability == .checking || availability == .savedOnly
+                    retryWhenLocalReady: availability == .checking || availability == .savedOnly,
+                    modelIdentity: nil
                 )
             }
 
@@ -2002,10 +2019,17 @@ final class StorySessionService: ObservableObject {
                     reply: localStoryGenerationFailureMessage(runtimeError: runtimeError),
                     runtimeNotice: true,
                     backend: "iori ローカル生成失敗",
-                    retryWhenLocalReady: false
+                    retryWhenLocalReady: false,
+                    modelIdentity: nil
                 )
             }
-            return (reply: reply, runtimeNotice: false, backend: backend, retryWhenLocalReady: false)
+            return (
+                reply: reply,
+                runtimeNotice: false,
+                backend: backend,
+                retryWhenLocalReady: false,
+                modelIdentity: availableModelURL?.path
+            )
         }
 
         var generationPrompt = prompt
@@ -2343,10 +2367,7 @@ final class StorySessionService: ObservableObject {
             visibleText: rawFinal,
             stateUpdate: acceptedStatePatch,
             backend: usedBackendName,
-            modelIdentity: !isRuntimeNotice && generationModel == .b31
-                ? StoryGemma31BAPIService.shared.lastUsedModelName
-                    .map { "\($0)" }
-                : (!isRuntimeNotice ? selectedModelURL?.path : nil),
+            modelIdentity: !isRuntimeNotice ? generated.modelIdentity : nil,
             modelLatencyMilliseconds: modelGenerationFinishedAt.timeIntervalSince(modelGenerationStartedAt) * 1_000,
             requestedSeed: seedOverride,
             effectiveSeed: seedOverride,
@@ -3158,7 +3179,7 @@ final class StorySessionService: ObservableObject {
         userPrompt: String,
         generationID: UUID,
         seedOverride: UInt32?
-    ) async -> String? {
+    ) async -> (reply: String?, modelIdentity: String?) {
         await MainActor.run {
             guard self.activeGenerationID == generationID else { return }
             self.streamingSpeakerName = "NAGI"
@@ -3170,7 +3191,7 @@ final class StorySessionService: ObservableObject {
         }
 
         do {
-            let text = try await StoryGemma31BAPIService.shared.generate(
+            let generation = try await StoryGemma31BAPIService.shared.generate(
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt,
                 temperature: 0.72,
@@ -3178,13 +3199,14 @@ final class StorySessionService: ObservableObject {
                 maxOutputTokens: 1024,
                 seed: seedOverride.map(Int.init)
             )
+            let text = generation.text
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = text
                 self.streamingStatusText = self.statusText("発話を整形中", "Formatting response")
                 self.streamingSpeakerName = self.detectCurrentSpeakerName(in: text)
             }
-            return text
+            return (reply: text, modelIdentity: generation.modelName)
         } catch let error as StoryGemma31BAPIError {
             // APIエラーをNPC本文として整形すると、空レスポンス時に
             // 同じキャラのフォールバック発話が追加されるためsystem通知にする。
@@ -3196,7 +3218,7 @@ final class StorySessionService: ObservableObject {
                 self.streamingStatusText = ""
                 self.streamingSpeakerName = nil
             }
-            return message
+            return (reply: message, modelIdentity: nil)
         } catch {
             let message = localizedNotice(
                 "Gemma4 31B API の応答に失敗しました。もう一度試してください。",
@@ -3209,7 +3231,7 @@ final class StorySessionService: ObservableObject {
                 self.streamingStatusText = ""
                 self.streamingSpeakerName = nil
             }
-            return message
+            return (reply: message, modelIdentity: nil)
         }
     }
 

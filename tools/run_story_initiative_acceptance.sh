@@ -10,6 +10,12 @@ GENERATION_OUTPUT="$ARTIFACT_DIR/generations.jsonl"
 FIXTURE_COPY="$ARTIFACT_DIR/story_initiative_scenarios.json"
 FIXED_USER_HOME="$ARTIFACT_DIR/user-home"
 
+report_artifacts() {
+    echo "generation records: $GENERATION_OUTPUT"
+    echo "isolated Kizuna storage: $STORAGE_ROOT"
+}
+trap report_artifacts EXIT
+
 mkdir -p "$STORAGE_ROOT" "$DERIVED_DATA" "$FIXED_USER_HOME"
 cp -p "$PROJECT_ROOT/tools/story_initiative_scenarios.json" "$FIXTURE_COPY"
 
@@ -24,6 +30,12 @@ EXPECTED_IORI_FILE="viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf"
 IORI_MODEL_SOURCE="${KIZUNA_IORI_MODEL_PATH:-}"
 IORI_MODEL_SHA256=""
 IORI_MODEL_ACCEPTED=0
+if [[ -n "$IORI_MODEL_SOURCE" ]]; then
+    IORI_MODEL_SOURCE_DIR="$(dirname -- "$IORI_MODEL_SOURCE")"
+    if [[ -d "$IORI_MODEL_SOURCE_DIR" ]]; then
+        IORI_MODEL_SOURCE="$(cd -- "$IORI_MODEL_SOURCE_DIR" && pwd -P)/$(basename -- "$IORI_MODEL_SOURCE")"
+    fi
+fi
 if [[ -n "$IORI_MODEL_SOURCE" && -f "$IORI_MODEL_SOURCE" ]]; then
     IORI_MODEL_BYTES="$(stat -L -f '%z' "$IORI_MODEL_SOURCE")"
     IORI_MODEL_SHA256="$(shasum -a 256 "$IORI_MODEL_SOURCE" | cut -d ' ' -f 1)"
@@ -113,6 +125,3 @@ xcodebuild -quiet test-without-building \
     -parallel-testing-enabled NO
 
 python3 tools/story_initiative_eval.py validate --input "$GENERATION_OUTPUT"
-
-echo "generation records: $GENERATION_OUTPUT"
-echo "isolated Kizuna storage: $STORAGE_ROOT"
