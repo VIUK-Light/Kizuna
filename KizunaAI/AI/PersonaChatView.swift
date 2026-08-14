@@ -45,6 +45,7 @@ struct PersonaChatView: View {
     /// 永続化は行わない。
     @State private var personaDrafts: [UUID: String] = [:]
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(\.dismiss) private var dismiss
 
     private let storyWorldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
@@ -380,13 +381,14 @@ struct PersonaChatView: View {
                     compactShowsChat = false
                 } label: {
                     Label(KizunaCopy.text(japanese: "一覧", english: "List"), systemImage: "chevron.left")
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
                 Spacer()
                 Text(showsStoryActions
                      ? KizunaCopy.text(japanese: "あなたの物語", english: "Your story")
                      : KizunaCopy.text(japanese: "会話", english: "Conversations"))
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.headline.weight(.bold))
                 Spacer()
                 if !showsStoryActions {
                     Button {
@@ -425,10 +427,10 @@ struct PersonaChatView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(KizunaCopy.appName)
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.headline.weight(.bold))
                     .foregroundStyle(.primary)
                 Text(KizunaCopy.text(japanese: "会話を続ける", english: "Continue a conversation"))
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
 
@@ -440,7 +442,7 @@ struct PersonaChatView: View {
                 } label: {
                     Image(systemName: "sparkles.rectangle.stack.fill")
                         .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 44, height: 44)
                         .background(Circle().fill(Color.accentColor.opacity(0.16)))
                         .foregroundStyle(Color.accentColor)
                 }
@@ -470,7 +472,7 @@ struct PersonaChatView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 34, height: 34)
+                    .frame(width: 44, height: 44)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -530,7 +532,7 @@ struct PersonaChatView: View {
                 Image(systemName: "infinity.circle.fill")
                     .font(.system(size: 13, weight: .semibold))
                 Text(KizunaCopy.appName)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.subheadline.weight(.bold))
             }
             .foregroundStyle(Color.accentColor)
 
@@ -544,10 +546,11 @@ struct PersonaChatView: View {
                         Image(systemName: "sparkles.rectangle.stack.fill")
                             .font(.system(size: 11, weight: .semibold))
                         Text(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"))
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.callout.weight(.semibold))
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
+                    .frame(minHeight: 44)
                     .background(Capsule().fill(Color.accentColor.opacity(0.16)))
                     .foregroundStyle(Color.accentColor)
                 }
@@ -577,10 +580,11 @@ struct PersonaChatView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 28, height: 28)
+                    .frame(width: 44, height: 44)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .accessibilityLabel(KizunaCopy.text(japanese: "キャラクター操作メニュー", english: "Character actions menu"))
             .help(KizunaCopy.text(japanese: "キャラクターなどの補助メニュー", english: "More character options"))
 
             if !showsStoryActions {
@@ -610,7 +614,7 @@ struct PersonaChatView: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.tint)
                 Text(KizunaCopy.appName)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.caption.weight(.bold))
                     .tracking(0.6)
                     .textCase(.uppercase)
                     .foregroundStyle(.secondary)
@@ -621,9 +625,10 @@ struct PersonaChatView: View {
                     } label: {
                         Image(systemName: "books.vertical.fill")
                             .font(.system(size: 13, weight: .semibold))
-                            .frame(width: 26, height: 26)
+                            .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(KizunaCopy.text(japanese: "シナリオライブラリーを開く", english: "Open scenario library"))
                     .help(KizunaCopy.text(japanese: "kizunaライブラリーを開く", english: "Open the kizuna library"))
                 }
             }
@@ -660,11 +665,12 @@ struct PersonaChatView: View {
                         Image(systemName: "sparkles.rectangle.stack.fill")
                             .font(.system(size: 12, weight: .semibold))
                         Text(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"))
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.callout.weight(.semibold))
                         Spacer()
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 12)
+                    .frame(minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -677,7 +683,7 @@ struct PersonaChatView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(KizunaCopy.text(japanese: "続きのある物語", english: "Stories in progress"))
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.subheadline.weight(.bold))
                     .tracking(0.4)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -685,9 +691,10 @@ struct PersonaChatView: View {
                     showWorldLibrary = true
                 } label: {
                     Label(KizunaCopy.text(japanese: "探す", english: "Browse"), systemImage: "sparkles.rectangle.stack.fill")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
+                        .frame(minHeight: 44)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(Color.accentColor)
                 }
@@ -737,7 +744,7 @@ struct PersonaChatView: View {
 
     private func sidebarSectionTitle(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 10, weight: .bold))
+            .font(.caption.weight(.bold))
             .tracking(0.6)
             .textCase(.uppercase)
             .foregroundStyle(.secondary)
@@ -772,11 +779,11 @@ struct PersonaChatView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.world.localizedForCurrentLanguage.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     Text(item.previewText)
-                        .font(.system(size: 11))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -803,16 +810,17 @@ struct PersonaChatView: View {
                 .font(.system(size: 26))
                 .foregroundStyle(.tertiary)
             Text(KizunaCopy.text(japanese: "会話はまだありません", english: "No conversations yet"))
-                .font(.system(size: 12))
+                .font(.body)
                 .foregroundStyle(.secondary)
             if showsStoryActions {
                 Button {
                     showWorldLibrary = true
                 } label: {
                     Text(KizunaCopy.text(japanese: "シナリオを選ぶ", english: "Choose a scenario"))
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
+                        .frame(minWidth: 44, minHeight: 44)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(Color.accentColor)
                 }
@@ -837,11 +845,11 @@ struct PersonaChatView: View {
                 PersonaAvatarView(profile: thread.personaSnapshot, size: 40)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(thread.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                 Text(thread.messages.last?.text ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation"))
-                        .font(.system(size: 11))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -932,7 +940,7 @@ struct PersonaChatView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             Text(message)
-                .font(.system(size: 11))
+                .font(.body)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             Spacer(minLength: 6)
@@ -940,10 +948,11 @@ struct PersonaChatView: View {
                 storyHistoryReloadID = UUID()
             } label: {
                 Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.body.weight(.semibold))
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .frame(minHeight: 44)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -1013,19 +1022,21 @@ struct PersonaChatView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
                     Text(thread.personaSnapshot.name)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.headline.weight(.bold))
                         .foregroundStyle(.primary)
                     Text(thread.personaSnapshot.relation.localizedDisplayName)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.caption.weight(.bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(Capsule().fill(style.primary.opacity(0.16)))
                         .foregroundStyle(style.primary)
                 }
                 Text(thread.personaSnapshot.tone.localizedDisplayName + KizunaCopy.text(japanese: " ・ ", english: " · ") + thread.personaSnapshot.personality)
-                    .font(.system(size: 11))
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
             Spacer()
             Menu {
@@ -1044,10 +1055,11 @@ struct PersonaChatView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 30, height: 30)
+                    .frame(width: 44, height: 44)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .accessibilityLabel(KizunaCopy.text(japanese: "会話メニュー", english: "Conversation menu"))
             .help(KizunaCopy.text(japanese: "シナリオとキャラクターの操作", english: "Scenario and character actions"))
         }
         .padding(.horizontal, 16)
@@ -1078,16 +1090,17 @@ struct PersonaChatView: View {
                 .font(.system(size: 40))
                 .foregroundStyle(.tertiary)
             Text(KizunaCopy.text(japanese: "始めましょう", english: "Let’s begin"))
-                .font(.system(size: 16, weight: .semibold))
+                .font(.title3.weight(.semibold))
 
             if showsStoryActions {
                 Button {
                     showWorldLibrary = true
                 } label: {
                     Text(KizunaCopy.text(japanese: "物語を見つける", english: "Find a story"))
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .padding(.horizontal, 18)
                         .padding(.vertical, 10)
+                        .frame(minHeight: 44)
                         .background(Capsule().fill(Color.accentColor.opacity(0.18)))
                         .foregroundStyle(Color.accentColor)
                 }
@@ -1152,7 +1165,7 @@ struct PersonaChatView: View {
                 }
                 .onChange(of: thread.messages.count) { _, _ in
                     if isPersonaChatNearBottom {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     } else {
@@ -1166,7 +1179,7 @@ struct PersonaChatView: View {
 
                 if !isPersonaChatNearBottom {
                     Button {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                         isPersonaChatNearBottom = true
@@ -1178,9 +1191,10 @@ struct PersonaChatView: View {
                                 : KizunaCopy.text(japanese: "最新へ", english: "Latest"),
                             systemImage: "arrow.down"
                         )
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.body.weight(.bold))
                         .padding(.horizontal, 11)
                         .padding(.vertical, 8)
+                        .frame(minHeight: 44)
                         .background(.regularMaterial, in: Capsule())
                         .overlay(Capsule().stroke(Color.primary.opacity(0.14), lineWidth: 1))
                     }
@@ -1205,10 +1219,10 @@ struct PersonaChatView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
                     Text(personaProfile.name)
-                        .font(.system(size: 11.5, weight: .bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(.secondary)
                     Text(KizunaCopy.text(japanese: "生成中…", english: "Writing…"))
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.tertiary)
                 }
                 if preview.isEmpty {
@@ -1216,7 +1230,7 @@ struct PersonaChatView: View {
                         .controlSize(.small)
                 } else {
                     Text(preview)
-                        .font(.system(size: 16, weight: .regular))
+                        .font(.body)
                         .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1240,6 +1254,7 @@ struct PersonaChatView: View {
             japanese: "\(personaProfile.name)が生成中です",
             english: "\(personaProfile.name) is writing"
         ))
+        .accessibilityValue(Text(preview))
     }
 
     private func generationError(_ message: String) -> some View {
@@ -1248,16 +1263,16 @@ struct PersonaChatView: View {
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 4) {
                 Text(KizunaCopy.text(japanese: "応答を生成できませんでした", english: "Could not generate a reply"))
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.headline.weight(.bold))
                 Text(message)
-                    .font(.system(size: 12))
+                    .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(KizunaCopy.text(
                     japanese: "入力欄からもう一度送信できます。",
                     english: "You can send the message again from the composer."
                 ))
-                    .font(.system(size: 11))
+                    .font(.callout)
                     .foregroundStyle(.tertiary)
                 HStack(spacing: 8) {
                     Button(KizunaCopy.text(japanese: "同じ内容を再送信", english: "Try again")) {
@@ -1265,11 +1280,13 @@ struct PersonaChatView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
+                    .frame(minHeight: 44)
                     Button(KizunaCopy.text(japanese: "閉じる", english: "Dismiss")) {
                         service.dismissError()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .frame(minHeight: 44)
                 }
             }
         }
@@ -1419,33 +1436,53 @@ struct PersonaMessageBubble: View {
     private var style: PersonaAvatarStyle { PersonaAvatarStyle(profile: personaProfile) }
 
     var body: some View {
-        if message.role == .narrator {
-            HStack {
-                Spacer(minLength: 34)
-                bubble(alignment: .center)
-                Spacer(minLength: 34)
-            }
-        } else {
-            HStack(alignment: .bottom, spacing: 8) {
-                if message.role == .assistant {
-                    VStack(alignment: .leading, spacing: 4) {
-                        // アイコンの横にキャラクター名を置く。
-                        HStack(spacing: 6) {
-                            avatar
-                            Text(personaProfile.name)
-                                .font(.system(size: 11.5, weight: .bold))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+        Group {
+            if message.role == .narrator {
+                HStack {
+                    Spacer(minLength: 34)
+                    bubble(alignment: .center)
+                    Spacer(minLength: 34)
+                }
+            } else {
+                HStack(alignment: .bottom, spacing: 8) {
+                    if message.role == .assistant {
+                        VStack(alignment: .leading, spacing: 4) {
+                            // アイコンの横にキャラクター名を置く。
+                            HStack(spacing: 6) {
+                                avatar
+                                Text(personaProfile.name)
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            bubble(alignment: .leading)
                         }
-                        bubble(alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Spacer(minLength: 40)
+                        bubble(alignment: .trailing)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Spacer(minLength: 40)
-                    bubble(alignment: .trailing)
                 }
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(Text(message.createdAt, style: .time))
+    }
+
+    private var accessibilityLabel: String {
+        let speaker: String
+        if message.role == .assistant {
+            speaker = personaProfile.name
+        } else if message.role == .narrator {
+            speaker = KizunaCopy.text(japanese: "ナレーション", english: "Narration")
+        } else {
+            speaker = KizunaCopy.text(japanese: "あなた", english: "You")
+        }
+        let body = message.text.isEmpty
+            ? KizunaCopy.text(japanese: "待機中", english: "Waiting")
+            : message.text
+        return "\(speaker): \(body)"
     }
 
     private var avatar: some View {
@@ -1456,7 +1493,7 @@ struct PersonaMessageBubble: View {
         VStack(alignment: alignment, spacing: 3) {
             if message.role == .narrator {
                 Label(message.text, systemImage: "sparkles")
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
@@ -1465,14 +1502,14 @@ struct PersonaMessageBubble: View {
             } else if message.text.isEmpty {
                 // ストリーム前の空メッセージ
                 Text(KizunaCopy.text(japanese: "…", english: "…"))
-                    .font(.system(size: 14))
+                    .font(.body)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(bubbleBackground)
             } else {
                 Text(message.text)
-                    .font(.system(size: 16, weight: .regular))
+                    .font(.body)
                     .foregroundStyle(message.role == .user ? .white : .primary)
                     .frame(maxWidth: message.role == .assistant ? .infinity : nil, alignment: .leading)
                     .padding(.horizontal, 13)
@@ -1481,8 +1518,11 @@ struct PersonaMessageBubble: View {
                     .textSelection(.enabled)
             }
             Text(timestamp)
-                .font(.system(size: 9))
-                .foregroundStyle(.tertiary)
+                .font(.caption2)
+                // Timestamps are visible content, not decorative metadata.
+                // Use the semantic secondary color so they remain readable
+                // against both message bubble backgrounds in light/dark mode.
+                .foregroundStyle(.secondary)
                 .padding(message.role == .user ? .trailing : .leading, 4)
         }
         .contextMenu {
@@ -1515,8 +1555,8 @@ struct PersonaMessageBubble: View {
                 // ユーザーバブル: ダークは少し落とした緑、ライトは LINE 緑風。
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(colorScheme == .dark
-                          ? Color(red: 0.30, green: 0.60, blue: 0.32)
-                          : Color(red: 0.42, green: 0.78, blue: 0.40))
+                          ? Color(red: 0.18, green: 0.48, blue: 0.22)
+                          : Color(red: 0.15, green: 0.46, blue: 0.20))
             } else {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(colorScheme == .dark
@@ -1572,7 +1612,7 @@ struct PersonaComposer: View {
                         japanese: "別のスレッドで生成中です。完了するまで送信できません。",
                         english: "Another thread is generating. You can send after it finishes."
                     ))
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.body.weight(.medium))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                 }
@@ -1618,7 +1658,7 @@ struct PersonaComposer: View {
                 } label: {
                     Image(systemName: isGeneratingThisThread ? "stop.fill" : "paperplane.fill")
                         .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 38, height: 38)
+                        .frame(width: 44, height: 44)
                         .background(
                             Circle().fill(isGeneratingThisThread || canSubmit ? Color.accentColor : Color.secondary.opacity(0.25))
                         )
