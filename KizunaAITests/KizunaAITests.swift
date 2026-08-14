@@ -2311,7 +2311,8 @@ final class KizunaAITests: XCTestCase {
                 session: pending,
                 scene: scene,
                 turnID: turnID,
-                assistantMessageIDs: []
+                assistantMessageIDs: [],
+                memoryRetries: []
             )
             XCTFail("a turn snapshot from before the world move must not commit")
         } catch let error as StoryTurnPersistenceError {
