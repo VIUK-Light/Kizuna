@@ -211,6 +211,18 @@ final class KizunaAITests: XCTestCase {
     }
 
     func testStoryPromptUsesCanonicalStoryStateInsteadOfSceneSeed() {
+        let defaults = UserDefaults.standard
+        let languageKey = "kizuna.language"
+        let originalLanguageValue = defaults.object(forKey: languageKey)
+        defer {
+            if let originalLanguageValue {
+                defaults.set(originalLanguageValue, forKey: languageKey)
+            } else {
+                defaults.removeObject(forKey: languageKey)
+            }
+        }
+        defaults.set(KizunaLanguage.japanese.rawValue, forKey: languageKey)
+
         let worldID = UUID()
         let world = StoryWorld(
             title: "夜の物語",

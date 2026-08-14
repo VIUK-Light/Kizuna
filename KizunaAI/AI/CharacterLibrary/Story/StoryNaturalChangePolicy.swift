@@ -162,7 +162,14 @@ enum StoryNaturalChangePolicy {
     }
 
     private static func normalizeEvidence(_ value: String) -> String {
-        value
+        var normalized = value
+        // The visible assistant text is sanitized before this policy sees it.
+        // Apply the same markdown-marker removal to the model's quoted
+        // evidence so `*駅前へ歩き出した*` matches `駅前へ歩き出した`.
+        for token in ["**", "__", "`", "*", "_"] {
+            normalized = normalized.replacingOccurrences(of: token, with: "")
+        }
+        return normalized
             .lowercased()
             .replacingOccurrences(
                 of: "\\s+",

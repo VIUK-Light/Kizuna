@@ -650,8 +650,9 @@ struct StoryPromptBuilder {
             isEnglish ? "Story title: " : "物語タイトル: ",
             isEnglish ? "User-controlled character: " : "ユーザー操作キャラ: "
         ]
-        let header = Array(lines.prefix(2))
-        let body = Array(lines.dropFirst(2))
+        // 出力形式・evidence要件・単一変更制約はいずれも切り詰めてはいけない。
+        let header = Array(lines.prefix(3))
+        let body = Array(lines.dropFirst(3))
         let mandatory = body.filter { line in
             mandatoryPrefixes.contains { line.hasPrefix($0) }
         }
