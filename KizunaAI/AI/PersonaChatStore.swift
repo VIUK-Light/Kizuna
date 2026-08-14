@@ -100,33 +100,14 @@ struct PersonaThread: Codable, Hashable, Identifiable {
     }
 }
 
-/// A portable, versioned representation of Persona history.
-///
-/// The thread payload remains the existing Codable schema so an export can be
-/// used for inspection or a future, explicit migration without losing the
-/// persona snapshot or message metadata.
-struct PersonaThreadExportDocument: Codable, Equatable {
-    static let currentSchemaVersion = 1
-
-    let schemaVersion: Int
-    let appVersion: String
-    let threads: [PersonaThread]
-}
-
 enum PersonaChatRecoveryError: LocalizedError {
     case noCorruptPersistedValue
-    case noPersistedValue
-    case persistenceRecoveryRequired
     case unsupportedPersistedValue
 
     var errorDescription: String? {
         switch self {
         case .noCorruptPersistedValue:
             return "復旧対象の保存データが見つかりません。"
-        case .noPersistedValue:
-            return "保存されたPersona履歴が見つかりません。"
-        case .persistenceRecoveryRequired:
-            return "先に保存データを復旧またはバックアップしてください。"
         case .unsupportedPersistedValue:
             return "保存データをバックアップ形式へ変換できません。"
         }
@@ -254,173 +235,39 @@ final class PersonaChatStore: ObservableObject {
         didFailToLoadPersistedThreads
     }
 
-    /// `true` when the original UserDefaults value exists, including when it
-    /// is malformed. This is intentionally separate from `threads.isEmpty` so
-    /// an empty in-memory fallback can never be mistaken for saved data.
-    var hasPersistedValue: Bool {
-        defaults.object(forKey: Key.threads) != nil
-    }
-
-    /// The app version is metadata for an export, not a migration decision.
-    /// Tests and previews may not have a fully populated application bundle.
-    private var currentAppVersion: String {
-        guard let version = Bundle.main.object(
-            forInfoDictionaryKey: "CFBundleShortVersionString"
-        ) as? String else {
-            return "unknown"
-        }
-        let trimmed = version.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "unknown" : trimmed
-    }
-
-    /// Export the exact persisted value without changing UserDefaults.
-    /// Normal JSON and corrupt values intentionally use the same raw path so a
-    /// user can preserve the original bytes before any recovery decision.
-    func exportRawPersistedThreads() throws -> URL {
-        let raw = try rawPersistedThreadsData()
-        return try writeExport(
-            raw.data,
-            prefix: "Kizuna-Persona-Raw",
-            fileExtension: raw.fileExtension
-        )
-    }
-
-    /// Export valid decoded history as a versioned machine-readable document.
-    /// A recovery-required store must not export its empty in-memory fallback.
-    func exportPersistedThreadsJSON() throws -> URL {
-        guard !didFailToLoadPersistedThreads else {
-            throw PersonaChatRecoveryError.persistenceRecoveryRequired
-        }
-
-        let document = PersonaThreadExportDocument(
-            schemaVersion: PersonaThreadExportDocument.currentSchemaVersion,
-            appVersion: currentAppVersion,
-            threads: threads
-        )
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(document)
-        return try writeExport(
-            data,
-            prefix: "Kizuna-Persona-Threads",
-            fileExtension: "json"
-        )
-    }
-
-    /// Export valid decoded history in a stable, human-readable format.
-    /// Message bodies keep their line breaks while each line remains visibly
-    /// inside its message block.
-    func exportPersistedThreadsText() throws -> URL {
-        guard !didFailToLoadPersistedThreads else {
-            throw PersonaChatRecoveryError.persistenceRecoveryRequired
-        }
-
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-
-        var lines = [
-            "Kizuna Persona history",
-            "schemaVersion: \(PersonaThreadExportDocument.currentSchemaVersion)",
-            "appVersion: \(currentAppVersion)",
-            "threadCount: \(threads.count)",
-            ""
-        ]
-
-        for (threadIndex, thread) in threads.enumerated() {
-            let characterID = thread.characterID?.uuidString ?? "none"
-            let age = thread.personaSnapshot.age.map(String.init) ?? "none"
-            lines.append("thread[\(threadIndex)]")
-            lines.append("id: \(thread.id.uuidString)")
-            lines.append("characterID: \(characterID)")
-            lines.append("title: \(thread.title)")
-            lines.append("createdAt: \(formatter.string(from: thread.createdAt))")
-            lines.append("updatedAt: \(formatter.string(from: thread.updatedAt))")
-            lines.append("personaSnapshot.id: \(thread.personaSnapshot.id.uuidString)")
-            lines.append("personaSnapshot.name: \(thread.personaSnapshot.name)")
-            lines.append("personaSnapshot.age: \(age)")
-            lines.append("personaSnapshot.personality: \(thread.personaSnapshot.personality)")
-            lines.append("personaSnapshot.tone: \(thread.personaSnapshot.tone.rawValue)")
-            lines.append("personaSnapshot.relation: \(thread.personaSnapshot.relation.rawValue)")
-            lines.append("personaSnapshot.freeFormAddendum: \(thread.personaSnapshot.freeFormAddendum)")
-            lines.append("messageCount: \(thread.messages.count)")
-
-            for (messageIndex, message) in thread.messages.enumerated() {
-                lines.append("message[\(messageIndex)]")
-                lines.append("id: \(message.id.uuidString)")
-                lines.append("role: \(message.role.rawValue)")
-                lines.append("createdAt: \(formatter.string(from: message.createdAt))")
-                lines.append("text:")
-                let bodyLines = message.text.split(
-                    omittingEmptySubsequences: false,
-                    whereSeparator: { $0 == "\n" }
-                )
-                if bodyLines.isEmpty {
-                    lines.append("  ")
-                } else {
-                    lines.append(contentsOf: bodyLines.map { "  \($0)" })
-                }
-            }
-            lines.append("")
-        }
-
-        let data = Data(lines.joined(separator: "\n").utf8)
-        return try writeExport(
-            data,
-            prefix: "Kizuna-Persona-Threads",
-            fileExtension: "txt"
-        )
-    }
-
     /// 破損した保存値を、明示的な共有・保存操作へ渡せる一時ファイルへ書き出す。
     /// Data と String は保存されていた値をそのままバイト列として扱い、
     /// その他の UserDefaults のプロパティリスト値も内容を失わない形式で保存する。
     /// この操作は保存値を変更せず、復旧が必要な状態でのみ実行できる。
     func exportCorruptPersistedThreads() throws -> URL {
         guard didFailToLoadPersistedThreads,
-              defaults.object(forKey: Key.threads) != nil else {
+              let rawValue = defaults.object(forKey: Key.threads) else {
             throw PersonaChatRecoveryError.noCorruptPersistedValue
         }
 
-        let raw = try rawPersistedThreadsData()
-        return try writeExport(
-            raw.data,
-            prefix: "Kizuna-Persona-Recovery",
-            fileExtension: raw.fileExtension
-        )
-    }
-
-    private func rawPersistedThreadsData() throws -> (data: Data, fileExtension: String) {
-        guard let rawValue = defaults.object(forKey: Key.threads) else {
-            throw PersonaChatRecoveryError.noPersistedValue
-        }
-
+        let data: Data
+        let fileExtension: String
         if let rawData = rawValue as? Data {
-            return (rawData, "bin")
-        }
-        if let rawString = rawValue as? String {
-            return (Data(rawString.utf8), "txt")
-        }
-        if PropertyListSerialization.propertyList(rawValue, isValidFor: .binary) {
-            return (
-                try PropertyListSerialization.data(
-                    fromPropertyList: rawValue,
-                    format: .binary,
-                    options: 0
-                ),
-                "plist"
+            data = rawData
+            fileExtension = "bin"
+        } else if let rawString = rawValue as? String {
+            data = Data(rawString.utf8)
+            fileExtension = "txt"
+        } else if PropertyListSerialization.propertyList(
+            rawValue,
+            isValidFor: .binary
+        ) {
+            data = try PropertyListSerialization.data(
+                fromPropertyList: rawValue,
+                format: .binary,
+                options: 0
             )
+            fileExtension = "plist"
+        } else {
+            throw PersonaChatRecoveryError.unsupportedPersistedValue
         }
-        throw PersonaChatRecoveryError.unsupportedPersistedValue
-    }
 
-    private func writeExport(
-        _ data: Data,
-        prefix: String,
-        fileExtension: String
-    ) throws -> URL {
-        let fileName = "\(prefix)-\(UUID().uuidString).\(fileExtension)"
+        let fileName = "Kizuna-Persona-Recovery-\(UUID().uuidString).\(fileExtension)"
         let exportURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         try data.write(to: exportURL, options: .atomic)
         return exportURL
@@ -513,18 +360,6 @@ final class PersonaChatStore: ObservableObject {
             activeThreadID = threads.first?.id
         }
         persist()
-    }
-
-    /// Delete every Persona conversation after an explicit user confirmation.
-    /// Recovery-required stores refuse this operation so corrupted bytes cannot
-    /// be silently replaced by an empty valid array.
-    @discardableResult
-    func deleteAllThreads() -> Bool {
-        guard canMutatePersistedState() else { return false }
-        threads = []
-        activeThreadID = nil
-        persist()
-        return true
     }
 
     func renameThread(id: UUID, title: String) {

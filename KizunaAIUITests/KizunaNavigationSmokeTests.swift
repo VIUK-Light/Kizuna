@@ -45,22 +45,4 @@ final class KizunaNavigationSmokeTests: XCTestCase {
                 .waitForExistence(timeout: 10)
         )
     }
-
-    func testMyPageDataManagementIsReachable() throws {
-        let myPageTab = app.tabBars.buttons["マイページ"]
-        XCTAssertTrue(myPageTab.waitForExistence(timeout: 10))
-        myPageTab.tap()
-
-        let dataManagementButton = app.buttons["myPage.dataManagement"]
-        if !dataManagementButton.waitForExistence(timeout: 3) {
-            app.swipeUp()
-        }
-        XCTAssertTrue(dataManagementButton.waitForExistence(timeout: 5))
-        dataManagementButton.tap()
-
-        XCTAssertTrue(
-            app.descendants(matching: .any)["myPage.dataManagement.heading"]
-                .waitForExistence(timeout: 5)
-        )
-    }
 }

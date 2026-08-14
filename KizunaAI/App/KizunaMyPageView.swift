@@ -10,7 +10,6 @@ struct KizunaMyPageView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isShowingProfileEditor = false
     @State private var isShowingDetailedSettings = false
-    @State private var isShowingDataManagement = false
     @State private var isShowingResetLaunchAlert = false
 
     var body: some View {
@@ -34,10 +33,6 @@ struct KizunaMyPageView: View {
         .sheet(isPresented: $isShowingDetailedSettings) {
             KizunaSettingsView()
                 .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 680)
-        }
-        .sheet(isPresented: $isShowingDataManagement) {
-            KizunaPersonaDataManagementView()
-                .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 620)
         }
         .alert(
             KizunaCopy.text(japanese: "初期設定を今すぐ開きますか？", english: "Open the welcome setup now?"),
@@ -158,7 +153,6 @@ struct KizunaMyPageView: View {
             languageCard
             runtimeCard
             launchCard
-            dataManagementCard
         }
     }
 
@@ -234,29 +228,6 @@ struct KizunaMyPageView: View {
                 .font(.system(size: 12, weight: .semibold))
             }
             .buttonStyle(.bordered)
-        }
-    }
-
-    private var dataManagementCard: some View {
-        settingsCard(
-            title: KizunaCopy.text(japanese: "データ管理", english: "Data management"),
-            subtitle: KizunaCopy.text(
-                japanese: "Persona会話を保存・書き出し・削除します。",
-                english: "Export or delete Persona conversations."
-            ),
-            icon: "externaldrive"
-        ) {
-            Button {
-                isShowingDataManagement = true
-            } label: {
-                Label(
-                    KizunaCopy.text(japanese: "データ管理を開く", english: "Open data management"),
-                    systemImage: "arrow.up.doc"
-                )
-                .font(.subheadline.weight(.semibold))
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("myPage.dataManagement")
         }
     }
 
