@@ -630,6 +630,68 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testSourceLessStoryMemoryDoesNotMergeWithAttributedRecord() {
+        let worldID = UUID()
+        let sessionID = UUID()
+        let sourceTurnID = UUID()
+        let legacy = StoryMemory(
+            storyWorldId: worldID,
+            text: "同じ内容",
+            storySessionId: sessionID
+        )
+        let attributed = StoryMemory(
+            storyWorldId: worldID,
+            text: "同じ内容",
+            storySessionId: sessionID,
+            sourceTurnIds: [sourceTurnID]
+        )
+
+        var values = [legacy]
+        LocalJSONStoryMemoryRepository.mergeMemory(attributed, &values)
+
+        XCTAssertEqual(values.count, 2)
+        XCTAssertTrue(values.contains(where: { $0.id == legacy.id && $0.sourceTurnIds.isEmpty }))
+        XCTAssertTrue(values.contains(where: { $0.id == attributed.id && $0.sourceTurnIds == [sourceTurnID] }))
+    }
+
+    func testMovingAttributedStoryMemoryDoesNotMergeWithSourceLessDestination() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let sourceWorldID = UUID()
+        let destinationWorldID = UUID()
+        let sessionID = UUID()
+        let sourceTurnID = UUID()
+        let repository = LocalJSONStoryMemoryRepository(storageURL: storageURL)
+        let legacy = StoryMemory(
+            storyWorldId: destinationWorldID,
+            text: "移動先の旧形式",
+            storySessionId: sessionID
+        )
+        let attributed = StoryMemory(
+            storyWorldId: sourceWorldID,
+            text: "移動先の旧形式",
+            storySessionId: sessionID,
+            sourceTurnIds: [sourceTurnID]
+        )
+
+        try await repository.saveMemory(legacy)
+        try await repository.saveMemory(attributed)
+        try await repository.moveMemory(attributed, to: destinationWorldID)
+
+        let moved = try await repository.fetchMemories(
+            storyWorldId: destinationWorldID,
+            storySessionId: sessionID
+        )
+        XCTAssertEqual(moved.count, 2)
+
+        try await repository.removeSourceTurnIds([sourceTurnID])
+        let remaining = try await repository.fetchMemories(
+            storyWorldId: destinationWorldID,
+            storySessionId: sessionID
+        )
+        XCTAssertEqual(remaining.map(\.id), [legacy.id])
+        XCTAssertTrue(remaining[0].sourceTurnIds.isEmpty)
+    }
+
     func testStoryMemorySourceMetadataUsesObjectAndReadsLegacyUUIDDictionary() throws {
         let sourceTurnID = UUID()
         let metadata = StoryMemorySourceMetadata(
@@ -1128,6 +1190,44 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(quarantined.count, 1)
         XCTAssertEqual(quarantined[0].missingSessionRestoreAttempts, 3)
         XCTAssertTrue(quarantined[0].isAbandoned)
+    }
+
+    func testOwnerlessLegacyMemoryRetryStaysMigratableWhenSessionIsMissing() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let missingSessionID = UUID()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "所属Sessionがまだ確定していない記憶",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "後で移行できる旧形式記憶"
+                )
+            ],
+            storyWorldID: worldID
+        )
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        try await retryRepository.saveRetry(retry)
+
+        let service = StorySessionService(
+            sessionRepo: TestStorySessionRepository(),
+            storyMemoryRetryRepo: retryRepository
+        )
+
+        for _ in 1...4 {
+            try await service.restorePendingStoryMemoryRetries(
+                storySessionID: missingSessionID,
+                storyWorldID: worldID
+            )
+        }
+
+        let remaining = try await retryRepository.fetchRetries()
+        XCTAssertEqual(remaining, [retry])
+        XCTAssertEqual(remaining[0].missingSessionRestoreAttempts, 0)
+        XCTAssertFalse(remaining[0].isAbandoned)
     }
 
     func testStaleMemoryRetryUsesCompletionFenceWhenJournalRetainsMissingScene() async throws {

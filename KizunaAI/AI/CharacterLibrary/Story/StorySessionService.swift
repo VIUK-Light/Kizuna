@@ -848,10 +848,12 @@ final class StorySessionService: ObservableObject {
         if retrySessionIDs == Set([storySessionID]) {
             return true
         }
-        // Legacy records without an owner and malformed records that mix
-        // owners cannot be assigned safely. Bound their lifetime as active
-        // work, while leaving the JSON record available for diagnosis.
-        return retrySessionIDs.isEmpty || retrySessionIDs.count > 1
+        // A legacy record without an owner may still be migratable when the
+        // original Session is opened later. Only records that explicitly mix
+        // multiple owners are impossible to assign safely and may be bounded
+        // as active work, while the JSON record remains available for
+        // diagnosis.
+        return retrySessionIDs.count > 1
     }
 
     private struct StoryProgressUpdate: Codable {

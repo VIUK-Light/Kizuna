@@ -1083,6 +1083,11 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                 && $0.characterId == incoming.characterId
                 && $0.category == incoming.category
                 && $0.source == incoming.source
+                // A source-less legacy record is not interchangeable with a
+                // record whose identity is tied to one or more turns. Keep
+                // both records so removing provenance cannot delete the
+                // legacy record indirectly.
+                && $0.sourceTurnIds.isEmpty == incoming.sourceTurnIds.isEmpty
                 && Self.normalize($0.text) == normalized
         }) {
             var existing = all[index]
@@ -1152,6 +1157,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                         && all[$0].characterId == memory.characterId
                     && all[$0].category == memory.category
                     && all[$0].source == memory.source
+                    && all[$0].sourceTurnIds.isEmpty == memory.sourceTurnIds.isEmpty
                     && Self.normalize(all[$0].text) == normalized
             }) {
                 var target = all[targetIndex]
