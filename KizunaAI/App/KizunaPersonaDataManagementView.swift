@@ -77,6 +77,9 @@ struct KizunaPersonaDataManagementView: View {
             ))
         }
         .accessibilityElement(children: .contain)
+        .onDisappear {
+            removeExportedFile()
+        }
     }
 
     private var summarySection: some View {
@@ -209,7 +212,8 @@ struct KizunaPersonaDataManagementView: View {
 
     private func exportRawData() {
         do {
-            exportedURL = try store.exportRawPersistedThreads()
+            let url = try store.exportRawPersistedThreads()
+            replaceExportedURL(with: url)
             statusMessage = KizunaCopy.text(japanese: "保存データを書き出しました。", english: "Stored data exported.")
             errorMessage = nil
         } catch {
@@ -219,7 +223,8 @@ struct KizunaPersonaDataManagementView: View {
 
     private func exportJSON() {
         do {
-            exportedURL = try store.exportPersistedThreadsJSON()
+            let url = try store.exportPersistedThreadsJSON()
+            replaceExportedURL(with: url)
             statusMessage = KizunaCopy.text(japanese: "JSONを書き出しました。", english: "JSON exported.")
             errorMessage = nil
         } catch {
@@ -229,7 +234,8 @@ struct KizunaPersonaDataManagementView: View {
 
     private func exportText() {
         do {
-            exportedURL = try store.exportPersistedThreadsText()
+            let url = try store.exportPersistedThreadsText()
+            replaceExportedURL(with: url)
             statusMessage = KizunaCopy.text(japanese: "テキストを書き出しました。", english: "Text exported.")
             errorMessage = nil
         } catch {
@@ -245,19 +251,59 @@ struct KizunaPersonaDataManagementView: View {
             )
             return
         }
-        exportedURL = nil
+        removeExportedFile()
         statusMessage = KizunaCopy.text(japanese: "Persona会話を削除しました。", english: "Persona conversations deleted.")
     }
 
     private func resetCorruptHistory() {
-        guard store.discardCorruptPersistedThreads() else {
-            errorMessage = KizunaCopy.text(
-                japanese: "復旧状態を変更できませんでした。画面を開き直してください。",
-                english: "The recovery state could not be changed. Reopen this screen and try again."
-            )
+        do {
+            // Keep a user-shareable copy before the destructive reset. The
+            // store also retains its internal recovery backup, but the URL is
+            // what lets the user inspect or save the original bytes now.
+            let backupURL = try store.exportCorruptPersistedThreads()
+            guard store.discardCorruptPersistedThreads() else {
+                removeExportFile(at: backupURL)
+                errorMessage = KizunaCopy.text(
+                    japanese: "復旧状態を変更できませんでした。画面を開き直してください。",
+                    english: "The recovery state could not be changed. Reopen this screen and try again."
+                )
+                return
+            }
+            replaceExportedURL(with: backupURL)
+        } catch {
+            errorMessage = error.localizedDescription
             return
         }
-        exportedURL = nil
         statusMessage = KizunaCopy.text(japanese: "バックアップ後に履歴をリセットしました。", english: "History was reset after backup.")
+    }
+
+    private func replaceExportedURL(with newURL: URL) {
+        let previousURL = exportedURL
+        if let previousURL, previousURL != newURL {
+            removeExportFile(at: previousURL)
+        }
+        exportedURL = newURL
+    }
+
+    private func removeExportedFile() {
+        guard let exportedURL else { return }
+        removeExportFile(at: exportedURL)
+        self.exportedURL = nil
+    }
+
+    private func removeExportFile(at url: URL) {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            let nsError = error as NSError
+            guard nsError.domain != NSCocoaErrorDomain
+                    || nsError.code != NSFileNoSuchFileError else {
+                return
+            }
+            NSLog(
+                "[KizunaPersonaDataManagement] failed to remove export file: %@",
+                "\(url.path): \(error.localizedDescription)"
+            )
+        }
     }
 }

@@ -420,9 +420,21 @@ final class PersonaChatStore: ObservableObject {
         prefix: String,
         fileExtension: String
     ) throws -> URL {
+        let exportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Kizuna-Persona-Exports", isDirectory: true)
+        if FileManager.default.fileExists(atPath: exportDirectory.path) {
+            try FileManager.default.removeItem(at: exportDirectory)
+        }
+        try FileManager.default.createDirectory(
+            at: exportDirectory,
+            withIntermediateDirectories: true
+        )
         let fileName = "\(prefix)-\(UUID().uuidString).\(fileExtension)"
-        let exportURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-        try data.write(to: exportURL, options: .atomic)
+        let exportURL = exportDirectory.appendingPathComponent(fileName)
+        try data.write(
+            to: exportURL,
+            options: [.atomic, .completeFileProtection]
+        )
         return exportURL
     }
 

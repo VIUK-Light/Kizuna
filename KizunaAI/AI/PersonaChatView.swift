@@ -262,8 +262,8 @@ struct PersonaChatView: View {
         } message: {
             Text(
                 KizunaCopy.text(
-                    japanese: "先にバックアップを書き出してください。リセットすると、読み込めなかったPersona履歴は新しい空状態に置き換わります。",
-                    english: "Export a backup first. Resetting replaces the unreadable Persona history with a new empty state."
+                    japanese: "リセット前にバックアップを書き出します。失敗した場合はリセットしません。読み込めなかったPersona履歴は新しい空状態に置き換わります。",
+                    english: "A backup is exported before resetting. If that fails, the reset is cancelled. Unreadable Persona history is replaced with a new empty state."
                 )
             )
         }
@@ -281,6 +281,9 @@ struct PersonaChatView: View {
             Button(KizunaCopy.text(japanese: "閉じる", english: "Close"), role: .cancel) {}
         } message: {
             Text(personaRecoveryErrorMessage ?? "")
+        }
+        .onDisappear {
+            removePersonaRecoveryExportFile()
         }
     }
 
@@ -355,7 +358,8 @@ struct PersonaChatView: View {
 
     private func exportPersonaRecoveryData() {
         do {
-            personaRecoveryExportURL = try store.exportCorruptPersistedThreads()
+            let url = try store.exportCorruptPersistedThreads()
+            replacePersonaRecoveryExportURL(with: url)
             personaRecoveryErrorMessage = nil
         } catch {
             personaRecoveryErrorMessage = error.localizedDescription
@@ -363,15 +367,52 @@ struct PersonaChatView: View {
     }
 
     private func resetPersonaRecoveryState() {
-        guard store.discardCorruptPersistedThreads() else {
-            personaRecoveryErrorMessage = KizunaCopy.text(
-                japanese: "復旧状態を変更できませんでした。画面を再度開いて確認してください。",
-                english: "The recovery state could not be changed. Reopen this screen and try again."
-            )
+        do {
+            let backupURL = try store.exportCorruptPersistedThreads()
+            guard store.discardCorruptPersistedThreads() else {
+                removePersonaRecoveryExportFile(at: backupURL)
+                personaRecoveryErrorMessage = KizunaCopy.text(
+                    japanese: "復旧状態を変更できませんでした。画面を再度開いて確認してください。",
+                    english: "The recovery state could not be changed. Reopen this screen and try again."
+                )
+                return
+            }
+            replacePersonaRecoveryExportURL(with: backupURL)
+            personaRecoveryErrorMessage = nil
+        } catch {
+            personaRecoveryErrorMessage = error.localizedDescription
             return
         }
-        personaRecoveryExportURL = nil
-        personaRecoveryErrorMessage = nil
+    }
+
+    private func replacePersonaRecoveryExportURL(with newURL: URL) {
+        let previousURL = personaRecoveryExportURL
+        if let previousURL, previousURL != newURL {
+            removePersonaRecoveryExportFile(at: previousURL)
+        }
+        personaRecoveryExportURL = newURL
+    }
+
+    private func removePersonaRecoveryExportFile() {
+        guard let personaRecoveryExportURL else { return }
+        removePersonaRecoveryExportFile(at: personaRecoveryExportURL)
+        self.personaRecoveryExportURL = nil
+    }
+
+    private func removePersonaRecoveryExportFile(at url: URL) {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            let nsError = error as NSError
+            guard nsError.domain != NSCocoaErrorDomain
+                    || nsError.code != NSFileNoSuchFileError else {
+                return
+            }
+            NSLog(
+                "[PersonaChatView] failed to remove recovery export file: %@",
+                "\(url.path): \(error.localizedDescription)"
+            )
+        }
     }
 
     private var compactChat: some View {

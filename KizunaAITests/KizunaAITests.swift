@@ -5226,9 +5226,11 @@ final class KizunaAITests: XCTestCase {
         let rawURL = try store.exportRawPersistedThreads()
         defer { try? FileManager.default.removeItem(at: rawURL) }
         XCTAssertEqual(try Data(contentsOf: rawURL), defaults.data(forKey: "persona.threads.v1"))
+        XCTAssertTrue(rawURL.path.contains("Kizuna-Persona-Exports"))
 
         let jsonURL = try store.exportPersistedThreadsJSON()
         defer { try? FileManager.default.removeItem(at: jsonURL) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rawURL.path))
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let document = try decoder.decode(
@@ -5247,6 +5249,7 @@ final class KizunaAITests: XCTestCase {
 
         let textURL = try store.exportPersistedThreadsText()
         defer { try? FileManager.default.removeItem(at: textURL) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: jsonURL.path))
         let readableText = try String(contentsOf: textURL, encoding: .utf8)
         XCTAssertTrue(readableText.contains(threadID.uuidString))
         XCTAssertTrue(readableText.contains(characterID.uuidString))
