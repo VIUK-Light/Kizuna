@@ -207,11 +207,75 @@ enum LocalJSONStoreTransaction {
         }
     }
 
+    /// Recover an array one element at a time while preserving the source
+    /// file. This API does not acquire the shared file lock: callers must
+    /// invoke it inside `withSharedLock`, and call that from
+    /// `performOnFileIO` when the read may otherwise block the MainActor.
+    /// Callers that need a safe read-modify-write must inspect `invalidCount`
+    /// and refuse to save the recovered array, otherwise saving it would
+    /// silently delete the unreadable records.
+    nonisolated static func recoverRecords<T: Decodable>(
+        at url: URL,
+        fileName: String,
+        fallback: LocalJSONStoreError,
+        logPrefix: String = "[LocalJSONStore]"
+    ) throws -> RecoveredRecords<T> {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw fallback
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            guard let rawItems = try JSONSerialization.jsonObject(
+                with: data,
+                options: [.fragmentsAllowed]
+            ) as? [Any] else {
+                throw fallback
+            }
+
+            let decoder = LocalJSONStoreCoding.makeDecoder()
+            var validItems: [T] = []
+            var invalidCount = 0
+            for (index, rawItem) in rawItems.enumerated() {
+                do {
+                    let itemData = try JSONSerialization.data(
+                        withJSONObject: rawItem,
+                        options: [.fragmentsAllowed]
+                    )
+                    validItems.append(try decoder.decode(T.self, from: itemData))
+                } catch {
+                    invalidCount += 1
+                    NSLog(
+                        "%@ skipped invalid %@ record at index %ld: %@",
+                        logPrefix,
+                        fileName,
+                        index,
+                        String(describing: error)
+                    )
+                }
+            }
+
+            guard invalidCount > 0 else { throw fallback }
+            NSLog(
+                "%@ recovered %@ for read: %ld valid, %ld invalid; source was not modified",
+                logPrefix,
+                fileName,
+                validItems.count,
+                invalidCount
+            )
+            return RecoveredRecords(items: validItems, invalidCount: invalidCount)
+        } catch let storeError as LocalJSONStoreError {
+            throw storeError
+        } catch {
+            throw LocalJSONStoreError.ioFailure(underlying: error)
+        }
+    }
+
     /// Read an array while preserving the source file when individual records
-    /// are malformed. This is deliberately separate from `load`: callers that
-    /// need a safe read-modify-write must inspect `invalidCount` and refuse to
-    /// save the recovered array, otherwise saving it would silently delete the
-    /// unreadable records.
+    /// are malformed. This nonisolated API does not acquire the shared file
+    /// lock: callers must invoke it inside `withSharedLock`, and call that
+    /// from `performOnFileIO` when the read may otherwise block the MainActor.
+    /// It is deliberately separate from `load` so callers can inspect
+    /// `invalidCount` before deciding whether a write is safe.
     nonisolated static func loadRecoveringCorruptRecords<T: Codable>(
         _ type: T.Type,
         fileName: String,
@@ -225,53 +289,12 @@ enum LocalJSONStoreTransaction {
         } catch let decodeError as LocalJSONStoreError {
             guard case .decode = decodeError else { throw decodeError }
             let url = baseURL.appendingPathComponent(fileName)
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                throw decodeError
-            }
-
-            do {
-                let data = try Data(contentsOf: url)
-                guard let rawItems = try JSONSerialization.jsonObject(
-                    with: data,
-                    options: [.fragmentsAllowed]
-                ) as? [Any] else {
-                    throw decodeError
-                }
-
-                let decoder = LocalJSONStoreCoding.makeDecoder()
-                var validItems: [T] = []
-                var invalidCount = 0
-                for (index, rawItem) in rawItems.enumerated() {
-                    do {
-                        let itemData = try JSONSerialization.data(
-                            withJSONObject: rawItem,
-                            options: [.fragmentsAllowed]
-                        )
-                        validItems.append(try decoder.decode(T.self, from: itemData))
-                    } catch {
-                        invalidCount += 1
-                        NSLog(
-                            "[LocalJSONStoreTransaction] skipped invalid %@ record at index %ld: %@",
-                            fileName,
-                            index,
-                            String(describing: error)
-                        )
-                    }
-                }
-
-                guard invalidCount > 0 else { throw decodeError }
-                NSLog(
-                    "[LocalJSONStoreTransaction] recovered %@ for migration read: %ld valid, %ld invalid; source was not modified",
-                    fileName,
-                    validItems.count,
-                    invalidCount
-                )
-                return RecoveredRecords(items: validItems, invalidCount: invalidCount)
-            } catch let storeError as LocalJSONStoreError {
-                throw storeError
-            } catch {
-                throw LocalJSONStoreError.ioFailure(underlying: error)
-            }
+            return try recoverRecords(
+                at: url,
+                fileName: fileName,
+                fallback: decodeError,
+                logPrefix: "[LocalJSONStoreTransaction]"
+            )
         }
     }
 
@@ -352,8 +375,7 @@ actor LocalJSONStore<T: Codable> {
             } catch let decodeError as LocalJSONStoreError {
                 guard case .decode = decodeError else { throw decodeError }
                 let recovery = try recoverRecordsUnlocked(fallback: decodeError)
-                NSLog("[LocalJSONStore] recovered %@ for read: %ld valid, %ld invalid; source was not modified", fileName, recovery.validItems.count, recovery.invalidCount)
-                return recovery.validItems
+                return recovery.items
             }
         }
     }
@@ -377,9 +399,8 @@ actor LocalJSONStore<T: Codable> {
                 // 退避できなければ現行データを上書きしない。
                 let recovery = try recoverRecordsUnlocked(fallback: decodeError)
                 let backupURL = try backupCorruptFileUnlocked()
-                try saveUnlocked(recovery.validItems)
-                NSLog("[LocalJSONStore] repaired %@ before write: %ld valid, %ld invalid; backup=%@", fileName, recovery.validItems.count, recovery.invalidCount, backupURL.lastPathComponent)
-                items = recovery.validItems
+                NSLog("[LocalJSONStore] recovered %@ for write: %ld valid, %ld invalid; backup=%@", fileName, recovery.items.count, recovery.invalidCount, backupURL.lastPathComponent)
+                items = recovery.items
             }
             try mutation(&items)
             try saveUnlocked(items)
@@ -398,40 +419,16 @@ actor LocalJSONStore<T: Codable> {
         }
     }
 
-    private struct RecoveryResult {
-        let validItems: [T]
-        let invalidCount: Int
-    }
-
     /// 配列の各要素を個別にdecodeし、壊れた要素がある場合だけ救出結果を返す。
     /// ルートJSON自体が配列でない場合は、復元不能なので元のdecodeエラーを返す。
-    private func recoverRecordsUnlocked(fallback: LocalJSONStoreError) throws -> RecoveryResult {
-        guard fm.fileExists(atPath: fileURL.path) else { throw fallback }
-        do {
-            let data = try Data(contentsOf: fileURL)
-            guard let rawItems = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [Any] else {
-                throw fallback
-            }
-
-            var validItems: [T] = []
-            var invalidCount = 0
-            for (index, rawItem) in rawItems.enumerated() {
-                do {
-                    let itemData = try JSONSerialization.data(withJSONObject: rawItem, options: [.fragmentsAllowed])
-                    validItems.append(try decoder.decode(T.self, from: itemData))
-                } catch {
-                    invalidCount += 1
-                    NSLog("[LocalJSONStore] skipped invalid %@ record at index %ld: %@", fileName, index, String(describing: error))
-                }
-            }
-
-            guard invalidCount > 0 else { throw fallback }
-            return RecoveryResult(validItems: validItems, invalidCount: invalidCount)
-        } catch let storeError as LocalJSONStoreError {
-            throw storeError
-        } catch {
-            throw LocalJSONStoreError.ioFailure(underlying: error)
-        }
+    private func recoverRecordsUnlocked(
+        fallback: LocalJSONStoreError
+    ) throws -> LocalJSONStoreTransaction.RecoveredRecords<T> {
+        try LocalJSONStoreTransaction.recoverRecords(
+            at: fileURL,
+            fileName: fileName,
+            fallback: fallback
+        )
     }
 
     /// 破損した元ファイルを同じディレクトリに退避する。コピーに失敗した場合は
