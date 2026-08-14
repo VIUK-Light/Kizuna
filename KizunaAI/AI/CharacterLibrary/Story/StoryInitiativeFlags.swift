@@ -10,12 +10,23 @@ import Foundation
 enum StoryInitiativeFlags {
     static let nagiUserDefaultsKey = "kizuna.storyInitiative.nagi"
     static let ioriUserDefaultsKey = "kizuna.storyInitiative.iori"
+    static let nagiLaunchArgument = "--kizuna-story-initiative-nagi"
+    static let ioriLaunchArgument = "--kizuna-story-initiative-iori"
 
     static func isEnabled(
         for model: StoryGenerationModel,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        arguments: [String] = ProcessInfo.processInfo.arguments
     ) -> Bool {
-        defaults.bool(forKey: key(for: model))
+        #if DEBUG || KIZUNA_INTERNAL_CANARY
+        return defaults.bool(forKey: key(for: model))
+            || arguments.contains(launchArgument(for: model))
+        #else
+        // Release builds have no public or persisted activation path. This
+        // prevents a stale developer default from silently enabling the
+        // experiment in a shipped build.
+        return false
+        #endif
     }
 
     static func setEnabled(
@@ -23,7 +34,18 @@ enum StoryInitiativeFlags {
         for model: StoryGenerationModel,
         defaults: UserDefaults = .standard
     ) {
+        #if DEBUG || KIZUNA_INTERNAL_CANARY
         defaults.set(enabled, forKey: key(for: model))
+        #endif
+    }
+
+    static func launchArgument(for model: StoryGenerationModel) -> String {
+        switch model {
+        case .b31:
+            return nagiLaunchArgument
+        case .e4b:
+            return ioriLaunchArgument
+        }
     }
 
     private static func key(for model: StoryGenerationModel) -> String {
