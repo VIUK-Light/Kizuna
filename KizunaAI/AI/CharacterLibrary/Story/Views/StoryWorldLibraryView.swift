@@ -15,10 +15,15 @@ struct StoryWorldLibraryView: View {
     // observation wrapper so updates continue to flow into this view.
     @StateObject private var vm: StoryWorldLibraryViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let showsDismissButton: Bool
     @State private var showCreate = false
     @State private var editing: StoryWorld? = nil
     @State private var selected: StoryWorld? = nil
+
+    private var storyCoverHeight: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 320 : 230
+    }
 
     /// セッション開始時に呼ぶ。呼び出し側 (PersonaChatView 等) がシート閉じてセッション画面へ。
     var onStartSession: ((StoryWorld) -> Void)?
@@ -363,7 +368,7 @@ struct StoryWorldLibraryView: View {
                 ZStack(alignment: .bottomLeading) {
                     StoryCoverView(world: displayedWorld, character: coverCharacter)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 230)
+                        .frame(height: storyCoverHeight)
                         .clipped()
 
                     LinearGradient(
