@@ -175,6 +175,11 @@ protocol StoryMemoryRepository: AnyObject {
     /// Fetch only memories created in the specified StorySession. Legacy
     /// records without a session ID are intentionally excluded from prompts.
     func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory]
+    /// Assign world-scoped legacy memories only when the world has exactly one
+    /// live StorySession. The implementation must re-read the Session list
+    /// inside the same file lock as the memory update so a second Session
+    /// cannot be created between the safety check and the assignment.
+    func assignLegacyMemoriesIfSingleSession(storyWorldId: UUID) async throws
     func saveMemory(_ memory: StoryMemory) async throws
     /// Remove only the cancelled turn provenance. A merged memory created by
     /// another turn must remain available.
@@ -694,34 +699,11 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             committed.persistenceRevision = actualRevision + 1
             committed.updatedAt = now
 
-            // Scene全体を古い呼び出し側スナップショットで置き換えない。
-            // このターンが生成したsummary/activeキャラだけを、生成開始時点
-            // から外部編集されていない場合に反映し、imageKey等の最新編集は残す。
-            var committedScene = currentScene
-            if currentScene.updatedAt == scene.updatedAt,
-               currentScene.effectivePersistenceRevision == scene.effectivePersistenceRevision {
-                committedScene.summary = scene.summary
-                committedScene.activeCharacterIds = Array(
-                    scene.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
-                )
-                // StoryState is the runtime source of truth after the first
-                // turn. Keep the scene strip and its fallback visual in sync
-                // with that state, while retaining user edits made after the
-                // turn started via the timestamp guard above.
-                if let storyState = committed.storyState {
-                    if !storyState.location.isEmpty {
-                        committedScene.location = storyState.location
-                    }
-                    if !storyState.timeOfDay.isEmpty {
-                        committedScene.timeOfDay = storyState.timeOfDay
-                    }
-                    if !storyState.mood.isEmpty {
-                        committedScene.mood = storyState.mood
-                    }
-                }
-                committedScene.updatedAt = now
-                committedScene.persistenceRevision = currentScene.effectivePersistenceRevision + 1
-            }
+            // Sceneはカタログ上の初期値として固定する。ターンごとの要約、
+            // active cast、場所・時間・ムードはSessionのruntime stateが正本で
+            // あり、古いSceneスナップショットや別ターンの結果で書き戻さない。
+            // ここでは現在のSceneをjournalへ保持するだけにする。
+            let committedScene = currentScene
 
             // ジャーナルを先に置いてから2つのスナップショットを更新する。
             // 途中終了時は次回のfetchで両方を再適用する。
@@ -1114,6 +1096,52 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                 if lhs.importance != rhs.importance { return lhs.importance > rhs.importance }
                 return (lhs.lastUsedAt ?? lhs.createdAt) > (rhs.lastUsedAt ?? rhs.createdAt)
             }
+    }
+
+    func assignLegacyMemoriesIfSingleSession(storyWorldId: UUID) async throws {
+        let storageURL = self.storageURL
+        let fileName = self.fileName
+        try await LocalJSONStoreTransaction.performOnFileIO {
+            try LocalJSONStoreTransaction.withSharedLock {
+                let sessions = try LocalJSONStoreTransaction.load(
+                    StorySession.self,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+                let worldSessions = sessions.filter { $0.storyWorldId == storyWorldId }
+                guard let session = worldSessions.first, worldSessions.count == 1 else {
+                    // Zero Sessions and multiple Sessions are both ambiguous.
+                    // In either case, leave legacy records world-scoped and
+                    // out of prompt injection rather than guessing ownership.
+                    return
+                }
+
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: session.id,
+                    recordKind: .session,
+                    tombstones: tombstones
+                )
+
+                var memories = try LocalJSONStoreTransaction.load(
+                    StoryMemory.self,
+                    fileName: fileName,
+                    baseURL: storageURL
+                )
+                var changed = false
+                for index in memories.indices where memories[index].storyWorldId == storyWorldId {
+                    guard memories[index].storySessionId == nil else { continue }
+                    memories[index].storySessionId = session.id
+                    changed = true
+                }
+                guard changed else { return }
+                try LocalJSONStoreTransaction.save(
+                    memories,
+                    fileName: fileName,
+                    baseURL: storageURL
+                )
+            }
+        }
     }
 
     func saveMemory(_ memory: StoryMemory) async throws {

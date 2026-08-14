@@ -207,14 +207,14 @@ struct StoryPromptBuilder {
         if !effectiveScene.mood.isEmpty { sceneLines.append("\(copy("空気", "Atmosphere")): \(effectiveScene.mood)") }
         if let goal = effectiveScene.goal { sceneLines.append("\(copy("このシーンの目的", "Scene goal")): \(goal)") }
         if let conflict = scene.conflict, !conflict.isEmpty { sceneLines.append("\(copy("葛藤", "Conflict")): \(conflict)") }
-        if !scene.summary.isEmpty { sceneLines.append("\(copy("ここまでの要約", "Summary so far")): \(scene.summary)") }
+        if !scene.summary.isEmpty { sceneLines.append("\(copy("初期Scene説明", "Initial scene description")): \(scene.summary)") }
         sections.append("## \(copy("現在のシーン", "Current scene"))\n" + sceneLines.joined(separator: "\n"))
 
         var sessionLines: [String] = []
         if let progress = session.progressLabel, !progress.isEmpty { sessionLines.append("\(copy("進行", "Progress")): \(progress)") }
         if let objective = effectiveScene.goal { sessionLines.append("\(copy("現在の目的", "Current objective")): \(objective)") }
         if let turnProgress = session.lastTurnProgress, !turnProgress.isEmpty { sessionLines.append("\(copy("前回動いたこと", "Last turn")): \(turnProgress)") }
-        if let summary = session.lastSceneSummary, !summary.isEmpty { sessionLines.append("\(copy("前回までの要約", "Summary so far")): \(summary)") }
+        if let summary = session.lastSceneSummary, !summary.isEmpty { sessionLines.append("\(copy("現在までの要約", "Current summary")): \(summary)") }
         if let hooks = session.unresolvedHooks, !hooks.isEmpty {
             sessionLines.append("\(copy("未回収の要素", "Unresolved hooks")): " + hooks.prefix(6).joined(separator: " / "))
         }

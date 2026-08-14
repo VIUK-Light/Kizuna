@@ -1409,16 +1409,22 @@ final class StoryWorldDetailViewModel: ObservableObject {
             return (repaired, firstScene)
         }
 
+        let initialObjective = firstScene.sceneGoal.isEmpty ? world.storyGoal : firstScene.sceneGoal
         var session = StorySession(
             storyWorldId: world.id,
             currentSceneId: firstScene.id,
             activeCharacterIds: firstScene.activeCharacterIds,
             progressLabel: "第1章 きっかけ",
-            currentObjective: firstScene.sceneGoal.isEmpty ? world.storyGoal : firstScene.sceneGoal,
-            relationshipStage: "出会い",
+            currentObjective: initialObjective,
             lastTurnProgress: nil,
             lastSceneSummary: firstScene.summary.isEmpty ? world.openingScene : firstScene.summary,
-            unresolvedHooks: [firstScene.conflict, world.storyGoal].compactMap { $0 }.filter { !$0.isEmpty }
+            unresolvedHooks: [firstScene.conflict, world.storyGoal].compactMap { $0 }.filter { !$0.isEmpty },
+            storyState: StoryState(
+                location: firstScene.location,
+                timeOfDay: firstScene.timeOfDay,
+                mood: firstScene.mood,
+                activeGoals: initialObjective.isEmpty ? [] : [initialObjective]
+            )
         )
         // opening を narration として 1 件投入 (見やすさのため)
         if !world.openingScene.isEmpty {

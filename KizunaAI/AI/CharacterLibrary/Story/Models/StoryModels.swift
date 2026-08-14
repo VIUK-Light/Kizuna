@@ -633,7 +633,8 @@ enum StoryStateBootstrap {
     static func preservingExistingState(
         _ existing: StoryState?,
         scene: StoryScene,
-        initialObjective: String? = nil
+        initialObjective: String? = nil,
+        initialRelationshipStage: String? = nil
     ) -> StoryState {
         if let existing { return existing }
         var goals: [String] = []
@@ -647,6 +648,7 @@ enum StoryStateBootstrap {
             location: scene.location,
             timeOfDay: scene.timeOfDay,
             mood: scene.mood,
+            relationshipStage: initialRelationshipStage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
             activeGoals: Array(goals.prefix(6))
         )
     }
@@ -1024,8 +1026,9 @@ struct StoryMemorySourceMetadata: Codable, Equatable, Hashable {
 struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
     var id: UUID
     var storyWorldId: UUID
-    /// Memoryが生まれたStorySession。旧データはnilのまま読み込めるが、
-    /// Sessionへ自動注入する候補には含めない。
+    /// Memoryが生まれたStorySession。旧データはnilのまま読み込める。
+    /// 同じWorldにSessionが1件だけある場合だけRepositoryが安全に補完し、
+    /// 複数Sessionでは推測せずプロンプトから除外する。
     var storySessionId: UUID?
     /// Memoryが根拠にした生成ターン。本文の重複統合で複数ターンが
     /// 同じレコードへまとまっても、どのターン由来かを失わない。
@@ -1167,8 +1170,8 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
     }
 
     /// 同じStoryWorldでもSessionをまたいで出来事を注入しない。
-    /// 旧データ（storySessionId == nil）はユーザー所有データとして保持するが、
-    /// 新しいSessionの文脈へ勝手に混ぜない。
+    /// 旧データ（storySessionId == nil）はRepositoryが安全に所属を確定する
+    /// までユーザー所有データとして保持し、勝手に新しいSessionへ混ぜない。
     static func scoped(to storySessionId: UUID, from memories: [StoryMemory]) -> [StoryMemory] {
         memories.filter { $0.storySessionId == storySessionId }
     }
@@ -1437,6 +1440,23 @@ extension StorySession {
     ) -> [UUID] {
         let source = activeCharacterIds ?? scene.activeCharacterIds
         return Array(source.prefix(max(0, maxCount)))
+    }
+
+    /// Return only turn IDs that still have a generated story response in the
+    /// session transcript. A preserved user message is not enough: after Undo,
+    /// its turn may remain visible while the generated response and its
+    /// provenance have been removed. Such a turn must not re-inject a stale
+    /// StoryMemory into the next prompt.
+    func memoryEligibleTurnIDs() -> Set<UUID> {
+        Set(messages.compactMap { message in
+            guard let turnID = message.turnID else { return nil }
+            switch message.author {
+            case .narrator, .cast(_, _):
+                return turnID
+            case .user, .system:
+                return nil
+            }
+        })
     }
 }
 

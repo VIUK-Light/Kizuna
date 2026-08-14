@@ -99,10 +99,9 @@ struct StoryTurnCommitRetry: Equatable {
 }
 
 /// A commit can throw after the journal has already made the session/scene
-/// snapshot durable. Only treat that recovery as successful when both records
-/// identify the exact generated turn and the scene fields owned by that turn
-/// are present. A committed session by itself is not enough: the scene write
-/// may still be missing or may have been left at an older snapshot.
+/// snapshot durable. Only treat that recovery as successful when the Session
+/// identifies the exact generated turn and the catalog Scene still exists in
+/// the same World. Scene runtime fields are not owned by a turn.
 enum StoryTurnCommitRecovery {
     private static func normalizedMessageIDs(_ ids: [UUID]) -> [UUID] {
         var seen = Set<UUID>()
@@ -185,19 +184,15 @@ enum StoryTurnCommitRecovery {
         in sessions: [StorySession],
         scenes: [StoryScene]
     ) -> StorySession? {
-        guard let scene = scenes.first(where: {
+        guard scenes.contains(where: {
             $0.id == retry.scene.id && $0.storyWorldId == retry.scene.storyWorldId
         }) else {
             return nil
         }
 
-        let expectedActiveCharacterIDs = Array(
-            retry.scene.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
-        )
-        guard scene.summary == retry.scene.summary,
-              scene.activeCharacterIds == expectedActiveCharacterIDs else {
-            return nil
-        }
+        // Scene is catalog data. A committed turn no longer owns its summary
+        // or active cast, so recovery must require only the stable identity
+        // and world boundary rather than comparing a stale generated snapshot.
 
         return sessions.first { session in
             guard session.id == retry.session.id,
@@ -1251,8 +1246,14 @@ final class StorySessionService: ObservableObject {
         session.storyState = StoryStateBootstrap.preservingExistingState(
             session.storyState,
             scene: scene,
-            initialObjective: session.currentObjective
+            initialObjective: session.currentObjective,
+            initialRelationshipStage: session.relationshipStage
         )
+        // Older sessions stored relationshipStage beside StoryState. The
+        // bootstrap above promotes it only when StoryState was absent; after
+        // that, the duplicate field is no longer written by this turn while
+        // remaining Codable for old-file decoding.
+        session.relationshipStage = nil
 
         // user メッセージとpending checkpointを1回の保存境界で確保する。
         // 再試行では既存の保存済み入力を再利用し、同じIDの発話を重複保存しない。
@@ -1266,6 +1267,11 @@ final class StorySessionService: ObservableObject {
                 attempt: attempt,
                 ownerID: turnOwnerID
             )
+            // beginTurn reloads the persisted Session as its concurrency
+            // source of truth. Clear the legacy duplicate again before the
+            // eventual commit so old records are migrated rather than
+            // re-emitted by that reload.
+            session.relationshipStage = nil
         } catch {
             await finishGenerationWithoutSaving(
                 generationID: generationID,
@@ -1595,6 +1601,23 @@ final class StorySessionService: ObservableObject {
         // 参加していないキャラの記憶まで一括注入すると、同じ本文を持つ
         // 別キャラの経験が混ざるため、共通(nil)または今回のactive castだけに絞る。
         let contextualCharacterIDs = Set(activeCast.map(\.characterId))
+        do {
+            // Legacy world-scoped memories can be recovered without guessing
+            // only while this World has exactly one live Session. The local
+            // repository repeats that check under its shared file lock.
+            try await storyMemoryRepo.assignLegacyMemoriesIfSingleSession(
+                storyWorldId: world.id
+            )
+        } catch {
+            // A failed migration must not prevent the current turn. The
+            // unassigned records remain preserved and are still excluded from
+            // this prompt until a later safe migration succeeds.
+            NSLog(
+                "[StorySession] legacy StoryMemory assignment skipped world=%@ error=%@",
+                world.id.uuidString,
+                error.localizedDescription
+            )
+        }
         let scopedStoryMemoryCandidates = ((try? await storyMemoryRepo.fetchMemories(
             storyWorldId: world.id,
             storySessionId: session.id
@@ -1609,7 +1632,7 @@ final class StorySessionService: ObservableObject {
         // Memory provenance uses the durable turn identity. generationID is an
         // execution-attempt ID and must not decide whether a saved memory still
         // belongs to the visible session history.
-        let activeSourceTurnIDs = Set(session.messages.compactMap(\.turnID))
+        let activeSourceTurnIDs = session.memoryEligibleTurnIDs()
         let storyMemoryCandidates = StoryMemory.scoped(
             to: session.id,
             sourceTurnIds: activeSourceTurnIDs,
@@ -2148,10 +2171,10 @@ final class StorySessionService: ObservableObject {
             return
         }
 
-        // 11) Scene summary 更新 (270M)
+        // 11) Runtime summary 更新 (270M)。Sceneの初期summaryは固定する。
         streamingStatusText = statusText("場面要約を更新中", "Updating scene summary")
         let newSummary = await summarizer.updateSummary(
-            currentSummary: scene.summary,
+            currentSummary: session.lastSceneSummary?.nonEmpty ?? scene.summary,
             recentMessages: Array(storyContentMessages(from: session.messages).suffix(18)),
             characterIndex: charIndex
         )
@@ -2159,9 +2182,8 @@ final class StorySessionService: ObservableObject {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
         }
-        if newSummary != scene.summary {
-            scene.summary = newSummary
-        }
+        // StoryScene.summary is the catalog's initial description. The
+        // evolving runtime summary belongs only to StorySession.
         // 12) 進行状態は本文の完了を遅らせない。
         // 以前はここで同じローカルモデルへ進行JSONを追加生成していたため、
         // 1ターンの待ち時間が実質2回分になっていた。本文を先に返し、
