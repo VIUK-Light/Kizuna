@@ -101,6 +101,17 @@ final class KizunaAITests: XCTestCase {
             advanced,
             "a later turn's StoryState must not be reset from the scene seed"
         )
+
+        let migrated = StoryStateBootstrap.preservingExistingState(
+            nil,
+            scene: scene,
+            initialRelationshipStage: "信頼"
+        )
+        XCTAssertEqual(
+            migrated.relationshipStage,
+            "信頼",
+            "legacy Session relationshipStage is promoted only during the initial State bootstrap"
+        )
     }
 
     func testStorySessionUsesSessionCastAndLegacySceneFallback() {
@@ -283,6 +294,7 @@ final class KizunaAITests: XCTestCase {
         XCTAssertFalse(fullPrompt.contains("灯台へ向かう"))
         XCTAssertFalse(localPrompt.contains("灯台へ向かう"))
         XCTAssertTrue(fullPrompt.contains("港で起きた出来事の要約"))
+        XCTAssertTrue(fullPrompt.contains("初期Scene説明"))
     }
 
     func testLocalJSONStoreDecoderReadsNumericAndBothISO8601DateForms() throws {
@@ -409,6 +421,120 @@ final class KizunaAITests: XCTestCase {
                 from: [current, matchingLegacy, otherLegacy, worldOnlyLegacy]
             ),
             [matchingLegacy]
+        )
+    }
+
+    func testLegacyWorldMemoryIsAssignedWhenWorldHasOneSession() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let otherWorldID = UUID()
+        let sessionID = UUID()
+        let session = StorySession(id: sessionID, storyWorldId: worldID)
+        let legacy = StoryMemory(storyWorldId: worldID, text: "旧形式の出来事")
+        let otherWorldLegacy = StoryMemory(storyWorldId: otherWorldID, text: "別Worldの出来事")
+
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [legacy, otherWorldLegacy],
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStoryMemoryRepository(storageURL: storageURL)
+        try await repository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+
+        let scoped = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: sessionID
+        )
+        XCTAssertEqual(scoped.map(\.id), [legacy.id])
+        XCTAssertEqual(scoped.first?.storySessionId, sessionID)
+        let otherWorldMemories = try await repository.fetchMemories(storyWorldId: otherWorldID)
+        XCTAssertNil(otherWorldMemories.first?.storySessionId, "assignment must not cross StoryWorld boundaries")
+    }
+
+    func testLegacyWorldMemoryStaysUnassignedWhenWorldHasMultipleSessions() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let firstSessionID = UUID()
+        let secondSessionID = UUID()
+        let legacy = StoryMemory(storyWorldId: worldID, text: "どちらのSessionか不明")
+
+        try LocalJSONStoreTransaction.save(
+            [
+                StorySession(id: firstSessionID, storyWorldId: worldID),
+                StorySession(id: secondSessionID, storyWorldId: worldID)
+            ],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [legacy],
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStoryMemoryRepository(storageURL: storageURL)
+        try await repository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+
+        let allMemories = try await repository.fetchMemories(storyWorldId: worldID)
+        XCTAssertEqual(allMemories.map(\.id), [legacy.id])
+        XCTAssertNil(allMemories.first?.storySessionId)
+        let firstSessionMemories = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: firstSessionID
+        )
+        let secondSessionMemories = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: secondSessionID
+        )
+        XCTAssertTrue(firstSessionMemories.isEmpty)
+        XCTAssertTrue(secondSessionMemories.isEmpty)
+    }
+
+    func testMemoryPromptScopeRejectsUndoPreservedUserOnlyTurn() {
+        let worldID = UUID()
+        let sessionID = UUID()
+        let committedTurnID = UUID()
+        let undoneTurnID = UUID()
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            messages: [
+                StoryMessage(author: .user, text: "確定した入力", turnID: committedTurnID),
+                StoryMessage(
+                    author: .cast(characterId: UUID(), displayName: "ナギ"),
+                    text: "確定した返答",
+                    turnID: committedTurnID
+                ),
+                StoryMessage(author: .user, text: "取り消した入力", turnID: undoneTurnID)
+            ]
+        )
+        let committedMemory = StoryMemory(
+            storyWorldId: worldID,
+            text: "確定した出来事",
+            storySessionId: sessionID,
+            sourceTurnIds: [committedTurnID]
+        )
+        let undoneMemory = StoryMemory(
+            storyWorldId: worldID,
+            text: "取り消した出来事",
+            storySessionId: sessionID,
+            sourceTurnIds: [undoneTurnID]
+        )
+
+        XCTAssertEqual(session.memoryEligibleTurnIDs(), Set([committedTurnID]))
+        XCTAssertEqual(
+            StoryMemory.scoped(
+                to: sessionID,
+                sourceTurnIds: session.memoryEligibleTurnIDs(),
+                from: [committedMemory, undoneMemory]
+            ),
+            [committedMemory]
         )
     }
 
@@ -1900,15 +2026,15 @@ final class KizunaAITests: XCTestCase {
             "a committed session without its scene must remain retryable"
         )
 
-        var staleScene = scene
-        staleScene.summary = "古い場面"
-        XCTAssertNil(
+        var editedScene = scene
+        editedScene.summary = "ユーザーが編集した初期説明"
+        XCTAssertNotNil(
             StoryTurnCommitRecovery.committedSession(
                 matching: retry,
                 in: [session],
-                scenes: [staleScene]
+                scenes: [editedScene]
             ),
-            "a committed session with a stale scene must remain retryable"
+            "runtime turn recovery must not depend on a mutable Scene summary"
         )
 
         var changedStoryState = session
@@ -3307,7 +3433,7 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persistedScene?.updatedAt, editedAt)
     }
 
-    func testStorySessionRepositoryCommitReflectsCanonicalStoryStateInScene() async throws {
+    func testStorySessionRepositoryCommitKeepsSceneCatalogValues() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
         let sceneID = UUID()
@@ -3327,6 +3453,8 @@ final class KizunaAITests: XCTestCase {
             id: sessionID,
             storyWorldId: worldID,
             currentSceneId: sceneID,
+            activeCharacterIds: [UUID()],
+            lastSceneSummary: "runtimeで更新された要約",
             storyState: StoryState(
                 location: "駅前",
                 timeOfDay: "深夜",
@@ -3342,6 +3470,8 @@ final class KizunaAITests: XCTestCase {
             location: "港",
             timeOfDay: "夕方",
             mood: "静か",
+            activeCharacterIds: [UUID()],
+            summary: "初期Sceneの説明",
             updatedAt: date
         )
         try LocalJSONStoreTransaction.save(
@@ -3368,9 +3498,19 @@ final class KizunaAITests: XCTestCase {
             fileName: "story_scenes.json",
             baseURL: storageURL
         ).first
-        XCTAssertEqual(persistedScene?.location, "駅前")
-        XCTAssertEqual(persistedScene?.timeOfDay, "深夜")
-        XCTAssertEqual(persistedScene?.mood, "緊張")
+        XCTAssertEqual(persistedScene?.location, "港")
+        XCTAssertEqual(persistedScene?.timeOfDay, "夕方")
+        XCTAssertEqual(persistedScene?.mood, "静か")
+        XCTAssertEqual(persistedScene?.summary, "初期Sceneの説明")
+        XCTAssertEqual(persistedScene?.activeCharacterIds ?? [], scene.activeCharacterIds)
+        XCTAssertEqual(persistedScene?.updatedAt, date)
+        let persistedSession = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persistedSession?.lastSceneSummary ?? "", "runtimeで更新された要約")
+        XCTAssertEqual(persistedSession?.activeCharacterIds, session.activeCharacterIds)
     }
 
     func testStoryTurnJournalUsesSceneRevisionWhenDatesShareAnISOSecond() throws {
@@ -6611,6 +6751,8 @@ private actor TestStoryMemoryRepository: MemoryRepository, StoryMemoryRepository
     func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] { [] }
 
     func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory] { [] }
+
+    func assignLegacyMemoriesIfSingleSession(storyWorldId: UUID) async throws {}
 
     func saveMemory(_ memory: StoryMemory) async throws {
         if shouldThrowStoryRecordDeleted {
