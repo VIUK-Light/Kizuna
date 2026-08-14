@@ -2,8 +2,19 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 ARTIFACT_DIR="${KIZUNA_ACCEPTANCE_ARTIFACT_DIR:-$(mktemp -d /private/tmp/kizuna-story-acceptance.XXXXXX)}"
+if [[ "$ARTIFACT_DIR" != /* ]]; then
+    ARTIFACT_DIR="$PROJECT_ROOT/$ARTIFACT_DIR"
+fi
+mkdir -p "$ARTIFACT_DIR"
+ARTIFACT_DIR="$(cd "$ARTIFACT_DIR" && pwd -P)"
+case "$ARTIFACT_DIR" in
+    "$PROJECT_ROOT"|"$PROJECT_ROOT"/*)
+        echo "KIZUNA_ACCEPTANCE_ARTIFACT_DIR must remain outside the repository" >&2
+        exit 2
+        ;;
+esac
 STORAGE_ROOT="$ARTIFACT_DIR/storage"
 DERIVED_DATA="$ARTIFACT_DIR/derived-data"
 GENERATION_OUTPUT="$ARTIFACT_DIR/generations.jsonl"
@@ -41,16 +52,43 @@ if [[ -n "$IORI_MODEL_SOURCE" && -f "$IORI_MODEL_SOURCE" ]]; then
     IORI_MODEL_SHA256="$(shasum -a 256 "$IORI_MODEL_SOURCE" | cut -d ' ' -f 1)"
 
     if [[ "$IORI_MODEL_BYTES" == "$EXPECTED_IORI_BYTES" && "$IORI_MODEL_SHA256" == "$EXPECTED_IORI_SHA256" ]]; then
-        IORI_INSTALL_DIR="$STORAGE_ROOT/Library/Application Support/VIUK/KizunaAI/LocalModels/Gemma4E4B4bit"
+        # In DEBUG/canary builds KizunaDataMigration treats the acceptance
+        # root itself as Application Support. Do not add the real macOS
+        # "Library/Application Support" prefix here or the app will never
+        # discover the staged model and will report iori as not installed.
+        IORI_INSTALL_DIR="$STORAGE_ROOT/VIUK/KizunaAI/LocalModels/Gemma4E4B4bit"
         mkdir -p "$IORI_INSTALL_DIR"
         IORI_INSTALL_PATH="$IORI_INSTALL_DIR/$EXPECTED_IORI_FILE"
         if [[ -e "$IORI_INSTALL_PATH" || -L "$IORI_INSTALL_PATH" ]]; then
-            if [[ ! -L "$IORI_INSTALL_PATH" || "$(readlink "$IORI_INSTALL_PATH")" != "$IORI_MODEL_SOURCE" ]]; then
-                echo "existing isolated iori artifact path does not match the requested source" >&2
+            if [[ -L "$IORI_INSTALL_PATH" ]]; then
+                echo "existing isolated iori artifact path is a symlink; use a fresh artifact directory" >&2
+                exit 1
+            fi
+            INSTALLED_IORI_BYTES="$(stat -f '%z' "$IORI_INSTALL_PATH")"
+            INSTALLED_IORI_SHA256="$(shasum -a 256 "$IORI_INSTALL_PATH" | cut -d ' ' -f 1)"
+            if [[ "$INSTALLED_IORI_BYTES" != "$EXPECTED_IORI_BYTES" || "$INSTALLED_IORI_SHA256" != "$EXPECTED_IORI_SHA256" ]]; then
+                echo "existing isolated iori artifact path does not match the requested verified artifact" >&2
                 exit 1
             fi
         else
-            ln -s "$IORI_MODEL_SOURCE" "$IORI_INSTALL_PATH"
+            IORI_STAGE_PATH="$IORI_INSTALL_PATH.partial"
+            if [[ -e "$IORI_STAGE_PATH" || -L "$IORI_STAGE_PATH" ]]; then
+                echo "stale partial iori artifact exists; use a fresh artifact directory" >&2
+                exit 1
+            fi
+            # Do not symlink an external model into the app-data root. The
+            # runtime's structural validator reads the file URL directly, and
+            # Foundation reports a symlink's own byte count on this path.
+            # Copy, hash-check, then atomically move the verified artifact into
+            # the managed directory instead.
+            cp -p "$IORI_MODEL_SOURCE" "$IORI_STAGE_PATH"
+            STAGED_IORI_BYTES="$(stat -f '%z' "$IORI_STAGE_PATH")"
+            STAGED_IORI_SHA256="$(shasum -a 256 "$IORI_STAGE_PATH" | cut -d ' ' -f 1)"
+            if [[ "$STAGED_IORI_BYTES" != "$EXPECTED_IORI_BYTES" || "$STAGED_IORI_SHA256" != "$EXPECTED_IORI_SHA256" ]]; then
+                echo "copied isolated iori artifact failed verification" >&2
+                exit 1
+            fi
+            mv "$IORI_STAGE_PATH" "$IORI_INSTALL_PATH"
         fi
         IORI_MODEL_ACCEPTED=1
         echo "iori artifact accepted: $IORI_MODEL_SOURCE"

@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from story_initiative_eval import (  # noqa: E402
+    EXPECTED_IORI_MODEL_IDENTITY,
+    EXPECTED_IORI_MODEL_SHA256,
     EvaluationError,
     create_blind_artifacts,
     load_scenario_fixture,
@@ -50,10 +52,10 @@ def make_generation(condition, *, language="ja", model="iori", scenario_id="stor
         "runtime": {
             "provider": "local-story-runtime",
             "backend": "test-runtime",
-            "model_identity": "/private/tmp/kizuna-test-model.gguf",
+            "model_identity": EXPECTED_IORI_MODEL_IDENTITY,
             "model_identity_observed": True,
             "prompt_observed": True,
-            "model_sha256": "e" * 64,
+            "model_sha256": EXPECTED_IORI_MODEL_SHA256,
         },
     }
 
@@ -151,6 +153,33 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
                     runtime=dict(record["runtime"], model_sha256="not-a-sha"),
                 ),
                 "runtime.model_sha256 must be a SHA-256 hex digest",
+            ),
+            (
+                "nested model identity path",
+                lambda record: dict(
+                    record,
+                    runtime=dict(
+                        record["runtime"],
+                        model_identity="/private/tmp/kizuna-test-model.gguf",
+                    ),
+                ),
+                "must not contain an absolute or nested path",
+            ),
+            (
+                "untrusted iori model identity",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_identity="generic-gemma.gguf"),
+                ),
+                "trusted VIUK Story artifact",
+            ),
+            (
+                "missing trusted iori sha256",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_sha256=None),
+                ),
+                "trusted model SHA-256",
             ),
         )
 

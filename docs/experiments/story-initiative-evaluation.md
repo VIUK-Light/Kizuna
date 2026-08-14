@@ -4,8 +4,12 @@ This is the release gate for the experiment introduced by PR #259. It is a
 local, reproducible evaluation only. The evaluator and blind scorer never
 call an LLM or upload story content; the opt-in app-path runner does call the
 configured local/API model and writes only hashed prompt metadata plus local
-generation results. The evaluation does not add a Story screen, add an event
-state machine, or turn the feature on for ordinary users.
+generation results. The response text and synthetic fixture context are retained
+only in the external, local evaluation artifact so a human can rate paired
+outputs; the runner rejects output paths under the repository and never uses
+the user data store. Do not commit or upload that JSONL. The
+evaluation does not add a Story screen, add an event state machine, or turn
+the feature on for ordinary users.
 
 ## What is being compared
 
@@ -123,7 +127,7 @@ successful record cannot claim an unverified model or provider.
   "runtime": {
     "provider": "local-story-runtime",
     "backend": "iori local model",
-    "model_identity": "/isolated/storage/LocalModels/Gemma4E4B4bit/viuk-story-...Q4_K_M.gguf",
+    "model_identity": "viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf",
     "model_identity_observed": true,
     "prompt_observed": true,
     "model_sha256": "eafe6431810b2a2a17f6c4b0be338364440707e10ff6648d07665e10875039a5"
@@ -143,8 +147,10 @@ status, and failed records must not contain state_update. The validator accepts
 the record shape so the operational failure is visible, but blind generation
 rejects any matrix containing a non-completed output.
 
-`runtime.provider`, `runtime.backend`, and `runtime.model_identity` identify
-the app path and artifact used. `model_identity_observed` and
+`runtime.provider`, `runtime.backend`, and the filename-only
+`runtime.model_identity` identify the app path and artifact used without
+exporting local filesystem paths. Completed iori records must use the trusted
+VIUK Story filename and SHA-256 shown above. `model_identity_observed` and
 `prompt_observed` must be true for completed records. Failed records may have
 false values because the app may reject input or fail before model invocation;
 those records remain visible and block blind scoring.

@@ -45,6 +45,20 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             return
         }
         let outputURL = URL(fileURLWithPath: outputPath)
+        let projectRootURL = URL(
+            fileURLWithPath: ProcessInfo.processInfo.environment["SRCROOT"]
+                ?? FileManager.default.currentDirectoryPath,
+            isDirectory: true
+        ).standardizedFileURL
+        let outputPathForComparison = outputURL.standardizedFileURL.path
+        let projectPathPrefix = projectRootURL.path.hasSuffix("/")
+            ? projectRootURL.path
+            : projectRootURL.path + "/"
+        guard outputPathForComparison != projectRootURL.path,
+              !outputPathForComparison.hasPrefix(projectPathPrefix) else {
+            XCTFail("KIZUNA_ACCEPTANCE_OUTPUT must remain outside the repository.")
+            return
+        }
         try initializeJSONLOutput(at: outputURL)
 
         let previousLanguage = UserDefaults.standard.string(forKey: "kizuna.language")
@@ -149,7 +163,11 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         var modelLatencyMilliseconds: Double = 0
 
         do {
-            try await saveFixture(entities: entitiesForTurn)
+            // saveSession advances the persisted revision. Re-read the
+            // session before handing it to the app path so beginTurn receives
+            // the same revision that is on disk instead of a stale fixture
+            // snapshot (nil/0 versus persisted 1).
+            let persistedFixtureSession = try await saveFixture(entities: entitiesForTurn)
             let createdService = StorySessionService()
             service = createdService
             createdService.acceptanceGenerationTraceHandler = { trace in
@@ -158,7 +176,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
 
             sentUserMessageID = createdService.send(
                 localized.userMessage,
-                session: entitiesForTurn.session,
+                session: persistedFixtureSession,
                 world: entitiesForTurn.world,
                 scene: entitiesForTurn.scene,
                 generationModel: model,
@@ -312,7 +330,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         )
     }
 
-    private func saveFixture(entities: StoryAcceptanceEntities) async throws {
+    private func saveFixture(entities: StoryAcceptanceEntities) async throws -> StorySession {
         let characterRepository = LocalJSONCharacterRepository()
         let worldRepository = LocalJSONStoryWorldRepository()
         let castRepository = LocalJSONCastRepository()
@@ -324,6 +342,12 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         try await castRepository.saveCast(entities.cast)
         try await sceneRepository.saveScene(entities.scene)
         try await sessionRepository.saveSession(entities.session)
+        guard let persistedSession = try await sessionRepository
+            .fetchSessions(storyWorldId: entities.world.id)
+            .first(where: { $0.id == entities.session.id }) else {
+            throw StoryAcceptanceRunnerError.sessionNotPersisted
+        }
+        return persistedSession
     }
 
     private func makeRecord(
@@ -399,18 +423,16 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         failureCode: String?
     ) -> StoryAcceptanceRuntimeObservation {
         let environment = ProcessInfo.processInfo.environment
-        let configuredModelPath = environment["KIZUNA_IORI_MODEL_PATH"]
         let modelIdentity: String
         let modelIdentityObserved: Bool
         let provider: String
         if let trace {
-            modelIdentity = trace.modelIdentity ?? "unknown"
+            modelIdentity = Self.sanitizedModelIdentity(trace.modelIdentity)
+                ?? "unobserved-runtime"
             modelIdentityObserved = trace.modelIdentity != nil
             provider = model == .b31 ? "google-generative-language-api" : "local-story-runtime"
         } else if model == .e4b {
-            modelIdentity = configuredModelPath
-                ?? model.installedModelURL?.path
-                ?? "iori-model-not-resolved"
+            modelIdentity = "unobserved-local-runtime"
             modelIdentityObserved = false
             provider = "local-story-runtime"
         } else {
@@ -425,7 +447,6 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 backend: trace?.backend ?? service?.latestRuntimeNotice?.backendName ?? "not-observed",
                 modelIdentity: modelIdentity,
                 modelIdentityObserved: modelIdentityObserved,
-                configuredModelPath: configuredModelPath,
                 modelSHA256: environment["KIZUNA_IORI_MODEL_SHA256"],
                 promptObserved: observedPrompt != nil,
                 effectiveSeed: trace?.effectiveSeed,
@@ -434,6 +455,15 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             ),
             observedPrompt: observedPrompt
         )
+    }
+
+    private static func sanitizedModelIdentity(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let fileName = URL(fileURLWithPath: trimmed).lastPathComponent
+        guard !fileName.isEmpty, fileName != ".", fileName != ".." else { return nil }
+        return fileName
     }
 
     private func makeEntities(
@@ -691,6 +721,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
 
 private enum StoryAcceptanceRunnerError: Error {
     case invalidSelection(String)
+    case sessionNotPersisted
 }
 
 private final class StoryAcceptanceTraceBox {
@@ -972,7 +1003,6 @@ private struct StoryAcceptanceRuntimeRecord: Encodable {
     let backend: String
     let modelIdentity: String
     let modelIdentityObserved: Bool
-    let configuredModelPath: String?
     let modelSHA256: String?
     let promptObserved: Bool
     let effectiveSeed: UInt32?
@@ -984,7 +1014,6 @@ private struct StoryAcceptanceRuntimeRecord: Encodable {
         case backend
         case modelIdentity = "model_identity"
         case modelIdentityObserved = "model_identity_observed"
-        case configuredModelPath = "configured_model_path"
         case modelSHA256 = "model_sha256"
         case promptObserved = "prompt_observed"
         case effectiveSeed = "effective_seed"

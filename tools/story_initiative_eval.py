@@ -47,6 +47,8 @@ VIOLATION_KEYS = (
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 PRESENTATION_SALT_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+EXPECTED_IORI_MODEL_IDENTITY = "viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf"
+EXPECTED_IORI_MODEL_SHA256 = "eafe6431810b2a2a17f6c4b0be338364440707e10ff6648d07665e10875039a5"
 BOOTSTRAP_RESAMPLES = 10_000
 BOOTSTRAP_SEED = 20260814
 
@@ -352,6 +354,16 @@ def validate_generation_records(
                     raise EvaluationError(
                         f"runtime.{runtime_key} must be a non-empty string"
                     )
+            model_identity = runtime["model_identity"]
+            if "/" in model_identity or "\\" in model_identity:
+                raise EvaluationError(
+                    "runtime.model_identity must not contain an absolute or nested path"
+                )
+            if model == "iori" and status == "completed":
+                if model_identity != EXPECTED_IORI_MODEL_IDENTITY:
+                    raise EvaluationError(
+                        "completed iori output must identify the trusted VIUK Story artifact"
+                    )
             model_identity_observed = runtime.get("model_identity_observed")
             if not isinstance(model_identity_observed, bool):
                 raise EvaluationError("runtime.model_identity_observed must be boolean")
@@ -370,6 +382,11 @@ def validate_generation_records(
                     model_sha256.lower()
                 ):
                     raise EvaluationError("runtime.model_sha256 must be a SHA-256 hex digest")
+            if model == "iori" and status == "completed":
+                if model_sha256 != EXPECTED_IORI_MODEL_SHA256:
+                    raise EvaluationError(
+                        "completed iori output must include the trusted model SHA-256"
+                    )
             latency = _validate_latency(record)
             state_update = record.get("state_update")
             if state_update is not None and not isinstance(state_update, dict):

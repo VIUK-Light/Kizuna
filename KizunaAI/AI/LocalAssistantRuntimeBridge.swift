@@ -1872,7 +1872,9 @@ final class BundledServerLogAggregator {
                         continuation.resume(
                             returning: LocalAssistantGenerationResult(
                                 text: text,
-                                modelIdentity: installedModelURL.path
+                                modelIdentity: self.observedModelIdentity(
+                                    forModelPath: installedModelURL.path
+                                )
                             )
                         )
                     } else {
@@ -1908,7 +1910,9 @@ final class BundledServerLogAggregator {
                     continuation.resume(
                         returning: LocalAssistantGenerationResult(
                             text: text,
-                            modelIdentity: installedModelURL.path
+                            modelIdentity: self.observedModelIdentity(
+                                forModelPath: installedModelURL.path
+                            )
                         )
                     )
                 } else {
@@ -2047,6 +2051,18 @@ final class BundledServerLogAggregator {
                 }
             }
         }
+    }
+
+    /// Returns a stable, non-sensitive identifier for the model that the
+    /// selected runtime actually used. The app must not export the absolute
+    /// application-support path in acceptance artifacts or diagnostics.
+    private func observedModelIdentity(forModelPath modelPath: String) -> String? {
+        let fileName = URL(fileURLWithPath: modelPath).lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fileName.isEmpty, fileName != ".", fileName != ".." else {
+            return nil
+        }
+        return fileName
     }
 
     private func recordGenerationFailure(
