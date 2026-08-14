@@ -2972,6 +2972,316 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persisted.first?.messages.first?.id, userMessage.id)
     }
 
+    func testStorySessionRepositoryUndoRestoresPreTurnStateAndFencesMemory() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let sessionID = UUID()
+        let scene = StoryScene(id: sceneID, storyWorldId: worldID)
+        let userMessage = StoryMessage(author: .user, text: "港へ向かう")
+        let opening = StoryMessage(author: .narrator, text: "雨の港", turnID: nil)
+        let beforeState = StoryState(
+            location: "駅前",
+            timeOfDay: "夕方",
+            mood: "静か",
+            relationshipStage: "知り合い"
+        )
+        let original = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            activeCharacterIds: [UUID()],
+            messages: [opening],
+            progressLabel: "第1章",
+            currentObjective: "手紙を探す",
+            lastTurnProgress: "まだ何も起きていない",
+            lastSceneSummary: "駅前で待っている",
+            unresolvedHooks: ["届かない手紙"],
+            storyState: beforeState,
+            lastSelectedModelName: "iori",
+            lastUsedBackendName: "local",
+            persistenceRevision: 4
+        )
+        try LocalJSONStoreTransaction.save(
+            [original],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let turnID = UUID()
+        let pending = try await repository.beginTurn(
+            session: original,
+            userMessage: userMessage,
+            turnID: turnID,
+            attempt: 1
+        )
+        let narrator = StoryMessage(
+            author: .narrator,
+            text: "遠くで汽笛が鳴った",
+            turnID: turnID
+        )
+        let cast = StoryMessage(
+            author: .cast(characterId: try XCTUnwrap(original.activeCharacterIds?.first), displayName: "ナギ"),
+            text: "手紙は倉庫にある",
+            turnID: turnID
+        )
+        var generated = pending
+        generated.messages.append(contentsOf: [narrator, cast])
+        generated.progressLabel = "第1章・倉庫へ"
+        generated.currentObjective = "倉庫を調べる"
+        generated.lastTurnProgress = "倉庫の場所がわかった"
+        generated.lastSceneSummary = "港の倉庫を見つめる"
+        generated.unresolvedHooks = ["倉庫の鍵"]
+        generated.activeCharacterIds = [try XCTUnwrap(original.activeCharacterIds?.first)]
+        generated.storyState = StoryState(
+            location: "港の倉庫",
+            timeOfDay: "夜",
+            mood: "緊張",
+            relationshipStage: "信頼が芽生えた"
+        )
+        let committed = try await repository.commitTurn(
+            session: generated,
+            scene: scene,
+            turnID: turnID,
+            assistantMessageIDs: [narrator.id, cast.id],
+            memoryRetries: []
+        )
+
+        let otherTurnID = UUID()
+        let removedMemory = StoryMemory(
+            storyWorldId: worldID,
+            characterId: original.activeCharacterIds!.first,
+            text: "倉庫の場所",
+            category: .event,
+            source: .summary,
+            storySessionId: sessionID,
+            sourceTurnIds: [turnID]
+        )
+        let mergedMemory = StoryMemory(
+            storyWorldId: worldID,
+            characterId: original.activeCharacterIds!.first,
+            text: "鍵の手がかり",
+            category: .event,
+            source: .summary,
+            storySessionId: sessionID,
+            sourceTurnIds: [turnID, otherTurnID]
+        )
+        try LocalJSONStoreTransaction.save(
+            [removedMemory, mergedMemory],
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+        let retry = StoryMemoryRetry(
+            turnID: turnID,
+            userMessageID: userMessage.id,
+            userText: userMessage.text,
+            characterMemories: [],
+            storyMemories: [removedMemory],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        try LocalJSONStoreTransaction.save(
+            [retry],
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
+
+        let undone = try await repository.undoCommittedTurn(
+            sessionID: sessionID,
+            turnID: turnID,
+            attempt: 1,
+            expectedRevision: committed.effectivePersistenceRevision
+        )
+
+        XCTAssertEqual(undone.persistenceRevision, committed.effectivePersistenceRevision + 1)
+        XCTAssertEqual(undone.messages.map(\.id), [opening.id, userMessage.id])
+        XCTAssertEqual(undone.messages.last?.text, userMessage.text)
+        XCTAssertEqual(undone.progressLabel, original.progressLabel)
+        XCTAssertEqual(undone.currentObjective, original.currentObjective)
+        XCTAssertEqual(undone.lastTurnProgress, original.lastTurnProgress)
+        XCTAssertEqual(undone.lastSceneSummary, original.lastSceneSummary)
+        XCTAssertEqual(undone.unresolvedHooks, original.unresolvedHooks)
+        XCTAssertEqual(undone.activeCharacterIds, original.activeCharacterIds)
+        XCTAssertEqual(undone.storyState, original.storyState)
+        XCTAssertEqual(undone.latestTurnCheckpoint?.status, .cancelled)
+        XCTAssertEqual(undone.latestTurnCheckpoint?.failureCode, "undone")
+        XCTAssertTrue(undone.latestTurnCheckpoint?.assistantMessageIDs.isEmpty == true)
+        XCTAssertEqual(undone.latestTurnCheckpoint?.preTurnSnapshot, committed.latestTurnCheckpoint?.preTurnSnapshot)
+
+        let persistedMemories = try LocalJSONStoreTransaction.load(
+            StoryMemory.self,
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+        XCTAssertFalse(persistedMemories.contains(where: { $0.id == removedMemory.id }))
+        XCTAssertEqual(
+            persistedMemories.first(where: { $0.id == mergedMemory.id })?.sourceTurnIds,
+            [otherTurnID]
+        )
+        let persistedRetries = try LocalJSONStoreTransaction.load(
+            StoryMemoryRetry.self,
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
+        XCTAssertTrue(persistedRetries.isEmpty)
+
+        let regenerated = try await repository.beginTurn(
+            session: undone,
+            userMessage: StoryMessage(id: UUID(), author: .user, text: userMessage.text),
+            turnID: turnID,
+            attempt: 2
+        )
+        XCTAssertEqual(regenerated.latestTurnCheckpoint?.status, .pending)
+        XCTAssertEqual(regenerated.latestTurnCheckpoint?.attempt, 2)
+        XCTAssertEqual(regenerated.latestTurnCheckpoint?.preTurnSnapshot, undone.latestTurnCheckpoint?.preTurnSnapshot)
+        XCTAssertEqual(regenerated.messages.filter { $0.id == userMessage.id }.count, 1)
+    }
+
+    func testStorySessionRepositoryUndoRejectsStaleRevisionWithoutChangingCommittedTurn() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let scene = StoryScene(storyWorldId: worldID)
+        let session = StorySession(
+            storyWorldId: worldID,
+            currentSceneId: scene.id,
+            storyState: StoryState(location: "初期"),
+            persistenceRevision: 2
+        )
+        try LocalJSONStoreTransaction.save([session], fileName: "story_sessions.json", baseURL: storageURL)
+        try LocalJSONStoreTransaction.save([scene], fileName: "story_scenes.json", baseURL: storageURL)
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let turnID = UUID()
+        let pending = try await repository.beginTurn(
+            session: session,
+            userMessage: StoryMessage(author: .user, text: "開始"),
+            turnID: turnID,
+            attempt: 1
+        )
+        let assistant = StoryMessage(author: .narrator, text: "返答", turnID: turnID)
+        var generated = pending
+        generated.messages.append(assistant)
+        let committed = try await repository.commitTurn(
+            session: generated,
+            scene: scene,
+            turnID: turnID,
+            assistantMessageIDs: [assistant.id],
+            memoryRetries: []
+        )
+        let before = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+
+        do {
+            _ = try await repository.undoCommittedTurn(
+                sessionID: session.id,
+                turnID: turnID,
+                attempt: 1,
+                expectedRevision: committed.effectivePersistenceRevision - 1
+            )
+            XCTFail("a stale Undo snapshot must be rejected")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(
+                error,
+                .revisionConflict(
+                    expected: committed.effectivePersistenceRevision - 1,
+                    actual: committed.effectivePersistenceRevision
+                )
+            )
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        let after = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(after, before)
+    }
+
+    func testStorySessionRepositoryUndoRejectsUnsafeCheckpointVariantsWithoutChangingSession() async throws {
+        let snapshot = StoryTurnUndoSnapshot(currentObjective: "戻す前の目的")
+        let cases: [(String, StoryTurnStatus, [UUID], Int, Int, StoryTurnUndoSnapshot?)] = [
+            ("legacy checkpoint without snapshot", .committed, [UUID()], 1, 1, nil),
+            ("committed checkpoint without assistant messages", .committed, [], 1, 1, snapshot),
+            ("pending checkpoint", .pending, [UUID()], 1, 1, snapshot),
+            ("mismatched attempt", .committed, [UUID()], 2, 1, snapshot)
+        ]
+
+        for (name, status, assistantMessageIDs, storedAttempt, requestedAttempt, preTurnSnapshot) in cases {
+            let storageURL = try makeStoryPersistenceTestDirectory()
+            let worldID = UUID()
+            let turnID = UUID()
+            let opening = StoryMessage(author: .narrator, text: "開始")
+            let userMessage = StoryMessage(
+                author: .user,
+                text: "続ける",
+                turnID: turnID
+            )
+            let assistant = StoryMessage(
+                author: .narrator,
+                text: "保存済みの返答",
+                turnID: turnID
+            )
+            var session = StorySession(
+                storyWorldId: worldID,
+                currentSceneId: UUID(),
+                storyState: StoryState(location: "初期"),
+                persistenceRevision: 3
+            )
+            session.messages = [opening, userMessage, assistant]
+            session.latestTurnCheckpoint = StoryTurnCheckpoint(
+                turnID: turnID,
+                userMessageID: userMessage.id,
+                status: status,
+                attempt: storedAttempt,
+                baseRevision: 3,
+                assistantMessageIDs: assistantMessageIDs,
+                preTurnSnapshot: preTurnSnapshot
+            )
+            try LocalJSONStoreTransaction.save(
+                [session],
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+
+            let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+            let before = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+
+            do {
+                _ = try await repository.undoCommittedTurn(
+                    sessionID: session.id,
+                    turnID: turnID,
+                    attempt: requestedAttempt,
+                    expectedRevision: session.effectivePersistenceRevision
+                )
+                XCTFail("\(name) must not be undoable")
+            } catch let error as StoryTurnPersistenceError {
+                XCTAssertEqual(error, .turnNotUndoable, name)
+            } catch {
+                XCTFail("\(name) returned an unexpected error: \(error)")
+            }
+
+            let after = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+            XCTAssertEqual(after, before, name)
+        }
+    }
+
     func testStorySessionRepositoryMoveSessionAdvancesRevision() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let originalWorldID = UUID()
@@ -7128,6 +7438,17 @@ private actor TestStorySessionRepository: StorySessionRepository {
         activeOwnerIDs: Set<UUID>
     ) async throws {}
     func discardInterruptedTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int,
+        expectedRevision: UInt64
+    ) async throws -> StorySession {
+        guard let session = sessions.first(where: { $0.id == sessionID }) else {
+            throw StoryTurnPersistenceError.sessionNotFound
+        }
+        return session
+    }
+    func undoCommittedTurn(
         sessionID: UUID,
         turnID: UUID,
         attempt: Int,

@@ -152,6 +152,15 @@ protocol StorySessionRepository: AnyObject {
         attempt: Int,
         expectedRevision: UInt64
     ) async throws -> StorySession
+    /// Undo the latest committed response while retaining its User message.
+    /// The revision check and all local JSON mutations happen under one shared
+    /// lock so a stale UI snapshot cannot remove a newer turn.
+    func undoCommittedTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int,
+        expectedRevision: UInt64
+    ) async throws -> StorySession
     func deleteSession(id: UUID) async throws
 }
 
@@ -540,7 +549,8 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                         ownerID: ownerID,
                         baseRevision: actualRevision,
                         startedAt: checkpoint.startedAt,
-                        updatedAt: now
+                        updatedAt: now,
+                        preTurnSnapshot: checkpoint.preTurnSnapshot
                     )
                     retried.persistenceRevision = actualRevision + 1
                     retried.updatedAt = now
@@ -564,6 +574,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 // 同じrevisionの呼び出し元スナップショットから引き継ぐ。
                 next.storyState = session.storyState
             }
+            let preTurnSnapshot = StoryTurnUndoSnapshot(session: next)
             var normalizedMessage = userMessage
             normalizedMessage.turnID = turnID
             if let messageIndex = next.messages.firstIndex(where: { $0.id == userMessage.id }) {
@@ -583,7 +594,8 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 startedAt: current.latestTurnCheckpoint?.turnID == turnID
                     ? current.latestTurnCheckpoint?.startedAt ?? now
                     : now,
-                updatedAt: now
+                updatedAt: now,
+                preTurnSnapshot: preTurnSnapshot
             )
             next.persistenceRevision = actualRevision + 1
             next.updatedAt = now
@@ -882,6 +894,195 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                     baseURL: storageURL
                 )
                 return current
+            }
+        }
+    }
+
+    func undoCommittedTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int,
+        expectedRevision: UInt64
+    ) async throws -> StorySession {
+        let storageURL = self.storageURL
+        try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
+        return try await LocalJSONStoreTransaction.performOnFileIO {
+            try LocalJSONStoreTransaction.withSharedLock {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: sessionID,
+                    recordKind: .session,
+                    tombstones: tombstones
+                )
+
+                let originalSessions = try LocalJSONStoreTransaction.load(
+                    StorySession.self,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+                guard let sessionIndex = originalSessions.firstIndex(where: { $0.id == sessionID }) else {
+                    throw StoryTurnPersistenceError.sessionNotFound
+                }
+                let current = originalSessions[sessionIndex]
+                guard current.effectivePersistenceRevision == expectedRevision else {
+                    throw StoryTurnPersistenceError.revisionConflict(
+                        expected: expectedRevision,
+                        actual: current.effectivePersistenceRevision
+                    )
+                }
+                guard let checkpoint = current.latestTurnCheckpoint,
+                      checkpoint.turnID == turnID,
+                      checkpoint.attempt == attempt,
+                      checkpoint.status == .committed,
+                      checkpoint.preTurnSnapshot != nil,
+                      !checkpoint.assistantMessageIDs.isEmpty else {
+                    throw StoryTurnPersistenceError.turnNotUndoable
+                }
+
+                // Read every file that will be changed before the first write.
+                // A decode/I/O failure therefore leaves the committed turn
+                // untouched instead of silently treating missing data as empty.
+                let originalStoryMemories = try LocalJSONStoreTransaction.load(
+                    StoryMemory.self,
+                    fileName: "story_memories.json",
+                    baseURL: storageURL
+                )
+                let originalMemoryRetries = try LocalJSONStoreTransaction.load(
+                    StoryMemoryRetry.self,
+                    fileName: "story_memory_retries.json",
+                    baseURL: storageURL
+                )
+                var storyMemories = originalStoryMemories
+                LocalJSONStoryMemoryRepository.removeSourceTurnIds(
+                    Set([turnID]),
+                    from: &storyMemories
+                )
+                var memoryRetries = originalMemoryRetries
+                memoryRetries.removeAll { $0.turnID == turnID }
+
+                let generatedMessageIDs = Set(checkpoint.assistantMessageIDs)
+                var restored = checkpoint.preTurnSnapshot!.applying(to: current)
+                restored.messages.removeAll { message in
+                    guard !message.author.isUser else { return false }
+                    if generatedMessageIDs.contains(message.id) {
+                        return true
+                    }
+                    guard message.turnID == turnID else { return false }
+                    switch message.author {
+                    case .narrator, .cast(_, _):
+                        return true
+                    case .user, .system:
+                        return false
+                    }
+                }
+                guard restored.messages.contains(where: { $0.id == checkpoint.userMessageID && $0.author.isUser }) else {
+                    throw StoryTurnPersistenceError.turnNotUndoable
+                }
+
+                let now = Date()
+                restored.latestTurnCheckpoint = StoryTurnReducer.undo(
+                    committed: checkpoint,
+                    updatedAt: now
+                )
+                restored.persistenceRevision = current.effectivePersistenceRevision + 1
+                restored.updatedAt = now
+
+                var didWriteMemories = false
+                var didWriteRetries = false
+                var didAttemptSessionWrite = false
+                do {
+                    if storyMemories != originalStoryMemories {
+                        try LocalJSONStoreTransaction.save(
+                            storyMemories,
+                            fileName: "story_memories.json",
+                            baseURL: storageURL
+                        )
+                        didWriteMemories = true
+                    }
+                    if memoryRetries != originalMemoryRetries {
+                        try LocalJSONStoreTransaction.save(
+                            memoryRetries,
+                            fileName: "story_memory_retries.json",
+                            baseURL: storageURL
+                        )
+                        didWriteRetries = true
+                    }
+
+                    var updatedSessions = originalSessions
+                    updatedSessions[sessionIndex] = restored
+                    didAttemptSessionWrite = true
+                    try LocalJSONStoreTransaction.save(
+                        updatedSessions,
+                        fileName: "story_sessions.json",
+                        baseURL: storageURL
+                    )
+                } catch {
+                    // Atomic JSON writes normally leave the previous file in
+                    // place on failure. The compensating saves also cover a
+                    // failure after a preceding auxiliary file was replaced.
+                    if didWriteMemories {
+                        do {
+                            try LocalJSONStoreTransaction.save(
+                                originalStoryMemories,
+                                fileName: "story_memories.json",
+                                baseURL: storageURL
+                            )
+                        } catch let compensationError {
+                            NSLog(
+                                "[StorySession] undo compensation failed file=story_memories.json turn=%@ error=%@",
+                                turnID.uuidString,
+                                compensationError.localizedDescription
+                            )
+                        }
+                    }
+                    if didWriteRetries {
+                        do {
+                            try LocalJSONStoreTransaction.save(
+                                originalMemoryRetries,
+                                fileName: "story_memory_retries.json",
+                                baseURL: storageURL
+                            )
+                        } catch let compensationError {
+                            NSLog(
+                                "[StorySession] undo compensation failed file=story_memory_retries.json turn=%@ error=%@",
+                                turnID.uuidString,
+                                compensationError.localizedDescription
+                            )
+                        }
+                    }
+                    if didAttemptSessionWrite {
+                        do {
+                            try LocalJSONStoreTransaction.save(
+                                originalSessions,
+                                fileName: "story_sessions.json",
+                                baseURL: storageURL
+                            )
+                        } catch let compensationError {
+                            NSLog(
+                                "[StorySession] undo compensation failed file=story_sessions.json turn=%@ error=%@",
+                                turnID.uuidString,
+                                compensationError.localizedDescription
+                            )
+                        }
+                    }
+                    throw error
+                }
+
+                // A committed journal may still carry the old memory retry
+                // payload. The persisted session has a newer revision now, so
+                // recovery will discard that stale pair if this cleanup itself
+                // fails. Do not turn a successful Undo into a visible failure.
+                do {
+                    try StoryTurnJournal.removeUnlocked(turnID: turnID, baseURL: storageURL)
+                } catch {
+                    NSLog(
+                        "[StoryTurnJournal] undo cleanup deferred turn=%@ error=%@",
+                        turnID.uuidString,
+                        error.localizedDescription
+                    )
+                }
+
+                return restored
             }
         }
     }
@@ -1423,17 +1624,29 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
     func removeSourceTurnIds(_ sourceTurnIds: Set<UUID>) async throws {
         guard !sourceTurnIds.isEmpty else { return }
         try await store.mutate { all in
-            for index in all.indices.reversed() {
-                guard !all[index].sourceTurnIds.isDisjoint(with: sourceTurnIds) else { continue }
-                all[index].sourceTurnIds.subtract(sourceTurnIds)
-                for sourceTurnId in sourceTurnIds {
-                    all[index].sourceTurnMetadata.removeValue(forKey: sourceTurnId)
-                }
-                if all[index].sourceTurnIds.isEmpty {
-                    all.remove(at: index)
-                } else {
-                    all[index].recomputeAggregatesFromSourceMetadata()
-                }
+            Self.removeSourceTurnIds(sourceTurnIds, from: &all)
+        }
+    }
+
+    /// Apply the same lossless provenance removal used by the public memory
+    /// repository method to an already-loaded transaction buffer. A memory
+    /// merged from several turns survives while its other source metadata is
+    /// retained.
+    static func removeSourceTurnIds(
+        _ sourceTurnIds: Set<UUID>,
+        from memories: inout [StoryMemory]
+    ) {
+        guard !sourceTurnIds.isEmpty else { return }
+        for index in memories.indices.reversed() {
+            guard !memories[index].sourceTurnIds.isDisjoint(with: sourceTurnIds) else { continue }
+            memories[index].sourceTurnIds.subtract(sourceTurnIds)
+            for sourceTurnId in sourceTurnIds {
+                memories[index].sourceTurnMetadata.removeValue(forKey: sourceTurnId)
+            }
+            if memories[index].sourceTurnIds.isEmpty {
+                memories.remove(at: index)
+            } else {
+                memories[index].recomputeAggregatesFromSourceMetadata()
             }
         }
     }

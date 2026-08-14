@@ -45,6 +45,17 @@ private let storyText = Color.white.opacity(0.92)
 // status labels.
 private let storyMuted = Color.white.opacity(0.78)
 
+private enum StorySessionClipboard {
+    static func copy(_ text: String) {
+        #if canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #elseif canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
+    }
+}
+
 struct StorySessionChatView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let world: StoryWorld
@@ -459,6 +470,7 @@ private struct StorySessionChatBody: View {
     @State private var isShowingSafetyResources = false
     @State private var isShowingSafetyHelp = false
     @State private var isShowingInterruptedDiscardConfirmation = false
+    @State private var isShowingResponseActionError = false
     @State private var unavailableModelMessage = ""
     @State private var isShowingUnavailableModelAlert = false
     @State private var isStoryChatNearLatest = true
@@ -481,8 +493,12 @@ private struct StorySessionChatBody: View {
                     ZStack(alignment: .bottomTrailing) {
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 12) {
+                                let latestResponseID = vm.latestCommittedResponseMessageID
                                 ForEach(visibleMessages) { message in
-                                    messageRow(message)
+                                    messageRow(
+                                        message,
+                                        showsResponseActions: message.id == latestResponseID
+                                    )
                                         .id(message.id)
                                 }
                                 if service.phase == .thinking {
@@ -573,6 +589,9 @@ private struct StorySessionChatBody: View {
                                 proxy.scrollTo("runtime-notice-card", anchor: .bottom)
                             }
                         }
+                        .onChange(of: vm.responseActionError) { _, error in
+                            isShowingResponseActionError = error != nil
+                        }
 
                         if !isStoryChatNearLatest {
                             Button {
@@ -610,6 +629,14 @@ private struct StorySessionChatBody: View {
                         Button(storyCopy("閉じる", "Close"), role: .cancel) { }
                     } message: {
                         Text(unavailableModelMessage)
+                    }
+                    .alert(
+                        storyCopy("応答を変更できませんでした", "Could not change the response"),
+                        isPresented: $isShowingResponseActionError
+                    ) {
+                        Button(storyCopy("閉じる", "Close"), role: .cancel) { }
+                    } message: {
+                        Text(vm.responseActionError ?? storyCopy("保存状態を確認してください。", "Check the saved conversation."))
                     }
                 }
             }
@@ -1195,7 +1222,47 @@ private struct StorySessionChatBody: View {
     }
 
     @ViewBuilder
-    private func messageRow(_ message: StoryMessage) -> some View {
+    private func messageRow(
+        _ message: StoryMessage,
+        showsResponseActions: Bool = false
+    ) -> some View {
+        if showsResponseActions {
+            messageRowContainer(message, showsResponseActions: true)
+                .contextMenu {
+                    responseActionButtons(for: message)
+                }
+                .accessibilityAction(named: Text(storyCopy("コピー", "Copy"))) {
+                    StorySessionClipboard.copy(message.text)
+                }
+                .accessibilityAction(named: Text(storyCopy("もう一度生成", "Regenerate"))) {
+                    vm.regenerateLatestResponse()
+                }
+                .accessibilityAction(named: Text(storyCopy("この応答を取り消す", "Undo this response"))) {
+                    vm.undoLatestResponse()
+                }
+        } else {
+            messageRowContainer(message, showsResponseActions: false)
+        }
+    }
+
+    @ViewBuilder
+    private func messageRowContainer(
+        _ message: StoryMessage,
+        showsResponseActions: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            accessibleMessageRowContent(message)
+            if showsResponseActions {
+                HStack {
+                    Spacer(minLength: 0)
+                    responseActionMenu(for: message)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func accessibleMessageRowContent(_ message: StoryMessage) -> some View {
         if case .system = message.author {
             messageRowContent(message)
                 .accessibilityElement(children: .contain)
@@ -1206,6 +1273,41 @@ private struct StorySessionChatBody: View {
                 .accessibilityLabel(storyAccessibilityLabel(for: message))
                 .accessibilityValue(Text(message.createdAt, style: .time))
         }
+    }
+
+    private func responseActionMenu(for message: StoryMessage) -> some View {
+        Menu {
+            responseActionButtons(for: message)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(storyMuted)
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(storyCopy("この応答の操作", "Actions for this response"))
+        .accessibilityHint(storyCopy("コピー、再生成、取り消し", "Copy, regenerate, or undo"))
+        .disabled(vm.isHandlingResponseAction)
+    }
+
+    @ViewBuilder
+    private func responseActionButtons(for message: StoryMessage) -> some View {
+        Button {
+            StorySessionClipboard.copy(message.text)
+        } label: {
+            Label(storyCopy("コピー", "Copy"), systemImage: "doc.on.doc")
+        }
+        Button {
+            vm.regenerateLatestResponse()
+        } label: {
+            Label(storyCopy("もう一度生成", "Regenerate"), systemImage: "arrow.clockwise")
+        }
+        Button(role: .destructive) {
+            vm.undoLatestResponse()
+        } label: {
+            Label(storyCopy("この応答を取り消す", "Undo this response"), systemImage: "arrow.uturn.backward")
+        }
+        .keyboardShortcut("z", modifiers: [.command])
     }
 
     @ViewBuilder

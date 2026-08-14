@@ -935,6 +935,73 @@ final class StorySessionService: ObservableObject {
         return userMessageID
     }
 
+    /// Undo only the latest committed Story response. The repository owns the
+    /// revision check and restores the pre-turn snapshot; this service method
+    /// only fences in-memory retry work so an auxiliary save cannot resurrect
+    /// provenance for the removed response.
+    func undoCommittedResponse(session: StorySession) async throws -> StorySession {
+        guard phase != .thinking else {
+            throw StoryTurnPersistenceError.turnInProgress
+        }
+        guard let checkpoint = session.latestTurnCheckpoint,
+              checkpoint.status == .committed,
+              checkpoint.preTurnSnapshot != nil,
+              !checkpoint.assistantMessageIDs.isEmpty else {
+            throw StoryTurnPersistenceError.turnNotUndoable
+        }
+
+        let updated = try await sessionRepo.undoCommittedTurn(
+            sessionID: session.id,
+            turnID: checkpoint.turnID,
+            attempt: checkpoint.attempt,
+            expectedRevision: session.effectivePersistenceRevision
+        )
+
+        pendingStoryTurnCommitRetries.removeValue(forKey: checkpoint.turnID)
+        pendingStoryMemoryRetries.removeValue(forKey: checkpoint.turnID)
+        pendingStoryMemoryRetryOrder.removeAll { $0 == checkpoint.turnID }
+        rebuildRuntimeNoticeAfterRemovingRetry(turnID: checkpoint.turnID)
+        do {
+            // LocalJSON undo fences this under the same file lock. This call is
+            // retained for injected/future repositories whose transaction
+            // capability is implemented separately.
+            try await storyMemoryRetryRepo.deleteRetry(turnID: checkpoint.turnID)
+        } catch {
+            // The cancelled checkpoint is itself a durable fence. Bootstrap
+            // will mark a stale retry completed before it can save memory.
+            NSLog(
+                "[StorySession] undo retry cleanup deferred turn=%@: %@",
+                checkpoint.turnID.uuidString,
+                error.localizedDescription
+            )
+        }
+        return updated
+    }
+
+    /// Removes a retry notice that became unusable when its source turn was
+    /// undone, while preserving an unrelated notice and exposing the next
+    /// durable retry when one exists.
+    private func rebuildRuntimeNoticeAfterRemovingRetry(turnID: UUID) {
+        let removedNotice: Bool
+        switch latestRuntimeNotice?.retryAction {
+        case let .storyTurnCommit(retry):
+            removedNotice = retry.turnID == turnID
+        case let .storyMemory(retry):
+            removedNotice = retry.turnID == turnID
+        default:
+            removedNotice = false
+        }
+        guard removedNotice else { return }
+
+        if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+            latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+        } else if let pendingRetry = oldestPendingStoryMemoryRetry {
+            latestRuntimeNotice = storyMemoryRetryNotice(pendingRetry)
+        } else {
+            latestRuntimeNotice = nil
+        }
+    }
+
     func addNarration(_ text: String, session: StorySession) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
