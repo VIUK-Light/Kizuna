@@ -1822,6 +1822,8 @@ final class StorySessionViewModel: ObservableObject {
     func regenerateLatestResponse() {
         guard !isHandlingResponseAction,
               service.phase != .thinking,
+              !isSavingRestAcknowledgement,
+              sendPreparationTask == nil,
               let checkpoint = session.latestTurnCheckpoint,
               checkpoint.status == .committed,
               checkpoint.preTurnSnapshot != nil,
@@ -2194,7 +2196,8 @@ final class StorySessionViewModel: ObservableObject {
     /// 「このまま続ける」は短い了承を 1 回だけ記録し、その後 120 分は抑制する。
     func chooseRestSuggestionContinue() {
         guard let suggestion = restSuggestion,
-              !isSavingRestAcknowledgement else { return }
+              !isSavingRestAcknowledgement,
+              !isHandlingResponseAction else { return }
         restAcknowledgementError = nil
         restSuggestionSuppressedUntil = Date().addingTimeInterval(120 * 60)
         restSuggestionAttempted = true

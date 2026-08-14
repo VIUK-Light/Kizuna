@@ -3206,6 +3206,82 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(after, before)
     }
 
+    func testStorySessionRepositoryUndoRejectsUnsafeCheckpointVariantsWithoutChangingSession() async throws {
+        let snapshot = StoryTurnUndoSnapshot(currentObjective: "戻す前の目的")
+        let cases: [(String, StoryTurnStatus, [UUID], Int, Int, StoryTurnUndoSnapshot?)] = [
+            ("legacy checkpoint without snapshot", .committed, [UUID()], 1, 1, nil),
+            ("committed checkpoint without assistant messages", .committed, [], 1, 1, snapshot),
+            ("pending checkpoint", .pending, [UUID()], 1, 1, snapshot),
+            ("mismatched attempt", .committed, [UUID()], 2, 1, snapshot)
+        ]
+
+        for (name, status, assistantMessageIDs, storedAttempt, requestedAttempt, preTurnSnapshot) in cases {
+            let storageURL = try makeStoryPersistenceTestDirectory()
+            let worldID = UUID()
+            let turnID = UUID()
+            let opening = StoryMessage(author: .narrator, text: "開始")
+            let userMessage = StoryMessage(
+                author: .user,
+                text: "続ける",
+                turnID: turnID
+            )
+            let assistant = StoryMessage(
+                author: .narrator,
+                text: "保存済みの返答",
+                turnID: turnID
+            )
+            var session = StorySession(
+                storyWorldId: worldID,
+                currentSceneId: UUID(),
+                storyState: StoryState(location: "初期"),
+                persistenceRevision: 3
+            )
+            session.messages = [opening, userMessage, assistant]
+            session.latestTurnCheckpoint = StoryTurnCheckpoint(
+                turnID: turnID,
+                userMessageID: userMessage.id,
+                status: status,
+                attempt: storedAttempt,
+                baseRevision: 3,
+                assistantMessageIDs: assistantMessageIDs,
+                preTurnSnapshot: preTurnSnapshot
+            )
+            try LocalJSONStoreTransaction.save(
+                [session],
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+
+            let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+            let before = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+
+            do {
+                _ = try await repository.undoCommittedTurn(
+                    sessionID: session.id,
+                    turnID: turnID,
+                    attempt: requestedAttempt,
+                    expectedRevision: session.effectivePersistenceRevision
+                )
+                XCTFail("\(name) must not be undoable")
+            } catch let error as StoryTurnPersistenceError {
+                XCTAssertEqual(error, .turnNotUndoable, name)
+            } catch {
+                XCTFail("\(name) returned an unexpected error: \(error)")
+            }
+
+            let after = try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            )
+            XCTAssertEqual(after, before, name)
+        }
+    }
+
     func testStorySessionRepositoryMoveSessionAdvancesRevision() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let originalWorldID = UUID()

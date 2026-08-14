@@ -493,10 +493,11 @@ private struct StorySessionChatBody: View {
                     ZStack(alignment: .bottomTrailing) {
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 12) {
+                                let latestResponseID = vm.latestCommittedResponseMessageID
                                 ForEach(visibleMessages) { message in
                                     messageRow(
                                         message,
-                                        showsResponseActions: message.id == vm.latestCommittedResponseMessageID
+                                        showsResponseActions: message.id == latestResponseID
                                     )
                                         .id(message.id)
                                 }
@@ -1220,39 +1221,13 @@ private struct StorySessionChatBody: View {
         }
     }
 
+    @ViewBuilder
     private func messageRow(
         _ message: StoryMessage,
         showsResponseActions: Bool = false
-    ) -> AnyView {
-        let accessibleContent: AnyView
-        if case .system = message.author {
-            accessibleContent = AnyView(
-                messageRowContent(message)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel(storyAccessibilityLabel(for: message))
-            )
-        } else {
-            accessibleContent = AnyView(
-                messageRowContent(message)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(storyAccessibilityLabel(for: message))
-                    .accessibilityValue(Text(message.createdAt, style: .time))
-            )
-        }
-
-        let row = VStack(alignment: .leading, spacing: 2) {
-            accessibleContent
-            if showsResponseActions {
-                HStack {
-                    Spacer(minLength: 0)
-                    responseActionMenu(for: message)
-                }
-            }
-        }
-
-        guard showsResponseActions else { return AnyView(row) }
-        return AnyView(
-            row
+    ) -> some View {
+        if showsResponseActions {
+            messageRowContainer(message, showsResponseActions: true)
                 .contextMenu {
                     responseActionButtons(for: message)
                 }
@@ -1265,7 +1240,39 @@ private struct StorySessionChatBody: View {
                 .accessibilityAction(named: Text(storyCopy("この応答を取り消す", "Undo this response"))) {
                     vm.undoLatestResponse()
                 }
-        )
+        } else {
+            messageRowContainer(message, showsResponseActions: false)
+        }
+    }
+
+    @ViewBuilder
+    private func messageRowContainer(
+        _ message: StoryMessage,
+        showsResponseActions: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            accessibleMessageRowContent(message)
+            if showsResponseActions {
+                HStack {
+                    Spacer(minLength: 0)
+                    responseActionMenu(for: message)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func accessibleMessageRowContent(_ message: StoryMessage) -> some View {
+        if case .system = message.author {
+            messageRowContent(message)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(storyAccessibilityLabel(for: message))
+        } else {
+            messageRowContent(message)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(storyAccessibilityLabel(for: message))
+                .accessibilityValue(Text(message.createdAt, style: .time))
+        }
     }
 
     private func responseActionMenu(for message: StoryMessage) -> some View {

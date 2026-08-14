@@ -1021,25 +1021,49 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                     // place on failure. The compensating saves also cover a
                     // failure after a preceding auxiliary file was replaced.
                     if didWriteMemories {
-                        try? LocalJSONStoreTransaction.save(
-                            originalStoryMemories,
-                            fileName: "story_memories.json",
-                            baseURL: storageURL
-                        )
+                        do {
+                            try LocalJSONStoreTransaction.save(
+                                originalStoryMemories,
+                                fileName: "story_memories.json",
+                                baseURL: storageURL
+                            )
+                        } catch let compensationError {
+                            NSLog(
+                                "[StorySession] undo compensation failed file=story_memories.json turn=%@ error=%@",
+                                turnID.uuidString,
+                                compensationError.localizedDescription
+                            )
+                        }
                     }
                     if didWriteRetries {
-                        try? LocalJSONStoreTransaction.save(
-                            originalMemoryRetries,
-                            fileName: "story_memory_retries.json",
-                            baseURL: storageURL
-                        )
+                        do {
+                            try LocalJSONStoreTransaction.save(
+                                originalMemoryRetries,
+                                fileName: "story_memory_retries.json",
+                                baseURL: storageURL
+                            )
+                        } catch let compensationError {
+                            NSLog(
+                                "[StorySession] undo compensation failed file=story_memory_retries.json turn=%@ error=%@",
+                                turnID.uuidString,
+                                compensationError.localizedDescription
+                            )
+                        }
                     }
                     if didAttemptSessionWrite {
-                        try? LocalJSONStoreTransaction.save(
-                            originalSessions,
-                            fileName: "story_sessions.json",
-                            baseURL: storageURL
-                        )
+                        do {
+                            try LocalJSONStoreTransaction.save(
+                                originalSessions,
+                                fileName: "story_sessions.json",
+                                baseURL: storageURL
+                            )
+                        } catch let compensationError {
+                            NSLog(
+                                "[StorySession] undo compensation failed file=story_sessions.json turn=%@ error=%@",
+                                turnID.uuidString,
+                                compensationError.localizedDescription
+                            )
+                        }
                     }
                     throw error
                 }

@@ -960,6 +960,7 @@ final class StorySessionService: ObservableObject {
         pendingStoryTurnCommitRetries.removeValue(forKey: checkpoint.turnID)
         pendingStoryMemoryRetries.removeValue(forKey: checkpoint.turnID)
         pendingStoryMemoryRetryOrder.removeAll { $0 == checkpoint.turnID }
+        rebuildRuntimeNoticeAfterRemovingRetry(turnID: checkpoint.turnID)
         do {
             // LocalJSON undo fences this under the same file lock. This call is
             // retained for injected/future repositories whose transaction
@@ -975,6 +976,30 @@ final class StorySessionService: ObservableObject {
             )
         }
         return updated
+    }
+
+    /// Removes a retry notice that became unusable when its source turn was
+    /// undone, while preserving an unrelated notice and exposing the next
+    /// durable retry when one exists.
+    private func rebuildRuntimeNoticeAfterRemovingRetry(turnID: UUID) {
+        let removedNotice: Bool
+        switch latestRuntimeNotice?.retryAction {
+        case let .storyTurnCommit(retry):
+            removedNotice = retry.turnID == turnID
+        case let .storyMemory(retry):
+            removedNotice = retry.turnID == turnID
+        default:
+            removedNotice = false
+        }
+        guard removedNotice else { return }
+
+        if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+            latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+        } else if let pendingRetry = oldestPendingStoryMemoryRetry {
+            latestRuntimeNotice = storyMemoryRetryNotice(pendingRetry)
+        } else {
+            latestRuntimeNotice = nil
+        }
     }
 
     func addNarration(_ text: String, session: StorySession) async {
