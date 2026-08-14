@@ -383,6 +383,14 @@ final class StorySessionService: ObservableObject {
     /// 補助保存の再試行中は同じ操作を二重起動しない。
     @Published private(set) var isRetryingAuxiliarySave = false
 
+    /// Installed only by the internal acceptance runner. The normal app does
+    /// not retain prompts or raw model output outside this service.
+    var acceptanceGenerationTraceHandler: ((StoryAcceptanceGenerationTrace) -> Void)?
+    /// Diagnostic-only signal for the app-path acceptance runner. This is
+    /// separate from narrator message shape because a valid Story response
+    /// may contain narration without a safety block.
+    private(set) var acceptanceInputSafetyBlocked = false
+
     // DI (デフォルトは Local + Mock)
     private let characterRepo: CharacterRepository
     private let memoryRepo: MemoryRepository
@@ -881,7 +889,8 @@ final class StorySessionService: ObservableObject {
         world: StoryWorld,
         scene: StoryScene,
         generationModel: StoryGenerationModel = .e4b,
-        existingUserMessageID: UUID? = nil
+        existingUserMessageID: UUID? = nil,
+        seedOverride: UInt32? = nil
     ) -> UUID? {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -895,6 +904,7 @@ final class StorySessionService: ObservableObject {
         streamingStatusText = statusText("準備中", "Preparing")
         latestSafetyConcern = nil
         latestRuntimeNotice = nil
+        acceptanceInputSafetyBlocked = false
         lastVisibleText = ""
         let generationID = UUID()
         activeGenerationID = generationID
@@ -929,7 +939,8 @@ final class StorySessionService: ObservableObject {
                 generationID: generationID,
                 userMessageID: userMessageID,
                 turnID: turnID,
-                attempt: attempt
+                attempt: attempt,
+                seedOverride: seedOverride
             )
         }
         return userMessageID
@@ -1317,7 +1328,8 @@ final class StorySessionService: ObservableObject {
         generationID: UUID,
         userMessageID: UUID,
         turnID: UUID,
-        attempt: Int
+        attempt: Int,
+        seedOverride: UInt32?
     ) async {
         await waitForPendingTurnFinish()
         guard isGenerationActive(generationID) else { return }
@@ -1549,6 +1561,7 @@ final class StorySessionService: ObservableObject {
             return
         }
         if inSafety.action == .block {
+            acceptanceInputSafetyBlocked = true
             let polite = inSafety.rewrittenText ?? localizedNotice(
                 "(ナレーション) その話題はここではそっと脇に置いて、別の場面に進もう。",
                 "(Narration) Let's set that topic aside for now and move to another scene."
@@ -1892,6 +1905,7 @@ final class StorySessionService: ObservableObject {
             : statusText("ローカルモデルで発話生成中", "Generating on device")
         let localModelManager = LocalAssistantModelManager.shared
         let selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
+        let modelGenerationStartedAt = Date()
 
         func generateStoryReply(systemPrompt: String) async -> (reply: String?, runtimeNotice: Bool, backend: String, retryWhenLocalReady: Bool) {
             if generationModel == .b31 {
@@ -1899,7 +1913,8 @@ final class StorySessionService: ObservableObject {
                     let reply = await generateWithGemma31BAPI(
                         systemPrompt: systemPrompt,
                         userPrompt: effectiveUserText,
-                        generationID: generationID
+                        generationID: generationID,
+                        seedOverride: seedOverride
                     )
                     let isNotice = isGemma31BRuntimeNotice(reply)
                     return (
@@ -1972,6 +1987,7 @@ final class StorySessionService: ObservableObject {
                 overrideSystemPrompt: systemPrompt,
                 initialMessages: localConversationHistory,
                 overrideModelURL: availableModelURL,
+                seedOverride: seedOverride,
                 generationID: generationID,
                 onUpdate: { @MainActor [weak self] update in
                     self?.handleStreamUpdate(update, generationID: generationID)
@@ -1994,6 +2010,7 @@ final class StorySessionService: ObservableObject {
 
         var generationPrompt = prompt
         var generated = await generateStoryReply(systemPrompt: generationPrompt)
+        var modelGenerationFinishedAt = Date()
         // The model call has completed. The watchdog must not continue into
         // Safety, summary, progress, commit, or memory persistence work.
         generationWatchdogDeadline = nil
@@ -2049,6 +2066,7 @@ final class StorySessionService: ObservableObject {
                     userMessageID: userMessageID
                 )
                 generated = await generateStoryReply(systemPrompt: generationPrompt)
+                modelGenerationFinishedAt = Date()
                 generationWatchdogDeadline = nil
                 reply = generated.reply
                 isRuntimeNotice = generated.runtimeNotice
@@ -2316,6 +2334,24 @@ final class StorySessionService: ObservableObject {
                 evidenceText: stateEvidenceText
             )
         }
+        acceptanceGenerationTraceHandler?(StoryAcceptanceGenerationTrace(
+            generationID: generationID,
+            model: generationModel,
+            systemPrompt: generationPrompt,
+            userPrompt: effectiveUserText,
+            rawOutput: reply ?? streamingResponse,
+            visibleText: rawFinal,
+            stateUpdate: acceptedStatePatch,
+            backend: usedBackendName,
+            modelIdentity: !isRuntimeNotice && generationModel == .b31
+                ? StoryGemma31BAPIService.shared.lastUsedModelName
+                    .map { "\($0)" }
+                : (!isRuntimeNotice ? selectedModelURL?.path : nil),
+            modelLatencyMilliseconds: modelGenerationFinishedAt.timeIntervalSince(modelGenerationStartedAt) * 1_000,
+            requestedSeed: seedOverride,
+            effectiveSeed: seedOverride,
+            seedMode: seedOverride == nil ? nil : "sampler"
+        ))
         let stateAfterAcceptedPatch: StoryState? = {
             guard let acceptedStatePatch else { return session.storyState }
             return acceptedStatePatch.applying(
@@ -3120,7 +3156,8 @@ final class StorySessionService: ObservableObject {
     private func generateWithGemma31BAPI(
         systemPrompt: String,
         userPrompt: String,
-        generationID: UUID
+        generationID: UUID,
+        seedOverride: UInt32?
     ) async -> String? {
         await MainActor.run {
             guard self.activeGenerationID == generationID else { return }
@@ -3138,7 +3175,8 @@ final class StorySessionService: ObservableObject {
                 userPrompt: userPrompt,
                 temperature: 0.72,
                 // 物語本文は2〜7行で十分。過剰な上限は待ち時間と候補の連続出力を増やす。
-                maxOutputTokens: 1024
+                maxOutputTokens: 1024,
+                seed: seedOverride.map(Int.init)
             )
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }

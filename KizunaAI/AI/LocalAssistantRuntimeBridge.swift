@@ -1787,6 +1787,9 @@ final class BundledServerLogAggregator {
         /// LiteRT-LMへrole付きで渡す短い会話履歴。SDK非対応のruntimeでは使わない。
         initialMessages: [LocalAssistantLiteRTLMHistoryMessage] = [],
         overrideModelURL: URL? = nil,
+        /// Internal acceptance runs may pin the sampler seed. Ordinary Story
+        /// turns keep the production per-turn seed behavior when this is nil.
+        seedOverride: UInt32? = nil,
         generationID: UUID? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> String? {
@@ -1829,7 +1832,8 @@ final class BundledServerLogAggregator {
         let parameters = generationParameters(
             for: reasoningMode,
             researchMode: researchMode,
-            advancedSettings: advancedSettings
+            advancedSettings: advancedSettings,
+            seedOverride: seedOverride
         )
         let startedAt = Date()
 
@@ -1844,6 +1848,7 @@ final class BundledServerLogAggregator {
                 stage: .generation,
                 startedAt: startedAt,
                 initialMessages: initialMessages,
+                seedOverride: seedOverride,
                 generationID: generationID,
                 onUpdate: onUpdate
             )
@@ -2750,13 +2755,14 @@ final class BundledServerLogAggregator {
         stage: LocalAssistantRuntimeDiagnostic.Stage,
         startedAt: Date,
         initialMessages: [LocalAssistantLiteRTLMHistoryMessage],
+        seedOverride: UInt32? = nil,
         generationID: UUID? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> VIUKEmbeddedRuntimeResult {
         // A fixed seed made every retry repeat the same poor first token path.
         // Story chat is intentionally creative, so vary the sampler per turn
         // while retaining the preset as its reproducible base.
-        let turnSeed = parameters.seed &+ UInt32(truncatingIfNeeded: Int64(Date().timeIntervalSince1970 * 1_000))
+        let turnSeed = seedOverride ?? (parameters.seed &+ UInt32(truncatingIfNeeded: Int64(Date().timeIntervalSince1970 * 1_000)))
         let warmState = warmState(for: .liteRTLM, modelPath: modelPath)
         let runnerLabel = runtimeRunnerLabel(for: .liteRTLM, runnerPath: nil)
         emitStatus(
@@ -7130,7 +7136,8 @@ final class BundledServerLogAggregator {
     private func generationParameters(
         for reasoningMode: ReasoningMode,
         researchMode: ResearchMode = .on,
-        advancedSettings: GemmaAdvancedSettings = makeRuntimeDefaultGemmaAdvancedSettings()
+        advancedSettings: GemmaAdvancedSettings = makeRuntimeDefaultGemmaAdvancedSettings(),
+        seedOverride: UInt32? = nil
     ) -> (maxTokens: Int, temperature: Float, topP: Float, topK: Int, seed: UInt32) {
         let preset = LocalAssistantModelProfile.generationPreset(
             for: reasoningMode,
@@ -7150,7 +7157,7 @@ final class BundledServerLogAggregator {
             temperature: effectiveTemperature,
             topP: preset.topP,
             topK: preset.topK,
-            seed: preset.seed
+            seed: seedOverride ?? preset.seed
         )
     }
 

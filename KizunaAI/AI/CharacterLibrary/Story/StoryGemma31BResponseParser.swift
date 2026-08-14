@@ -49,6 +49,7 @@ struct StoryGemma31BGenerationConfig: Encodable {
     let topP: Double
     let maxOutputTokens: Int
     let thinkingConfig: StoryGemma31BThinkingConfig
+    let seed: Int?
 }
 
 struct StoryGemma31BGenerateContentRequest: Encodable {
@@ -62,7 +63,8 @@ struct StoryGemma31BGenerateContentRequest: Encodable {
         temperature: Double,
         topP: Double = 0.92,
         maxOutputTokens: Int,
-        thinkingLevel: String
+        thinkingLevel: String,
+        seed: Int? = nil
     ) {
         let normalizedSystemPrompt = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
         systemInstruction = normalizedSystemPrompt.map {
@@ -78,7 +80,8 @@ struct StoryGemma31BGenerateContentRequest: Encodable {
             temperature: temperature,
             topP: topP,
             maxOutputTokens: maxOutputTokens,
-            thinkingConfig: StoryGemma31BThinkingConfig(thinkingLevel: thinkingLevel)
+            thinkingConfig: StoryGemma31BThinkingConfig(thinkingLevel: thinkingLevel),
+            seed: seed
         )
     }
 }

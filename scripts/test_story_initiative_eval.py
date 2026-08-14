@@ -47,6 +47,14 @@ def make_generation(condition, *, language="ja", model="iori", scenario_id="stor
             "model": 90 if condition == "baseline" else 95,
             "turn_end_to_end": 100 if condition == "baseline" else 105,
         },
+        "runtime": {
+            "provider": "local-story-runtime",
+            "backend": "test-runtime",
+            "model_identity": "/private/tmp/kizuna-test-model.gguf",
+            "model_identity_observed": True,
+            "prompt_observed": True,
+            "model_sha256": "e" * 64,
+        },
     }
 
 
@@ -81,12 +89,23 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
         validated = validate_generation_records(records, **self.matrix_kwargs)
         self.assertEqual(len(validated), 8)
 
-        with self.assertRaisesRegex(EvaluationError, "missing generation"):
-            validate_generation_records(records[:-1], **self.matrix_kwargs)
-
-        records[-1] = dict(records[-1], pair_input_sha256="b" * 64)
-        with self.assertRaisesRegex(EvaluationError, "inputs differ"):
+        records[0] = dict(
+            records[0],
+            runtime=dict(
+                records[0]["runtime"],
+                model_identity_observed=False,
+            ),
+        )
+        with self.assertRaisesRegex(EvaluationError, "identify the model"):
             validate_generation_records(records, **self.matrix_kwargs)
+
+        with self.assertRaisesRegex(EvaluationError, "missing generation"):
+            validate_generation_records(make_matrix()[:-1], **self.matrix_kwargs)
+
+        mismatched_records = make_matrix()
+        mismatched_records[-1] = dict(mismatched_records[-1], pair_input_sha256="b" * 64)
+        with self.assertRaisesRegex(EvaluationError, "inputs differ"):
+            validate_generation_records(mismatched_records, **self.matrix_kwargs)
 
     def test_scenario_fixture_is_complete_and_versioned(self):
         fixture, digest = load_scenario_fixture()

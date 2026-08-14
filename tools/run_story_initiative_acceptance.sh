@@ -1,0 +1,118 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ARTIFACT_DIR="${KIZUNA_ACCEPTANCE_ARTIFACT_DIR:-$(mktemp -d /private/tmp/kizuna-story-acceptance.XXXXXX)}"
+STORAGE_ROOT="$ARTIFACT_DIR/storage"
+DERIVED_DATA="$ARTIFACT_DIR/derived-data"
+GENERATION_OUTPUT="$ARTIFACT_DIR/generations.jsonl"
+FIXTURE_COPY="$ARTIFACT_DIR/story_initiative_scenarios.json"
+FIXED_USER_HOME="$ARTIFACT_DIR/user-home"
+
+mkdir -p "$STORAGE_ROOT" "$DERIVED_DATA" "$FIXED_USER_HOME"
+cp -p "$PROJECT_ROOT/tools/story_initiative_scenarios.json" "$FIXTURE_COPY"
+
+# macOS Kizuna uses the trusted Q4_K_M GGUF as iori's default artifact. Do not
+# silently replace it with LM Studio's MLX/safetensors E2B bundle or with a
+# different Q5 GGUF. If the exact artifact is unavailable, the runner still
+# emits explicit blocked/error slots and the evaluator prevents blind scoring.
+EXPECTED_IORI_BYTES=3416118624
+EXPECTED_IORI_SHA256="eafe6431810b2a2a17f6c4b0be338364440707e10ff6648d07665e10875039a5"
+EXPECTED_IORI_FILE="viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf"
+
+IORI_MODEL_SOURCE="${KIZUNA_IORI_MODEL_PATH:-}"
+IORI_MODEL_SHA256=""
+IORI_MODEL_ACCEPTED=0
+if [[ -n "$IORI_MODEL_SOURCE" && -f "$IORI_MODEL_SOURCE" ]]; then
+    IORI_MODEL_BYTES="$(stat -L -f '%z' "$IORI_MODEL_SOURCE")"
+    IORI_MODEL_SHA256="$(shasum -a 256 "$IORI_MODEL_SOURCE" | cut -d ' ' -f 1)"
+
+    if [[ "$IORI_MODEL_BYTES" == "$EXPECTED_IORI_BYTES" && "$IORI_MODEL_SHA256" == "$EXPECTED_IORI_SHA256" ]]; then
+        IORI_INSTALL_DIR="$STORAGE_ROOT/Library/Application Support/VIUK/KizunaAI/LocalModels/Gemma4E4B4bit"
+        mkdir -p "$IORI_INSTALL_DIR"
+        IORI_INSTALL_PATH="$IORI_INSTALL_DIR/$EXPECTED_IORI_FILE"
+        if [[ -e "$IORI_INSTALL_PATH" || -L "$IORI_INSTALL_PATH" ]]; then
+            if [[ ! -L "$IORI_INSTALL_PATH" || "$(readlink "$IORI_INSTALL_PATH")" != "$IORI_MODEL_SOURCE" ]]; then
+                echo "existing isolated iori artifact path does not match the requested source" >&2
+                exit 1
+            fi
+        else
+            ln -s "$IORI_MODEL_SOURCE" "$IORI_INSTALL_PATH"
+        fi
+        IORI_MODEL_ACCEPTED=1
+        echo "iori artifact accepted: $IORI_MODEL_SOURCE"
+    else
+        echo "iori artifact rejected (expected exact Q4_K_M; no substitution): $IORI_MODEL_SOURCE" >&2
+        echo "observed bytes=$IORI_MODEL_BYTES sha256=$IORI_MODEL_SHA256" >&2
+    fi
+else
+    echo "iori artifact not supplied; iori slots will be recorded as unavailable" >&2
+fi
+
+export KIZUNA_RUN_STORY_ACCEPTANCE=1
+export KIZUNA_ACCEPTANCE_STORAGE_ROOT="$STORAGE_ROOT"
+export KIZUNA_ACCEPTANCE_FIXTURE="$FIXTURE_COPY"
+export KIZUNA_ACCEPTANCE_OUTPUT="$GENERATION_OUTPUT"
+
+cd "$PROJECT_ROOT"
+
+for key in \
+    KIZUNA_ACCEPTANCE_LANGUAGES \
+    KIZUNA_ACCEPTANCE_MODELS \
+    KIZUNA_ACCEPTANCE_SCENARIOS \
+    KIZUNA_ACCEPTANCE_SEEDS; do
+    if [[ -n "${(P)key:-}" ]]; then
+        echo "$key is not accepted by the formal full-matrix runner; unset it before running" >&2
+        exit 2
+    fi
+done
+
+xcodebuild -quiet build-for-testing \
+    -project KizunaAI.xcodeproj \
+    -scheme KizunaAI \
+    -destination 'platform=macOS' \
+    -derivedDataPath "$DERIVED_DATA" \
+    CODE_SIGNING_ALLOWED=NO
+
+XCTESTRUN_PATH="$(find "$DERIVED_DATA/Build/Products" -maxdepth 1 -type f -name '*.xctestrun' -print -quit)"
+if [[ -z "$XCTESTRUN_PATH" ]]; then
+    echo "xctestrun specification was not generated" >&2
+    exit 1
+fi
+
+# xcodebuild does not reliably forward the caller's shell environment into an
+# app-hosted XCTest process. Inject the explicit runner contract into the
+# generated xctestrun file instead, without changing the checked-in scheme.
+set_xctest_environment() {
+    local key="$1"
+    local value="$2"
+    /usr/bin/plutil -insert "KizunaAITests.EnvironmentVariables.$key" -string "$value" "$XCTESTRUN_PATH"
+    /usr/bin/plutil -insert "KizunaAITests.TestingEnvironmentVariables.$key" -string "$value" "$XCTESTRUN_PATH"
+}
+
+set_xctest_environment KIZUNA_RUN_STORY_ACCEPTANCE "1"
+set_xctest_environment KIZUNA_ACCEPTANCE_STORAGE_ROOT "$STORAGE_ROOT"
+set_xctest_environment KIZUNA_ACCEPTANCE_FIXTURE "$FIXTURE_COPY"
+set_xctest_environment KIZUNA_ACCEPTANCE_OUTPUT "$GENERATION_OUTPUT"
+set_xctest_environment CFFIXED_USER_HOME "$FIXED_USER_HOME"
+
+if [[ -n "${KIZUNA_ACCEPTANCE_TURN_TIMEOUT_SECONDS:-}" ]]; then
+    set_xctest_environment KIZUNA_ACCEPTANCE_TURN_TIMEOUT_SECONDS "$KIZUNA_ACCEPTANCE_TURN_TIMEOUT_SECONDS"
+fi
+
+if [[ "$IORI_MODEL_ACCEPTED" == "1" ]]; then
+    set_xctest_environment KIZUNA_IORI_MODEL_PATH "$IORI_MODEL_SOURCE"
+    set_xctest_environment KIZUNA_IORI_MODEL_SHA256 "$IORI_MODEL_SHA256"
+fi
+
+xcodebuild -quiet test-without-building \
+    -xctestrun "$XCTESTRUN_PATH" \
+    -destination 'platform=macOS' \
+    -only-testing:KizunaAITests/StoryInitiativeAcceptanceRunnerTests/testStoryInitiativeAcceptanceMatrix \
+    -parallel-testing-enabled NO
+
+python3 tools/story_initiative_eval.py validate --input "$GENERATION_OUTPUT"
+
+echo "generation records: $GENERATION_OUTPUT"
+echo "isolated Kizuna storage: $STORAGE_ROOT"

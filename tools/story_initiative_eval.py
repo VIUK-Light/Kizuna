@@ -343,6 +343,33 @@ def validate_generation_records(
                 raise EvaluationError("baseline activation_source must be none")
             if condition == "initiative" and activation_source == "none":
                 raise EvaluationError("initiative requires an activation source")
+            runtime = record.get("runtime")
+            if not isinstance(runtime, dict):
+                raise EvaluationError("runtime must contain app-path identity metadata")
+            for runtime_key in ("provider", "backend", "model_identity"):
+                runtime_value = runtime.get(runtime_key)
+                if not isinstance(runtime_value, str) or not runtime_value.strip():
+                    raise EvaluationError(
+                        f"runtime.{runtime_key} must be a non-empty string"
+                    )
+            model_identity_observed = runtime.get("model_identity_observed")
+            if not isinstance(model_identity_observed, bool):
+                raise EvaluationError("runtime.model_identity_observed must be boolean")
+            prompt_observed = runtime.get("prompt_observed")
+            if not isinstance(prompt_observed, bool):
+                raise EvaluationError("runtime.prompt_observed must be boolean")
+            if status == "completed" and not model_identity_observed:
+                raise EvaluationError(
+                    "completed output must identify the model actually used by the app path"
+                )
+            if status == "completed" and not prompt_observed:
+                raise EvaluationError("completed output must observe the app prompt")
+            model_sha256 = runtime.get("model_sha256")
+            if model_sha256 is not None:
+                if not isinstance(model_sha256, str) or not SHA256_PATTERN.fullmatch(
+                    model_sha256.lower()
+                ):
+                    raise EvaluationError("runtime.model_sha256 must be a SHA-256 hex digest")
             latency = _validate_latency(record)
             state_update = record.get("state_update")
             if state_update is not None and not isinstance(state_update, dict):

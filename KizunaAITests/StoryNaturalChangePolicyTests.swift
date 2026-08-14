@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import KizunaAI
 
@@ -61,6 +62,24 @@ final class StoryNaturalChangePolicyTests: XCTestCase {
             prompt.contains(userToken),
             "NAGI receives the current user message through the user-role request"
         )
+    }
+
+    func testNAGIAcceptanceSeedIsSerializedInGenerationConfig() throws {
+        let request = StoryGemma31BGenerateContentRequest(
+            systemPrompt: "story system",
+            userPrompt: "story input",
+            temperature: 0.72,
+            maxOutputTokens: 128,
+            thinkingLevel: "minimal",
+            seed: 3
+        )
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(request))
+                as? [String: Any]
+        )
+        let generationConfig = try XCTUnwrap(object["generationConfig"] as? [String: Any])
+
+        XCTAssertEqual(generationConfig["seed"] as? Int, 3)
     }
 
     func testLocalPromptKeepsInitiativeContextWithinByteLimitAndOneStoryMemory() {

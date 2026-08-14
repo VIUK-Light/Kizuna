@@ -1,9 +1,11 @@
 # Story natural initiative evaluation
 
 This is the release gate for the experiment introduced by PR #259. It is a
-local, reproducible evaluation only. It does not call an LLM, upload story
-content, add a Story screen, add an event state machine, or turn the feature
-on for ordinary users.
+local, reproducible evaluation only. The evaluator and blind scorer never
+call an LLM or upload story content; the opt-in app-path runner does call the
+configured local/API model and writes only hashed prompt metadata plus local
+generation results. The evaluation does not add a Story screen, add an event
+state machine, or turn the feature on for ordinary users.
 
 ## What is being compared
 
@@ -16,12 +18,15 @@ twice:
 - initiative: the internal canary prompt and causal state acceptance
   behavior.
 
-The input is sent through the existing app path. The current user message is
-sent once as the user-role request; it is not copied into the NAGI system
-prompt. The local runner records a SHA-256 of the normalized shared
-paired-input envelope instead of committing the conversation or prompt text
-to the repository. The condition-specific system instruction is not part of
-this hash; it is the variable being evaluated.
+The input is sent through the existing `StorySessionService.send` path. That
+path performs the normal safety checks, prompt construction, model call,
+STATE_UPDATE parser, output safety, and JSON persistence. The current user
+message is sent once as the user-role request; it is not copied into the NAGI
+system prompt. The local runner records SHA-256 values for the shared paired
+input and the app-level system/user prompt observed at the generation seam;
+raw prompt text is not written to the output artifact. The condition-specific
+system instruction is not part of the paired-input hash; it is the variable
+being evaluated.
 
 The complete matrix is:
 
@@ -41,41 +46,46 @@ minimum and the larger sample size.
 
 ## Generation record: input and output contract
 
-The runner writes one JSON object per line. No raw user content is required
-in the committed repository. The shared input envelope used to calculate
-pair_input_sha256 must contain the following fields:
+The runner writes one JSON object per line. No raw prompt is written to the
+artifact. `pair_input_sha256` is calculated from the fixture context plus the
+matrix key, so baseline and initiative must have the same value for every
+pair:
 
 ~~~json
 {
+  "context": {
+    "user_message": "...",
+    "scene": {
+      "location": "...",
+      "time_of_day": "...",
+      "mood": "...",
+      "conflict": "..."
+    },
+    "story_state": {
+      "active_goal": "...",
+      "relationship_stage": "...",
+      "active_character": "..."
+    },
+    "character": {
+      "name": "...",
+      "purpose": "...",
+      "relationship": "..."
+    },
+    "history": [],
+    "hard_facts": []
+  },
   "language": "ja",
   "model": "iori",
   "scenario_id": "story-01",
-  "seed": 1,
-  "user_message": "...",
-  "scene": {
-    "location": "...",
-    "time_of_day": "...",
-    "mood": "...",
-    "conflict": "...",
-    "goal": "..."
-  },
-  "story_state": {
-    "active_goal": "...",
-    "relationship_stage": "...",
-    "active_character": "..."
-  },
-  "character": {
-    "purpose": "...",
-    "relationship": "..."
-  },
-  "memory": "..."
+  "scenario_version": "story-initiative-fixture-v2",
+  "seed": 1
 }
 ~~~
 
-The persisted generation record has this exact shape. pair_input_sha256 is
-the hash of the shared context only, while prompt_sha256 covers the actual
-condition-specific prompt sent to the model. The former must match between
-the two arms; the latter is expected to differ.
+The persisted generation record has this shape. `prompt_sha256` covers the
+exact system/user prompt observed by the app-path trace; raw prompt text is
+never serialized. The evaluator also requires runtime identity metadata so a
+successful record cannot claim an unverified model or provider.
 
 ~~~json
 {
@@ -109,6 +119,14 @@ the two arms; the latter is expected to differ.
   "latency_ms": {
     "model": 700,
     "turn_end_to_end": 842
+  },
+  "runtime": {
+    "provider": "local-story-runtime",
+    "backend": "iori local model",
+    "model_identity": "/isolated/storage/LocalModels/Gemma4E4B4bit/viuk-story-...Q4_K_M.gguf",
+    "model_identity_observed": true,
+    "prompt_observed": true,
+    "model_sha256": "eafe6431810b2a2a17f6c4b0be338364440707e10ff6648d07665e10875039a"
   }
 }
 ~~~
@@ -125,11 +143,17 @@ status, and failed records must not contain state_update. The validator accepts
 the record shape so the operational failure is visible, but blind generation
 rejects any matrix containing a non-completed output.
 
-seed.requested is the matrix seed. seed.effective is the seed or draw value
-actually observed by the runner, and seed.mode is sampler or draw. The record
-must not claim deterministic model sampling when the provider does not expose
-a seed: for example, a runner may record the effective local draw used by iori
-or the provider draw observed for nagi. Re-running the same matrix still
+`runtime.provider`, `runtime.backend`, and `runtime.model_identity` identify
+the app path and artifact used. `model_identity_observed` and
+`prompt_observed` must be true for completed records. Failed records may have
+false values because the app may reject input or fail before model invocation;
+those records remain visible and block blind scoring.
+
+seed.requested is the matrix seed. seed.effective is the value the app passes
+to its sampler, and seed.mode is sampler or draw. For NAGI, the request carries
+the seed in `generationConfig`; the provider response does not expose a
+returned seed, so this field records the requested sampler configuration, not
+an independently observed response property. Re-running the same matrix still
 requires a new run identifier outside this contract.
 
 The committed fixture is tools/story_initiative_scenarios.json. Its canonical
@@ -274,6 +298,29 @@ fail the GO gate. The answer key is never given to the rater and is required
 only by the scoring command.
 
 ## Commands
+
+Run the real app-path matrix in an isolated storage root. The iori input must
+be the exact trusted Q4_K_M artifact used by the macOS app. The script rejects
+Q5, LM Studio MLX/safetensors, and unrelated GGUF files rather than silently
+substituting them. NAGI uses the configured Gemma API key without writing the
+key to the artifact:
+
+~~~sh
+KIZUNA_IORI_MODEL_PATH="/path/to/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf" \
+  tools/run_story_initiative_acceptance.sh
+~~~
+
+The script copies the fixture into the artifact directory, generates an
+isolated `.xctestrun` file with the runner environment, and places both
+`generations.jsonl` and the isolated JSON store under one temporary artifact
+directory in `/private/tmp`. It also redirects the test process's
+`CFFIXED_USER_HOME`, so UserDefaults and app state are not taken from the
+developer account. The formal script always runs the complete matrix; partial
+selection environment variables are rejected. If the exact iori artifact is
+not available, the runner still emits explicit unavailable slots; validation
+then prevents blind generation and GO scoring. The LM Studio
+`google/gemma-4-e2b` bundle is useful for exploratory checks but is not the
+macOS Kizuna iori artifact and must not be used for the formal gate.
 
 Validate a complete local generation matrix:
 

@@ -50,6 +50,11 @@ final class StoryGemma31BAPIService {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
+    /// The last model endpoint that returned a successful HTTP response.
+    /// This is diagnostic metadata only; credentials and response bodies are
+    /// never retained here.
+    private(set) var lastUsedModelName: String?
+
     private init() {}
 
     var hasAPIKey: Bool {
@@ -60,17 +65,20 @@ final class StoryGemma31BAPIService {
         systemPrompt: String,
         userPrompt: String,
         temperature: Double = 0.72,
-        maxOutputTokens: Int = 4096
+        maxOutputTokens: Int = 4096,
+        seed: Int? = nil
     ) async throws -> String {
         guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
             throw StoryGemma31BAPIError.missingAPIKey
         }
+        lastUsedModelName = nil
         let body = try makeRequestBody(
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
             temperature: temperature,
             maxOutputTokens: maxOutputTokens,
-            thinkingLevel: "high"
+            thinkingLevel: "high",
+            seed: seed
         )
 
         let data = try await performRequestWithRetry(
@@ -95,7 +103,8 @@ final class StoryGemma31BAPIService {
             userPrompt: userPrompt,
             temperature: temperature,
             maxOutputTokens: max(maxOutputTokens, 1_536),
-            thinkingLevel: "minimal"
+            thinkingLevel: "minimal",
+            seed: seed
         )
         let fallbackData = try await performRequestWithRetry(
             apiKey: apiKey,
@@ -115,7 +124,8 @@ final class StoryGemma31BAPIService {
         userPrompt: String,
         temperature: Double,
         maxOutputTokens: Int,
-        thinkingLevel: String
+        thinkingLevel: String,
+        seed: Int?
     ) throws -> Data {
         // The API has a native systemInstruction field. Putting the system
         // prompt and a literal <Thinking> marker into user content makes the
@@ -125,7 +135,8 @@ final class StoryGemma31BAPIService {
             userPrompt: userPrompt,
             temperature: temperature,
             maxOutputTokens: maxOutputTokens,
-            thinkingLevel: thinkingLevel
+            thinkingLevel: thinkingLevel,
+            seed: seed
         ))
     }
 
@@ -178,6 +189,7 @@ final class StoryGemma31BAPIService {
             for attempt in 0..<maxAttemptsPerModel {
                 do {
                     let data = try await performSingleRequest(request)
+                    lastUsedModelName = modelName
                     return data
                 } catch let error as StoryGemma31BAPIError {
                     lastFailure = error
