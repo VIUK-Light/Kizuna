@@ -1529,6 +1529,11 @@ final class StorySessionViewModel: ObservableObject {
     /// discard never makes the incomplete turn look silently resolved.
     @Published private(set) var isHandlingInterruptedTurn = false
     @Published private(set) var interruptedTurnRecoveryError: String?
+    /// Only the latest committed AI response can be changed. Keep the action
+    /// state separate from generation so an Undo/Regenerate save cannot be
+    /// mistaken for an in-flight model request.
+    @Published private(set) var isHandlingResponseAction = false
+    @Published private(set) var responseActionError: String?
     /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
     @Published var restSuggestion: StoryRestSuggestion?
     /// 了承メッセージの保存中は通常送信を止め、保存結果を待つ。
@@ -1779,6 +1784,86 @@ final class StorySessionViewModel: ObservableObject {
         enqueueSend(userText, existingUserMessageID: nil)
     }
 
+    /// Removes the latest committed AI response while preserving the User
+    /// message. The repository performs the CAS; a failed save leaves this
+    /// ViewModel's committed snapshot untouched.
+    func undoLatestResponse() {
+        guard !isHandlingResponseAction,
+              service.phase != .thinking,
+              let checkpoint = session.latestTurnCheckpoint,
+              checkpoint.status == .committed,
+              checkpoint.preTurnSnapshot != nil,
+              latestCommittedResponse != nil else { return }
+
+        let sessionSnapshot = session
+        isHandlingResponseAction = true
+        responseActionError = nil
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isHandlingResponseAction = false }
+            do {
+                let updated = try await self.service.undoCommittedResponse(session: sessionSnapshot)
+                guard self.session.id == sessionSnapshot.id else { return }
+                self.session = updated
+            } catch {
+                self.responseActionError = KizunaCopy.text(
+                    japanese: "この応答を取り消せませんでした。保存状態は変更していません。",
+                    english: "This response could not be undone. The saved conversation was left unchanged."
+                )
+                await self.refreshAfterTurn()
+                NSLog("[StorySessionVM] undo response failed: %@", error.localizedDescription)
+            }
+        }
+    }
+
+    /// Undo and immediately retry the same logical turn. The persisted
+    /// cancelled checkpoint keeps the User message and beginTurn increments
+    /// the attempt without creating a second committed response set.
+    func regenerateLatestResponse() {
+        guard !isHandlingResponseAction,
+              service.phase != .thinking,
+              let checkpoint = session.latestTurnCheckpoint,
+              checkpoint.status == .committed,
+              checkpoint.preTurnSnapshot != nil,
+              latestCommittedResponse != nil,
+              let userMessage = session.messages.last(where: {
+                  $0.id == checkpoint.userMessageID && $0.author.isUser
+              }) else { return }
+
+        let sessionSnapshot = session
+        let userMessageID = userMessage.id
+        let userText = userMessage.text
+        isHandlingResponseAction = true
+        responseActionError = nil
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isHandlingResponseAction = false }
+            do {
+                let undone = try await self.service.undoCommittedResponse(session: sessionSnapshot)
+                guard self.session.id == sessionSnapshot.id else { return }
+                self.session = undone
+                guard self.enqueueSend(
+                    userText,
+                    existingUserMessageID: userMessageID,
+                    allowDuringResponseAction: true
+                ) else {
+                    self.responseActionError = KizunaCopy.text(
+                        japanese: "再生成を開始できませんでした。残っている発言からもう一度お試しください。",
+                        english: "Regeneration could not start. Try again from the preserved message."
+                    )
+                    return
+                }
+            } catch {
+                self.responseActionError = KizunaCopy.text(
+                    japanese: "再生成の準備に失敗しました。保存状態は変更していません。",
+                    english: "Regeneration could not be prepared. The saved conversation was left unchanged."
+                )
+                await self.refreshAfterTurn()
+                NSLog("[StorySessionVM] regenerate response failed: %@", error.localizedDescription)
+            }
+        }
+    }
+
     /// Reuses the exact user message and logical turn after a relaunch marked
     /// its pending checkpoint as interrupted. StorySessionService increments
     /// the persisted attempt and beginTurn keeps the user message idempotent.
@@ -1846,12 +1931,14 @@ final class StorySessionViewModel: ObservableObject {
     private func enqueueSend(
         _ userText: String,
         existingUserMessageID: UUID?,
-        isInterruptedRecovery: Bool = false
+        isInterruptedRecovery: Bool = false,
+        allowDuringResponseAction: Bool = false
     ) -> Bool {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               service.phase != .thinking,
               !isSavingRestAcknowledgement,
+              (allowDuringResponseAction || !isHandlingResponseAction),
               sendPreparationTask == nil else { return false }
         // 直前ターンの保存完了通知と送信タップが競合すると、古い session スナップショットで
         // 次のターンを開始して新しい発言を上書きする。送信前に最新状態を一度だけ読み直す。
@@ -2211,6 +2298,31 @@ final class StorySessionViewModel: ObservableObject {
     var interruptedTurnMessage: StoryMessage? {
         guard let checkpoint = interruptedTurn else { return nil }
         return session.messages.first { $0.id == checkpoint.userMessageID }
+    }
+
+    /// The action affordance is intentionally limited to the latest committed
+    /// generated response. Older messages and legacy checkpoints without a
+    /// pre-turn snapshot remain read-only rather than risking an incomplete
+    /// restoration.
+    var latestCommittedResponse: StoryMessage? {
+        guard let checkpoint = session.latestTurnCheckpoint,
+              checkpoint.status == .committed,
+              checkpoint.preTurnSnapshot != nil,
+              !checkpoint.assistantMessageIDs.isEmpty else { return nil }
+        let assistantIDs = Set(checkpoint.assistantMessageIDs)
+        return session.messages.last { message in
+            guard assistantIDs.contains(message.id) else { return false }
+            switch message.author {
+            case .narrator, .cast(_, _):
+                return true
+            case .user, .system:
+                return false
+            }
+        }
+    }
+
+    var latestCommittedResponseMessageID: UUID? {
+        latestCommittedResponse?.id
     }
 }
 

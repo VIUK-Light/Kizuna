@@ -29,6 +29,7 @@ enum StoryTurnPersistenceError: Error, Equatable {
     case sceneConflict
     case recordDeleted(kind: StoryTurnJournalRecordKind, id: UUID)
     case corruptJournal
+    case turnNotUndoable
 }
 
 /// 同一プロセス内で現在生存しているStorySessionServiceを識別する。
@@ -104,7 +105,8 @@ enum StoryTurnReducer {
         ownerID: UUID? = StoryTurnOwner.currentID,
         baseRevision: UInt64,
         startedAt: Date,
-        updatedAt: Date
+        updatedAt: Date,
+        preTurnSnapshot: StoryTurnUndoSnapshot? = nil
     ) -> StoryTurnCheckpoint {
         StoryTurnCheckpoint(
             turnID: turnID,
@@ -114,7 +116,8 @@ enum StoryTurnReducer {
             ownerID: ownerID,
             baseRevision: baseRevision,
             startedAt: startedAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            preTurnSnapshot: preTurnSnapshot
         )
     }
 
@@ -132,7 +135,8 @@ enum StoryTurnReducer {
             baseRevision: pending.baseRevision,
             assistantMessageIDs: assistantMessageIDs,
             startedAt: pending.startedAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            preTurnSnapshot: pending.preTurnSnapshot
         )
     }
 
@@ -152,7 +156,27 @@ enum StoryTurnReducer {
             assistantMessageIDs: pending.assistantMessageIDs,
             startedAt: pending.startedAt,
             updatedAt: updatedAt,
-            failureCode: failureCode
+            failureCode: failureCode,
+            preTurnSnapshot: pending.preTurnSnapshot
+        )
+    }
+
+    nonisolated static func undo(
+        committed: StoryTurnCheckpoint,
+        updatedAt: Date
+    ) -> StoryTurnCheckpoint {
+        StoryTurnCheckpoint(
+            turnID: committed.turnID,
+            userMessageID: committed.userMessageID,
+            status: .cancelled,
+            attempt: committed.attempt,
+            ownerID: committed.ownerID,
+            baseRevision: committed.baseRevision,
+            assistantMessageIDs: [],
+            startedAt: committed.startedAt,
+            updatedAt: updatedAt,
+            failureCode: "undone",
+            preTurnSnapshot: committed.preTurnSnapshot
         )
     }
 }
@@ -403,7 +427,18 @@ enum StoryTurnJournal {
                     // completed, so dropping these retries would lose
                     // session-owned memories. Handoff is idempotent by
                     // turnID and must finish before consuming the journal.
-                    if !entry.memoryRetries.isEmpty {
+                    // An exception is an Undo or a later regeneration of the
+                    // same logical turn: its cancelled/different-attempt
+                    // checkpoint fences the old memory payload.
+                    let entryAttempt = entry.session.latestTurnCheckpoint?.attempt
+                    let persistedCheckpoint = persistedSession.latestTurnCheckpoint
+                    let sameTurnWasReplaced = persistedCheckpoint?.turnID == entry.turnID
+                    let sameAttemptIsStillCommitted = persistedCheckpoint?.status == .committed
+                        && persistedCheckpoint?.attempt == entryAttempt
+                    let shouldHandoffMemoryRetries = decision == .apply
+                        || !sameTurnWasReplaced
+                        || sameAttemptIsStillCommitted
+                    if shouldHandoffMemoryRetries && !entry.memoryRetries.isEmpty {
                         do {
                             try mergeMemoryRetriesUnlocked(
                                 entry.memoryRetries,

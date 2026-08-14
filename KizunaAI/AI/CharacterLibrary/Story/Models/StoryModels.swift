@@ -1286,6 +1286,50 @@ enum StoryTurnStatus: String, Codable, Hashable {
     case interrupted
 }
 
+/// A compact snapshot of the mutable StorySession fields that a committed
+/// response may change. Keeping this inside the turn checkpoint makes Undo a
+/// persistence operation rather than a best-effort reconstruction from the
+/// visible transcript.
+struct StoryTurnUndoSnapshot: Codable, Equatable, Hashable {
+    var currentSceneId: UUID?
+    var activeCharacterIds: [UUID]?
+    var progressLabel: String?
+    var currentObjective: String?
+    var relationshipStage: String?
+    var lastTurnProgress: String?
+    var lastSceneSummary: String?
+    var unresolvedHooks: [String]?
+    var storyState: StoryState?
+    var lastSelectedModelName: String?
+    var lastUsedBackendName: String?
+
+    init(
+        currentSceneId: UUID? = nil,
+        activeCharacterIds: [UUID]? = nil,
+        progressLabel: String? = nil,
+        currentObjective: String? = nil,
+        relationshipStage: String? = nil,
+        lastTurnProgress: String? = nil,
+        lastSceneSummary: String? = nil,
+        unresolvedHooks: [String]? = nil,
+        storyState: StoryState? = nil,
+        lastSelectedModelName: String? = nil,
+        lastUsedBackendName: String? = nil
+    ) {
+        self.currentSceneId = currentSceneId
+        self.activeCharacterIds = activeCharacterIds
+        self.progressLabel = progressLabel
+        self.currentObjective = currentObjective
+        self.relationshipStage = relationshipStage
+        self.lastTurnProgress = lastTurnProgress
+        self.lastSceneSummary = lastSceneSummary
+        self.unresolvedHooks = unresolvedHooks
+        self.storyState = storyState
+        self.lastSelectedModelName = lastSelectedModelName
+        self.lastUsedBackendName = lastUsedBackendName
+    }
+}
+
 struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
     var turnID: UUID
     var userMessageID: UUID
@@ -1300,6 +1344,10 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
     var startedAt: Date
     var updatedAt: Date
     var failureCode: String?
+    /// The state immediately before this logical turn began. It is optional so
+    /// checkpoints written by PR3/PR4 remain decodable and continue to support
+    /// retry/cancel recovery even though they cannot safely offer Undo.
+    var preTurnSnapshot: StoryTurnUndoSnapshot?
 
     private enum CodingKeys: String, CodingKey {
         case turnID
@@ -1312,6 +1360,7 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         case startedAt
         case updatedAt
         case failureCode
+        case preTurnSnapshot
     }
 
     nonisolated init(
@@ -1324,7 +1373,8 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         assistantMessageIDs: [UUID] = [],
         startedAt: Date = Date(),
         updatedAt: Date = Date(),
-        failureCode: String? = nil
+        failureCode: String? = nil,
+        preTurnSnapshot: StoryTurnUndoSnapshot? = nil
     ) {
         self.turnID = turnID
         self.userMessageID = userMessageID
@@ -1336,6 +1386,7 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.failureCode = failureCode
+        self.preTurnSnapshot = preTurnSnapshot
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -1350,6 +1401,10 @@ struct StoryTurnCheckpoint: Codable, Equatable, Hashable {
         self.startedAt = try container.decode(Date.self, forKey: .startedAt)
         self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         self.failureCode = try container.decodeIfPresent(String.self, forKey: .failureCode)
+        self.preTurnSnapshot = try container.decodeIfPresent(
+            StoryTurnUndoSnapshot.self,
+            forKey: .preTurnSnapshot
+        )
     }
 }
 
@@ -1457,6 +1512,40 @@ extension StorySession {
                 return nil
             }
         })
+    }
+}
+
+extension StoryTurnUndoSnapshot {
+    init(session: StorySession) {
+        self.init(
+            currentSceneId: session.currentSceneId,
+            activeCharacterIds: session.activeCharacterIds,
+            progressLabel: session.progressLabel,
+            currentObjective: session.currentObjective,
+            relationshipStage: session.relationshipStage,
+            lastTurnProgress: session.lastTurnProgress,
+            lastSceneSummary: session.lastSceneSummary,
+            unresolvedHooks: session.unresolvedHooks,
+            storyState: session.storyState,
+            lastSelectedModelName: session.lastSelectedModelName,
+            lastUsedBackendName: session.lastUsedBackendName
+        )
+    }
+
+    func applying(to session: StorySession) -> StorySession {
+        var restored = session
+        restored.currentSceneId = currentSceneId
+        restored.activeCharacterIds = activeCharacterIds
+        restored.progressLabel = progressLabel
+        restored.currentObjective = currentObjective
+        restored.relationshipStage = relationshipStage
+        restored.lastTurnProgress = lastTurnProgress
+        restored.lastSceneSummary = lastSceneSummary
+        restored.unresolvedHooks = unresolvedHooks
+        restored.storyState = storyState
+        restored.lastSelectedModelName = lastSelectedModelName
+        restored.lastUsedBackendName = lastUsedBackendName
+        return restored
     }
 }
 
