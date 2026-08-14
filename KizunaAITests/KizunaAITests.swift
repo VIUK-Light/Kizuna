@@ -4940,6 +4940,80 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryTurnJournalHandsOffRetriesForStalePair() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let fixture = makeCommittedJournalFixture()
+        var laterSession = fixture.entry.session
+        laterSession.persistenceRevision = fixture.entry.session.effectivePersistenceRevision + 1
+        laterSession.updatedAt = fixture.entry.session.updatedAt.addingTimeInterval(1)
+        var laterScene = fixture.entry.scene
+        laterScene.persistenceRevision = fixture.entry.scene.effectivePersistenceRevision + 1
+        laterScene.updatedAt = fixture.entry.scene.updatedAt.addingTimeInterval(1)
+        let retry = StoryMemoryRetry(
+            turnID: fixture.entry.turnID,
+            userMessageID: try XCTUnwrap(
+                fixture.entry.session.latestTurnCheckpoint?.userMessageID
+            ),
+            userText: "stale pair memory retry",
+            characterMemories: [],
+            storyMemories: [],
+            storySessionID: fixture.entry.session.id,
+            storyWorldID: fixture.entry.session.storyWorldId
+        )
+        let entry = StoryTurnJournalEntry(
+            turnID: fixture.entry.turnID,
+            session: fixture.entry.session,
+            scene: fixture.entry.scene,
+            memoryRetries: [retry]
+        )
+
+        try LocalJSONStoreTransaction.save(
+            [laterSession],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [laterScene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [entry],
+            fileName: "story_turn_journal.json",
+            baseURL: storageURL
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryTurnJournalEntry.self,
+                fileName: "story_turn_journal.json",
+                baseURL: storageURL
+            ).isEmpty,
+            "a stale pair must be consumed after its memory retry is handed off"
+        )
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryMemoryRetry.self,
+                fileName: "story_memory_retries.json",
+                baseURL: storageURL
+            ),
+            [retry]
+        )
+
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+        XCTAssertEqual(
+            try LocalJSONStoreTransaction.load(
+                StoryMemoryRetry.self,
+                fileName: "story_memory_retries.json",
+                baseURL: storageURL
+            ),
+            [retry],
+            "recovery must not duplicate an already handed-off retry"
+        )
+    }
+
     private func makeCommittedJournalFixture() -> (
         persistedSession: StorySession,
         persistedScene: StoryScene,

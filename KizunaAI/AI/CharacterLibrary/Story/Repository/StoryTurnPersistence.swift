@@ -216,7 +216,7 @@ enum StoryTurnJournal {
         case newer
     }
 
-    private enum PairRecoveryDecision {
+    private enum PairRecoveryDecision: Equatable {
         case apply
         case discard
         case retain
@@ -378,10 +378,11 @@ enum StoryTurnJournal {
                 let sessionOrdering = ordering(entry.session, over: persistedSession)
                 let sceneOrdering = ordering(entry.scene, over: persistedScene)
 
-                switch recoveryDecision(
+                let decision = recoveryDecision(
                     session: sessionOrdering,
                     scene: sceneOrdering
-                ) {
+                )
+                switch decision {
                 case .retain:
                     // A pair cannot be consumed when one side is newer than
                     // the other, or when either side has an equal-metadata
@@ -395,32 +396,34 @@ enum StoryTurnJournal {
                         String(describing: sceneOrdering)
                     )
                     continue
-                case .discard:
-                    // The persisted pair is already at least as new as the
-                    // journal pair. Nothing from this stale entry may be
-                    // handed off to the retry queue.
-                    continue
-                case .apply:
-                    break
-                }
-
-                if !entry.memoryRetries.isEmpty {
-                    do {
-                        try mergeMemoryRetriesUnlocked(
-                            entry.memoryRetries,
-                            baseURL: baseURL
-                        )
-                    } catch {
-                        // Do not consume a journal entry while its auxiliary
-                        // retry store is unreadable. The conversation
-                        // snapshot and its memory candidates must remain
-                        // recoverable on the next launch.
-                        unresolvedEntries.append(entry)
-                        NSLog(
-                            "[StoryTurnJournal] retained entry while merging memory retries turn=%@: %@",
-                            entry.turnID.uuidString,
-                            error.localizedDescription
-                        )
+                case .discard, .apply:
+                    // A stale pair must not overwrite a later pair, but its
+                    // auxiliary memory work is still valid. The later pair
+                    // may have been committed before the memory writes
+                    // completed, so dropping these retries would lose
+                    // session-owned memories. Handoff is idempotent by
+                    // turnID and must finish before consuming the journal.
+                    if !entry.memoryRetries.isEmpty {
+                        do {
+                            try mergeMemoryRetriesUnlocked(
+                                entry.memoryRetries,
+                                baseURL: baseURL
+                            )
+                        } catch {
+                            // Do not consume an entry while its auxiliary
+                            // retry store is unreadable. The memory
+                            // candidates remain recoverable on the next
+                            // launch.
+                            unresolvedEntries.append(entry)
+                            NSLog(
+                                "[StoryTurnJournal] retained entry while merging memory retries turn=%@: %@",
+                                entry.turnID.uuidString,
+                                error.localizedDescription
+                            )
+                            continue
+                        }
+                    }
+                    if decision == .discard {
                         continue
                     }
                 }
