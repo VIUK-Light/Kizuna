@@ -209,6 +209,21 @@ final class StorySessionService: ObservableObject {
 
     private var turnOwnerID: UUID { turnOwnerLease.id }
 
+    /// Keep the last resolved cast when the selector has no usable result.
+    /// An empty selector result is an inference failure, not an explicit user
+    /// request to remove every character from the session.
+    nonisolated static func activeCharacterIDsForTurn(
+        selectedIDs: [UUID],
+        previousIDs: [UUID],
+        limit: Int
+    ) -> [UUID] {
+        let cappedSelectedIDs = Array(selectedIDs.prefix(limit))
+        guard !cappedSelectedIDs.isEmpty else {
+            return Array(previousIDs.prefix(limit))
+        }
+        return cappedSelectedIDs
+    }
+
     private struct StoryProgressUpdate: Codable {
         var progressLabel: String?
         var currentObjective: String?
@@ -217,6 +232,16 @@ final class StorySessionService: ObservableObject {
         var unresolvedHooks: [String]?
         // 本文とは別にAIが返す、今回の状態差分。
         var storyState: StoryStatePatch?
+    }
+
+    /// Scene/Worldの初期値を、既存Sessionの状態へ毎ターン再注入しない。
+    /// Sceneの目標はSession作成時だけseedされ、以後はSessionが正本になる。
+    static func deterministicStateForTurn(
+        existing state: StoryState?
+    ) -> StoryState {
+        var next = state ?? StoryState()
+        next.updatedAt = Date()
+        return next
     }
 
     /// 入口: ユーザー発話を送る。session/scene は呼び出し側で確定済み前提。
@@ -540,20 +565,24 @@ final class StorySessionService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         var session = session
         var scene = scene
+        scene.activeCharacterIds = session.resolvedActiveCharacterIds(fallback: scene)
         // Keep `world` raw for every repository write.  Prompt construction is
         // the presentation/generation boundary, so it may use the translated
         // copy without allowing that copy to leak into StorySession storage.
         let promptWorld = world.localizedForCurrentLanguage
 
-        // 初回ターンでも、現在シーンを構造化状態としてAIへ渡せるようにする。
-        if session.storyState == nil {
-            session.storyState = StoryState(
-                location: scene.location,
-                timeOfDay: scene.timeOfDay,
-                mood: scene.mood,
-                activeGoals: scene.sceneGoal.isEmpty ? [] : [scene.sceneGoal]
-            )
+        if session.currentObjective?.nonEmpty == nil, session.storyState == nil {
+            session.currentObjective = scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty
         }
+        // 初回ターンだけ現在シーンと初期目的を構造化状態へseedする。
+        // 既存Stateは前ターンのPatch／世界変化を含む正本なので、Sceneや
+        // 表示用currentObjectiveの初期値で戻さない。特にactiveGoals=[]で
+        // 解決した目的を、次ターンに再追加してはいけない。
+        session.storyState = StoryStateBootstrap.preservingExistingState(
+            session.storyState,
+            scene: scene,
+            initialObjective: session.currentObjective
+        )
 
         // user メッセージとpending checkpointを1回の保存境界で確保する。
         // 再試行では既存の保存済み入力を再利用し、同じIDの発話を重複保存しない。
@@ -834,7 +863,12 @@ final class StorySessionService: ObservableObject {
             return
         }
         var sceneWithSelectedCharacters = scene
-        sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
+        sceneWithSelectedCharacters.activeCharacterIds = Self.activeCharacterIDsForTurn(
+            selectedIDs: selectedIDs,
+            previousIDs: session.resolvedActiveCharacterIds(fallback: scene),
+            limit: activeCharacterLimit
+        )
+        session.activeCharacterIds = sceneWithSelectedCharacters.activeCharacterIds
         // 選択結果はターンのcommitまでメモリ上に保持する。生成失敗時に
         // activeCharacterIdsだけが先に保存される部分成功を作らない。
         scene = sceneWithSelectedCharacters
@@ -911,6 +945,15 @@ final class StorySessionService: ObservableObject {
             try? await storyMemoryRepo.markUsed(ids: selectedStoryMemories.map(\.id))
         }
 
+        // Keep prompt-only state aligned before lorebook keyword selection too;
+        // otherwise an old Scene location can reintroduce stale rules even
+        // when the main prompt uses the newer StoryState.
+        var promptStoryState = session.storyState ?? StoryState()
+        promptStoryState.characterStates.removeAll { state in
+            guard let id = state.characterId else { return false }
+            return !validCastCharacterIDs.contains(id)
+        }
+
         // 6) Lorebook: キーワード一致した設定だけを選択する。
         streamingStatusText = statusText("Lorebookを選択中", "Selecting lorebook entries")
         var lorebookEntries = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
@@ -957,7 +1000,8 @@ final class StorySessionService: ObservableObject {
         let selectedLorebookEntries = promptBuilder.selectLorebookEntries(
             from: lorebookEntries,
             scene: scene,
-            userInput: effectiveUserText
+            userInput: effectiveUserText,
+            storyState: promptStoryState
         )
 
         // 7) StoryPromptBuilder
@@ -985,12 +1029,6 @@ final class StorySessionService: ObservableObject {
         // セッションに残った旧UUIDも、現在のキャストに存在するものだけを
         // StoryStateとしてモデルへ渡す。本文ログは保持したまま、生成入力だけを
         // 現在の世界に整合させる。
-        var promptStoryState = session.storyState ?? StoryState()
-        promptStoryState.characterStates.removeAll { state in
-            guard let id = state.characterId else { return false }
-            return !validCastCharacterIDs.contains(id)
-        }
-
         let prompt: String
         if generationModel == .b31 {
             prompt = promptBuilder.build(
@@ -1452,28 +1490,39 @@ final class StorySessionService: ObservableObject {
         // same response, reuse it here. This is intentionally opportunistic:
         // ordinary dialogue does not decode and stays on the deterministic
         // path, while structured state is applied without a second LLM call.
-        var deterministicState = session.storyState ?? StoryState()
-        if !scene.location.isEmpty { deterministicState.location = scene.location }
-        if !scene.timeOfDay.isEmpty { deterministicState.timeOfDay = scene.timeOfDay }
-        if !scene.mood.isEmpty { deterministicState.mood = scene.mood }
-        let objective = session.currentObjective?.nonEmpty ?? scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty
-        if let objective {
-            deterministicState.activeGoals = Array(([objective] + deterministicState.activeGoals).filter { !$0.isEmpty }.reduce(into: [String]()) { result, value in
-                if !result.contains(value) { result.append(value) }
-            }.prefix(6))
-        }
-        deterministicState.updatedAt = Date()
-        session.storyState = deterministicState
+        session.storyState = Self.deterministicStateForTurn(
+            existing: session.storyState
+        )
 
         let progressStatePatch = modelStatePatch ?? acceptedStructuredProgressUpdate?.storyState
+        let acceptedStatePatch = progressStatePatch.flatMap {
+            StoryNaturalChangePolicy.acceptedPatch(
+                from: $0,
+                currentState: session.storyState,
+                evidenceText: [rawFinal, effectiveUserText]
+            )
+        }
+        let stateAfterAcceptedPatch: StoryState? = {
+            guard let acceptedStatePatch else { return session.storyState }
+            return acceptedStatePatch.applying(
+                to: session.storyState ?? StoryState(),
+                characterIndex: charIndex,
+                validCharacterIDs: Set(cast.map(\.characterId))
+            )
+        }()
+        let hasExplicitObjectiveState = acceptedStatePatch?.activeGoals != nil
+        let objectiveFromState = StoryNaturalChangePolicy.objectiveAfterAcceptedPatch(
+            currentObjective: session.currentObjective,
+            patch: acceptedStatePatch
+        )
         let progressUpdate = StoryProgressUpdate(
             progressLabel: acceptedStructuredProgressUpdate?.progressLabel.nonEmpty
                 ?? session.progressLabel.nonEmpty
                 ?? "第1章 きっかけ",
-            currentObjective: acceptedStructuredProgressUpdate?.currentObjective.nonEmpty
-                ?? session.currentObjective.nonEmpty
-                ?? scene.sceneGoal.nonEmpty
-                ?? world.storyGoal.nonEmpty,
+            currentObjective: hasExplicitObjectiveState
+                ? objectiveFromState
+                : acceptedStructuredProgressUpdate?.currentObjective.nonEmpty
+                    ?? session.currentObjective.nonEmpty,
             lastTurnProgress: acceptedStructuredProgressUpdate?.lastTurnProgress.nonEmpty
                 ?? synthesizeTurnProgress(from: newMessages),
             lastSceneSummary: acceptedStructuredProgressUpdate?.lastSceneSummary.nonEmpty
@@ -1481,17 +1530,24 @@ final class StorySessionService: ObservableObject {
                 ?? session.lastSceneSummary.nonEmpty,
             unresolvedHooks: normalizedHooks(
                 acceptedStructuredProgressUpdate?.unresolvedHooks,
-                fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
+                fallback: Self.unresolvedHooks(
+                    world: world,
+                    scene: scene,
+                    previous: session.unresolvedHooks,
+                    storyState: stateAfterAcceptedPatch
+                )
             ),
-            storyState: progressStatePatch
+            storyState: acceptedStatePatch
         )
         session.progressLabel = progressUpdate.progressLabel.nonEmpty
             ?? session.progressLabel.nonEmpty
             ?? "第1章 きっかけ"
-        session.currentObjective = progressUpdate.currentObjective.nonEmpty
-            ?? session.currentObjective.nonEmpty
-            ?? scene.sceneGoal.nonEmpty
-            ?? world.storyGoal.nonEmpty
+        if hasExplicitObjectiveState {
+            session.currentObjective = progressUpdate.currentObjective
+        } else {
+            session.currentObjective = progressUpdate.currentObjective.nonEmpty
+                ?? session.currentObjective.nonEmpty
+        }
         session.lastTurnProgress = progressUpdate.lastTurnProgress.nonEmpty
             ?? session.lastTurnProgress.nonEmpty
         session.lastSceneSummary = progressUpdate.lastSceneSummary.nonEmpty
@@ -1499,15 +1555,14 @@ final class StorySessionService: ObservableObject {
             ?? session.lastSceneSummary.nonEmpty
         session.unresolvedHooks = normalizedHooks(
             progressUpdate.unresolvedHooks,
-            fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
-        )
-        if let statePatch = progressUpdate.storyState {
-            session.storyState = statePatch.applying(
-                to: session.storyState ?? StoryState(),
-                characterIndex: charIndex,
-                validCharacterIDs: Set(cast.map(\.characterId))
+            fallback: Self.unresolvedHooks(
+                world: world,
+                scene: scene,
+                previous: session.unresolvedHooks,
+                storyState: stateAfterAcceptedPatch
             )
-        }
+        )
+        session.storyState = stateAfterAcceptedPatch
         do {
             session = try await sessionRepo.commitTurn(
                 session: session,
@@ -2625,7 +2680,12 @@ final class StorySessionService: ObservableObject {
         }
     }
 
-    private func unresolvedHooks(world: StoryWorld, scene: StoryScene, previous: [String]?) -> [String] {
+    static func unresolvedHooks(
+        world: StoryWorld,
+        scene: StoryScene,
+        previous: [String]?,
+        storyState: StoryState? = nil
+    ) -> [String] {
         var hooks: [String] = []
         var seen = Set<String>()
         func push(_ value: String?) {
@@ -2633,10 +2693,37 @@ final class StorySessionService: ObservableObject {
             guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { return }
             hooks.append(trimmed)
         }
-        previous?.forEach(push)
+        let activeGoals = Set(
+            (storyState?.activeGoals ?? []).map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        )
+        let seedGoals = Set(
+            [scene.sceneGoal, world.storyGoal].map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty }
+        )
+        previous?.forEach { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if storyState != nil,
+               seedGoals.contains(trimmed),
+               !activeGoals.contains(trimmed) {
+                return
+            }
+            push(trimmed)
+        }
         push(scene.conflict)
-        push(scene.sceneGoal)
-        push(world.storyGoal)
+        func pushSeedGoal(_ goal: String) {
+            let trimmed = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            // Once StoryState exists, an empty activeGoals array is an
+            // explicit resolution. Do not reintroduce the catalog's initial
+            // goal as an unresolved hook on the next turn.
+            guard storyState == nil || activeGoals.contains(trimmed) else { return }
+            push(trimmed)
+        }
+        pushSeedGoal(scene.sceneGoal)
+        pushSeedGoal(world.storyGoal)
         if !world.openingScene.isEmpty, hooks.count < 6 {
             push("オープニングの出来事: \(world.openingScene)")
         }

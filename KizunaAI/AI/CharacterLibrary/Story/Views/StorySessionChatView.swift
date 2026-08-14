@@ -1,8 +1,9 @@
 /*
 仕様:
-- 役割: StoryWorld の複数人チャット画面。現在の Scene と activeCharacters を表示し、
+- 役割: StoryWorld の複数人チャット画面。現在の Session と Scene の初期値から
+  activeCharacters を表示し、
   発話者名付きの会話として進行する。
-- 制約: activeCharacters は StoryScene 側の最大 3 名を尊重する。
+- 制約: activeCharacters は StorySession 側の最大 3 名を正本として扱う。
 */
 
 import SwiftUI

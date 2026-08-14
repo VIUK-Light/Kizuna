@@ -1,0 +1,242 @@
+import Foundation
+
+/// Keeps an ordinary story turn to one small, observable change at most. The
+/// model still decides whether a change is warranted; this policy prevents one
+/// response from changing several independent parts of the world at once.
+enum StoryNaturalChangePolicy {
+    private enum ChangeGroup {
+        case environment
+        case relationship
+        case character
+        case inventory
+        case objective
+    }
+
+    static func acceptedPatch(
+        from patch: StoryStatePatch,
+        currentState: StoryState? = nil,
+        evidenceText: [String] = []
+    ) -> StoryStatePatch? {
+        // Production callers pass the visible assistant turn and the current
+        // user input. A state delta without a short exact quote from either
+        // surface is only a model assertion, not an observable story change.
+        // Keep the default empty context for pure structural callers and
+        // migration tests; the StorySessionService always supplies context.
+        if !evidenceText.isEmpty {
+            guard let evidence = normalizedText(patch.evidence),
+                  evidence.count >= 4,
+                  evidence.count <= 120,
+                  evidenceText.contains(where: { containsEvidence(evidence, in: $0) }) else {
+                return nil
+            }
+        }
+
+        // A scene transition can coherently update several environmental
+        // fields (for example, moving location also changing the weather).
+        // It still counts as one change group. Unrelated groups are rejected
+        // instead of partially applying a response that the narrative did not
+        // establish.
+        let environment = (
+            location: changedText(patch.location, from: currentState?.location),
+            timeOfDay: changedText(patch.timeOfDay, from: currentState?.timeOfDay),
+            mood: changedText(patch.mood, from: currentState?.mood),
+            weather: changedText(patch.weather, from: currentState?.weather)
+        )
+        let relationship = changedText(
+            patch.relationshipStage,
+            from: currentState?.relationshipStage
+        )
+        let characterChanges = (patch.characterUpdates ?? []).compactMap {
+            normalizedCharacterChange($0, currentState: currentState)
+        }
+        let inventoryChanges = (patch.inventoryChanges ?? []).compactMap {
+            normalizedInventoryChange($0, currentState: currentState)
+        }
+
+        // Silently selecting the first character/item would make the stored
+        // state disagree with the generated prose. Fail closed when a single
+        // response attempts to change multiple members of either collection.
+        guard characterChanges.count <= 1, inventoryChanges.count <= 1 else {
+            return nil
+        }
+
+        // An explicit empty array can resolve the last active objective. A
+        // missing key means that objectives were not part of this change.
+        let normalizedGoals: [String]?
+        if let goals = patch.activeGoals {
+            if goals.isEmpty {
+                normalizedGoals = []
+            } else {
+                let values = goals.compactMap(normalizedText)
+                guard !values.isEmpty else { return nil }
+                normalizedGoals = Array(values.prefix(6))
+            }
+        } else {
+            normalizedGoals = nil
+        }
+        var groups: [ChangeGroup] = []
+        if [environment.location, environment.timeOfDay, environment.mood, environment.weather]
+            .contains(where: { $0 != nil }) { groups.append(.environment) }
+        if relationship != nil { groups.append(.relationship) }
+        if !characterChanges.isEmpty { groups.append(.character) }
+        if !inventoryChanges.isEmpty { groups.append(.inventory) }
+        // The key itself is meaningful even when the value is already equal
+        // to the current state: an explicit [] also clears the display-only
+        // session objective, and a no-op objective patch remains harmless.
+        if normalizedGoals != nil { groups.append(.objective) }
+        guard groups.count == 1, let group = groups.first else { return nil }
+
+        var accepted = patch
+        switch group {
+        case .environment:
+            accepted.location = environment.location
+            accepted.timeOfDay = environment.timeOfDay
+            accepted.mood = environment.mood
+            accepted.weather = environment.weather
+            accepted.relationshipStage = nil
+            accepted.characterUpdates = nil
+            accepted.inventoryChanges = nil
+            accepted.activeGoals = nil
+        case .relationship:
+            accepted.location = nil
+            accepted.timeOfDay = nil
+            accepted.mood = nil
+            accepted.weather = nil
+            accepted.relationshipStage = relationship
+            accepted.characterUpdates = nil
+            accepted.inventoryChanges = nil
+            accepted.activeGoals = nil
+        case .character:
+            accepted.location = nil
+            accepted.timeOfDay = nil
+            accepted.mood = nil
+            accepted.weather = nil
+            accepted.relationshipStage = nil
+            accepted.characterUpdates = characterChanges
+            accepted.inventoryChanges = nil
+            accepted.activeGoals = nil
+        case .inventory:
+            accepted.location = nil
+            accepted.timeOfDay = nil
+            accepted.mood = nil
+            accepted.weather = nil
+            accepted.relationshipStage = nil
+            accepted.characterUpdates = nil
+            accepted.inventoryChanges = inventoryChanges
+            accepted.activeGoals = nil
+        case .objective:
+            accepted.location = nil
+            accepted.timeOfDay = nil
+            accepted.mood = nil
+            accepted.weather = nil
+            accepted.relationshipStage = nil
+            accepted.characterUpdates = nil
+            accepted.inventoryChanges = nil
+            accepted.activeGoals = normalizedGoals
+        }
+        return accepted
+    }
+
+    /// The display objective follows the canonical StoryState when a patch
+    /// explicitly carries activeGoals. In particular, an empty array resolves
+    /// the old objective instead of allowing the session display field to
+    /// resurrect it on the next turn.
+    static func objectiveAfterAcceptedPatch(
+        currentObjective: String?,
+        patch: StoryStatePatch?
+    ) -> String? {
+        guard let goals = patch?.activeGoals else { return currentObjective }
+        return goals.compactMap(normalizedText).first
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func containsEvidence(_ evidence: String, in text: String) -> Bool {
+        let normalizedEvidence = normalizeEvidence(evidence)
+        guard !normalizedEvidence.isEmpty else { return false }
+        return normalizeEvidence(text).contains(normalizedEvidence)
+    }
+
+    private static func normalizeEvidence(_ value: String) -> String {
+        var normalized = value
+        // The visible assistant text is sanitized before this policy sees it.
+        // Apply the same markdown-marker removal to the model's quoted
+        // evidence so `*駅前へ歩き出した*` matches `駅前へ歩き出した`.
+        for token in ["**", "__", "`", "*", "_"] {
+            normalized = normalized.replacingOccurrences(of: token, with: "")
+        }
+        return normalized
+            .lowercased()
+            .replacingOccurrences(
+                of: "\\s+",
+                with: " ",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func changedText(_ value: String?, from current: String?) -> String? {
+        guard let value = normalizedText(value) else { return nil }
+        return value == normalizedText(current) ? nil : value
+    }
+
+    private static func normalizedCharacterChange(
+        _ update: StoryCharacterStatePatch,
+        currentState: StoryState?
+    ) -> StoryCharacterStatePatch? {
+        let name = normalizedText(update.characterName) ?? ""
+        guard update.characterId != nil || !name.isEmpty else { return nil }
+
+        let current = currentState?.characterStates.first { state in
+            if let characterId = update.characterId {
+                return state.characterId == characterId
+            }
+            return normalizedText(state.characterName) == name
+        }
+        let change = StoryCharacterStatePatch(
+            characterId: update.characterId,
+            characterName: name,
+            mood: changedText(update.mood, from: current?.mood),
+            goal: changedText(update.goal, from: current?.goal),
+            relationship: changedText(update.relationship, from: current?.relationship),
+            innerThought: changedText(update.innerThought, from: current?.innerThought)
+        )
+        let hasFieldChange = [change.mood, change.goal, change.relationship, change.innerThought]
+            .contains(where: { $0 != nil })
+        return hasFieldChange ? change : nil
+    }
+
+    private static func normalizedInventoryChange(
+        _ change: StoryInventoryChange,
+        currentState: StoryState?
+    ) -> StoryInventoryChange? {
+        guard let name = normalizedText(change.name) else { return nil }
+        let current = currentState?.inventory.first {
+            normalizedText($0.name) == name
+        }
+        switch change.action {
+        case .remove:
+            guard current != nil else { return nil }
+            return StoryInventoryChange(action: .remove, name: name, detail: nil, owner: nil)
+        case .add, .update:
+            // An add for an existing item is an upsert. Preserve fields that
+            // the model did not mention instead of turning a partial change
+            // into data loss when StoryStatePatch.applying replaces the item.
+            let detail = normalizedText(change.detail) ?? normalizedText(current?.detail)
+            let owner = normalizedText(change.owner) ?? normalizedText(current?.owner)
+            let isSame = normalizedText(current?.detail) == detail
+                && normalizedText(current?.owner) == owner
+            guard current == nil || !isSame else { return nil }
+            return StoryInventoryChange(
+                action: current == nil ? .add : .update,
+                name: name,
+                detail: detail,
+                owner: owner
+            )
+        }
+    }
+}

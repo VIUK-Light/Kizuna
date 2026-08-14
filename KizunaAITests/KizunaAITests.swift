@@ -36,7 +36,7 @@ private final class FileIOTestProbe: @unchecked Sendable {
 final class KizunaAITests: XCTestCase {
     func testStoryStateMetadataParserParsesOneValidUpdate() throws {
         let result = StoryStateMetadataParser.parse(
-            "ナギ: 港を見つめた\n状態更新: {\"mood\":\"calm\",\"activeGoals\":[]}"
+            "ナギ: 港を見つめた\n状態更新: {\"mood\":\"calm\",\"activeGoals\":[],\"evidence\":\"港を見つめた\"}"
         )
 
         guard case let .valid(visibleText, payload) = result else {
@@ -46,6 +46,7 @@ final class KizunaAITests: XCTestCase {
         let patch = try JSONDecoder().decode(StoryStatePatch.self, from: payload)
         XCTAssertEqual(patch.mood, "calm")
         XCTAssertEqual(patch.activeGoals, [])
+        XCTAssertEqual(patch.evidence, "港を見つめた")
     }
 
     func testStoryStateMetadataParserRejectsMalformedMetadataAndRemovesIt() {
@@ -72,6 +73,216 @@ final class KizunaAITests: XCTestCase {
             return XCTFail("ordinary story text must not become metadata")
         }
         XCTAssertEqual(visibleText, text)
+    }
+
+    func testStoryStateBootstrapSeedsSceneOnlyForAnEmptySessionState() {
+        let scene = StoryScene(
+            storyWorldId: UUID(),
+            location: "港",
+            timeOfDay: "夕方",
+            mood: "静か",
+            sceneGoal: "灯台へ向かう"
+        )
+
+        let seeded = StoryStateBootstrap.preservingExistingState(nil, scene: scene)
+        XCTAssertEqual(seeded.location, "港")
+        XCTAssertEqual(seeded.timeOfDay, "夕方")
+        XCTAssertEqual(seeded.mood, "静か")
+        XCTAssertEqual(seeded.activeGoals, ["灯台へ向かう"])
+
+        let advanced = StoryState(
+            location: "駅前",
+            timeOfDay: "深夜",
+            mood: "緊張",
+            activeGoals: ["鍵を探す"]
+        )
+        XCTAssertEqual(
+            StoryStateBootstrap.preservingExistingState(advanced, scene: scene),
+            advanced,
+            "a later turn's StoryState must not be reset from the scene seed"
+        )
+    }
+
+    func testStorySessionUsesSessionCastAndLegacySceneFallback() {
+        let sessionCharacterID = UUID()
+        let sceneCharacterID = UUID()
+        let scene = StoryScene(
+            storyWorldId: UUID(),
+            activeCharacterIds: [sceneCharacterID]
+        )
+        let session = StorySession(
+            storyWorldId: scene.storyWorldId,
+            activeCharacterIds: [sessionCharacterID]
+        )
+        let legacySession = StorySession(storyWorldId: scene.storyWorldId)
+
+        XCTAssertEqual(
+            session.resolvedActiveCharacterIds(fallback: scene),
+            [sessionCharacterID]
+        )
+        XCTAssertEqual(
+            legacySession.resolvedActiveCharacterIds(fallback: scene),
+            [sceneCharacterID]
+        )
+    }
+
+    func testEmptySceneSelectionKeepsThePreviouslyResolvedCast() {
+        let previousIDs = [UUID(), UUID()]
+        let selectedIDs: [UUID] = []
+
+        XCTAssertEqual(
+            StorySessionService.activeCharacterIDsForTurn(
+                selectedIDs: selectedIDs,
+                previousIDs: previousIDs,
+                limit: StoryConstants.maxActiveCharacters
+            ),
+            previousIDs,
+            "an empty selector result must not persist an empty session cast"
+        )
+    }
+
+    func testExistingStoryStateDoesNotReapplySceneValuesWhenObjectiveIsMissing() {
+        let existingState = StoryState(
+            location: "駅前の屋上",
+            timeOfDay: "午前二時",
+            mood: "静かな緊張",
+            activeGoals: ["すでに選び直した目的"]
+        )
+
+        let completedTurnState = StorySessionService.deterministicStateForTurn(
+            existing: existingState
+        )
+
+        XCTAssertEqual(completedTurnState.location, existingState.location)
+        XCTAssertEqual(completedTurnState.timeOfDay, existingState.timeOfDay)
+        XCTAssertEqual(completedTurnState.mood, existingState.mood)
+        XCTAssertEqual(completedTurnState.activeGoals, existingState.activeGoals)
+    }
+
+    func testResolvedStoryObjectiveIsNotReintroducedOnTheNextTurn() {
+        let scene = StoryScene(
+            storyWorldId: UUID(),
+            sceneGoal: "灯台へ向かう"
+        )
+        let seeded = StoryStateBootstrap.preservingExistingState(
+            nil,
+            scene: scene,
+            initialObjective: "灯台へ向かう"
+        )
+        let resolved = StoryStatePatch(
+            location: nil,
+            timeOfDay: nil,
+            mood: nil,
+            weather: nil,
+            relationshipStage: nil,
+            characterUpdates: nil,
+            inventoryChanges: nil,
+            activeGoals: []
+        ).applying(to: seeded, characterIndex: [:])
+
+        let nextTurnState = StorySessionService.deterministicStateForTurn(
+            existing: resolved
+        )
+
+        XCTAssertEqual(resolved.activeGoals, [])
+        XCTAssertEqual(nextTurnState.activeGoals, [])
+    }
+
+    func testResolvedStoryObjectiveIsNotReintroducedAsAnUnresolvedHook() {
+        let world = StoryWorld(
+            title: "夜の物語",
+            storyGoal: "灯台へ向かう"
+        )
+        let scene = StoryScene(
+            storyWorldId: world.id,
+            sceneGoal: "灯台へ向かう"
+        )
+        let resolvedState = StoryState(activeGoals: [])
+
+        let hooks = StorySessionService.unresolvedHooks(
+            world: world,
+            scene: scene,
+            previous: ["灯台へ向かう", "港の違和感"],
+            storyState: resolvedState
+        )
+
+        XCTAssertFalse(hooks.contains("灯台へ向かう"))
+        XCTAssertTrue(hooks.contains("港の違和感"))
+    }
+
+    func testStoryPromptUsesCanonicalStoryStateInsteadOfSceneSeed() {
+        let defaults = UserDefaults.standard
+        let languageKey = "kizuna.language"
+        let originalLanguageValue = defaults.object(forKey: languageKey)
+        defer {
+            if let originalLanguageValue {
+                defaults.set(originalLanguageValue, forKey: languageKey)
+            } else {
+                defaults.removeObject(forKey: languageKey)
+            }
+        }
+        defaults.set(KizunaLanguage.japanese.rawValue, forKey: languageKey)
+
+        let worldID = UUID()
+        let world = StoryWorld(
+            title: "夜の物語",
+            worldSetting: "静かな街"
+        )
+        let scene = StoryScene(
+            storyWorldId: worldID,
+            title: "古いSceneの題名",
+            location: "港",
+            timeOfDay: "夕方",
+            mood: "静か",
+            sceneGoal: "灯台へ向かう",
+            summary: "港で起きた出来事の要約"
+        )
+        let session = StorySession(
+            storyWorldId: worldID,
+            currentObjective: "灯台へ向かう"
+        )
+        let state = StoryState(
+            location: "駅前",
+            timeOfDay: "深夜",
+            mood: "緊張",
+            activeGoals: []
+        )
+        let builder = StoryPromptBuilder()
+
+        let fullPrompt = builder.build(
+            world: world,
+            scene: scene,
+            activeCast: [],
+            inactiveCast: [],
+            characterIndex: [:],
+            selectedMemories: [],
+            session: session,
+            recentMessages: [],
+            userInput: "立ち止まる",
+            generationModel: .b31,
+            safetyDecision: nil,
+            storyState: state
+        )
+        let localPrompt = builder.buildLocalRuntimePrompt(
+            world: world,
+            scene: scene,
+            activeCast: [],
+            characterIndex: [:],
+            selectedMemories: [],
+            selectedStoryMemories: [],
+            session: session,
+            storyState: state,
+            selectedLorebookEntries: [],
+            userCharacterName: nil
+        )
+
+        XCTAssertTrue(fullPrompt.contains("場所: 駅前"))
+        XCTAssertTrue(localPrompt.contains("場所: 駅前"))
+        XCTAssertFalse(fullPrompt.contains("場所: 港"))
+        XCTAssertFalse(localPrompt.contains("場所: 港"))
+        XCTAssertFalse(fullPrompt.contains("灯台へ向かう"))
+        XCTAssertFalse(localPrompt.contains("灯台へ向かう"))
+        XCTAssertTrue(fullPrompt.contains("港で起きた出来事の要約"))
     }
 
     func testPersonaResponseSanitizerPreservesVisibleText() {
@@ -712,6 +923,71 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(committed.latestTurnCheckpoint?.status, .committed)
         XCTAssertEqual(persistedScene?.summary, "ユーザーが編集した場面")
         XCTAssertEqual(persistedScene?.updatedAt, editedAt)
+    }
+
+    func testStorySessionRepositoryCommitReflectsCanonicalStoryStateInScene() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sceneID = UUID()
+        let sessionID = UUID()
+        let turnID = UUID()
+        let date = Date(timeIntervalSince1970: 100)
+        let checkpoint = StoryTurnReducer.begin(
+            turnID: turnID,
+            userMessageID: UUID(),
+            attempt: 1,
+            ownerID: StoryTurnOwner.currentID,
+            baseRevision: 1,
+            startedAt: date,
+            updatedAt: date
+        )
+        let session = StorySession(
+            id: sessionID,
+            storyWorldId: worldID,
+            currentSceneId: sceneID,
+            storyState: StoryState(
+                location: "駅前",
+                timeOfDay: "深夜",
+                mood: "緊張"
+            ),
+            persistenceRevision: 1,
+            latestTurnCheckpoint: checkpoint,
+            updatedAt: date
+        )
+        let scene = StoryScene(
+            id: sceneID,
+            storyWorldId: worldID,
+            location: "港",
+            timeOfDay: "夕方",
+            mood: "静か",
+            updatedAt: date
+        )
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [scene],
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        )
+
+        _ = try await LocalJSONStorySessionRepository(storageURL: storageURL).commitTurn(
+            session: session,
+            scene: scene,
+            turnID: turnID,
+            assistantMessageIDs: []
+        )
+
+        let persistedScene = try LocalJSONStoreTransaction.load(
+            StoryScene.self,
+            fileName: "story_scenes.json",
+            baseURL: storageURL
+        ).first
+        XCTAssertEqual(persistedScene?.location, "駅前")
+        XCTAssertEqual(persistedScene?.timeOfDay, "深夜")
+        XCTAssertEqual(persistedScene?.mood, "緊張")
     }
 
     func testStoryTurnJournalDoesNotOverwriteNewerSceneWithOlderJournalSameSecond() throws {
