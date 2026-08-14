@@ -28,7 +28,49 @@ report_artifacts() {
     echo "private rating input: $RATING_OUTPUT"
     echo "isolated Kizuna storage: $STORAGE_ROOT"
 }
-trap report_artifacts EXIT
+
+# XCTest app hosts may exit without delivering the normal application
+# termination notification while the app intentionally keeps its bundled
+# server warm. Reap only llama-server processes from this run's isolated
+# derived-data tree; never match a user's other runtime or LM Studio process.
+owned_server_pids() {
+    local display_derived_data="$DERIVED_DATA"
+    if [[ "$display_derived_data" == /private/* ]]; then
+        display_derived_data="${display_derived_data#/private}"
+    fi
+    ps -axo pid=,command= | awk \
+        -v prefix="$DERIVED_DATA/Build/Products/" \
+        -v displayPrefix="$display_derived_data/Build/Products/" \
+        '((index($0, prefix) || index($0, displayPrefix)) && $0 ~ /\/llama-server([[:space:]]|$)/) {print $1}'
+}
+
+cleanup_runtime_processes() {
+    local pid command display_derived_data="$DERIVED_DATA"
+    if [[ "$display_derived_data" == /private/* ]]; then
+        display_derived_data="${display_derived_data#/private}"
+    fi
+    for pid in $(owned_server_pids); do
+        [[ -n "$pid" ]] || continue
+        command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+        case "$command" in
+            *"$DERIVED_DATA/Build/Products/"*"/llama-server "*|*"$display_derived_data/Build/Products/"*"/llama-server "*)
+                kill -TERM "$pid" 2>/dev/null || true
+                ;;
+        esac
+    done
+
+    for _ in {1..20}; do
+        [[ -z "$(owned_server_pids)" ]] && return
+        sleep 0.1
+    done
+
+    for pid in $(owned_server_pids); do
+        [[ -n "$pid" ]] || continue
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+}
+
+trap 'cleanup_runtime_processes; report_artifacts' EXIT
 
 mkdir -p "$STORAGE_ROOT" "$DERIVED_DATA" "$FIXED_USER_HOME"
 cp -p "$PROJECT_ROOT/tools/story_initiative_scenarios.json" "$FIXTURE_COPY"
@@ -146,6 +188,7 @@ set_xctest_environment() {
 }
 
 set_xctest_environment KIZUNA_RUN_STORY_ACCEPTANCE "1"
+set_xctest_environment KIZUNA_ACCEPTANCE_PROJECT_ROOT "$PROJECT_ROOT"
 set_xctest_environment KIZUNA_ACCEPTANCE_STORAGE_ROOT "$STORAGE_ROOT"
 set_xctest_environment KIZUNA_ACCEPTANCE_FIXTURE "$FIXTURE_COPY"
 set_xctest_environment KIZUNA_ACCEPTANCE_OUTPUT "$GENERATION_OUTPUT"
@@ -161,8 +204,14 @@ if [[ "$IORI_MODEL_ACCEPTED" == "1" ]]; then
     set_xctest_environment KIZUNA_IORI_MODEL_SHA256 "$IORI_MODEL_SHA256"
 fi
 
+RESULT_BUNDLE="$ARTIFACT_DIR/result.xcresult"
+if [[ -e "$RESULT_BUNDLE" ]]; then
+    rm -rf "$RESULT_BUNDLE"
+fi
+
 xcodebuild -quiet test-without-building \
     -xctestrun "$XCTESTRUN_PATH" \
+    -resultBundlePath "$RESULT_BUNDLE" \
     -destination 'platform=macOS' \
     -only-testing:KizunaAITests/StoryInitiativeAcceptanceRunnerTests/testStoryInitiativeAcceptanceMatrix \
     -parallel-testing-enabled NO

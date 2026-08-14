@@ -72,7 +72,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         }
 
         let fixtureURL = fixtureURL()
-        let fixtureData = try Data(contentsOf: fixtureURL)
+        let fixtureData = try await Self.readDataOffMain(at: fixtureURL)
         let fixtureObject = try JSONSerialization.jsonObject(with: fixtureData)
         guard let fixture = try? JSONDecoder().decode(StoryAcceptanceFixture.self, from: fixtureData) else {
             XCTFail("The Story initiative fixture could not be decoded.")
@@ -92,7 +92,8 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         let turnTimeout = selectedTurnTimeout()
 
         let projectRootURL = URL(
-            fileURLWithPath: ProcessInfo.processInfo.environment["SRCROOT"]
+            fileURLWithPath: ProcessInfo.processInfo.environment["KIZUNA_ACCEPTANCE_PROJECT_ROOT"]
+                ?? ProcessInfo.processInfo.environment["SRCROOT"]
                 ?? FileManager.default.currentDirectoryPath,
             isDirectory: true
         ).standardizedFileURL.resolvingSymlinksInPath()
@@ -104,8 +105,8 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             environmentKey: "KIZUNA_ACCEPTANCE_RATING_OUTPUT",
             projectRootURL: projectRootURL
         )
-        try initializeJSONLOutput(at: outputURL)
-        try initializeJSONLOutput(at: ratingOutputURL)
+        try await Self.initializeJSONLOutput(at: outputURL)
+        try await Self.initializeJSONLOutput(at: ratingOutputURL)
 
         let previousLanguage = UserDefaults.standard.string(forKey: "kizuna.language")
         let previousInitiativeFlags: [String: Any?] = [
@@ -168,8 +169,8 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                                 fixtureSHA256: fixtureSHA256,
                                 turnTimeout: turnTimeout
                             )
-                            try appendJSONL(artifacts.generation, to: outputURL)
-                            try appendJSONL(artifacts.ratingInput, to: ratingOutputURL)
+                            try await Self.appendJSONL(artifacts.generation, to: outputURL)
+                            try await Self.appendJSONL(artifacts.ratingInput, to: ratingOutputURL)
                         }
                     }
                 }
@@ -339,8 +340,18 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             service?.cancel()
             throw CancellationError()
         } catch {
+            NSLog(
+                "[StoryAcceptance] pair=%@ setup/persistence error type=%@ description=%@",
+                pairID,
+                String(reflecting: type(of: error)),
+                error.localizedDescription
+            )
             status = .error
-            failureCode = "runner_setup_or_persistence_error"
+            let diagnostic = error.localizedDescription
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            failureCode = diagnostic.isEmpty
+                ? "runner_setup_or_persistence_error"
+                : "runner_setup_or_persistence_error:\(diagnostic)"
         }
 
         let runtimeObservation = runtimeRecord(
@@ -737,7 +748,8 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         guard outputURL.path != projectRootURL.path,
               !outputURL.path.hasPrefix(projectPathPrefix) else {
             throw StoryAcceptanceRunnerError.invalidOutputPath(
-                "\(environmentKey) must remain outside the repository."
+                "\(environmentKey) must remain outside the repository "
+                    + "(project=\(projectRootURL.path), output=\(outputURL.path))."
             )
         }
         return outputURL
@@ -749,33 +761,43 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         return encoder
     }
 
-    private func initializeJSONLOutput(at url: URL) throws {
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data().write(to: url, options: .atomic)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: url.path
-        )
+    private static func readDataOffMain(at url: URL) async throws -> Data {
+        try await Task.detached(priority: .utility) {
+            try Data(contentsOf: url)
+        }.value
     }
 
-    private func appendJSONL<Record: Encodable>(
+    private static func initializeJSONLOutput(at url: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data().write(to: url, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: url.path
+            )
+        }.value
+    }
+
+    private static func appendJSONL<Record: Encodable>(
         _ record: Record,
         to url: URL
-    ) throws {
+    ) async throws {
         let data = try Self.makeJSONEncoder().encode(record)
-        let handle = try FileHandle(forWritingTo: url)
-        do {
-            try handle.seekToEnd()
-            try handle.write(contentsOf: data)
-            try handle.write(contentsOf: Data([0x0A]))
-            try handle.close()
-        } catch {
-            try? handle.close()
-            throw error
-        }
+        try await Task.detached(priority: .utility) {
+            let handle = try FileHandle(forWritingTo: url)
+            do {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+                try handle.write(contentsOf: Data([0x0A]))
+                try handle.close()
+            } catch {
+                try? handle.close()
+                throw error
+            }
+        }.value
     }
 
     private static func sha256(_ data: Data) -> String {

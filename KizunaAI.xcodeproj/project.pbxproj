@@ -752,6 +752,35 @@
 				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-cli",
 				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-server",
 				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-cli.source-revision",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-server.source-revision",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-base.0.20.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-base.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-base.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-blas.0.20.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-blas.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-blas.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-cpu.0.20.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-cpu.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-cpu.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-metal.0.20.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-metal.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-metal.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-rpc.0.20.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-rpc.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-rpc.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml.0.20.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-cli-impl.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-common.0.1.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-common.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-common.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-server-impl.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama.0.1.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libmtmd.0.1.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libmtmd.0.dylib",
+				"$(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libmtmd.dylib",
 			);
 			name = "Bundle Local AI Runtime";
 			outputFileListPaths = (
@@ -760,10 +789,11 @@
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-cli",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-server",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-cli.source-revision",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-server.source-revision",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\nif [[ \"${PLATFORM_NAME:-}\" != \"macosx\" ]]; then\n  exit 0\nfi\n\nSRC_RUNTIME=\"${PROJECT_DIR}/KizunaAI/AI/LocalRuntime\"\nAPP_BUNDLE=\"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\"\nAPP_RESOURCES=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"$APP_RESOURCES\"\n\nfor FILE in llama-cli llama-server llama-cli.source-revision; do\n  cp -fX \"$SRC_RUNTIME/$FILE\" \"$APP_RESOURCES/$FILE\"\ndone\nchmod +x \"$APP_RESOURCES/llama-cli\" \"$APP_RESOURCES/llama-server\"\nxattr -cr \"$APP_BUNDLE\" 2>/dev/null || true\n\nif [[ \"${CODE_SIGNING_ALLOWED:-NO}\" == \"YES\" && -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]]; then\n  for FILE in llama-cli llama-server; do\n    /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$APP_RESOURCES/$FILE\"\n  done\nfi\n";
+			shellScript = "set -euo pipefail\nif [[ \"${PLATFORM_NAME:-}\" != \"macosx\" ]]; then\n  exit 0\nfi\n\nSRC_RUNTIME=\"${PROJECT_DIR}/KizunaAI/AI/LocalRuntime\"\nAPP_BUNDLE=\"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\"\nAPP_RESOURCES=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"$APP_RESOURCES\"\n\nfor FILE in llama-cli llama-server llama-cli.source-revision llama-server.source-revision; do\n  cp -fX \"$SRC_RUNTIME/$FILE\" \"$APP_RESOURCES/$FILE\"\ndone\nfor FILE in \"$SRC_RUNTIME\"/lib*.dylib; do\n  cp -fR \"$FILE\" \"$APP_RESOURCES/\"\ndone\nchmod +x \"$APP_RESOURCES/llama-cli\" \"$APP_RESOURCES/llama-server\"\nxattr -cr \"$APP_BUNDLE\" 2>/dev/null || true\n\nif [[ \"${CODE_SIGNING_ALLOWED:-NO}\" == \"YES\" && -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]]; then\n  for FILE in \"$APP_RESOURCES\"/lib*.dylib; do\n    /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$FILE\"\n  done\n  for FILE in llama-cli llama-server; do\n    /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$APP_RESOURCES/$FILE\"\n  done\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

@@ -344,6 +344,18 @@ KIZUNA_IORI_MODEL_PATH="/path/to/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K
   tools/run_story_initiative_acceptance.sh
 ~~~
 
+Before the full matrix, run the fixed local-only iori canary. It uses exactly
+`ja / iori / story-01 / seed 1` for both baseline and initiative, and never
+contacts the NAGI provider:
+
+~~~sh
+KIZUNA_IORI_MODEL_PATH="/path/to/viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf" \
+  tools/run_story_initiative_iori_canary.sh
+~~~
+
+The canary is an app-path and artifact-integrity check, not a quality or GO
+decision. Its two output files remain outside the repository for inspection.
+
 The script copies the fixture into the artifact directory, generates an
 isolated `.xctestrun` file with the runner environment, and places both
 `generations.jsonl` and the isolated JSON store under one temporary artifact
