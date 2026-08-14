@@ -1215,6 +1215,32 @@ final class StorySessionService: ObservableObject {
 
     // MARK: - Pipeline
 
+    /// Migrate the legacy duplicate relationship field without allowing an
+    /// already-advanced StoryState to be overwritten. The helper is invoked
+    /// both before and after beginTurn because beginTurn reloads the persisted
+    /// Session as its concurrency source of truth.
+    static func promoteLegacyRelationshipStage(_ session: inout StorySession) {
+        guard let rawLegacy = session.relationshipStage else { return }
+        let legacy = rawLegacy.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !legacy.isEmpty else {
+            session.relationshipStage = nil
+            return
+        }
+        guard var state = session.storyState else {
+            // Do not clear a non-empty legacy value if an unexpected caller
+            // invokes this helper before StoryState bootstrap has run.
+            return
+        }
+        let current = state.relationshipStage.trimmingCharacters(in: .whitespacesAndNewlines)
+        if current.isEmpty {
+            state.relationshipStage = legacy
+            session.storyState = state
+        }
+        // StoryState is the canonical field. A non-empty canonical value wins
+        // over the legacy duplicate rather than being silently downgraded.
+        session.relationshipStage = nil
+    }
+
     private func runPipeline(
         userText: String,
         session: StorySession,
@@ -1250,10 +1276,9 @@ final class StorySessionService: ObservableObject {
             initialRelationshipStage: session.relationshipStage
         )
         // Older sessions stored relationshipStage beside StoryState. The
-        // bootstrap above promotes it only when StoryState was absent; after
-        // that, the duplicate field is no longer written by this turn while
-        // remaining Codable for old-file decoding.
-        session.relationshipStage = nil
+        // bootstrap only seeds a new state, so existing states need the
+        // explicit promotion before the duplicate is cleared.
+        Self.promoteLegacyRelationshipStage(&session)
 
         // user メッセージとpending checkpointを1回の保存境界で確保する。
         // 再試行では既存の保存済み入力を再利用し、同じIDの発話を重複保存しない。
@@ -1268,10 +1293,10 @@ final class StorySessionService: ObservableObject {
                 ownerID: turnOwnerID
             )
             // beginTurn reloads the persisted Session as its concurrency
-            // source of truth. Clear the legacy duplicate again before the
-            // eventual commit so old records are migrated rather than
-            // re-emitted by that reload.
-            session.relationshipStage = nil
+            // source of truth. Promote again so an existing blank State from
+            // disk cannot erase the legacy value before commitTurn persists
+            // the canonical State.
+            Self.promoteLegacyRelationshipStage(&session)
         } catch {
             await finishGenerationWithoutSaving(
                 generationID: generationID,

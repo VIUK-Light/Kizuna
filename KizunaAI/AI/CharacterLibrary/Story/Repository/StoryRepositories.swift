@@ -178,7 +178,9 @@ protocol StoryMemoryRepository: AnyObject {
     /// Assign world-scoped legacy memories only when the world has exactly one
     /// live StorySession. The implementation must re-read the Session list
     /// inside the same file lock as the memory update so a second Session
-    /// cannot be created between the safety check and the assignment.
+    /// cannot be created between the safety check and the assignment. A local
+    /// implementation may persist a completion marker after a lossless check
+    /// so this one-time migration is not repeated on every turn.
     func assignLegacyMemoriesIfSingleSession(storyWorldId: UUID) async throws
     func saveMemory(_ memory: StoryMemory) async throws
     /// Remove only the cancelled turn provenance. A merged memory created by
@@ -1063,10 +1065,36 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
         let storySessionId: UUID?
     }
 
+    private struct LegacyMemoryFileFingerprint: Codable, Equatable {
+        let byteCount: UInt64?
+        let modificationDate: Date?
+    }
+
+    private struct LegacyMemoryMigrationMarker: Codable, Equatable {
+        let storyWorldId: UUID
+        let sessionFileFingerprint: LegacyMemoryFileFingerprint
+        let memoryFileFingerprint: LegacyMemoryFileFingerprint
+        let completedAt: Date
+    }
+
+    private static let legacyMigrationFileName = "story_memory_migrations.json"
+
     private let store: LocalJSONStore<StoryMemory>
     let storageURL: URL
     let fileName: String
     private let perScopeLimit: Int
+
+    private static func memoryFileFingerprint(
+        storageURL: URL,
+        fileName: String
+    ) -> LegacyMemoryFileFingerprint {
+        let fileURL = storageURL.appendingPathComponent(fileName)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        return LegacyMemoryFileFingerprint(
+            byteCount: (attributes?[.size] as? NSNumber)?.uint64Value,
+            modificationDate: attributes?[.modificationDate] as? Date
+        )
+    }
 
     init(
         fileName: String = "story_memories.json",
@@ -1101,18 +1129,93 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
     func assignLegacyMemoriesIfSingleSession(storyWorldId: UUID) async throws {
         let storageURL = self.storageURL
         let fileName = self.fileName
+        let sessionFileName = "story_sessions.json"
+        let migrationFileName = Self.legacyMigrationFileName
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
-                let sessions = try LocalJSONStoreTransaction.load(
-                    StorySession.self,
-                    fileName: "story_sessions.json",
+                let currentSessionFingerprint = Self.memoryFileFingerprint(
+                    storageURL: storageURL,
+                    fileName: sessionFileName
+                )
+                let currentFingerprint = Self.memoryFileFingerprint(
+                    storageURL: storageURL,
+                    fileName: fileName
+                )
+                let markers = try LocalJSONStoreTransaction.loadRecoveringCorruptRecords(
+                    LegacyMemoryMigrationMarker.self,
+                    fileName: migrationFileName,
                     baseURL: storageURL
                 )
-                let worldSessions = sessions.filter { $0.storyWorldId == storyWorldId }
+                guard !markers.items.contains(where: {
+                    $0.storyWorldId == storyWorldId
+                        && $0.memoryFileFingerprint == currentFingerprint
+                }) else {
+                    // This is a one-time compatibility migration. New
+                    // StoryMemory writes always carry a Session ID, so a
+                    // successful lossless check does not need to rescan the
+                    // complete Session and memory files on every turn.
+                    return
+                }
+
+                let sessionRecovery = try LocalJSONStoreTransaction.loadRecoveringCorruptRecords(
+                    StorySession.self,
+                    fileName: sessionFileName,
+                    baseURL: storageURL
+                )
+                guard sessionRecovery.invalidCount == 0 else {
+                    // An unreadable Session could be the second owner of this
+                    // World. Do not infer ownership from an incomplete list.
+                    // The source file remains untouched and the next safe
+                    // migration attempt can retry after repair/export.
+                    NSLog(
+                        "[StoryMemoryMigration] skipped world=%@ because story_sessions.json has %ld invalid records",
+                        storyWorldId.uuidString,
+                        sessionRecovery.invalidCount
+                    )
+                    return
+                }
+                let worldSessions = sessionRecovery.items.filter { $0.storyWorldId == storyWorldId }
+                let memoryRecovery = try LocalJSONStoreTransaction.loadRecoveringCorruptRecords(
+                    StoryMemory.self,
+                    fileName: fileName,
+                    baseURL: storageURL
+                )
+                guard memoryRecovery.invalidCount == 0 else {
+                    // Saving the recovered array would drop unreadable
+                    // records. Preserve the complete source and leave the
+                    // migration unmarked until a repair/export path makes it
+                    // safe to write again.
+                    NSLog(
+                        "[StoryMemoryMigration] skipped world=%@ because %@ has %ld invalid records",
+                        storyWorldId.uuidString,
+                        fileName,
+                        memoryRecovery.invalidCount
+                    )
+                    return
+                }
+
                 guard let session = worldSessions.first, worldSessions.count == 1 else {
                     // Zero Sessions and multiple Sessions are both ambiguous.
                     // In either case, leave legacy records world-scoped and
                     // out of prompt injection rather than guessing ownership.
+                    // A marker is still safe here because a later Session
+                    // change or memory-file change invalidates the check.
+                    var updatedMarkers = markers.items
+                    updatedMarkers.removeAll { $0.storyWorldId == storyWorldId }
+                    updatedMarkers.append(
+                        LegacyMemoryMigrationMarker(
+                            storyWorldId: storyWorldId,
+                            sessionFileFingerprint: currentSessionFingerprint,
+                            memoryFileFingerprint: currentFingerprint,
+                            completedAt: Date()
+                        )
+                    )
+                    guard markers.invalidCount == 0 else { return }
+                    try LocalJSONStoreTransaction.save(
+                        updatedMarkers,
+                        fileName: migrationFileName,
+                        baseURL: storageURL
+                    )
                     return
                 }
 
@@ -1123,21 +1226,42 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                     tombstones: tombstones
                 )
 
-                var memories = try LocalJSONStoreTransaction.load(
-                    StoryMemory.self,
-                    fileName: fileName,
-                    baseURL: storageURL
-                )
+                var memories = memoryRecovery.items
                 var changed = false
                 for index in memories.indices where memories[index].storyWorldId == storyWorldId {
                     guard memories[index].storySessionId == nil else { continue }
                     memories[index].storySessionId = session.id
                     changed = true
                 }
-                guard changed else { return }
+                if changed {
+                    try LocalJSONStoreTransaction.save(
+                        memories,
+                        fileName: fileName,
+                        baseURL: storageURL
+                    )
+                }
+
+                // Do not trim here. Migration must not delete user data just
+                // because an old file exceeds the current per-scope limit.
+                // The existing saveMemory path remains the only path that
+                // applies that limit, preserving its established behavior.
+                var updatedMarkers = markers.items
+                updatedMarkers.removeAll { $0.storyWorldId == storyWorldId }
+                updatedMarkers.append(
+                    LegacyMemoryMigrationMarker(
+                        storyWorldId: storyWorldId,
+                        sessionFileFingerprint: currentSessionFingerprint,
+                        memoryFileFingerprint: Self.memoryFileFingerprint(
+                            storageURL: storageURL,
+                            fileName: fileName
+                        ),
+                        completedAt: Date()
+                    )
+                )
+                guard markers.invalidCount == 0 else { return }
                 try LocalJSONStoreTransaction.save(
-                    memories,
-                    fileName: fileName,
+                    updatedMarkers,
+                    fileName: migrationFileName,
                     baseURL: storageURL
                 )
             }
