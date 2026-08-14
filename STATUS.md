@@ -34,6 +34,8 @@ Updated: 2026-08-15 JST
 - Keep acceptance runtime identifiers filename-only and require the trusted
   iori filename/SHA for completed records.
 - Prevent evaluation JSONL output under the repository.
+- Resolve output-path and `SRCROOT` symlinks before containment checks, and
+  reject duplicate acceptance selections after alias/seed normalization.
 
 ## Verification
 

@@ -14,6 +14,15 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
     private static let schemaVersion = 1
     private static let defaultTurnTimeout: TimeInterval = 240
 
+    func testAcceptanceSelectionsRejectNormalizedDuplicates() {
+        XCTAssertThrowsError(try parseLanguages(["ja", "ja"]))
+        XCTAssertThrowsError(try parseModels(["iori", "e4b"]))
+        XCTAssertThrowsError(
+            try parseScenarioIDs(["story-01", "story-01"], defaults: ["story-01", "story-02"])
+        )
+        XCTAssertThrowsError(try parseSeeds(["1", "01"]))
+    }
+
     func testStoryInitiativeAcceptanceMatrix() async throws {
         guard ProcessInfo.processInfo.environment["KIZUNA_RUN_STORY_ACCEPTANCE"] == "1" else {
             throw XCTSkip("Set KIZUNA_RUN_STORY_ACCEPTANCE=1 to run the real app-path matrix.")
@@ -44,13 +53,26 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             XCTFail("KIZUNA_ACCEPTANCE_OUTPUT must point outside the repository.")
             return
         }
-        let outputURL = URL(fileURLWithPath: outputPath)
+        let requestedOutputURL = URL(fileURLWithPath: outputPath).standardizedFileURL
+        guard let outputFileName = requestedOutputURL.lastPathComponent,
+              !outputFileName.isEmpty else {
+            XCTFail("KIZUNA_ACCEPTANCE_OUTPUT must name a JSONL file.")
+            return
+        }
+        let resolvedOutputParentURL = requestedOutputURL
+            .deletingLastPathComponent()
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let outputURL = resolvedOutputParentURL
+            .appendingPathComponent(outputFileName, isDirectory: false)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
         let projectRootURL = URL(
             fileURLWithPath: ProcessInfo.processInfo.environment["SRCROOT"]
                 ?? FileManager.default.currentDirectoryPath,
             isDirectory: true
-        ).standardizedFileURL
-        let outputPathForComparison = outputURL.standardizedFileURL.path
+        ).standardizedFileURL.resolvingSymlinksInPath()
+        let outputPathForComparison = outputURL.path
         let projectPathPrefix = projectRootURL.path.hasSuffix("/")
             ? projectRootURL.path
             : projectRootURL.path + "/"
@@ -585,8 +607,14 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
 
     private func selectedLanguages() throws -> [KizunaLanguage] {
         let values = selectionValues(key: "KIZUNA_ACCEPTANCE_LANGUAGES", defaults: ["ja", "en"])
+        return try parseLanguages(values)
+    }
+
+    private func parseLanguages(_ values: [String]) throws -> [KizunaLanguage] {
         let languages = values.compactMap(KizunaLanguage.init(rawValue:))
-        guard languages.count == values.count, !languages.isEmpty else {
+        guard languages.count == values.count,
+              !languages.isEmpty,
+              Set(languages.map(\.rawValue)).count == languages.count else {
             throw StoryAcceptanceRunnerError.invalidSelection("languages")
         }
         return languages
@@ -594,6 +622,10 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
 
     private func selectedModels() throws -> [StoryGenerationModel] {
         let values = selectionValues(key: "KIZUNA_ACCEPTANCE_MODELS", defaults: ["iori", "nagi"])
+        return try parseModels(values)
+    }
+
+    private func parseModels(_ values: [String]) throws -> [StoryGenerationModel] {
         let models = values.compactMap { value -> StoryGenerationModel? in
             switch value.lowercased() {
             case "iori", "e4b": return .e4b
@@ -601,7 +633,9 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             default: return nil
             }
         }
-        guard models.count == values.count, !models.isEmpty else {
+        guard models.count == values.count,
+              !models.isEmpty,
+              Set(models.map(\.acceptanceName)).count == models.count else {
             throw StoryAcceptanceRunnerError.invalidSelection("models")
         }
         return models
@@ -610,7 +644,13 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
     private func selectedScenarioIDs(from fixture: StoryAcceptanceFixture) throws -> [String] {
         let defaults = fixture.scenarios.map(\.scenarioID)
         let values = selectionValues(key: "KIZUNA_ACCEPTANCE_SCENARIOS", defaults: defaults)
-        guard !values.isEmpty, Set(values).isSubset(of: Set(defaults)) else {
+        return try parseScenarioIDs(values, defaults: defaults)
+    }
+
+    private func parseScenarioIDs(_ values: [String], defaults: [String]) throws -> [String] {
+        guard !values.isEmpty,
+              Set(values).count == values.count,
+              Set(values).isSubset(of: Set(defaults)) else {
             throw StoryAcceptanceRunnerError.invalidSelection("scenarios")
         }
         return values
@@ -618,11 +658,17 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
 
     private func selectedSeeds() throws -> [UInt32] {
         let values = selectionValues(key: "KIZUNA_ACCEPTANCE_SEEDS", defaults: ["1", "2", "3"])
+        return try parseSeeds(values)
+    }
+
+    private func parseSeeds(_ values: [String]) throws -> [UInt32] {
         let seeds = values.compactMap { value -> UInt32? in
             guard let raw = UInt64(value), raw <= UInt64(UInt32.max) else { return nil }
             return UInt32(raw)
         }
-        guard seeds.count == values.count, !seeds.isEmpty else {
+        guard seeds.count == values.count,
+              !seeds.isEmpty,
+              Set(seeds).count == seeds.count else {
             throw StoryAcceptanceRunnerError.invalidSelection("seeds")
         }
         return seeds
