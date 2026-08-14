@@ -546,39 +546,43 @@ struct StoryPromptBuilder {
         let narrationInstruction: String
         if storyInitiativeEnabled {
             stateUpdateInstruction = isEnglish
-                ? "If location, time, mood, weather, relationship, character state, or inventory clearly changes, append one hidden STATE_UPDATE: {JSON} line after the dialogue using only the documented keys; omit it when nothing changed. When present, include an exact 4-120 character quote from the visible reply or current user message in evidence."
-                : "場所・時間・ムード・天候・関係・キャラ状態・所持品が明確に変化した時だけ、本文の後に STATE_UPDATE: {JSON} を1行付ける。変化がなければ付けない。付ける場合は表示本文または今回のユーザー発言から4〜120文字の完全一致する引用を evidence に入れる。"
+                ? "Append one hidden STATE_UPDATE: {JSON} line only for a clear state change; use documented keys and an exact 4-120 character quote from the reply or current user message as evidence. Omit it when unchanged."
+                : "明確な状態変化の時だけ本文後に STATE_UPDATE: {JSON} を1行付ける。既定キーを使い、本文または今回のユーザー発言から4〜120文字の完全一致引用を evidence に入れる。変化なしは省略。"
             changeInstruction = isEnglish
-                ? "Move the world only when the current message or story context gives a clear cause; make at most one small observable change and omit STATE_UPDATE when there is no cause."
-                : "現在の発言や物語の文脈に明確な因果がある時だけ世界を動かし、小さな観測可能な変化は最大1件にする。根拠がなければ STATE_UPDATE を付けない。"
+                ? "Make at most one small observable change only when the message, scene, objective, relationship, or session memory gives a clear cause; otherwise keep state unchanged."
+                : "発言・Scene・目的・関係・Session Memoryに明確な因果がある時だけ、小さな観測可能な変化を最大1件加える。根拠がなければ維持する。"
             narrationInstruction = isEnglish
-                ? "Add one Narration: line only for a small observable change causally grounded in the current message or story context."
-                : "現在の発言や物語の文脈に因果がある小さな観測可能な変化の時だけ、短い「ナレーション: 本文」を1行添える。"
+                ? "Add one short Narration: line only for that grounded change."
+                : "その因果のある変化の時だけ短い「ナレーション: 本文」を1行添える。"
         } else {
             stateUpdateInstruction = isEnglish
-                ? "Append STATE_UPDATE only when the current user message explicitly asks for a durable change; otherwise omit it and do not invent world movement. Use an exact 4-120 character quote from the current user message as evidence."
-                : "今回のユーザー発言が場所・時間・目的などの変更を明示的に求めた時だけ STATE_UPDATE を付ける。それ以外は付けず、世界の変化を発明しない。evidence にはユーザー発言から4〜120文字の完全一致する引用を入れる。"
+                ? "Append STATE_UPDATE only for a durable change explicitly requested in the current user message, with an exact 4-120 character quote from that message as evidence; otherwise omit it."
+                : "今回のユーザー発言が永続変更を明示した時だけ STATE_UPDATE を付け、ユーザー発言から4〜120文字の完全一致引用を evidence に入れる。それ以外は省略。"
             changeInstruction = isEnglish
-                ? "Reply directly while keeping the current scene, objective, and relationship stable. Do not add a change every turn; follow a new direction only when the user provides one."
-                : "現在の場面・目的・関係を保ったまま、今回のユーザー発言へ直接返す。変化を毎回追加せず、ユーザーが方向を変えた時だけ追従する。"
+                ? "Reply directly while keeping the current scene, objective, and relationship stable; follow a new direction only when the user explicitly provides one."
+                : "現在の場面・目的・関係を保ち、ユーザーが明示的に方向転換した時だけ追従する。毎ターン変化を足さない。"
             narrationInstruction = isEnglish
-                ? "Add one Narration: line only when the current user message explicitly directs a scene or state change; otherwise keep the scene stable and omit narration."
-                : "今回のユーザー発言が場面や状態の方向転換を明示した時だけ、短い「ナレーション: 本文」を1行添える。それ以外は場面を安定させ、ナレーションを付けない。"
+                ? "Add one short Narration: line only when the current user message explicitly directs a scene or state change; otherwise omit narration."
+                : "ユーザーが場面や状態の方向転換を明示した時だけ短い「ナレーション: 本文」を1行添え、それ以外は付けない。"
         }
 
+        let userCharacterInstruction: String? = {
+            guard let userCharacterName, !userCharacterName.isEmpty else { return nil }
+            return isEnglish
+                ? "User-controlled character: \(utf8Prefix(userCharacterName, byteLimit: 72)). Never generate a line for this character."
+                : "ユーザー操作キャラ: \(utf8Prefix(userCharacterName, byteLimit: 72))。この名前で発話を生成しない。"
+        }()
         var lines = [
             isEnglish
-                ? "You are the scene partner in a Kizuna story chat. Reply in English only; no reasoning, explanations, translations, lists, or symbol-only output."
-                : "あなたは絆の物語チャットの相手役です。本文は日本語だけを返す。思考、説明、翻訳、箇条書き、記号だけの返答は禁止。",
+                ? "Kizuna Story scene partner. English only; no reasoning, explanations, translations, lists, or symbol-only output."
+                : "絆Storyの相手役。日本語のみ。思考・説明・翻訳・箇条書き・記号だけは禁止。",
             isEnglish
-                ? "Start with \(npcSpeakerLabel): a natural reply. \(duplicateInstruction) \(narrationInstruction) Do not repeat the previous scene, greeting, or reply. Never invent the user's dialogue, actions, or feelings. \(stateUpdateInstruction)"
-                : "基本は「\(npcSpeakerLabel): 自然な返事」を1行だけ返す。\(duplicateInstruction) \(narrationInstruction) 毎ターンの場面説明、直前と同じ情景・挨拶・返答は禁止。ユーザーの台詞・行動・感情は代弁しない。\(stateUpdateInstruction)",
+                ? "Start with \(npcSpeakerLabel): reply. \(duplicateInstruction) \(narrationInstruction) Never invent the user's dialogue, actions, or feelings. \(stateUpdateInstruction)"
+                : "基本は「\(npcSpeakerLabel): 返答」。\(duplicateInstruction) \(narrationInstruction) ユーザーの台詞・行動・感情を代筆しない。\(stateUpdateInstruction)",
             changeInstruction
         ]
-        if let userCharacterName, !userCharacterName.isEmpty {
-            lines.append(isEnglish
-                         ? "User-controlled character: \(utf8Prefix(userCharacterName, byteLimit: 72)). Never generate a line for this character."
-                         : "ユーザー操作キャラ: \(utf8Prefix(userCharacterName, byteLimit: 72))。この名前で発話を生成しない。")
+        if let userCharacterInstruction {
+            lines[1] += " " + userCharacterInstruction
         }
 
         // 小型モデルでも、長い履歴より先に物語の不変条件を渡す。31B用の
@@ -592,9 +596,9 @@ struct StoryPromptBuilder {
             session.lastTurnProgress?.isEmpty == false ? "\(isEnglish ? "Last progress" : "直前の進行"): \(utf8Prefix(session.lastTurnProgress ?? "", byteLimit: 120))" : nil,
             session.lastSceneSummary?.isEmpty == false ? "\(isEnglish ? "Last scene" : "直前の場面"): \(utf8Prefix(session.lastSceneSummary ?? "", byteLimit: 140))" : nil
         ].compactMap { $0 }
-        if !worldFacts.isEmpty {
-            lines.append((isEnglish ? "Story context: " : "物語コンテキスト: ") + worldFacts.joined(separator: " / "))
-        }
+        let worldContextLine = worldFacts.isEmpty
+            ? nil
+            : (isEnglish ? "Story context: " : "物語コンテキスト: ") + worldFacts.joined(separator: " / ")
 
         let stateFacts = [
             storyState.location.isEmpty ? nil : "\(isEnglish ? "State location" : "状態場所")=\(utf8Prefix(storyState.location, byteLimit: 64))",
@@ -605,16 +609,16 @@ struct StoryPromptBuilder {
             storyState.inventory.prefix(3).map { utf8Prefix($0.name, byteLimit: 40) }.joined(separator: ", ").isEmpty ? nil : "\(isEnglish ? "Items" : "所持品")=\(storyState.inventory.prefix(3).map { utf8Prefix($0.name, byteLimit: 40) }.joined(separator: ", "))",
             storyState.activeGoals.prefix(2).map { utf8Prefix($0, byteLimit: 56) }.joined(separator: ", ").isEmpty ? nil : "\(isEnglish ? "Goals" : "状態目標")=\(storyState.activeGoals.prefix(2).map { utf8Prefix($0, byteLimit: 56) }.joined(separator: ", "))"
         ].compactMap { $0 }
-        if !stateFacts.isEmpty {
-            lines.append((isEnglish ? "State snapshot: " : "状態スナップショット: ") + stateFacts.joined(separator: " / "))
-        }
+        let stateContextLine = stateFacts.isEmpty
+            ? nil
+            : (isEnglish ? "State snapshot: " : "状態スナップショット: ") + stateFacts.joined(separator: " / ")
 
         let loreFacts = selectedLorebookEntries.prefix(2).map {
             "\(utf8Prefix($0.title, byteLimit: 48)): \(utf8Prefix($0.content, byteLimit: 120))"
         }
-        if !loreFacts.isEmpty {
-            lines.append((isEnglish ? "Relevant rules: " : "関連ルール: ") + loreFacts.joined(separator: " / "))
-        }
+        let loreContextLine = loreFacts.isEmpty
+            ? nil
+            : (isEnglish ? "Relevant rules: " : "関連ルール: ") + loreFacts.joined(separator: " / ")
 
         // ローカル実行でも、既に選別済みの記憶を小さな状態カプセルとして渡す。
         // 再検索や追加の推論はせず、現在Sessionの物語内Memoryは1件だけに
@@ -639,11 +643,11 @@ struct StoryPromptBuilder {
                 .sorted { $0.importance > $1.importance }
                 .prefix(1)
                 .map { isEnglish ? "Shared memory: \(utf8Prefix($0.text, byteLimit: 84))" : "共通の記憶: \(utf8Prefix($0.text, byteLimit: 84))" }
-        if !memoryFacts.isEmpty {
-            lines.append(isEnglish
-                         ? "Important past: \(memoryFacts.joined(separator: " / ")). Keep it consistent without explaining it."
-                         : "重要な過去: \(memoryFacts.joined(separator: " / "))。説明せず自然に整合させる。")
-        }
+        let memoryContextLine = memoryFacts.isEmpty
+            ? nil
+            : (isEnglish
+               ? "Important past: \(memoryFacts.joined(separator: " / ")). Keep it consistent without explaining it."
+               : "重要な過去: \(memoryFacts.joined(separator: " / "))。説明せず自然に整合させる。")
 
         let sceneDetails = [
             effectiveScene.location.isEmpty ? nil : "\(isEnglish ? "Location" : "場所"): \(utf8Prefix(effectiveScene.location, byteLimit: 84))",
@@ -652,23 +656,24 @@ struct StoryPromptBuilder {
             effectiveScene.goal.map { "\(isEnglish ? "Goal" : "目的"): \(utf8Prefix($0, byteLimit: 72))" },
             scene.conflict.map { "\(isEnglish ? "Conflict" : "葛藤"): \(utf8Prefix($0, byteLimit: 88))" }
         ].compactMap { $0 }
-        if !sceneDetails.isEmpty { lines.append((isEnglish ? "Current scene: " : "現在の場面: ") + sceneDetails.joined(separator: " / ")) }
+        let sceneContextLine = sceneDetails.isEmpty
+            ? nil
+            : (isEnglish ? "Current scene: " : "現在の場面: ") + sceneDetails.joined(separator: " / ")
 
         let characterDetails = [
             profile?.shortDescription,
             profile?.personality,
-            profile?.speakingStyle,
-            profile?.scenario,
-            npc?.member.relationshipToUser,
-            profile?.relationshipToUser
+            profile?.speakingStyle
         ]
         .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
         .map { utf8Prefix($0, byteLimit: 72) }
-        if !characterDetails.isEmpty {
-            lines.append((isEnglish ? "\(npcName)'s traits: " : "\(npcName)の設定: ") + characterDetails.joined(separator: " / "))
-        }
+        let characterTraitsLine = characterDetails.isEmpty
+            ? nil
+            : (isEnglish ? "\(npcName)'s traits: " : "\(npcName)の設定: ") + characterDetails.joined(separator: " / ")
 
+        let currentRelationLine: String?
+        let activeCharacterContextLine: String?
         if let npc {
             let currentCharacterState = storyState.characterStates.first { state in
                 if let characterID = state.characterId {
@@ -684,37 +689,65 @@ struct StoryPromptBuilder {
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .map { utf8Prefix($0, byteLimit: 64) }
-            if !currentRelationFacts.isEmpty {
-                lines.append(
-                    (isEnglish ? "Current \(npcName) purpose/relationship: " : "現在の\(npcName)の目的・関係: ")
-                        + currentRelationFacts.joined(separator: " / ")
-                )
-            }
+            currentRelationLine = currentRelationFacts.isEmpty
+                ? nil
+                : (isEnglish ? "Current \(npcName) purpose/relationship: " : "現在の\(npcName)の目的・関係: ")
+                    + currentRelationFacts.joined(separator: " / ")
+
+            let activeCharacterFacts = [
+                npc.profile.scenario,
+                npc.member.relationshipToUser,
+                npc.profile.relationshipToUser
+            ]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { utf8Prefix($0, byteLimit: 72) }
+            activeCharacterContextLine = activeCharacterFacts.isEmpty
+                ? nil
+                : (isEnglish ? "\(npcName)'s context: " : "\(npcName)の文脈: ")
+                    + activeCharacterFacts.joined(separator: " / ")
+        } else {
+            currentRelationLine = nil
+            activeCharacterContextLine = nil
         }
 
         let userProfile = LocalAssistantRuntimeBridge.userProfileAddendum
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !userProfile.isEmpty {
-            lines.append(isEnglish
-                         ? "User profile: \(utf8Prefix(userProfile, byteLimit: 260)). Use it naturally only when relevant."
-                         : "ユーザープロフィール: \(utf8Prefix(userProfile, byteLimit: 260))。必要な時だけ自然に使う。")
-        }
+        let userProfileLine = userProfile.isEmpty
+            ? nil
+            : (isEnglish
+               ? "User profile: \(utf8Prefix(userProfile, byteLimit: 260)). Use it naturally only when relevant."
+               : "ユーザープロフィール: \(utf8Prefix(userProfile, byteLimit: 260))。必要な時だけ自然に使う。")
+        let storyTitleLine = "\(isEnglish ? "Story title" : "物語タイトル"): \(utf8Prefix(world.title, byteLimit: 96))"
 
-        lines.append("\(isEnglish ? "Story title" : "物語タイトル"): \(utf8Prefix(world.title, byteLimit: 96))")
+        // Keep the current state and causal character context ahead of the
+        // original scene seed. Lore and broad world facts are optional when
+        // the LiteRT byte budget is tight.
+        lines.append(contentsOf: [
+            stateContextLine,
+            currentRelationLine,
+            activeCharacterContextLine,
+            sceneContextLine,
+            characterTraitsLine,
+            memoryContextLine,
+            worldContextLine,
+            userProfileLine,
+            storyTitleLine,
+            loreContextLine
+        ].compactMap { $0 })
 
         // LiteRT側でも1,250 UTF-8 bytesへ上限を設けている。重要な出力規則を
         // 先頭に置いたうえで、ここでも余裕を持って切り詰める。
-        // The current scene, active character traits, user profile, and title
-        // are mandatory for continuity.  Keep them ahead of optional lore and
-        // memory snapshots so the byte cap trims background context first.
+        // Current state, causal character context, scene facts, traits, and
+        // the one selected StoryMemory are mandatory for continuity. Keep
+        // broad world facts, profile, title, and lore optional.
         let mandatoryPrefixes = [
+            isEnglish ? "State snapshot: " : "状態スナップショット: ",
+            isEnglish ? "Current \(npcName) purpose/relationship: " : "現在の\(npcName)の目的・関係: ",
+            isEnglish ? "\(npcName)'s context: " : "\(npcName)の文脈: ",
             isEnglish ? "Current scene: " : "現在の場面: ",
             isEnglish ? "\(npcName)'s traits: " : "\(npcName)の設定: ",
-            isEnglish ? "Current \(npcName) purpose/relationship: " : "現在の\(npcName)の目的・関係: ",
-            isEnglish ? "Important past: " : "重要な過去: ",
-            isEnglish ? "User profile: " : "ユーザープロフィール: ",
-            isEnglish ? "Story title: " : "物語タイトル: ",
-            isEnglish ? "User-controlled character: " : "ユーザー操作キャラ: "
+            isEnglish ? "Important past: " : "重要な過去: "
         ]
         // 出力形式・evidence要件・単一変更制約はいずれも切り詰めてはいけない。
         let header = Array(lines.prefix(3))
