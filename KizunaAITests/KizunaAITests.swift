@@ -648,8 +648,9 @@ final class KizunaAITests: XCTestCase {
             storyMemories: [legacy]
         )
         try await singleSessionRepository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+        let singleSessionMemories = try await singleSessionRepository.fetchMemories(storyWorldId: worldID)
         XCTAssertEqual(
-            try await singleSessionRepository.fetchMemories(storyWorldId: worldID).first?.storySessionId,
+            singleSessionMemories.first?.storySessionId,
             sessionID,
             "exactly one live Session may claim a world-scoped legacy memory"
         )
@@ -662,15 +663,17 @@ final class KizunaAITests: XCTestCase {
             storyMemories: [legacy]
         )
         try await ambiguousRepository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+        let ambiguousMemories = try await ambiguousRepository.fetchMemories(storyWorldId: worldID)
         XCTAssertNil(
-            try await ambiguousRepository.fetchMemories(storyWorldId: worldID).first?.storySessionId,
+            ambiguousMemories.first?.storySessionId,
             "multiple Sessions must not guess which Session owns the legacy memory"
         )
 
         let noSessionRepository = TestStoryMemoryRepository(storyMemories: [legacy])
         try await noSessionRepository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+        let noSessionMemories = try await noSessionRepository.fetchMemories(storyWorldId: worldID)
         XCTAssertNil(
-            try await noSessionRepository.fetchMemories(storyWorldId: worldID).first?.storySessionId,
+            noSessionMemories.first?.storySessionId,
             "zero Sessions must leave the legacy memory unassigned"
         )
     }
