@@ -25,8 +25,15 @@
   loaded there, while a minimal local completion timed out in
   `PROCESSINGPROMPT`; keep this separate from the formal gate.
 - Acceptance output is an external local artifact. Raw prompt text is not
-  serialized; generated response text is retained only for local human
-  rating and must not be committed or uploaded.
+  serialized into generation metadata. Generated response text and fixture
+  context are retained only in a separate `rating-input.jsonl` with local
+  `0600` permissions for human rating, and must not be committed or uploaded.
+- Generation metadata and rating input are appended as a pair per turn. The
+  evaluator rejects missing, duplicate, mismatched, or prompt-bearing rating
+  records before blind artifact creation.
+- Acceptance task cancellation is a control-flow failure, not an evaluation
+  sample: the runner cancels the active StorySessionService and rethrows
+  `CancellationError` instead of recording a partial turn.
 - Failed, blocked, empty, and timeout records remain visible and prevent blind
   scoring.
 

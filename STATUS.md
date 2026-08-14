@@ -36,15 +36,26 @@ Updated: 2026-08-15 JST
 - Prevent evaluation JSONL output under the repository.
 - Resolve output-path and `SRCROOT` symlinks before containment checks, and
   reject duplicate acceptance selections after alias/seed normalization.
+- Propagate XCTest task cancellation through `runTurn`, cancel the active
+  StorySessionService, and avoid swallowing cancellation while waiting for a
+  response.
+- Write generation metadata and human-rating input to separate external JSONL
+  files. `generations.jsonl` contains no raw response/context/state patch;
+  `rating-input.jsonl` is local-only and initialized with mode `0600`.
+- Require the evaluator to validate the one-to-one rating-input contract before
+  blind artifact creation.
 
 ## Verification
 
 - `xcrun swiftc -parse` for the changed Swift runtime and acceptance runner:
   passed.
+- `xcodebuild -quiet build-for-testing` for the macOS KizunaAI scheme passed
+  with the isolated temporary HOME; existing Swift concurrency warnings remain.
 - `zsh -n tools/run_story_initiative_acceptance.sh`: passed.
 - `git diff --check`: passed.
-- Python evaluation unit tests: 11 passed.
-- Full application build: intentionally not run for this evaluation step.
+- Python evaluation unit tests: 12 passed.
+- Full installable application build and the real 384-output matrix: not run
+  yet.
 
 ## Blockers
 

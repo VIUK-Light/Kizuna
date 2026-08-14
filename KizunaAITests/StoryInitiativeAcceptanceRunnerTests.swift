@@ -23,6 +23,49 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         XCTAssertThrowsError(try parseSeeds(["1", "01"]))
     }
 
+    func testGenerationMetadataEncodingExcludesRawEvaluationContent() throws {
+        let record = StoryAcceptanceGenerationRecord(
+            schemaVersion: Self.schemaVersion,
+            recordType: "generation",
+            pairID: "ja-iori-story-01-1",
+            language: "ja",
+            model: "iori",
+            scenarioID: "story-01",
+            scenarioVersion: "story-initiative-fixture-v2",
+            fixtureSHA256: String(repeating: "a", count: 64),
+            promptSHA256: String(repeating: "b", count: 64),
+            pairInputSHA256: String(repeating: "c", count: 64),
+            seed: StoryAcceptanceSeedRecord(requested: 1, effective: 1, mode: "sampler"),
+            condition: "baseline",
+            status: "completed",
+            canary: StoryAcceptanceCanaryRecord(
+                initiativeEnabled: false,
+                activationSource: "none"
+            ),
+            latency: StoryAcceptanceLatencyRecord(model: 1, turnEndToEnd: 2),
+            runtime: StoryAcceptanceRuntimeRecord(
+                provider: "local-story-runtime",
+                backend: "test-runtime",
+                modelIdentity: "test-model.gguf",
+                modelIdentityObserved: true,
+                modelSHA256: String(repeating: "d", count: 64),
+                promptObserved: true,
+                effectiveSeed: 1,
+                seedMode: "sampler",
+                failureCode: nil
+            )
+        )
+
+        let data = try Self.makeJSONEncoder().encode(record)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        XCTAssertNil(object["response_text"])
+        XCTAssertNil(object["context"])
+        XCTAssertNil(object["state_update"])
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("user message"))
+    }
+
     func testStoryInitiativeAcceptanceMatrix() async throws {
         guard ProcessInfo.processInfo.environment["KIZUNA_RUN_STORY_ACCEPTANCE"] == "1" else {
             throw XCTSkip("Set KIZUNA_RUN_STORY_ACCEPTANCE=1 to run the real app-path matrix.")
@@ -48,40 +91,21 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         let seeds = try selectedSeeds()
         let turnTimeout = selectedTurnTimeout()
 
-        guard let outputPath = ProcessInfo.processInfo.environment["KIZUNA_ACCEPTANCE_OUTPUT"],
-              !outputPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            XCTFail("KIZUNA_ACCEPTANCE_OUTPUT must point outside the repository.")
-            return
-        }
-        let requestedOutputURL = URL(fileURLWithPath: outputPath).standardizedFileURL
-        guard let outputFileName = requestedOutputURL.lastPathComponent,
-              !outputFileName.isEmpty else {
-            XCTFail("KIZUNA_ACCEPTANCE_OUTPUT must name a JSONL file.")
-            return
-        }
-        let resolvedOutputParentURL = requestedOutputURL
-            .deletingLastPathComponent()
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-        let outputURL = resolvedOutputParentURL
-            .appendingPathComponent(outputFileName, isDirectory: false)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
         let projectRootURL = URL(
             fileURLWithPath: ProcessInfo.processInfo.environment["SRCROOT"]
                 ?? FileManager.default.currentDirectoryPath,
             isDirectory: true
         ).standardizedFileURL.resolvingSymlinksInPath()
-        let outputPathForComparison = outputURL.path
-        let projectPathPrefix = projectRootURL.path.hasSuffix("/")
-            ? projectRootURL.path
-            : projectRootURL.path + "/"
-        guard outputPathForComparison != projectRootURL.path,
-              !outputPathForComparison.hasPrefix(projectPathPrefix) else {
-            XCTFail("KIZUNA_ACCEPTANCE_OUTPUT must remain outside the repository.")
-            return
-        }
+        let outputURL = try resolvedExternalOutputURL(
+            environmentKey: "KIZUNA_ACCEPTANCE_OUTPUT",
+            projectRootURL: projectRootURL
+        )
+        let ratingOutputURL = try resolvedExternalOutputURL(
+            environmentKey: "KIZUNA_ACCEPTANCE_RATING_OUTPUT",
+            projectRootURL: projectRootURL
+        )
         try initializeJSONLOutput(at: outputURL)
+        try initializeJSONLOutput(at: ratingOutputURL)
 
         let previousLanguage = UserDefaults.standard.string(forKey: "kizuna.language")
         let previousInitiativeFlags: [String: Any?] = [
@@ -132,7 +156,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                         )
 
                         for condition in StoryAcceptanceCondition.allCases {
-                            let record = await runTurn(
+                            let artifacts = try await runTurn(
                                 language: language,
                                 model: model,
                                 scenario: scenario,
@@ -144,7 +168,8 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                                 fixtureSHA256: fixtureSHA256,
                                 turnTimeout: turnTimeout
                             )
-                            try appendJSONL(record, to: outputURL)
+                            try appendJSONL(artifacts.generation, to: outputURL)
+                            try appendJSONL(artifacts.ratingInput, to: ratingOutputURL)
                         }
                     }
                 }
@@ -164,7 +189,8 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         pairInputSHA256: String,
         fixtureSHA256: String,
         turnTimeout: TimeInterval
-    ) async -> StoryAcceptanceGenerationRecord {
+    ) async throws -> StoryAcceptanceTurnArtifacts {
+        try Task.checkCancellation()
         let startedAt = Date()
         let pairID = "\(language.rawValue)-\(model.acceptanceName)-\(scenario.scenarioID)-\(seed)"
         let expectedInitiative = condition == .initiative
@@ -179,7 +205,6 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         var persistedSession: StorySession?
         var status = StoryAcceptanceStatus.error
         var responseText = ""
-        var stateUpdate: StoryStatePatch?
         var failureCode: String?
         var trace: StoryAcceptanceGenerationTrace?
         var modelLatencyMilliseconds: Double = 0
@@ -214,7 +239,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                     service: createdService,
                     failureCode: failureCode
                 )
-                return makeRecord(
+                return makeArtifacts(
                     pairID: pairID,
                     language: language,
                     model: model,
@@ -228,17 +253,16 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                     activationSource: activationSource,
                     status: status,
                     responseText: responseText,
-                    stateUpdate: nil,
                     startedAt: startedAt,
                     modelLatencyMilliseconds: 0,
-                    observedPrompt: runtimeObservation.observedPrompt,
+                    promptSHA256: runtimeObservation.promptSHA256,
                     runtime: runtimeObservation.record
                 )
             }
 
             let deadline = Date().addingTimeInterval(turnTimeout)
             while createdService.phase == .thinking && Date() < deadline {
-                try? await Task.sleep(nanoseconds: 250_000_000)
+                try await Task.sleep(nanoseconds: 250_000_000)
             }
 
             if createdService.phase == .thinking {
@@ -246,7 +270,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 createdService.cancel()
                 status = .timeout
                 for _ in 0..<20 where createdService.phase == .thinking {
-                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    try await Task.sleep(nanoseconds: 250_000_000)
                 }
             }
 
@@ -272,13 +296,12 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 // Preserve the timeout even if a late callback finishes while
                 // the runner is cleaning up. The record must expose that the
                 // operation exceeded the runner's bounded wait.
-                stateUpdate = nil
+                failureCode = failureCode ?? "runner_timeout"
             } else if let trace,
                       trace.modelIdentity != nil,
                       committed,
                       !responseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 status = .completed
-                stateUpdate = trace.stateUpdate
                 failureCode = nil
             } else if let trace,
                       committed,
@@ -288,15 +311,12 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 // not let an API-key error or local-runtime failure become a
                 // completed blind-evaluation sample.
                 status = .error
-                stateUpdate = nil
                 failureCode = "model_identity_not_observed"
             } else if createdService.acceptanceInputSafetyBlocked {
                 status = .blocked
-                stateUpdate = nil
                 failureCode = checkpoint?.failureCode ?? createdService.latestRuntimeNotice?.backendName
             } else if let checkpoint, checkpoint.status != .committed {
                 status = .error
-                stateUpdate = nil
                 failureCode = checkpoint.failureCode
                     ?? createdService.latestRuntimeNotice?.backendName
                     ?? "turn_not_committed"
@@ -306,21 +326,20 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 // committed or intentionally empty model response; classify
                 // it as an operational app-path error.
                 status = .error
-                stateUpdate = nil
                 failureCode = createdService.latestRuntimeNotice?.backendName
                     ?? "turn_checkpoint_missing"
             } else if responseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 status = .empty
-                stateUpdate = nil
                 failureCode = createdService.latestRuntimeNotice?.backendName ?? "empty_response"
             } else {
                 status = .error
-                stateUpdate = nil
                 failureCode = "trace_or_commit_missing"
             }
+        } catch is CancellationError {
+            service?.cancel()
+            throw CancellationError()
         } catch {
             status = .error
-            stateUpdate = nil
             failureCode = "runner_setup_or_persistence_error"
         }
 
@@ -330,7 +349,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             service: service,
             failureCode: failureCode
         )
-        return makeRecord(
+        return makeArtifacts(
             pairID: pairID,
             language: language,
             model: model,
@@ -344,10 +363,9 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             activationSource: activationSource,
             status: status,
             responseText: status == .completed ? responseText : "",
-            stateUpdate: status == .completed ? stateUpdate : nil,
             startedAt: startedAt,
             modelLatencyMilliseconds: modelLatencyMilliseconds,
-            observedPrompt: runtimeObservation.observedPrompt,
+            promptSHA256: runtimeObservation.promptSHA256,
             runtime: runtimeObservation.record
         )
     }
@@ -372,7 +390,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         return persistedSession
     }
 
-    private func makeRecord(
+    private func makeArtifacts(
         pairID: String,
         language: KizunaLanguage,
         model: StoryGenerationModel,
@@ -386,26 +404,18 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         activationSource: String,
         status: StoryAcceptanceStatus,
         responseText: String,
-        stateUpdate: StoryStatePatch?,
         startedAt: Date,
         modelLatencyMilliseconds: Double,
-        observedPrompt: String?,
+        promptSHA256: String,
         runtime: StoryAcceptanceRuntimeRecord
-    ) -> StoryAcceptanceGenerationRecord {
-        let promptSHA256: String
-        if let observedPrompt {
-            let prompt = observedPrompt
-            promptSHA256 = Self.sha256(Data(prompt.utf8))
-        } else {
-            // No model prompt exists when the app rejects input before model
-            // invocation. This sentinel is deliberately marked in runtime;
-            // it is not presented as a generated prompt hash.
-            promptSHA256 = Self.sha256(Data("kizuna-no-model-prompt".utf8))
-        }
-
+    ) -> StoryAcceptanceTurnArtifacts {
         let effectiveSeed = Int(runtime.effectiveSeed ?? seed)
         let seedMode = runtime.seedMode ?? "draw"
-        return StoryAcceptanceGenerationRecord(
+        let latency = StoryAcceptanceLatencyRecord(
+            model: max(0, modelLatencyMilliseconds),
+            turnEndToEnd: max(0, Date().timeIntervalSince(startedAt) * 1_000)
+        )
+        let generation = StoryAcceptanceGenerationRecord(
             schemaVersion: Self.schemaVersion,
             recordType: "generation",
             pairID: pairID,
@@ -423,18 +433,25 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             ),
             condition: condition.rawValue,
             status: status.rawValue,
-            responseText: responseText,
-            stateUpdate: stateUpdate,
-            context: StoryAcceptanceContext(localized: localized),
             canary: StoryAcceptanceCanaryRecord(
                 initiativeEnabled: actualInitiative,
                 activationSource: activationSource
             ),
-            latency: StoryAcceptanceLatencyRecord(
-                model: max(0, modelLatencyMilliseconds),
-                turnEndToEnd: max(0, Date().timeIntervalSince(startedAt) * 1_000)
-            ),
+            latency: latency,
             runtime: runtime
+        )
+        let ratingInput = StoryAcceptanceRatingInput(
+            schemaVersion: Self.schemaVersion,
+            recordType: "rating_input",
+            pairID: pairID,
+            condition: condition.rawValue,
+            status: status.rawValue,
+            context: StoryAcceptanceContext(localized: localized),
+            responseText: responseText
+        )
+        return StoryAcceptanceTurnArtifacts(
+            generation: generation,
+            ratingInput: ratingInput
         )
     }
 
@@ -462,7 +479,9 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             modelIdentityObserved = false
             provider = "google-generative-language-api"
         }
-        let observedPrompt: String? = trace.map { $0.systemPrompt + "\n---user---\n" + $0.userPrompt }
+        let promptSHA256 = trace.map {
+            Self.sha256(Data("\($0.systemPrompt)\n---user---\n\($0.userPrompt)".utf8))
+        } ?? Self.sha256(Data("kizuna-no-model-prompt".utf8))
         return StoryAcceptanceRuntimeObservation(
             record: StoryAcceptanceRuntimeRecord(
                 provider: provider,
@@ -470,12 +489,12 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 modelIdentity: modelIdentity,
                 modelIdentityObserved: modelIdentityObserved,
                 modelSHA256: environment["KIZUNA_IORI_MODEL_SHA256"],
-                promptObserved: observedPrompt != nil,
+                promptObserved: trace != nil,
                 effectiveSeed: trace?.effectiveSeed,
                 seedMode: trace?.seedMode,
                 failureCode: failureCode
             ),
-            observedPrompt: observedPrompt
+            promptSHA256: promptSHA256
         )
     }
 
@@ -687,6 +706,43 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         return raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
+    private func resolvedExternalOutputURL(
+        environmentKey: String,
+        projectRootURL: URL
+    ) throws -> URL {
+        guard let outputPath = ProcessInfo.processInfo.environment[environmentKey],
+              !outputPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw StoryAcceptanceRunnerError.invalidOutputPath(
+                "\(environmentKey) must point outside the repository."
+            )
+        }
+        let requestedOutputURL = URL(fileURLWithPath: outputPath).standardizedFileURL
+        let outputFileName = requestedOutputURL.lastPathComponent
+        guard !outputFileName.isEmpty else {
+            throw StoryAcceptanceRunnerError.invalidOutputPath(
+                "\(environmentKey) must name a JSONL file."
+            )
+        }
+        let resolvedOutputParentURL = requestedOutputURL
+            .deletingLastPathComponent()
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let outputURL = resolvedOutputParentURL
+            .appendingPathComponent(outputFileName, isDirectory: false)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let projectPathPrefix = projectRootURL.path.hasSuffix("/")
+            ? projectRootURL.path
+            : projectRootURL.path + "/"
+        guard outputURL.path != projectRootURL.path,
+              !outputURL.path.hasPrefix(projectPathPrefix) else {
+            throw StoryAcceptanceRunnerError.invalidOutputPath(
+                "\(environmentKey) must remain outside the repository."
+            )
+        }
+        return outputURL
+    }
+
     private static func makeJSONEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -699,10 +755,14 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             withIntermediateDirectories: true
         )
         try Data().write(to: url, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
+        )
     }
 
-    private func appendJSONL(
-        _ record: StoryAcceptanceGenerationRecord,
+    private func appendJSONL<Record: Encodable>(
+        _ record: Record,
         to url: URL
     ) throws {
         let data = try Self.makeJSONEncoder().encode(record)
@@ -767,6 +827,7 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
 
 private enum StoryAcceptanceRunnerError: Error {
     case invalidSelection(String)
+    case invalidOutputPath(String)
     case sessionNotPersisted
 }
 
@@ -1039,9 +1100,14 @@ private struct StoryAcceptanceLatencyRecord: Encodable {
     }
 }
 
+private struct StoryAcceptanceTurnArtifacts {
+    let generation: StoryAcceptanceGenerationRecord
+    let ratingInput: StoryAcceptanceRatingInput
+}
+
 private struct StoryAcceptanceRuntimeObservation {
     let record: StoryAcceptanceRuntimeRecord
-    let observedPrompt: String?
+    let promptSHA256: String
 }
 
 private struct StoryAcceptanceRuntimeRecord: Encodable {
@@ -1082,9 +1148,6 @@ private struct StoryAcceptanceGenerationRecord: Encodable {
     let seed: StoryAcceptanceSeedRecord
     let condition: String
     let status: String
-    let responseText: String
-    let stateUpdate: StoryStatePatch?
-    let context: StoryAcceptanceContext
     let canary: StoryAcceptanceCanaryRecord
     let latency: StoryAcceptanceLatencyRecord
     let runtime: StoryAcceptanceRuntimeRecord
@@ -1103,12 +1166,32 @@ private struct StoryAcceptanceGenerationRecord: Encodable {
         case seed
         case condition
         case status
-        case responseText = "response_text"
-        case stateUpdate = "state_update"
-        case context
         case canary
         case latency = "latency_ms"
         case runtime
+    }
+}
+
+/// Raw response/context used only to build a local blind-rating artifact.
+/// This is intentionally a separate Encodable type and path from the
+/// generation metadata JSONL.
+private struct StoryAcceptanceRatingInput: Encodable {
+    let schemaVersion: Int
+    let recordType: String
+    let pairID: String
+    let condition: String
+    let status: String
+    let context: StoryAcceptanceContext
+    let responseText: String
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case recordType = "record_type"
+        case pairID = "pair_id"
+        case condition
+        case status
+        case context
+        case responseText = "response_text"
     }
 }
 

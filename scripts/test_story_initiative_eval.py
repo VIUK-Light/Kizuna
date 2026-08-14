@@ -35,12 +35,6 @@ def make_generation(condition, *, language="ja", model="iori", scenario_id="stor
         "seed": {"requested": seed, "effective": seed, "mode": "sampler"},
         "condition": condition,
         "status": "completed",
-        "response_text": f"{condition} response",
-        "state_update": None,
-        "context": {
-            "user_message": "The lantern flickers beside the old map.",
-            "scene": {"location": "station", "mood": "quiet"},
-        },
         "canary": {
             "initiative_enabled": condition == "initiative",
             "activation_source": "none" if condition == "baseline" else "launch_argument",
@@ -60,9 +54,45 @@ def make_generation(condition, *, language="ja", model="iori", scenario_id="stor
     }
 
 
+def make_rating_input(
+    condition,
+    *,
+    language="ja",
+    model="iori",
+    scenario_id="story-01",
+    seed=1,
+    status="completed",
+    response_text=None,
+):
+    pair_id = f"{language}-{model}-{scenario_id}-{seed}"
+    return {
+        "schema_version": 1,
+        "record_type": "rating_input",
+        "pair_id": pair_id,
+        "condition": condition,
+        "status": status,
+        "context": {
+            "user_message": "The lantern flickers beside the old map.",
+            "scene": {"location": "station", "mood": "quiet"},
+        },
+        "response_text": (
+            f"{condition} response" if response_text is None else response_text
+        ),
+    }
+
+
 def make_matrix():
     return [
         make_generation(condition, scenario_id=scenario_id, seed=seed)
+        for scenario_id in ("story-01", "story-02")
+        for seed in (1, 2)
+        for condition in ("baseline", "initiative")
+    ]
+
+
+def make_rating_matrix():
+    return [
+        make_rating_input(condition, scenario_id=scenario_id, seed=seed)
         for scenario_id in ("story-01", "story-02")
         for seed in (1, 2)
         for condition in ("baseline", "initiative")
@@ -208,7 +238,9 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
         )
 
     def test_blind_artifact_does_not_expose_condition_or_latency(self):
-        blind, key = create_blind_artifacts(make_matrix(), **self.matrix_kwargs)
+        blind, key = create_blind_artifacts(
+            make_matrix(), rating_records=make_rating_matrix(), **self.matrix_kwargs
+        )
 
         self.assertEqual(len(blind), 4)
         self.assertEqual(len(key), 4)
@@ -246,11 +278,13 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
     def test_same_presentation_salt_reproduces_blind_mapping(self):
         first_blind, first_key = create_blind_artifacts(
             make_matrix(),
+            rating_records=make_rating_matrix(),
             presentation_salt="a" * 32,
             **self.matrix_kwargs,
         )
         second_blind, second_key = create_blind_artifacts(
             make_matrix(),
+            rating_records=make_rating_matrix(),
             presentation_salt="a" * 32,
             **self.matrix_kwargs,
         )
@@ -267,6 +301,8 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
                         "generate-blind",
                         "--input",
                         str(Path(directory) / "missing.jsonl"),
+                        "--rating-input",
+                        str(Path(directory) / "missing-rating.jsonl"),
                         "--blind-output",
                         str(output),
                         "--key-output",
@@ -278,14 +314,50 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
 
     def test_blind_artifact_rejects_incomplete_output(self):
         records = make_matrix()
-        records[0] = dict(records[0], status="timeout", response_text="")
+        records[0] = dict(records[0], status="timeout")
 
         with self.assertRaisesRegex(EvaluationError, "incomplete outputs"):
-            create_blind_artifacts(records, **self.matrix_kwargs)
+            create_blind_artifacts(
+                records,
+                rating_records=make_rating_matrix(),
+                **self.matrix_kwargs,
+            )
+
+    def test_rating_input_is_required_and_kept_out_of_generation_metadata(self):
+        generations = make_matrix()
+        self.assertTrue(all("response_text" not in record for record in generations))
+        self.assertTrue(all("context" not in record for record in generations))
+
+        raw_generation = dict(generations[0], response_text="must not be serialized")
+        with self.assertRaisesRegex(EvaluationError, "raw field 'response_text'"):
+            validate_generation_records(
+                [raw_generation, *generations[1:]],
+                **self.matrix_kwargs,
+            )
+
+        with self.assertRaisesRegex(EvaluationError, "missing rating input"):
+            create_blind_artifacts(
+                generations,
+                rating_records=make_rating_matrix()[:-1],
+                **self.matrix_kwargs,
+            )
+
+        rating_inputs = make_rating_matrix()
+        rating_inputs[0] = dict(rating_inputs[0], prompt="must not be persisted")
+        with self.assertRaisesRegex(EvaluationError, "raw prompt field"):
+            create_blind_artifacts(
+                generations,
+                rating_records=rating_inputs,
+                **self.matrix_kwargs,
+            )
 
     def test_score_maps_blind_preference_and_reports_release_gates(self):
         generations = make_matrix()
-        _, key = create_blind_artifacts(generations, **self.matrix_kwargs)
+        _, key = create_blind_artifacts(
+            generations,
+            rating_records=make_rating_matrix(),
+            **self.matrix_kwargs,
+        )
         ratings = []
         for answer in key:
             preferred_side = "a" if answer["a_condition"] == "initiative" else "b"
@@ -319,7 +391,11 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
 
     def test_ties_count_as_rated_and_half_preference(self):
         generations = make_matrix()
-        _, key = create_blind_artifacts(generations, **self.matrix_kwargs)
+        _, key = create_blind_artifacts(
+            generations,
+            rating_records=make_rating_matrix(),
+            **self.matrix_kwargs,
+        )
         ratings = [
             {
                 "schema_version": 1,
@@ -347,7 +423,11 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
 
     def test_invalid_ratings_fail_the_go_gate(self):
         generations = make_matrix()
-        _, key = create_blind_artifacts(generations, **self.matrix_kwargs)
+        _, key = create_blind_artifacts(
+            generations,
+            rating_records=make_rating_matrix(),
+            **self.matrix_kwargs,
+        )
         ratings = [
             {
                 "schema_version": 1,
@@ -373,7 +453,11 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
 
     def test_baseline_only_agency_and_safety_flags_do_not_fail_initiative_gates(self):
         generations = make_matrix()
-        _, key = create_blind_artifacts(generations, **self.matrix_kwargs)
+        _, key = create_blind_artifacts(
+            generations,
+            rating_records=make_rating_matrix(),
+            **self.matrix_kwargs,
+        )
         ratings = []
         for answer in key:
             assessment = {"a": make_assessment(), "b": make_assessment()}

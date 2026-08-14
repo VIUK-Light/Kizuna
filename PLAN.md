@@ -14,7 +14,7 @@ LLM call.
 - Collect at least 120 valid paired turns and 384 planned outputs.
 - Require preference lower bootstrap bound > 50%, user-agency violations 0,
   safety violations 0, irrelevant events <= 5%, continuity regression <= 2
-  points, p95 latency <= 10 seconds, and zero operational failures.
+  points, p95 latency regression <= 10%, and zero operational failures.
 - Keep initiative default-OFF until the complete evidence and human rating
   report are available.
 
@@ -23,7 +23,8 @@ LLM call.
 1. Keep the current PR sequence linear; do not open a second overlapping PR.
 2. Verify persistence, parser, prompt, and runtime identity seams.
 3. Run an isolated iori canary with the exact trusted VIUK Story GGUF.
-4. Run the formal local matrix only after iori produces real completed records.
+4. Validate both the metadata JSONL and protected local rating-input JSONL;
+   run the formal local matrix only after iori produces real completed records.
 5. Request explicit authorization before any NAGI/Google API run because Story
    fixtures and prompts would leave the device.
 6. Publish the evidence and update the release decision; the user merges.

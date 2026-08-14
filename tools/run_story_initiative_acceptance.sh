@@ -1,6 +1,7 @@
 #!/bin/zsh
 
 set -euo pipefail
+umask 077
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 ARTIFACT_DIR="${KIZUNA_ACCEPTANCE_ARTIFACT_DIR:-$(mktemp -d /private/tmp/kizuna-story-acceptance.XXXXXX)}"
@@ -18,11 +19,13 @@ esac
 STORAGE_ROOT="$ARTIFACT_DIR/storage"
 DERIVED_DATA="$ARTIFACT_DIR/derived-data"
 GENERATION_OUTPUT="$ARTIFACT_DIR/generations.jsonl"
+RATING_OUTPUT="$ARTIFACT_DIR/rating-input.jsonl"
 FIXTURE_COPY="$ARTIFACT_DIR/story_initiative_scenarios.json"
 FIXED_USER_HOME="$ARTIFACT_DIR/user-home"
 
 report_artifacts() {
     echo "generation records: $GENERATION_OUTPUT"
+    echo "private rating input: $RATING_OUTPUT"
     echo "isolated Kizuna storage: $STORAGE_ROOT"
 }
 trap report_artifacts EXIT
@@ -104,6 +107,7 @@ export KIZUNA_RUN_STORY_ACCEPTANCE=1
 export KIZUNA_ACCEPTANCE_STORAGE_ROOT="$STORAGE_ROOT"
 export KIZUNA_ACCEPTANCE_FIXTURE="$FIXTURE_COPY"
 export KIZUNA_ACCEPTANCE_OUTPUT="$GENERATION_OUTPUT"
+export KIZUNA_ACCEPTANCE_RATING_OUTPUT="$RATING_OUTPUT"
 
 cd "$PROJECT_ROOT"
 
@@ -145,6 +149,7 @@ set_xctest_environment KIZUNA_RUN_STORY_ACCEPTANCE "1"
 set_xctest_environment KIZUNA_ACCEPTANCE_STORAGE_ROOT "$STORAGE_ROOT"
 set_xctest_environment KIZUNA_ACCEPTANCE_FIXTURE "$FIXTURE_COPY"
 set_xctest_environment KIZUNA_ACCEPTANCE_OUTPUT "$GENERATION_OUTPUT"
+set_xctest_environment KIZUNA_ACCEPTANCE_RATING_OUTPUT "$RATING_OUTPUT"
 set_xctest_environment CFFIXED_USER_HOME "$FIXED_USER_HOME"
 
 if [[ -n "${KIZUNA_ACCEPTANCE_TURN_TIMEOUT_SECONDS:-}" ]]; then
@@ -162,4 +167,6 @@ xcodebuild -quiet test-without-building \
     -only-testing:KizunaAITests/StoryInitiativeAcceptanceRunnerTests/testStoryInitiativeAcceptanceMatrix \
     -parallel-testing-enabled NO
 
-python3 tools/story_initiative_eval.py validate --input "$GENERATION_OUTPUT"
+python3 tools/story_initiative_eval.py validate \
+    --input "$GENERATION_OUTPUT" \
+    --rating-input "$RATING_OUTPUT"

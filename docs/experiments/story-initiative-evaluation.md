@@ -3,11 +3,13 @@
 This is the release gate for the experiment introduced by PR #259. It is a
 local, reproducible evaluation only. The evaluator and blind scorer never
 call an LLM or upload story content; the opt-in app-path runner does call the
-configured local/API model and writes only hashed prompt metadata plus local
-generation results. The response text and synthetic fixture context are retained
-only in the external, local evaluation artifact so a human can rate paired
-outputs; the runner rejects output paths under the repository and never uses
-the user data store. Do not commit or upload that JSONL. The
+configured local/API model. It writes two separate external artifacts:
+`generations.jsonl` contains only hashed prompt/input metadata, status, timing,
+and runtime identity; `rating-input.jsonl` contains the synthetic fixture
+context and visible response text needed for local human rating. Both files
+are created with mode `0600`, the runner rejects output paths under the
+repository, and neither path uses the user's normal data store. Do not commit
+or upload either JSONL. The
 evaluation does not add a Story screen, add an event state machine, or turn
 the feature on for ordinary users.
 
@@ -86,10 +88,15 @@ pair:
 }
 ~~~
 
-The persisted generation record has this shape. `prompt_sha256` covers the
-exact system/user prompt observed by the app-path trace; raw prompt text is
-never serialized. The evaluator also requires runtime identity metadata so a
-successful record cannot claim an unverified model or provider.
+This input envelope is used to compute `pair_input_sha256`; it is not written
+to `generations.jsonl`. The same envelope is retained only in the protected
+`rating-input.jsonl` artifact for the human-rating step.
+
+The persisted generation metadata record has this shape. `prompt_sha256` covers
+the exact system/user prompt observed by the app-path trace; raw prompt text,
+fixture context, and visible response text are never serialized here. The
+evaluator also requires runtime identity metadata so a successful record cannot
+claim an unverified model or provider.
 
 ~~~json
 {
@@ -110,12 +117,6 @@ successful record cannot claim an unverified model or provider.
   },
   "condition": "baseline",
   "status": "completed",
-  "response_text": "ナギ: まだ港の灯りが見えている。",
-  "state_update": null,
-  "context": {
-    "user_message": "...",
-    "scene": {"location": "港", "mood": "quiet"}
-  },
   "canary": {
     "initiative_enabled": false,
     "activation_source": "none"
@@ -135,17 +136,12 @@ successful record cannot claim an unverified model or provider.
 }
 ~~~
 
-state_update is either null or the parsed hidden STATE_UPDATE object
-accepted by the existing Story parser. The evaluator does not trust it as a
-quality label; the human rater judges the visible reply and the app's
-existing safety/state rules remain authoritative.
-
 status is one of completed, timeout, error, empty, blocked, or cancelled. A
-failed output is retained in the generation JSONL with its status and timing;
-it is never silently dropped. response_text may be empty only for a failed
-status, and failed records must not contain state_update. The validator accepts
-the record shape so the operational failure is visible, but blind generation
-rejects any matrix containing a non-completed output.
+failed output is retained in the generation metadata JSONL with its status and
+timing; it is never silently dropped. The validator accepts failed metadata so
+the operational failure is visible, but blind generation rejects any matrix
+containing a non-completed output. The paired raw response is kept only in the
+private rating-input artifact below.
 
 `runtime.provider`, `runtime.backend`, and the filename-only
 `runtime.model_identity` identify the app path and artifact used without
@@ -225,12 +221,44 @@ Required invariants:
 
 - Every matrix slot has exactly one baseline and one initiative record.
 - The two records in a pair have the same pair_input_sha256.
-- completed response_text is non-empty and
-  latency_ms.turn_end_to_end is finite and non-negative.
+- The separate rating-input record for every completed generation has a
+  non-empty response_text and the baseline/initiative contexts match.
+- latency_ms.turn_end_to_end is finite and non-negative.
 - pair_id is derived from language, model, scenario, and seed.
 - A failed generation is retained as an operational failure, not treated as a
   missing or skipped response. It prevents blind artifact creation and fails
   the final operational gate.
+
+## Private rating-input artifact
+
+`rating-input.jsonl` is a separate, local-only file for the human-rating step.
+It is not the generation metadata contract and must not be committed, uploaded,
+or sent to an external model. It contains the fixture context and visible
+response text, but never the system prompt, user-role prompt assembled by the
+app, `STATE_UPDATE`, filesystem path, or API credential. Its records are
+joined to generation metadata only by `pair_id` and `condition`:
+
+~~~json
+{
+  "schema_version": 1,
+  "record_type": "rating_input",
+  "pair_id": "ja-iori-story-01-1",
+  "condition": "baseline",
+  "status": "completed",
+  "context": {
+    "user_message": "...",
+    "scene": {"location": "港", "mood": "quiet"}
+  },
+  "response_text": "ナギ: まだ港の灯りが見えている。"
+}
+~~~
+
+The runner initializes both JSONL files before the matrix starts and appends
+one generation record plus one matching rating-input record per completed or
+failed turn. A failed turn keeps an empty `response_text` in the private file;
+the generation status still prevents blind-artifact creation. The validator
+requires an exact one-to-one match, equal paired contexts, and no raw prompt
+fields in the rating-input record.
 
 ## Blind rating contract
 
@@ -328,11 +356,12 @@ then prevents blind generation and GO scoring. The LM Studio
 `google/gemma-4-e2b` bundle is useful for exploratory checks but is not the
 macOS Kizuna iori artifact and must not be used for the formal gate.
 
-Validate a complete local generation matrix:
+Validate a complete local generation matrix and its private rating input:
 
 ~~~sh
 python3 tools/story_initiative_eval.py validate \
-  --input /path/to/generations.jsonl
+  --input /path/to/generations.jsonl \
+  --rating-input /path/to/rating-input.jsonl
 ~~~
 
 Create the blinded file and keep its answer key private:
@@ -340,6 +369,7 @@ Create the blinded file and keep its answer key private:
 ~~~sh
 python3 tools/story_initiative_eval.py generate-blind \
   --input /path/to/generations.jsonl \
+  --rating-input /path/to/rating-input.jsonl \
   --blind-output /path/to/blind.jsonl \
   --key-output /path/to/private-key.jsonl
 ~~~
