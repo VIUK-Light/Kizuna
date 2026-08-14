@@ -5122,6 +5122,9 @@ final class KizunaAITests: XCTestCase {
         } catch {
             XCTFail("corrupt data should be exportable: \(error)")
         }
+        XCTAssertThrowsError(try store.exportPersistedThreadsJSON())
+        XCTAssertThrowsError(try store.exportPersistedThreadsText())
+        XCTAssertFalse(store.deleteAllThreads())
 
         XCTAssertTrue(store.discardCorruptPersistedThreads())
         XCTAssertEqual(defaults.data(forKey: "persona.threads.v1.corrupt-backup"), raw)
@@ -5177,6 +5180,111 @@ final class KizunaAITests: XCTestCase {
         let second = PersonaChatStore(defaults: defaults)
         XCTAssertEqual(second.threads.count, 1)
         XCTAssertEqual(second.threads.first?.messages.first?.text, "keep this")
+    }
+
+    @MainActor
+    func testPersonaStoreExportsRawJSONAndHumanReadableHistory() throws {
+        let suiteName = "KizunaAITests.PersonaExport.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profileID = UUID()
+        let characterID = UUID()
+        let threadID = UUID()
+        let messageID = UUID()
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let profile = PersonaProfile(
+            id: profileID,
+            name: "保存テスト",
+            age: 24,
+            personality: "落ち着いている",
+            tone: .casual,
+            relation: .friend,
+            freeFormAddendum: "港の近くで暮らしている"
+        )
+        let thread = PersonaThread(
+            id: threadID,
+            personaSnapshot: profile,
+            characterID: characterID,
+            title: "港での会話",
+            messages: [
+                PersonaMessage(
+                    id: messageID,
+                    role: .user,
+                    text: "この記録を残して",
+                    createdAt: date
+                )
+            ],
+            createdAt: date,
+            updatedAt: date
+        )
+        defaults.set(try JSONEncoder().encode([thread]), forKey: "persona.threads.v1")
+
+        let store = PersonaChatStore(defaults: defaults)
+        XCTAssertFalse(store.isPersistenceRecoveryRequired)
+
+        let rawURL = try store.exportRawPersistedThreads()
+        defer { try? FileManager.default.removeItem(at: rawURL) }
+        XCTAssertEqual(try Data(contentsOf: rawURL), defaults.data(forKey: "persona.threads.v1"))
+
+        let jsonURL = try store.exportPersistedThreadsJSON()
+        defer { try? FileManager.default.removeItem(at: jsonURL) }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let document = try decoder.decode(
+            PersonaThreadExportDocument.self,
+            from: Data(contentsOf: jsonURL)
+        )
+        XCTAssertEqual(document.schemaVersion, PersonaThreadExportDocument.currentSchemaVersion)
+        XCTAssertFalse(document.appVersion.isEmpty)
+        XCTAssertEqual(document.threads.count, 1)
+        XCTAssertEqual(document.threads.first?.id, threadID)
+        XCTAssertEqual(document.threads.first?.characterID, characterID)
+        XCTAssertEqual(document.threads.first?.messages.first?.id, messageID)
+        XCTAssertEqual(document.threads.first?.messages.first?.role, .user)
+        XCTAssertEqual(document.threads.first?.messages.first?.text, "この記録を残して")
+        XCTAssertEqual(document.threads.first?.messages.first?.createdAt, date)
+
+        let textURL = try store.exportPersistedThreadsText()
+        defer { try? FileManager.default.removeItem(at: textURL) }
+        let readableText = try String(contentsOf: textURL, encoding: .utf8)
+        XCTAssertTrue(readableText.contains(threadID.uuidString))
+        XCTAssertTrue(readableText.contains(characterID.uuidString))
+        XCTAssertTrue(readableText.contains("role: user"))
+        XCTAssertTrue(readableText.contains("この記録を残して"))
+        XCTAssertTrue(readableText.contains("personaSnapshot.name: 保存テスト"))
+    }
+
+    @MainActor
+    func testPersonaStoreDeletesAllValidHistoryAndKeepsAnEmptyPersistedState() throws {
+        let suiteName = "KizunaAITests.PersonaDeleteAll.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = PersonaChatStore(defaults: defaults)
+        let profile = PersonaProfile(
+            name: "削除テスト",
+            personality: "calm",
+            tone: .calm,
+            relation: .friend
+        )
+        guard let thread = store.createThread(with: profile) else {
+            return XCTFail("valid persistence should allow thread creation")
+        }
+        XCTAssertTrue(store.appendMessage(
+            PersonaMessage(role: .user, text: "delete me"),
+            toThread: thread.id
+        ))
+
+        XCTAssertTrue(store.deleteAllThreads())
+        XCTAssertTrue(store.threads.isEmpty)
+        XCTAssertNil(store.activeThreadID)
+        XCTAssertFalse(store.isPersistenceRecoveryRequired)
+        XCTAssertEqual(
+            defaults.data(forKey: "persona.threads.v1"),
+            try JSONEncoder().encode([PersonaThread]())
+        )
+        XCTAssertNil(defaults.object(forKey: "persona.activeThreadID.v1"))
     }
 
     @MainActor

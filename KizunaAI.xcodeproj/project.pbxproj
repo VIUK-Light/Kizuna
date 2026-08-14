@@ -53,6 +53,7 @@
 		797B71C3CFD48A11BA1DA3C4 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; platformFilters = (ios, ); productRef = 28CBD9BDFFE99D154131DA85 /* LiteRTLM */; };
 		7A008B57837C3BB36B3D5BAC /* CharacterLibrarySeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F704141DA8C5E0FCA2CBBEF /* CharacterLibrarySeed.swift */; };
 		7E43E57EAADECA6F88093220 /* SafetyProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16690F37F0845E53F9952C23 /* SafetyProtocols.swift */; };
+		8033E3E01EF69A10043BF93B /* KizunaPersonaDataManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1D29D51F93E121A39E0BAB2 /* KizunaPersonaDataManagementView.swift */; };
 		82055619396F81169DBD67A8 /* KizunaLaunchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5537883EB3A9D9BA38FB400 /* KizunaLaunchView.swift */; };
 		84E2BB3BA295D977ABF0DCF3 /* KizunaRuntimeCompatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38C38E45DF917A9188C23AAC /* KizunaRuntimeCompatibility.swift */; };
 		84F3582F967CA23F11C0173E /* PromptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 496320007DB1F65A5462A0A2 /* PromptBuilder.swift */; };
@@ -224,6 +225,7 @@
 		DBEDCA0076A343951F227050 /* LiteRT-LM */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "LiteRT-LM"; path = "ThirdParty/LiteRT-LM"; sourceTree = SOURCE_ROOT; };
 		DDFE920681402504D9239D4F /* StorySceneImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySceneImageView.swift; sourceTree = "<group>"; };
 		DFDAC715FA5ECBCDEE5C1F24 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		E1D29D51F93E121A39E0BAB2 /* KizunaPersonaDataManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaPersonaDataManagementView.swift; sourceTree = "<group>"; };
 		E422AA1452C576610E41D436 /* VIUKKizunaWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VIUKKizunaWorkspaceView.swift; sourceTree = "<group>"; };
 		E675C1D433A2840AB2461CFD /* MemoryRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryRepository.swift; sourceTree = "<group>"; };
 		E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIExecutionModes.swift; sourceTree = "<group>"; };
@@ -359,6 +361,7 @@
 				C40196698BCD7CAB2D603972 /* KizunaLanguage.swift */,
 				F5537883EB3A9D9BA38FB400 /* KizunaLaunchView.swift */,
 				7AF6B261A0A887E41A390BC7 /* KizunaMyPageView.swift */,
+				E1D29D51F93E121A39E0BAB2 /* KizunaPersonaDataManagementView.swift */,
 				2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */,
 				C611D89D7CAC7F09D41C0D9A /* KizunaUICompatibility.swift */,
 				78CFFCEC0FA3CC44BDDA2C99 /* KizunaUserProfile.swift */,
@@ -796,6 +799,7 @@
 				242EDCC10810B6E59A09B3AF /* KizunaLanguage.swift in Sources */,
 				82055619396F81169DBD67A8 /* KizunaLaunchView.swift in Sources */,
 				55FF5DBC8D045FDFEF161569 /* KizunaMyPageView.swift in Sources */,
+				8033E3E01EF69A10043BF93B /* KizunaPersonaDataManagementView.swift in Sources */,
 				84E2BB3BA295D977ABF0DCF3 /* KizunaRuntimeCompatibility.swift in Sources */,
 				1646F9BF705069B3CABED43D /* KizunaSettingsView.swift in Sources */,
 				75BA6E7CBE0835A208713ED6 /* KizunaUICompatibility.swift in Sources */,
