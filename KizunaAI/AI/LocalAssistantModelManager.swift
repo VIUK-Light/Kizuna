@@ -840,8 +840,17 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         environmentRefreshTask?.cancel()
         environmentRefreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            let refreshTransferID = self.activeTransferID
+            let wasDownloading = self.isDownloading
             let stateRead = await Self.readPersistedDownloadState(at: self.downloadStateURL)
             guard !Task.isCancelled else { return }
+            // A download may start, finish, or be cancelled while the
+            // external-volume read is suspended. Do not apply that stale
+            // snapshot to a newer transfer generation.
+            guard self.activeTransferID == refreshTransferID,
+                  self.isDownloading == wasDownloading else {
+                return
+            }
 
             switch stateRead {
             case .missing:

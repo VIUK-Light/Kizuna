@@ -105,6 +105,11 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
             environmentKey: "KIZUNA_ACCEPTANCE_RATING_OUTPUT",
             projectRootURL: projectRootURL
         )
+        guard outputURL != ratingOutputURL else {
+            throw StoryAcceptanceRunnerError.invalidOutputPath(
+                "KIZUNA_ACCEPTANCE_OUTPUT and KIZUNA_ACCEPTANCE_RATING_OUTPUT must differ."
+            )
+        }
         try await Self.initializeJSONLOutput(at: outputURL)
         try await Self.initializeJSONLOutput(at: ratingOutputURL)
 
@@ -266,20 +271,66 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 try await Task.sleep(nanoseconds: 250_000_000)
             }
 
-            if createdService.phase == .thinking {
+            if createdService.phase == .thinking,
+               let sentUserMessageID {
                 failureCode = "runner_timeout"
                 createdService.cancel()
                 status = .timeout
-                for _ in 0..<20 where createdService.phase == .thinking {
+                var terminalCheckpointPersisted = false
+                for _ in 0..<20 {
+                    try Task.checkCancellation()
+                    let candidate: StorySession?
+                    do {
+                        candidate = try await LocalJSONStorySessionRepository()
+                            .fetchSessions(storyWorldId: entitiesForTurn.world.id)
+                            .first(where: { candidate in
+                                guard candidate.id == entitiesForTurn.session.id,
+                                      let checkpoint = candidate.latestTurnCheckpoint,
+                                      checkpoint.userMessageID == sentUserMessageID else {
+                                    return false
+                                }
+                                return checkpoint.status != .pending
+                            })
+                    } catch {
+                        NSLog(
+                            "[StoryAcceptance] pair=%@ cancelled checkpoint read failed: %@",
+                            pairID,
+                            error.localizedDescription
+                        )
+                        failureCode = "cancel_cleanup_read_failed"
+                        break
+                    }
+                    if let candidate {
+                        persistedSession = candidate
+                        terminalCheckpointPersisted = true
+                        break
+                    }
                     try await Task.sleep(nanoseconds: 250_000_000)
+                }
+                if !terminalCheckpointPersisted {
+                    failureCode = "cancel_cleanup_not_persisted"
                 }
             }
 
             let sessionRepository = LocalJSONStorySessionRepository()
-            persistedSession = try? await sessionRepository
-                .fetchSessions(storyWorldId: entitiesForTurn.world.id)
-                .first(where: { $0.id == entitiesForTurn.session.id })
+            if persistedSession == nil {
+                do {
+                    persistedSession = try await sessionRepository
+                        .fetchSessions(storyWorldId: entitiesForTurn.world.id)
+                        .first(where: { $0.id == entitiesForTurn.session.id })
+                } catch {
+                    NSLog(
+                        "[StoryAcceptance] pair=%@ session reload failed: %@",
+                        pairID,
+                        error.localizedDescription
+                    )
+                    failureCode = failureCode ?? "session_reload_failed"
+                }
+            }
             trace = traceBox.value
+            let normalizedTraceModelIdentity = trace.flatMap {
+                Self.sanitizedModelIdentity($0.modelIdentity)
+            }
             modelLatencyMilliseconds = trace?.modelLatencyMilliseconds ?? 0
 
             let checkpoint = persistedSession?.latestTurnCheckpoint
@@ -298,16 +349,15 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 // the runner is cleaning up. The record must expose that the
                 // operation exceeded the runner's bounded wait.
                 failureCode = failureCode ?? "runner_timeout"
-            } else if let trace,
-                      trace.modelIdentity != nil,
+            } else if normalizedTraceModelIdentity != nil,
                       committed,
                       !responseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 status = .completed
                 failureCode = nil
-            } else if let trace,
+            } else if trace != nil,
                       committed,
                       !responseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      trace.modelIdentity == nil {
+                      normalizedTraceModelIdentity == nil {
                 // A persisted runtime notice is not a model generation. Do
                 // not let an API-key error or local-runtime failure become a
                 // completed blind-evaluation sample.
@@ -477,9 +527,10 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
         let modelIdentityObserved: Bool
         let provider: String
         if let trace {
-            modelIdentity = Self.sanitizedModelIdentity(trace.modelIdentity)
+            let normalizedModelIdentity = Self.sanitizedModelIdentity(trace.modelIdentity)
+            modelIdentity = normalizedModelIdentity
                 ?? "unobserved-runtime"
-            modelIdentityObserved = trace.modelIdentity != nil
+            modelIdentityObserved = normalizedModelIdentity != nil
             provider = model == .b31 ? "google-generative-language-api" : "local-story-runtime"
         } else if model == .e4b {
             modelIdentity = "unobserved-local-runtime"
@@ -499,7 +550,9 @@ final class StoryInitiativeAcceptanceRunnerTests: XCTestCase {
                 backend: trace?.backend ?? service?.latestRuntimeNotice?.backendName ?? "not-observed",
                 modelIdentity: modelIdentity,
                 modelIdentityObserved: modelIdentityObserved,
-                modelSHA256: environment["KIZUNA_IORI_MODEL_SHA256"],
+                modelSHA256: model == .e4b
+                    ? environment["KIZUNA_IORI_MODEL_SHA256"]
+                    : nil,
                 promptObserved: trace != nil,
                 effectiveSeed: trace?.effectiveSeed,
                 seedMode: trace?.seedMode,

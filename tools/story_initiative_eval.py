@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
 import re
 import secrets
@@ -44,6 +45,9 @@ VIOLATION_KEYS = (
     "safety_hard_violation",
     "irrelevant_event",
     "continuity_error",
+)
+FORBIDDEN_RATING_KEYS = frozenset(
+    {"prompt", "system_prompt", "user_prompt", "state_update"}
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 PRESENTATION_SALT_PATTERN = re.compile(r"^[0-9a-f]{32}$")
@@ -77,11 +81,29 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def write_jsonl(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
+    file_descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+        os.fchmod(handle.fileno(), 0o600)
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
             handle.write("\n")
-    path.chmod(0o600)
+
+
+def validate_no_forbidden_rating_keys(value: Any, *, path: str = "record") -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in FORBIDDEN_RATING_KEYS:
+                raise EvaluationError(
+                    f"rating input must not contain raw prompt field {key!r} at {path}"
+                )
+            validate_no_forbidden_rating_keys(child, path=f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            validate_no_forbidden_rating_keys(child, path=f"{path}[{index}]")
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -443,11 +465,7 @@ def validate_rating_input_records(
                 raise EvaluationError("schema_version must be 1")
             if record.get("record_type") != "rating_input":
                 raise EvaluationError("record_type must be rating_input")
-            for forbidden_key in ("prompt", "system_prompt", "user_prompt", "state_update"):
-                if forbidden_key in record:
-                    raise EvaluationError(
-                        f"rating input must not contain raw prompt field {forbidden_key!r}"
-                    )
+            validate_no_forbidden_rating_keys(record)
             pair_id = record.get("pair_id")
             condition = record.get("condition")
             if not isinstance(pair_id, str) or not pair_id.strip():

@@ -60,7 +60,7 @@ cleanup_runtime_processes() {
     if [[ "$display_derived_data" == /private/* ]]; then
         display_derived_data="${display_derived_data#/private}"
     fi
-    for pid in $(owned_server_pids); do
+    while IFS= read -r pid; do
         [[ -n "$pid" ]] || continue
         command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
         case "$command" in
@@ -68,17 +68,17 @@ cleanup_runtime_processes() {
                 kill -TERM "$pid" 2>/dev/null || true
                 ;;
         esac
-    done
+    done < <(owned_server_pids)
 
     for _ in {1..20}; do
         [[ -z "$(owned_server_pids)" ]] && return
         sleep 0.1
     done
 
-    for pid in $(owned_server_pids); do
+    while IFS= read -r pid; do
         [[ -n "$pid" ]] || continue
         kill -KILL "$pid" 2>/dev/null || true
-    done
+    done < <(owned_server_pids)
 }
 
 trap 'cleanup_runtime_processes; report_artifacts' EXIT

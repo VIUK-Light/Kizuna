@@ -1153,12 +1153,12 @@ final class LocalAssistantRuntimeBridge {
             lastBundledServerLaunchErrorMessage = diagnostic.detailedMessage
             bundledServerSession = nil
 
-            // process.run() が成功した後のready失敗は、ポート競合ではなく
-            // server実行ファイル・モデル・引数・ランタイムの問題である。
-            // 同じ条件のままポートだけを変えて再試行すると、診断を隠しながら
-            // 最大16回のタイムアウトを発生させるため、起動済みプロセスでは
-            // ここで終了する。process.run() 自体の失敗だけは上のcontinueで
-            // 次の空きポート候補を試す。
+            // 空きポート確認と子プロセスのbindにはTOCTOUがある。
+            // 明確なbind競合だけは次の候補へ進み、モデル・引数・runtimeの
+            // readiness失敗は診断を保ったまま終了する。
+            if isBundledServerPortConflict(in: message) {
+                continue
+            }
             return nil
         }
 
@@ -1189,6 +1189,12 @@ final class LocalAssistantRuntimeBridge {
                 bind(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
             }
         }
+    }
+
+    private func isBundledServerPortConflict(in message: String) -> Bool {
+        let lowercased = message.lowercased()
+        return lowercased.contains("eaddrinuse")
+            || lowercased.contains("address already in use")
     }
 
     private func waitForBundledServerReady(
@@ -2126,7 +2132,8 @@ final class BundledServerLogAggregator {
                 parameters: parameters,
                 stage: .supportBrief,
                 startedAt: Date(),
-                initialMessages: []
+                initialMessages: [],
+                seedOverride: parameters.seed
             )
             return await withCheckedContinuation { continuation in
                 queue.async {

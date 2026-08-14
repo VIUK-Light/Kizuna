@@ -16,6 +16,7 @@ from story_initiative_eval import (  # noqa: E402
     main,
     score_evaluation,
     validate_generation_records,
+    write_jsonl,
 )
 
 
@@ -350,6 +351,35 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
                 rating_records=rating_inputs,
                 **self.matrix_kwargs,
             )
+
+    def test_rating_input_rejects_nested_raw_prompt_fields(self):
+        generations = make_matrix()
+        rating_inputs = make_rating_matrix()
+        rating_inputs[0] = dict(
+            rating_inputs[0],
+            context={
+                "scene": [
+                    {"metadata": {"notes": [{"state_update": "hidden"}]}}
+                ]
+            },
+        )
+
+        with self.assertRaisesRegex(EvaluationError, "raw prompt field 'state_update'"):
+            create_blind_artifacts(
+                generations,
+                rating_records=rating_inputs,
+                **self.matrix_kwargs,
+            )
+
+    def test_write_jsonl_is_private_before_first_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private.jsonl"
+            write_jsonl(path, [{"secret": "local-only"}])
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+            path.chmod(0o644)
+            write_jsonl(path, [{"secret": "local-only-again"}])
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_score_maps_blind_preference_and_reports_release_gates(self):
         generations = make_matrix()

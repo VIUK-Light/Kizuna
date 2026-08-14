@@ -49,18 +49,25 @@ if ! command -v dyld_info >/dev/null 2>&1; then
 fi
 
 while IFS= read -r -d '' artifact; do
+  dependency_list="$(mktemp -t kizuna-dyld-info)"
+  if ! dyld_info -dependents "$artifact" > "$dependency_list" 2>/dev/null; then
+    rm -f "$dependency_list"
+    echo "dyld_info failed for $artifact" >&2
+    exit 1
+  fi
   while IFS= read -r dependency; do
     [[ -z "$dependency" ]] && continue
     dependency_name="${dependency##*/}"
     if [[ ! -e "$RUNTIME_DIR/$dependency_name" ]]; then
+      rm -f "$dependency_list"
       echo "missing @rpath dependency for $(basename "$artifact"): $dependency_name" >&2
       exit 1
     fi
   done < <(
-    dyld_info -dependents "$artifact" 2>/dev/null \
-      | sed -n -E 's/^[[:space:]]*@rpath\/([^[:space:]]+).*$/\1/p' \
+    sed -n -E 's/^[[:space:]]*@rpath\/([^[:space:]]+).*$/\1/p' "$dependency_list" \
       | sort -u
   )
+  rm -f "$dependency_list"
 done < <(
   find "$RUNTIME_DIR" -maxdepth 1 -type f \( -name 'llama-cli' -o -name 'llama-server' -o -name '*.dylib' \) -print0
 )
