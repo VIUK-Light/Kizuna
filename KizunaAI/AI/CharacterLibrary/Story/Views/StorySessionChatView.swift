@@ -645,6 +645,24 @@ private struct StorySessionChatBody: View {
             // background self-check finishes, without duplicating input.
             _ = vm.retryRuntimeNotice(notice)
         }
+        .confirmationDialog(
+            storyCopy("中断した発言を破棄しますか？", "Discard the interrupted message?"),
+            isPresented: $isShowingInterruptedDiscardConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(
+                storyCopy("この発言を破棄", "Discard this message"),
+                role: .destructive
+            ) {
+                vm.discardInterruptedTurn()
+            }
+            Button(storyCopy("キャンセル", "Cancel"), role: .cancel) { }
+        } message: {
+            Text(storyCopy(
+                "未完了の発言と生成待ち状態を履歴から取り除きます。",
+                "The incomplete message and its pending generation state will be removed from this story."
+            ))
+        }
     }
 
     /// Auxiliary memory-retry restoration is useful but not required to read
@@ -778,24 +796,6 @@ private struct StorySessionChatBody: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("story.interrupted-turn")
             .transition(accessibilityReduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
-            .confirmationDialog(
-                storyCopy("中断した発言を破棄しますか？", "Discard the interrupted message?"),
-                isPresented: $isShowingInterruptedDiscardConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button(
-                    storyCopy("この発言を破棄", "Discard this message"),
-                    role: .destructive
-                ) {
-                    vm.discardInterruptedTurn()
-                }
-                Button(storyCopy("キャンセル", "Cancel"), role: .cancel) { }
-            } message: {
-                Text(storyCopy(
-                    "未完了の発言と生成待ち状態を履歴から取り除きます。",
-                    "The incomplete message and its pending generation state will be removed from this story."
-                ))
-            }
             .id("story.interrupted-turn-\(checkpoint.turnID.uuidString)")
         }
     }

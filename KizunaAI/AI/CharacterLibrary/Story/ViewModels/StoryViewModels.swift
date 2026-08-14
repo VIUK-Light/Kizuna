@@ -1557,6 +1557,7 @@ final class StorySessionViewModel: ObservableObject {
     private var debugRequestPollingTask: Task<Void, Never>?
     private var sendPreparationTask: Task<Void, Never>?
     private var sendPreparationID: UUID?
+    private var interruptedRecoveryPreparationID: UUID?
     private var restAcknowledgementTask: Task<Void, Never>?
     private var restAcknowledgementID: UUID?
 
@@ -1780,7 +1781,21 @@ final class StorySessionViewModel: ObservableObject {
         guard !isHandlingInterruptedTurn,
               let message = interruptedTurnMessage else { return false }
         interruptedTurnRecoveryError = nil
-        return enqueueSend(message.text, existingUserMessageID: message.id)
+        isHandlingInterruptedTurn = true
+        let accepted = enqueueSend(
+            message.text,
+            existingUserMessageID: message.id,
+            isInterruptedRecovery: true
+        )
+        guard accepted else {
+            isHandlingInterruptedTurn = false
+            interruptedTurnRecoveryError = KizunaCopy.text(
+                japanese: "いま別の処理を実行中です。少し待ってからもう一度お試しください。",
+                english: "Another operation is in progress. Wait a moment and try again."
+            )
+            return false
+        }
+        return true
     }
 
     /// Removes only the incomplete turn after a CAS against the snapshot that
@@ -1822,7 +1837,11 @@ final class StorySessionViewModel: ObservableObject {
     /// carries the existing user-message ID to StorySessionService, which makes
     /// the user append idempotent even when the stored error card is retried.
     @discardableResult
-    private func enqueueSend(_ userText: String, existingUserMessageID: UUID?) -> Bool {
+    private func enqueueSend(
+        _ userText: String,
+        existingUserMessageID: UUID?,
+        isInterruptedRecovery: Bool = false
+    ) -> Bool {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               service.phase != .thinking,
@@ -1832,12 +1851,20 @@ final class StorySessionViewModel: ObservableObject {
         // 次のターンを開始して新しい発言を上書きする。送信前に最新状態を一度だけ読み直す。
         let preparationID = UUID()
         sendPreparationID = preparationID
+        if isInterruptedRecovery {
+            interruptedRecoveryPreparationID = preparationID
+        }
         sendPreparationTask = Task { [weak self] in
             guard let self else { return }
             defer {
                 if self.sendPreparationID == preparationID {
                     self.sendPreparationTask = nil
                     self.sendPreparationID = nil
+                }
+                if isInterruptedRecovery,
+                   self.interruptedRecoveryPreparationID == preparationID {
+                    self.interruptedRecoveryPreparationID = nil
+                    self.isHandlingInterruptedTurn = false
                 }
             }
             guard !Task.isCancelled, self.sendPreparationID == preparationID else { return }
@@ -1847,7 +1874,7 @@ final class StorySessionViewModel: ObservableObject {
             guard !Task.isCancelled,
                   self.sendPreparationID == preparationID,
                   self.service.phase != .thinking else { return }
-            self.service.send(
+            let startedUserMessageID = self.service.send(
                 trimmed,
                 session: self.session,
                 world: self.world,
@@ -1855,6 +1882,13 @@ final class StorySessionViewModel: ObservableObject {
                 generationModel: self.generationModel,
                 existingUserMessageID: existingUserMessageID
             )
+            if isInterruptedRecovery, startedUserMessageID == nil {
+                self.interruptedTurnRecoveryError = KizunaCopy.text(
+                    japanese: "再試行を開始できませんでした。保存待ちの処理が終わってから、もう一度お試しください。",
+                    english: "The retry could not start. Try again after the pending save finishes."
+                )
+                return
+            }
 
             // Service 内で session/scene が永続化されるので、こちらは UI 更新のため
             // 軽くポーリングで再取得する (将来 Combine pipeline 化)。
@@ -1979,6 +2013,10 @@ final class StorySessionViewModel: ObservableObject {
         sendPreparationID = nil
         sendPreparationTask?.cancel()
         sendPreparationTask = nil
+        if interruptedRecoveryPreparationID != nil {
+            interruptedRecoveryPreparationID = nil
+            isHandlingInterruptedTurn = false
+        }
         restAcknowledgementID = nil
         restAcknowledgementTask?.cancel()
         restAcknowledgementTask = nil

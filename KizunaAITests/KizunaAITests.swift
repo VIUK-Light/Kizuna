@@ -3115,6 +3115,49 @@ final class KizunaAITests: XCTestCase {
         XCTAssertFalse(persisted.messages.contains { $0.id == assistant.id })
     }
 
+    func testStorySessionRepositoryDoesNotDiscardPendingTurn() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let session = StorySession(id: UUID(), storyWorldId: worldID)
+        try LocalJSONStoreTransaction.save(
+            [session],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        let userMessage = StoryMessage(author: .user, text: "進行中の発言を消さない")
+        let turnID = UUID()
+        let pending = try await repository.beginTurn(
+            session: session,
+            userMessage: userMessage,
+            turnID: turnID,
+            attempt: 1
+        )
+
+        do {
+            _ = try await repository.discardInterruptedTurn(
+                sessionID: session.id,
+                turnID: turnID,
+                attempt: 1,
+                expectedRevision: pending.effectivePersistenceRevision
+            )
+            XCTFail("a pending turn must not be discarded")
+        } catch let error as StoryTurnPersistenceError {
+            XCTAssertEqual(error, .turnNotPending)
+        }
+
+        let persisted = try XCTUnwrap(
+            try LocalJSONStoreTransaction.load(
+                StorySession.self,
+                fileName: "story_sessions.json",
+                baseURL: storageURL
+            ).first
+        )
+        XCTAssertEqual(persisted.latestTurnCheckpoint?.status, .pending)
+        XCTAssertTrue(persisted.messages.contains { $0.id == userMessage.id })
+    }
+
     func testStorySessionRepositoryDoesNotInterruptRegisteredOwner() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
