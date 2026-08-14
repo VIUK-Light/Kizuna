@@ -29,7 +29,9 @@ struct PersonaChatView: View {
     @State private var compactShowsChat = false
     @State private var storyHistoryItems: [StoryHistoryItem] = []
     @State private var storyHistoryLoadError: String?
-    @State private var personaRecoveryExportURL: URL?
+    @State private var personaRecoveryExportItem: KizunaPersonaExportShareItem?
+    @State private var pendingPersonaRecoveryCleanupURLs: [URL] = []
+    @State private var personaRecoveryCleanupWarningMessage: String?
     @State private var personaRecoveryErrorMessage: String?
     @State private var isShowingPersonaRecoveryResetConfirmation = false
     /// SwiftUIが履歴ロードの世代を管理する。シートの再表示や画面破棄時に
@@ -66,6 +68,10 @@ struct PersonaChatView: View {
             if store.isPersistenceRecoveryRequired {
                 personaRecoveryBanner
                 Divider()
+            } else if personaRecoveryExportItem != nil
+                        || personaRecoveryCleanupWarningMessage != nil {
+                personaRecoveryPostResetBanner
+                Divider()
             }
             if horizontalSizeClass == .compact {
                 if compactShowsChat, store.activeThread != nil {
@@ -85,6 +91,12 @@ struct PersonaChatView: View {
             }
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
+        .onAppear {
+            retryPendingPersonaRecoveryCleanup()
+        }
+        .onDisappear {
+            retryPendingPersonaRecoveryCleanup()
+        }
         .sheet(isPresented: $showConfig) {
             PersonaConfigView()
                 .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 680)
@@ -262,8 +274,8 @@ struct PersonaChatView: View {
         } message: {
             Text(
                 KizunaCopy.text(
-                    japanese: "先にバックアップを書き出してください。リセットすると、読み込めなかったPersona履歴は新しい空状態に置き換わります。",
-                    english: "Export a backup first. Resetting replaces the unreadable Persona history with a new empty state."
+                    japanese: "リセット前にバックアップを書き出します。失敗した場合はリセットしません。読み込めなかったPersona履歴は新しい空状態に置き換わります。",
+                    english: "A backup is exported before resetting. If that fails, the reset is cancelled. Unreadable Persona history is replaced with a new empty state."
                 )
             )
         }
@@ -309,6 +321,17 @@ struct PersonaChatView: View {
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
+            if let personaRecoveryCleanupWarningMessage {
+                Label {
+                    Text(personaRecoveryCleanupWarningMessage)
+                        .font(.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                }
+                .foregroundStyle(.orange)
+            }
+
             // Keep recovery actions vertically stacked so Japanese labels and
             // larger Dynamic Type sizes never squeeze three controls into a
             // single compact-width row.
@@ -324,8 +347,11 @@ struct PersonaChatView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
 
-                if let personaRecoveryExportURL {
-                    ShareLink(item: personaRecoveryExportURL) {
+                if let personaRecoveryExportItem {
+                    ShareLink(
+                        item: personaRecoveryExportItem,
+                        preview: SharePreview(personaRecoveryExportItem.fileName)
+                    ) {
                         Label(
                             KizunaCopy.text(japanese: "共有／保存", english: "Share / Save"),
                             systemImage: "square.and.arrow.up"
@@ -353,9 +379,66 @@ struct PersonaChatView: View {
         .accessibilityElement(children: .contain)
     }
 
+    private var personaRecoveryPostResetBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let personaRecoveryExportItem {
+                Label {
+                    Text(
+                        KizunaCopy.text(
+                            japanese: "復旧前のバックアップを共有・保存できます。",
+                            english: "The pre-recovery backup is available to share or save."
+                        )
+                    )
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+
+                ShareLink(
+                    item: personaRecoveryExportItem,
+                    preview: SharePreview(personaRecoveryExportItem.fileName)
+                ) {
+                    Label(
+                        KizunaCopy.text(japanese: "共有／保存", english: "Share / Save"),
+                        systemImage: "square.and.arrow.up"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
+
+            if let personaRecoveryCleanupWarningMessage {
+                Label {
+                    Text(personaRecoveryCleanupWarningMessage)
+                        .font(.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                }
+                .foregroundStyle(.orange)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            personaRecoveryCleanupWarningMessage == nil
+                ? Color.green.opacity(0.08)
+                : Color.orange.opacity(0.10)
+        )
+        .accessibilityElement(children: .contain)
+    }
+
     private func exportPersonaRecoveryData() {
         do {
-            personaRecoveryExportURL = try store.exportCorruptPersistedThreads()
+            let url = try store.exportCorruptPersistedThreads()
+            let shareItem = try loadPersonaRecoveryExportItem(from: url)
+            if !removePersonaRecoveryExportFile(at: url) {
+                rememberPersonaRecoveryCleanupURL(url)
+            }
+            personaRecoveryExportItem = shareItem
             personaRecoveryErrorMessage = nil
         } catch {
             personaRecoveryErrorMessage = error.localizedDescription
@@ -363,15 +446,87 @@ struct PersonaChatView: View {
     }
 
     private func resetPersonaRecoveryState() {
-        guard store.discardCorruptPersistedThreads() else {
-            personaRecoveryErrorMessage = KizunaCopy.text(
-                japanese: "復旧状態を変更できませんでした。画面を再度開いて確認してください。",
-                english: "The recovery state could not be changed. Reopen this screen and try again."
-            )
+        do {
+            let backupURL = try store.exportCorruptPersistedThreads()
+            let backupItem = try loadPersonaRecoveryExportItem(from: backupURL)
+            // Keep the in-memory backup available even when the destructive
+            // recovery operation reports that it could not be applied.
+            personaRecoveryExportItem = backupItem
+            guard store.discardCorruptPersistedThreads() else {
+                if !removePersonaRecoveryExportFile(at: backupURL) {
+                    rememberPersonaRecoveryCleanupURL(backupURL)
+                }
+                personaRecoveryErrorMessage = KizunaCopy.text(
+                    japanese: "復旧状態を変更できませんでした。画面を再度開いて確認してください。",
+                    english: "The recovery state could not be changed. Reopen this screen and try again."
+                )
+                return
+            }
+            if !removePersonaRecoveryExportFile(at: backupURL) {
+                rememberPersonaRecoveryCleanupURL(backupURL)
+            }
+            personaRecoveryExportItem = backupItem
+            personaRecoveryErrorMessage = nil
+        } catch {
+            personaRecoveryErrorMessage = error.localizedDescription
             return
         }
-        personaRecoveryExportURL = nil
-        personaRecoveryErrorMessage = nil
+    }
+
+    @discardableResult
+    private func removePersonaRecoveryExportFile(at url: URL) -> Bool {
+        do {
+            try FileManager.default.removeItem(at: url)
+            return true
+        } catch {
+            let nsError = error as NSError
+            guard nsError.domain != NSCocoaErrorDomain
+                    || nsError.code != NSFileNoSuchFileError else {
+                return true
+            }
+            NSLog(
+                "[PersonaChatView] failed to remove recovery export file: %@",
+                "\(url.path): \(error.localizedDescription)"
+            )
+            return false
+        }
+    }
+
+    private func loadPersonaRecoveryExportItem(from url: URL) throws -> KizunaPersonaExportShareItem {
+        do {
+            return try KizunaPersonaExportShareItem(fileURL: url)
+        } catch {
+            if !removePersonaRecoveryExportFile(at: url) {
+                rememberPersonaRecoveryCleanupURL(url)
+            }
+            throw error
+        }
+    }
+
+    private func rememberPersonaRecoveryCleanupURL(
+        _ url: URL,
+        retryImmediately: Bool = true
+    ) {
+        guard !pendingPersonaRecoveryCleanupURLs.contains(url) else { return }
+        pendingPersonaRecoveryCleanupURLs.append(url)
+        personaRecoveryCleanupWarningMessage = KizunaCopy.text(
+            japanese: "バックアップは共有できますが、一時ファイルの削除に失敗しました。再試行します。",
+            english: "The backup is available to share, but its temporary file could not be removed. It will be retried."
+        )
+        if retryImmediately {
+            retryPendingPersonaRecoveryCleanup()
+        }
+    }
+
+    private func retryPendingPersonaRecoveryCleanup() {
+        let pendingURLs = pendingPersonaRecoveryCleanupURLs
+        pendingPersonaRecoveryCleanupURLs.removeAll()
+        for url in pendingURLs where !removePersonaRecoveryExportFile(at: url) {
+            rememberPersonaRecoveryCleanupURL(url, retryImmediately: false)
+        }
+        if pendingPersonaRecoveryCleanupURLs.isEmpty {
+            personaRecoveryCleanupWarningMessage = nil
+        }
     }
 
     private var compactChat: some View {

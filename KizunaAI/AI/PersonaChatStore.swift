@@ -177,6 +177,7 @@ final class PersonaChatStore: ObservableObject {
     /// 本番は `shared` から同じUserDefaults.standardを使う。
     init(defaults: UserDefaults = UserDefaults.standard) {
         self.defaults = defaults
+        KizunaPersonaExportFileLifecycle.cleanupOrphanedFiles()
         load()
         guard !didFailToLoadPersistedThreads else {
             NSLog("[PersonaChatStore] thread data was not decoded; preserving the source file")
@@ -420,9 +421,17 @@ final class PersonaChatStore: ObservableObject {
         prefix: String,
         fileExtension: String
     ) throws -> URL {
+        let exportDirectory = KizunaPersonaExportFileLifecycle.directoryURL
+        try FileManager.default.createDirectory(
+            at: exportDirectory,
+            withIntermediateDirectories: true
+        )
         let fileName = "\(prefix)-\(UUID().uuidString).\(fileExtension)"
-        let exportURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-        try data.write(to: exportURL, options: .atomic)
+        let exportURL = exportDirectory.appendingPathComponent(fileName)
+        try data.write(
+            to: exportURL,
+            options: [.atomic, .completeFileProtection]
+        )
         return exportURL
     }
 
