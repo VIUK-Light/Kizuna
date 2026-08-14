@@ -111,18 +111,18 @@ struct StoryCoverView: View {
                     Spacer(minLength: 0)
 
                     Text(world.localizedForCurrentLanguage.genre.localizedDisplayName)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(.caption, weight: .bold))
                         .foregroundStyle(.white.opacity(0.76))
                         .textCase(.uppercase)
 
                     Text(world.localizedForCurrentLanguage.title)
-                        .font(.system(size: 20, weight: .heavy, design: .rounded))
+                        .font(.system(.title3, design: .rounded, weight: .heavy))
                         .foregroundStyle(.white)
                         .lineLimit(3)
 
                     if !world.localizedForCurrentLanguage.mood.isEmpty {
                         Text(world.localizedForCurrentLanguage.mood)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(.caption, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(2)
                     }
