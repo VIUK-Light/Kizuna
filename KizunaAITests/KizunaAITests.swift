@@ -656,13 +656,17 @@ final class KizunaAITests: XCTestCase {
         incoming.importance = 0.8
 
         var values = [existing]
+        let mergeStartedAt = Date()
         LocalJSONStoryMemoryRepository.mergeMemory(incoming, &values)
+        let mergeFinishedAt = Date()
 
         let merged = values[0]
         XCTAssertEqual(values.count, 1)
         XCTAssertEqual(merged.importance, 0.8)
         XCTAssertEqual(merged.sourceTurnMetadata, [:])
-        XCTAssertNotNil(merged.lastUsedAt)
+        XCTAssertGreaterThanOrEqual(merged.lastUsedAt ?? .distantPast, mergeStartedAt)
+        XCTAssertLessThanOrEqual(merged.lastUsedAt ?? .distantFuture, mergeFinishedAt)
+        XCTAssertGreaterThan(merged.lastUsedAt ?? .distantPast, existing.lastUsedAt ?? .distantPast)
     }
 
     func testSourceLessStoryMemoryDoesNotMergeWithAttributedRecord() {
