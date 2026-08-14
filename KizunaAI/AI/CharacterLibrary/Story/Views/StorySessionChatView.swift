@@ -487,6 +487,7 @@ private struct StorySessionChatBody: View {
                                 if service.phase == .thinking {
                                     streamingPreview
                                 }
+                                bootstrapWarningCard
                                 // 最新のキャラクター発話の後ろに、会話の一部として表示する。
                                 restSuggestionCard
                                 safetySupportCard
@@ -515,6 +516,18 @@ private struct StorySessionChatBody: View {
                                 }
                             } else {
                                 unreadStoryMessageCount += 1
+                            }
+                        }
+                        .onChange(of: vm.bootstrapWarning) { _, warning in
+                            guard warning != nil, isStoryChatNearLatest else { return }
+                            Task { @MainActor in
+                                // Wait for the conditional card to enter the
+                                // LazyVStack before scrolling to its stable ID.
+                                await Task.yield()
+                                guard vm.bootstrapWarning != nil else { return }
+                                withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
+                                    proxy.scrollTo("story.bootstrap-warning", anchor: .bottom)
+                                }
                             }
                         }
                         .task(id: vm.session.id) {
@@ -632,6 +645,63 @@ private struct StorySessionChatBody: View {
         }
     }
 
+    /// Auxiliary memory-retry restoration is useful but not required to read
+    /// or continue the conversation. Keep the warning in the chat surface so
+    /// bootstrap can remain non-blocking without silently hiding a persistence
+    /// problem.
+    @ViewBuilder
+    private var bootstrapWarningCard: some View {
+        if let warning = vm.bootstrapWarning {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "info.circle.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.orange.opacity(0.9))
+                        .frame(width: 18)
+                    Text(warning)
+                        .font(.footnote)
+                        .foregroundStyle(storyText.opacity(0.78))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                HStack {
+                    Spacer(minLength: 0)
+                    if vm.isRestoringBootstrapWarning {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel(storyCopy("再試行中", "Retrying"))
+                    }
+                    Button {
+                        Task { @MainActor in
+                            await vm.retryBootstrapMemoryRestore()
+                        }
+                    } label: {
+                        Label(
+                            storyCopy("再試行", "Retry"),
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(minHeight: 44)
+                    .disabled(vm.isRestoringBootstrapWarning)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.orange.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.orange.opacity(0.16), lineWidth: 1)
+            )
+            .accessibilityElement(children: .contain)
+            .id("story.bootstrap-warning")
+        }
+    }
+
     // 休憩提案はアラートではなく、会話画面内に表示するカード。
     // 「?」はこのカードの説明だけを開く。
     @ViewBuilder
@@ -718,8 +788,12 @@ private struct StorySessionChatBody: View {
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.orange.opacity(0.9))
                     .frame(width: 18)
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(storyCopy("モデル状態", "Model status"))
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(
+                        notice.retryAction.isAuxiliarySave
+                            ? storyCopy("保存状態", "Save status")
+                            : storyCopy("モデル状態", "Model status")
+                    )
                         .font(.caption.weight(.heavy))
                         .foregroundStyle(storyMuted)
                     Text(notice.text)
@@ -727,13 +801,18 @@ private struct StorySessionChatBody: View {
                         .foregroundStyle(storyText.opacity(0.78))
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
-                        Button(storyCopy("もう一度試す", "Try again")) {
+                        Button(
+                            notice.retryAction.isAuxiliarySave
+                                ? storyCopy("保存を再試行", "Retry save")
+                                : storyCopy("もう一度試す", "Try again")
+                        ) {
                             _ = vm.retryRuntimeNotice(notice)
                         }
                         .font(.body.weight(.bold))
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .frame(minHeight: 44)
+                        .disabled(service.isRetryingAuxiliarySave)
                         if notice.backend == .local {
                             Button {
                                 vm.generationModel = .b31
@@ -1311,6 +1390,7 @@ private struct StorySessionChatBody: View {
                         .fill(Color.white.opacity(0.08))
                 )
                 .onSubmit(submit)
+                .disabled(service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
             Button {
                 if service.phase == .thinking {
                     vm.cancelGeneration()
@@ -1334,6 +1414,7 @@ private struct StorySessionChatBody: View {
             .buttonStyle(.plain)
             .disabled(service.phase != .thinking && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityLabel(service.phase == .thinking ? storyCopy("生成を停止", "Stop generating") : storyCopy("送信", "Send"))
+            .disabled(service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
         }
         .padding(14)
         .background(storyPanel)

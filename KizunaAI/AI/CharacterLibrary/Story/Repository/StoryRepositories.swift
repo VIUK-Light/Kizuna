@@ -128,7 +128,8 @@ protocol StorySessionRepository: AnyObject {
         session: StorySession,
         scene: StoryScene,
         turnID: UUID,
-        assistantMessageIDs: [UUID]
+        assistantMessageIDs: [UUID],
+        memoryRetries: [StoryMemoryRetry]
     ) async throws -> StorySession
     func finishTurn(
         sessionID: UUID,
@@ -161,10 +162,34 @@ protocol StoryLorebookRepository: AnyObject {
 /// 物語内メモリー。全体のCharacterMemoryとは保存先・取得条件を分ける。
 protocol StoryMemoryRepository: AnyObject {
     func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory]
+    /// Fetch only memories created in the specified StorySession. Legacy
+    /// records without a session ID are intentionally excluded from prompts.
+    func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory]
     func saveMemory(_ memory: StoryMemory) async throws
+    /// Remove only the cancelled turn provenance. A merged memory created by
+    /// another turn must remain available.
+    func removeSourceTurnIds(_ sourceTurnIds: Set<UUID>) async throws
     func deleteMemory(id: UUID) async throws
     func deleteAllMemories(storyWorldId: UUID) async throws
     func markUsed(ids: [UUID]) async throws
+}
+
+/// Auxiliary memory saves are durable work items, not another user turn.
+/// Keeping this queue behind its own repository lets a newly created
+/// StorySessionService restore retries after an app restart without coupling
+/// the queue to StoryMemory's read/query semantics.
+protocol StoryMemoryRetryRepository: AnyObject {
+    func fetchRetries() async throws -> [StoryMemoryRetry]
+    func saveRetry(_ retry: StoryMemoryRetry) async throws
+    func deleteRetry(turnID: UUID) async throws
+}
+
+/// Optional capability for local repositories that can commit the memory
+/// payload and its session-liveness check under one shared file lock. Keeping
+/// this separate from the queue repository preserves lightweight test/future
+/// cloud implementations that only need the basic retry CRUD API.
+protocol StoryMemoryRetryMemoryTransaction: AnyObject {
+    func saveMemoryRetryRecords(_ retry: StoryMemoryRetry) async throws -> StoryMemoryRetry?
 }
 
 // MARK: - Local JSON impls
@@ -259,7 +284,14 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
             .sorted { $0.createdAt < $1.createdAt }
     }
     func saveScene(_ scene: StoryScene) async throws {
+        let storageURL = self.storageURL
         try await store.mutate { scenes in
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: scene.id,
+                recordKind: .scene,
+                tombstones: tombstones
+            )
             var next = scene
             next.updatedAt = Date()
             // active キャラ数の上限を遵守
@@ -278,7 +310,14 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         let trimmedKey = imageKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else { return false }
         var repaired = false
+        let storageURL = self.storageURL
         try await store.mutate { scenes in
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: sceneId,
+                recordKind: .scene,
+                tombstones: tombstones
+            )
             guard let index = scenes.firstIndex(where: {
                 $0.id == sceneId && $0.storyWorldId == storyWorldId
             }), scenes[index].imageKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
@@ -296,7 +335,14 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
     /// 元シーンのcreatedAt/updatedAtやactiveキャラの内容はそのまま保持する。
     /// 通常の編集経路（saveScene）はupdatedAtを更新するため、移行では使わない。
     func moveScene(id: UUID, toStoryWorldId: UUID) async throws {
+        let storageURL = self.storageURL
         try await store.mutate { scenes in
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: id,
+                recordKind: .scene,
+                tombstones: tombstones
+            )
             guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
             scenes[index].storyWorldId = toStoryWorldId
             scenes[index].persistenceRevision = scenes[index].effectivePersistenceRevision + 1
@@ -304,10 +350,29 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
     }
 
     func deleteScene(id: UUID) async throws {
-        try await store.delete(matching: { $0.id == id })
+        let storageURL = self.storageURL
+        try await store.mutate { scenes in
+            try StoryTurnJournal.recordDeletionUnlocked(
+                recordID: id,
+                recordKind: .scene,
+                baseURL: storageURL
+            )
+            scenes.removeAll { $0.id == id }
+        }
     }
     func deleteAllScenes(storyWorldId: UUID) async throws {
-        try await store.delete(matching: { $0.storyWorldId == storyWorldId })
+        let storageURL = self.storageURL
+        try await store.mutate { scenes in
+            let deletedIDs = scenes
+                .filter { $0.storyWorldId == storyWorldId }
+                .map(\.id)
+            try StoryTurnJournal.recordDeletionsUnlocked(
+                recordIDs: deletedIDs,
+                recordKind: .scene,
+                baseURL: storageURL
+            )
+            scenes.removeAll { $0.storyWorldId == storyWorldId }
+        }
     }
 }
 
@@ -362,6 +427,12 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: session.id,
+                    recordKind: .session,
+                    tombstones: tombstones
+                )
                 var sessions = try LocalJSONStoreTransaction.load(
                     StorySession.self,
                     fileName: "story_sessions.json",
@@ -406,6 +477,12 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         return try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: session.id,
+                recordKind: .session,
+                tombstones: tombstones
+            )
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
                 fileName: "story_sessions.json",
@@ -504,12 +581,24 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         session: StorySession,
         scene: StoryScene,
         turnID: UUID,
-        assistantMessageIDs: [UUID]
+        assistantMessageIDs: [UUID],
+        memoryRetries: [StoryMemoryRetry]
     ) async throws -> StorySession {
         let storageURL = self.storageURL
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         return try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: session.id,
+                recordKind: .session,
+                tombstones: tombstones
+            )
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: scene.id,
+                recordKind: .scene,
+                tombstones: tombstones
+            )
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
                 fileName: "story_sessions.json",
@@ -542,6 +631,21 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 throw StoryTurnPersistenceError.turnNotPending
             }
             if checkpoint.status == .committed {
+                if !memoryRetries.isEmpty {
+                    // A prior attempt may have committed both records before
+                    // reporting an error. Keep the exact auxiliary payload
+                    // journaled until the caller finishes or queues it.
+                    try StoryTurnJournal.prepareUnlocked(
+                        StoryTurnJournalEntry(
+                            turnID: turnID,
+                            session: current,
+                            scene: currentScene,
+                            memoryRetries: memoryRetries
+                        ),
+                        baseURL: storageURL,
+                        tombstones: tombstones
+                    )
+                }
                 return current
             }
             guard checkpoint.status == .pending else {
@@ -612,23 +716,31 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             // ジャーナルを先に置いてから2つのスナップショットを更新する。
             // 途中終了時は次回のfetchで両方を再適用する。
             try StoryTurnJournal.prepareUnlocked(
-                StoryTurnJournalEntry(turnID: turnID, session: committed, scene: committedScene),
-                baseURL: storageURL
+                StoryTurnJournalEntry(
+                    turnID: turnID,
+                    session: committed,
+                    scene: committedScene,
+                    memoryRetries: memoryRetries
+                ),
+                baseURL: storageURL,
+                tombstones: tombstones
             )
             sessions[sessionIndex] = committed
             scenes[sceneIndex] = committedScene
             try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
             try LocalJSONStoreTransaction.save(scenes, fileName: "story_scenes.json", baseURL: storageURL)
-            do {
-                try StoryTurnJournal.removeUnlocked(turnID: turnID, baseURL: storageURL)
-            } catch {
-                // Session/Sceneが確定した後のjournal削除失敗は、ターン自体の
-                // 失敗ではない。次回recoveryで同じ確定snapshotを再適用する。
-                NSLog(
-                    "[StoryTurnJournal] committed turn cleanup deferred turn=%@ error=%@",
-                    turnID.uuidString,
-                    error.localizedDescription
-                )
+            if memoryRetries.isEmpty {
+                do {
+                    try StoryTurnJournal.removeUnlocked(turnID: turnID, baseURL: storageURL)
+                } catch {
+                    // Session/Sceneが確定した後のjournal削除失敗は、ターン自体の
+                    // 失敗ではない。次回recoveryで同じ確定snapshotを再適用する。
+                    NSLog(
+                        "[StoryTurnJournal] committed turn cleanup deferred turn=%@ error=%@",
+                        turnID.uuidString,
+                        error.localizedDescription
+                    )
+                }
             }
             return committed
             }
@@ -647,6 +759,12 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+            try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                recordID: sessionID,
+                recordKind: .session,
+                tombstones: tombstones
+            )
             var sessions = try LocalJSONStoreTransaction.load(
                 StorySession.self,
                 fileName: "story_sessions.json",
@@ -725,6 +843,12 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: id,
+                    recordKind: .session,
+                    tombstones: tombstones
+                )
                 var sessions = try LocalJSONStoreTransaction.load(
                     StorySession.self,
                     fileName: "story_sessions.json",
@@ -744,7 +868,15 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
     }
 
     func deleteSession(id: UUID) async throws {
-        try await store.delete(matching: { $0.id == id })
+        let storageURL = self.storageURL
+        try await store.mutate { sessions in
+            try StoryTurnJournal.recordDeletionUnlocked(
+                recordID: id,
+                recordKind: .session,
+                baseURL: storageURL
+            )
+            sessions.removeAll { $0.id == id }
+        }
     }
 }
 
@@ -860,9 +992,27 @@ final class LocalJSONStoryLorebookRepository: StoryLorebookRepository {
 // MARK: - Local Story Memory implementation
 
 /// 現在はローカルJSON。将来クラウド同期へ差し替えてもService側の呼び出しは変えない。
-final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
-    private let store = LocalJSONStore<StoryMemory>(fileName: "story_memories.json")
-    private let perWorldLimit = 120
+final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemoryFileIdentityProviding {
+    private struct MemoryScope: Hashable, Sendable {
+        let storyWorldId: UUID
+        let storySessionId: UUID?
+    }
+
+    private let store: LocalJSONStore<StoryMemory>
+    let storageURL: URL
+    let fileName: String
+    private let perScopeLimit: Int
+
+    init(
+        fileName: String = "story_memories.json",
+        storageURL: URL = KizunaDataMigration.characterLibraryURL,
+        perScopeLimit: Int = 120
+    ) {
+        self.perScopeLimit = max(1, perScopeLimit)
+        self.storageURL = storageURL
+        self.fileName = fileName
+        store = LocalJSONStore<StoryMemory>(fileName: fileName, baseURL: storageURL)
+    }
 
     func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] {
         try await store.loadRecoveringCorruptRecords()
@@ -873,36 +1023,121 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             }
     }
 
-    func saveMemory(_ memory: StoryMemory) async throws {
-        try await store.mutate { all in
-            let normalized = normalize(memory.text)
-            if let index = all.firstIndex(where: {
-                // 同じ本文でもキャラクターごとの記憶は別レコードとして保持する。
-                // world/textだけをキーにすると、別キャラの帰属・カテゴリ・出典が
-                // 最初のレコードへ統合されてしまい、次回のプロンプト選択も壊れる。
-                $0.storyWorldId == memory.storyWorldId
-                    && $0.characterId == memory.characterId
-                    && $0.category == memory.category
-                    && $0.source == memory.source
-                    && normalize($0.text) == normalized
-            }) {
-                var existing = all[index]
-                existing.importance = max(existing.importance, memory.importance)
-                existing.lastUsedAt = Date()
-                all[index] = existing
-            } else {
-                all.append(memory)
+    func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory] {
+        let memories = try await store.loadRecoveringCorruptRecords()
+            .filter { $0.storyWorldId == storyWorldId }
+        return StoryMemory.scoped(to: storySessionId, from: memories)
+            .sorted { lhs, rhs in
+                if lhs.importance != rhs.importance { return lhs.importance > rhs.importance }
+                return (lhs.lastUsedAt ?? lhs.createdAt) > (rhs.lastUsedAt ?? rhs.createdAt)
             }
+    }
 
-            // 物語ごとの上限を設け、古く重要度の低いものから自然に整理する。
-            let grouped = Dictionary(grouping: all, by: { $0.storyWorldId })
-            all = grouped.values.flatMap { values in
-                values.sorted {
-                    if $0.importance != $1.importance { return $0.importance > $1.importance }
-                    return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
-                }.prefix(perWorldLimit)
+    func saveMemory(_ memory: StoryMemory) async throws {
+        let storageURL = self.storageURL
+        let perScopeLimit = self.perScopeLimit
+        try await store.mutate { all in
+            if let sessionID = memory.storySessionId {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: sessionID,
+                    recordKind: .session,
+                    tombstones: tombstones
+                )
             }
+            Self.mergeMemory(
+                memory,
+                &all,
+                perScopeLimit: perScopeLimit
+            )
         }
+    }
+
+    /// Applies one memory save to an already-loaded collection. The regular
+    /// repository and the retry transaction share this implementation so a
+    /// retry cannot silently change dedupe, provenance, or limit behavior.
+    static func mergeMemory(
+        _ memory: StoryMemory,
+        _ all: inout [StoryMemory],
+        perScopeLimit: Int = 120
+    ) {
+        let normalized = Self.normalize(memory.text)
+        var incoming = memory
+        let now = Date()
+        for sourceTurnId in incoming.sourceTurnIds {
+            var metadata = incoming.sourceTurnMetadata[sourceTurnId]
+                ?? StoryMemorySourceMetadata(
+                    importance: incoming.importance,
+                    createdAt: incoming.createdAt,
+                    lastUsedAt: incoming.lastUsedAt
+                )
+            metadata.lastUsedAt = now
+            incoming.sourceTurnMetadata[sourceTurnId] = metadata
+        }
+        if let index = all.firstIndex(where: {
+            // 同じ本文でもキャラクターごとの記憶は別レコードとして保持する。
+            // world/textだけをキーにすると、別キャラの帰属・カテゴリ・出典が
+            // 最初のレコードへ統合されてしまい、次回のプロンプト選択も壊れる。
+            $0.storyWorldId == incoming.storyWorldId
+                && $0.storySessionId == incoming.storySessionId
+                && $0.characterId == incoming.characterId
+                && $0.category == incoming.category
+                && $0.source == incoming.source
+                // A source-less legacy record is not interchangeable with a
+                // record whose identity is tied to one or more turns. Keep
+                // both records so removing provenance cannot delete the
+                // legacy record indirectly.
+                && $0.sourceTurnIds.isEmpty == incoming.sourceTurnIds.isEmpty
+                && Self.normalize($0.text) == normalized
+        }) {
+            var existing = all[index]
+            if incoming.sourceTurnIds.isEmpty {
+                existing.importance = max(existing.importance, incoming.importance)
+                existing.lastUsedAt = now
+                // A legacy/source-less merge still changes the aggregate
+                // values. Keep every surviving provenance entry in sync so a
+                // later recompute cannot restore stale importance or usage
+                // timestamps from old metadata.
+                for sourceTurnID in existing.sourceTurnIds {
+                    var metadata = existing.sourceTurnMetadata[sourceTurnID]
+                        ?? StoryMemorySourceMetadata(
+                            importance: existing.importance,
+                            createdAt: existing.createdAt,
+                            lastUsedAt: existing.lastUsedAt
+                        )
+                    metadata.importance = existing.importance
+                    metadata.lastUsedAt = existing.lastUsedAt
+                    existing.sourceTurnMetadata[sourceTurnID] = metadata
+                }
+                existing.recomputeAggregatesFromSourceMetadata()
+            } else {
+                existing.sourceTurnIds.formUnion(incoming.sourceTurnIds)
+                existing.sourceTurnMetadata.merge(incoming.sourceTurnMetadata) { _, new in new }
+                existing.recomputeAggregatesFromSourceMetadata()
+            }
+            all[index] = existing
+        } else {
+            if !incoming.sourceTurnIds.isEmpty {
+                // New provenance receives a usage timestamp above. Keep
+                // the aggregate fields in sync before the first write;
+                // otherwise a newly-created memory would expose a nil
+                // lastUsedAt until a later merge or cancellation.
+                incoming.recomputeAggregatesFromSourceMetadata()
+            }
+            all.append(incoming)
+        }
+
+        // Sessionごとに上限を設ける。今回の保存対象以外のScopeまで
+        // 切り詰めると、新しいSessionの保存が別Sessionやnilの
+        // レガシー記録を削除してしまうため、対象Scopeだけを整理する。
+        Self.trim(
+            &all,
+            to: [MemoryScope(
+                storyWorldId: incoming.storyWorldId,
+                storySessionId: incoming.storySessionId
+            )],
+            perScopeLimit: max(1, perScopeLimit)
+        )
     }
 
     /// Move a memory without changing its UUID. `saveMemory` intentionally
@@ -911,20 +1146,29 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
     /// This operation keeps the move atomic inside the JSON store and merges
     /// an existing same-text memory in the destination world.
     func moveMemory(_ memory: StoryMemory, to storyWorldId: UUID) async throws {
+        let perScopeLimit = self.perScopeLimit
         try await store.mutate { all in
             guard let sourceIndex = all.firstIndex(where: { $0.id == memory.id }) else { return }
-            let normalized = normalize(memory.text)
+            let normalized = Self.normalize(memory.text)
             if let targetIndex = all.indices.first(where: {
-                $0 != sourceIndex
-                    && all[$0].storyWorldId == storyWorldId
-                    && all[$0].characterId == memory.characterId
+                    $0 != sourceIndex
+                        && all[$0].storyWorldId == storyWorldId
+                        && all[$0].storySessionId == memory.storySessionId
+                        && all[$0].characterId == memory.characterId
                     && all[$0].category == memory.category
                     && all[$0].source == memory.source
-                    && normalize(all[$0].text) == normalized
+                    && all[$0].sourceTurnIds.isEmpty == memory.sourceTurnIds.isEmpty
+                    && Self.normalize(all[$0].text) == normalized
             }) {
                 var target = all[targetIndex]
-                target.importance = max(target.importance, memory.importance)
-                target.lastUsedAt = max(target.lastUsedAt ?? target.createdAt, memory.lastUsedAt ?? memory.createdAt)
+                if memory.sourceTurnIds.isEmpty {
+                    target.importance = max(target.importance, memory.importance)
+                    target.lastUsedAt = max(target.lastUsedAt ?? target.createdAt, memory.lastUsedAt ?? memory.createdAt)
+                } else {
+                    target.sourceTurnIds.formUnion(memory.sourceTurnIds)
+                    target.sourceTurnMetadata.merge(memory.sourceTurnMetadata) { _, new in new }
+                    target.recomputeAggregatesFromSourceMetadata()
+                }
                 all[targetIndex] = target
                 all.remove(at: sourceIndex)
             } else {
@@ -933,12 +1177,39 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
                 all[sourceIndex] = moved
             }
 
-            let grouped = Dictionary(grouping: all, by: { $0.storyWorldId })
-            all = grouped.values.flatMap { values in
-                values.sorted {
-                    if $0.importance != $1.importance { return $0.importance > $1.importance }
-                    return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
-                }.prefix(perWorldLimit)
+            // 移動元で空いた枠と移動先の上限だけを整理する。他のWorldや
+            // Sessionの保持順序・件数には触れない。
+            Self.trim(
+                &all,
+                to: [
+                    MemoryScope(
+                        storyWorldId: memory.storyWorldId,
+                        storySessionId: memory.storySessionId
+                    ),
+                    MemoryScope(
+                        storyWorldId: storyWorldId,
+                        storySessionId: memory.storySessionId
+                    )
+                ],
+                perScopeLimit: perScopeLimit
+            )
+        }
+    }
+
+    func removeSourceTurnIds(_ sourceTurnIds: Set<UUID>) async throws {
+        guard !sourceTurnIds.isEmpty else { return }
+        try await store.mutate { all in
+            for index in all.indices.reversed() {
+                guard !all[index].sourceTurnIds.isDisjoint(with: sourceTurnIds) else { continue }
+                all[index].sourceTurnIds.subtract(sourceTurnIds)
+                for sourceTurnId in sourceTurnIds {
+                    all[index].sourceTurnMetadata.removeValue(forKey: sourceTurnId)
+                }
+                if all[index].sourceTurnIds.isEmpty {
+                    all.remove(at: index)
+                } else {
+                    all[index].recomputeAggregatesFromSourceMetadata()
+                }
             }
         }
     }
@@ -957,15 +1228,232 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
             let now = Date()
             for index in all.indices where ids.contains(all[index].id) {
                 all[index].lastUsedAt = now
+                for sourceTurnId in all[index].sourceTurnIds {
+                    var metadata = all[index].sourceTurnMetadata[sourceTurnId]
+                        ?? StoryMemorySourceMetadata(
+                            importance: all[index].importance,
+                            createdAt: all[index].createdAt,
+                            lastUsedAt: all[index].lastUsedAt
+                        )
+                    metadata.lastUsedAt = now
+                    all[index].sourceTurnMetadata[sourceTurnId] = metadata
+                }
+                all[index].recomputeAggregatesFromSourceMetadata()
             }
         }
     }
 
-    private func normalize(_ text: String) -> String {
+    private static func normalize(_ text: String) -> String {
         text.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    private static func trim(
+        _ all: inout [StoryMemory],
+        to scopes: Set<MemoryScope>,
+        perScopeLimit: Int
+    ) {
+        for scope in scopes {
+            let scoped = all
+                .filter { MemoryScope(storyWorldId: $0.storyWorldId, storySessionId: $0.storySessionId) == scope }
+                .sorted {
+                    if $0.importance != $1.importance { return $0.importance > $1.importance }
+                    return ($0.lastUsedAt ?? $0.createdAt) > ($1.lastUsedAt ?? $1.createdAt)
+                }
+            guard scoped.count > perScopeLimit else { continue }
+            let keptIDs = Set(scoped.prefix(perScopeLimit).map(\.id))
+            all.removeAll {
+                MemoryScope(storyWorldId: $0.storyWorldId, storySessionId: $0.storySessionId) == scope
+                    && !keptIDs.contains($0.id)
+            }
+        }
+    }
+}
+
+/// Coordinates the two memory files with the session tombstone check. The
+/// regular repositories intentionally remain independently replaceable, but a
+/// retry is one logical write: if deletion wins the shared lock, neither
+/// CharacterMemory nor StoryMemory may be recreated for that session.
+private enum LocalJSONStoryMemoryRetryMemoryTransaction {
+    static func save(
+        _ retry: StoryMemoryRetry,
+        storageURL: URL
+    ) throws -> StoryMemoryRetry? {
+        try LocalJSONStoreTransaction.withSharedLock {
+            let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+            let ownedStoryMemories = retry.storyMemories.map { memory -> StoryMemory in
+                var ownedMemory = memory
+                if ownedMemory.storySessionId == nil {
+                    ownedMemory.storySessionId = retry.storySessionID
+                }
+                return ownedMemory
+            }
+
+            // Validate the envelope and every embedded StoryMemory. Legacy
+            // retries may have no envelope ID while still carrying a session
+            // ID in the payload; skipping that case can resurrect memory after
+            // the session was deleted.
+            let sessionIDs = Set(
+                [retry.storySessionID].compactMap { $0 }
+                    + ownedStoryMemories.compactMap(\.storySessionId)
+            )
+            guard sessionIDs.count <= 1 else {
+                // A single retry must never merge memories from multiple
+                // sessions. Keep it durable for diagnosis instead of writing
+                // a cross-session partial result.
+                return retry
+            }
+            if sessionIDs.isEmpty, !ownedStoryMemories.isEmpty {
+                // A world-scoped legacy StoryMemory has no safe owner. It may
+                // not be guessed into whichever Session happens to retry it.
+                return retry
+            }
+            if let sessionID = sessionIDs.first {
+                if tombstones.contains(where: {
+                    $0.recordID == sessionID && $0.recordKind == .session
+                }) {
+                    // The retry belongs to an intentionally deleted session.
+                    // Returning nil lets the service remove the stale retry
+                    // without attempting either memory repository.
+                    return nil
+                }
+
+                let sessions = try LocalJSONStoreTransaction.load(
+                    StorySession.self,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+                guard let session = sessions.first(where: { $0.id == sessionID }) else {
+                    // A retry without a live owner is not safe to apply. This
+                    // also covers a session removed before its tombstone was
+                    // observed by the current process. Keep it durable until
+                    // the owner is restored or an explicit tombstone makes it
+                    // terminal; nil here would make the service delete a
+                    // recoverable retry as if the write had succeeded.
+                    return retry
+                }
+                if let worldID = retry.storyWorldID,
+                   session.storyWorldId != worldID {
+                    // Preserve the retry for diagnosis/recovery, but do not
+                    // write a payload into a different StoryWorld.
+                    return retry
+                }
+                guard ownedStoryMemories.allSatisfy({
+                    $0.storyWorldId == session.storyWorldId
+                }) else {
+                    // The envelope cannot authorize a StoryMemory for another
+                    // World. Keep the complete retry for diagnosis instead of
+                    // writing a partial cross-World result.
+                    return retry
+                }
+            }
+
+            if !retry.characterMemories.isEmpty {
+                var memories = try LocalJSONStoreTransaction.load(
+                    CharacterMemory.self,
+                    fileName: "memories.json",
+                    baseURL: storageURL
+                )
+                for memory in retry.characterMemories {
+                    LocalJSONMemoryRepository.mergeMemory(
+                        memory,
+                        into: &memories
+                    )
+                }
+                try LocalJSONStoreTransaction.save(
+                    memories,
+                    fileName: "memories.json",
+                    baseURL: storageURL
+                )
+            }
+
+            if !ownedStoryMemories.isEmpty {
+                var memories = try LocalJSONStoreTransaction.load(
+                    StoryMemory.self,
+                    fileName: "story_memories.json",
+                    baseURL: storageURL
+                )
+                for memory in ownedStoryMemories {
+                    LocalJSONStoryMemoryRepository.mergeMemory(
+                        memory,
+                        &memories
+                    )
+                }
+                try LocalJSONStoreTransaction.save(
+                    memories,
+                    fileName: "story_memories.json",
+                    baseURL: storageURL
+                )
+            }
+            return nil
+        }
+    }
+}
+
+/// Persists memory-only retry work independently from the conversation and
+/// memory stores. A failed retry must survive view dismissal and app restart,
+/// while a successful retry can remove only its own turnID atomically.
+final class LocalJSONStoryMemoryRetryRepository: StoryMemoryRetryRepository, StoryMemoryRetryMemoryTransaction, LocalJSONStorageIdentityProviding {
+    private let store: LocalJSONStore<StoryMemoryRetry>
+    let storageURL: URL
+
+    init(
+        fileName: String = "story_memory_retries.json",
+        storageURL: URL = KizunaDataMigration.characterLibraryURL
+    ) {
+        self.storageURL = storageURL
+        self.store = LocalJSONStore<StoryMemoryRetry>(
+            fileName: fileName,
+            baseURL: storageURL
+        )
+    }
+
+    func saveMemoryRetryRecords(_ retry: StoryMemoryRetry) async throws -> StoryMemoryRetry? {
+        let storageURL = self.storageURL
+        return try await LocalJSONStoreTransaction.performOnFileIO {
+            try LocalJSONStoryMemoryRetryMemoryTransaction.save(
+                retry,
+                storageURL: storageURL
+            )
+        }
+    }
+
+    func fetchRetries() async throws -> [StoryMemoryRetry] {
+        // LocalJSONStore preserves insertion order. Sorting by UUID changes
+        // the user's oldest-first retry order after an app restart.
+        try await store.loadRecoveringCorruptRecords()
+            .filter { !$0.isCompleted && !$0.isAbandoned }
+    }
+
+    func saveRetry(_ retry: StoryMemoryRetry) async throws {
+        let storageURL = self.storageURL
+        try await store.mutate { retries in
+            let sessionIDs = Set(
+                [retry.storySessionID].compactMap { $0 }
+                    + retry.storyMemories.compactMap(\.storySessionId)
+            )
+            if !sessionIDs.isEmpty {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+                for sessionID in sessionIDs {
+                    try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                        recordID: sessionID,
+                        recordKind: .session,
+                        tombstones: tombstones
+                    )
+                }
+            }
+            if let index = retries.firstIndex(where: { $0.turnID == retry.turnID }) {
+                retries[index] = retry
+            } else {
+                retries.append(retry)
+            }
+        }
+    }
+
+    func deleteRetry(turnID: UUID) async throws {
+        try await store.delete(matching: { $0.turnID == turnID })
     }
 }

@@ -16,16 +16,57 @@ enum LocalJSONStoreError: Error {
 }
 
 enum LocalJSONStoreCoding {
+    private static func encodeDate(_ date: Date, to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        // A JSON number round-trips Date's underlying Double exactly. Using
+        // ISO8601DateFormatter here would discard sub-millisecond precision,
+        // which breaks equality and stable retry ownership after a restart.
+        try container.encode(date.timeIntervalSinceReferenceDate)
+    }
+
+    private static func decodeDate(from decoder: Decoder) throws -> Date {
+        let container = try decoder.singleValueContainer()
+
+        if let timestamp = try? container.decode(Double.self) {
+            return Date(timeIntervalSinceReferenceDate: timestamp)
+        }
+
+        let value = try container.decode(String.self)
+
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: value) {
+            return date
+        }
+
+        // Existing Kizuna JSON used ISO8601 strings. Keep those files readable
+        // while new records use the exact numeric representation above.
+        let legacyFormatter = ISO8601DateFormatter()
+        legacyFormatter.formatOptions = [.withInternetDateTime]
+        if let date = legacyFormatter.date(from: value) {
+            return date
+        }
+
+        throw DecodingError.dataCorruptedError(
+            in: container,
+            debugDescription: "Invalid ISO8601 date: \(value)"
+        )
+    }
+
     nonisolated static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            try encodeDate(date, to: encoder)
+        }
         return encoder
     }
 
     nonisolated static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            try decodeDate(from: decoder)
+        }
         return decoder
     }
 }
@@ -70,7 +111,9 @@ final class LocalJSONStoreFileIOCancellationState: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private var state: State = .queued
+    nonisolated(unsafe) private var state: State = .queued
+
+    nonisolated init() {}
 
     nonisolated func cancel() {
         lock.lock()
