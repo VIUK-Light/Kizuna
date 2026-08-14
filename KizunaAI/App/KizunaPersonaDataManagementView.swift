@@ -6,7 +6,9 @@ import SwiftUI
 struct KizunaPersonaDataManagementView: View {
     @ObservedObject private var store = PersonaChatStore.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var exportedURL: URL?
+    @State private var exportedShareItem: KizunaPersonaExportShareItem?
+    @State private var pendingExportCleanupURLs: [URL] = []
+    @State private var exportCleanupWarningMessage: String?
     @State private var errorMessage: String?
     @State private var statusMessage: String?
     @State private var isShowingDeleteAllConfirmation = false
@@ -77,8 +79,11 @@ struct KizunaPersonaDataManagementView: View {
             ))
         }
         .accessibilityElement(children: .contain)
+        .onAppear {
+            retryPendingExportCleanup()
+        }
         .onDisappear {
-            removeExportedFile()
+            retryPendingExportCleanup()
         }
     }
 
@@ -104,6 +109,10 @@ struct KizunaPersonaDataManagementView: View {
             } else if let statusMessage {
                 Label(statusMessage, systemImage: "checkmark.circle")
                     .foregroundStyle(.secondary)
+            }
+            if let exportCleanupWarningMessage {
+                Label(exportCleanupWarningMessage, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
             }
         } header: {
             Text(KizunaCopy.text(japanese: "状態", english: "Status"))
@@ -146,8 +155,11 @@ struct KizunaPersonaDataManagementView: View {
             .disabled(!canExportDecodedHistory)
             .accessibilityIdentifier("myPage.dataManagement.exportText")
 
-            if let exportedURL {
-                ShareLink(item: exportedURL) {
+            if let exportedShareItem {
+                ShareLink(
+                    item: exportedShareItem,
+                    preview: SharePreview(exportedShareItem.fileName)
+                ) {
                     Label(
                         KizunaCopy.text(japanese: "共有／保存", english: "Share / Save"),
                         systemImage: "square.and.arrow.up"
@@ -213,8 +225,14 @@ struct KizunaPersonaDataManagementView: View {
     private func exportRawData() {
         do {
             let url = try store.exportRawPersistedThreads()
-            replaceExportedURL(with: url)
-            statusMessage = KizunaCopy.text(japanese: "保存データを書き出しました。", english: "Stored data exported.")
+            let shareItem = try loadExportShareItem(from: url)
+            if !removeExportFile(at: url) {
+                rememberExportCleanupURL(url)
+            }
+            exportedShareItem = shareItem
+            statusMessage = pendingExportCleanupURLs.isEmpty
+                ? KizunaCopy.text(japanese: "保存データを書き出しました。", english: "Stored data exported.")
+                : exportCleanupWarningText
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -224,8 +242,14 @@ struct KizunaPersonaDataManagementView: View {
     private func exportJSON() {
         do {
             let url = try store.exportPersistedThreadsJSON()
-            replaceExportedURL(with: url)
-            statusMessage = KizunaCopy.text(japanese: "JSONを書き出しました。", english: "JSON exported.")
+            let shareItem = try loadExportShareItem(from: url)
+            if !removeExportFile(at: url) {
+                rememberExportCleanupURL(url)
+            }
+            exportedShareItem = shareItem
+            statusMessage = pendingExportCleanupURLs.isEmpty
+                ? KizunaCopy.text(japanese: "JSONを書き出しました。", english: "JSON exported.")
+                : exportCleanupWarningText
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -235,8 +259,14 @@ struct KizunaPersonaDataManagementView: View {
     private func exportText() {
         do {
             let url = try store.exportPersistedThreadsText()
-            replaceExportedURL(with: url)
-            statusMessage = KizunaCopy.text(japanese: "テキストを書き出しました。", english: "Text exported.")
+            let shareItem = try loadExportShareItem(from: url)
+            if !removeExportFile(at: url) {
+                rememberExportCleanupURL(url)
+            }
+            exportedShareItem = shareItem
+            statusMessage = pendingExportCleanupURLs.isEmpty
+                ? KizunaCopy.text(japanese: "テキストを書き出しました。", english: "Text exported.")
+                : exportCleanupWarningText
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -251,7 +281,7 @@ struct KizunaPersonaDataManagementView: View {
             )
             return
         }
-        removeExportedFile()
+        exportedShareItem = nil
         statusMessage = KizunaCopy.text(japanese: "Persona会話を削除しました。", english: "Persona conversations deleted.")
     }
 
@@ -259,51 +289,93 @@ struct KizunaPersonaDataManagementView: View {
         do {
             // Keep a user-shareable copy before the destructive reset. The
             // store also retains its internal recovery backup, but the URL is
-            // what lets the user inspect or save the original bytes now.
+            // what lets the user inspect or save the original bytes now. The
+            // share item is materialized before the destructive reset so a
+            // failed reset can leave the current share item untouched.
             let backupURL = try store.exportCorruptPersistedThreads()
+            let backupItem = try loadExportShareItem(from: backupURL)
+            // Keep the backup shareable even when the recovery operation fails.
+            exportedShareItem = backupItem
             guard store.discardCorruptPersistedThreads() else {
-                removeExportFile(at: backupURL)
+                if !removeExportFile(at: backupURL) {
+                    rememberExportCleanupURL(backupURL)
+                }
                 errorMessage = KizunaCopy.text(
                     japanese: "復旧状態を変更できませんでした。画面を開き直してください。",
                     english: "The recovery state could not be changed. Reopen this screen and try again."
                 )
                 return
             }
-            replaceExportedURL(with: backupURL)
+            if !removeExportFile(at: backupURL) {
+                rememberExportCleanupURL(backupURL)
+            }
+            exportedShareItem = backupItem
         } catch {
             errorMessage = error.localizedDescription
             return
         }
-        statusMessage = KizunaCopy.text(japanese: "バックアップ後に履歴をリセットしました。", english: "History was reset after backup.")
+        statusMessage = pendingExportCleanupURLs.isEmpty
+            ? KizunaCopy.text(japanese: "バックアップ後に履歴をリセットしました。", english: "History was reset after backup.")
+            : exportCleanupWarningText
     }
 
-    private func replaceExportedURL(with newURL: URL) {
-        let previousURL = exportedURL
-        if let previousURL, previousURL != newURL {
-            removeExportFile(at: previousURL)
-        }
-        exportedURL = newURL
-    }
-
-    private func removeExportedFile() {
-        guard let exportedURL else { return }
-        removeExportFile(at: exportedURL)
-        self.exportedURL = nil
-    }
-
-    private func removeExportFile(at url: URL) {
+    @discardableResult
+    private func removeExportFile(at url: URL) -> Bool {
         do {
             try FileManager.default.removeItem(at: url)
+            return true
         } catch {
             let nsError = error as NSError
             guard nsError.domain != NSCocoaErrorDomain
                     || nsError.code != NSFileNoSuchFileError else {
-                return
+                return true
             }
             NSLog(
                 "[KizunaPersonaDataManagement] failed to remove export file: %@",
                 "\(url.path): \(error.localizedDescription)"
             )
+            return false
         }
+    }
+
+    private func loadExportShareItem(from url: URL) throws -> KizunaPersonaExportShareItem {
+        do {
+            return try KizunaPersonaExportShareItem(fileURL: url)
+        } catch {
+            if !removeExportFile(at: url) {
+                rememberExportCleanupURL(url)
+            }
+            throw error
+        }
+    }
+
+    private func rememberExportCleanupURL(
+        _ url: URL,
+        retryImmediately: Bool = true
+    ) {
+        guard !pendingExportCleanupURLs.contains(url) else { return }
+        pendingExportCleanupURLs.append(url)
+        exportCleanupWarningMessage = exportCleanupWarningText
+        if retryImmediately {
+            retryPendingExportCleanup()
+        }
+    }
+
+    private func retryPendingExportCleanup() {
+        let pendingURLs = pendingExportCleanupURLs
+        pendingExportCleanupURLs.removeAll()
+        for url in pendingURLs where !removeExportFile(at: url) {
+            rememberExportCleanupURL(url, retryImmediately: false)
+        }
+        if pendingExportCleanupURLs.isEmpty {
+            exportCleanupWarningMessage = nil
+        }
+    }
+
+    private var exportCleanupWarningText: String {
+        KizunaCopy.text(
+            japanese: "書き出しは完了しましたが、一時ファイルの削除に失敗しました。再試行します。",
+            english: "The export completed, but its temporary file could not be removed. It will be retried."
+        )
     }
 }

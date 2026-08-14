@@ -5230,7 +5230,7 @@ final class KizunaAITests: XCTestCase {
 
         let jsonURL = try store.exportPersistedThreadsJSON()
         defer { try? FileManager.default.removeItem(at: jsonURL) }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: rawURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rawURL.path))
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let document = try decoder.decode(
@@ -5249,13 +5249,49 @@ final class KizunaAITests: XCTestCase {
 
         let textURL = try store.exportPersistedThreadsText()
         defer { try? FileManager.default.removeItem(at: textURL) }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: jsonURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rawURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: jsonURL.path))
         let readableText = try String(contentsOf: textURL, encoding: .utf8)
         XCTAssertTrue(readableText.contains(threadID.uuidString))
         XCTAssertTrue(readableText.contains(characterID.uuidString))
         XCTAssertTrue(readableText.contains("role: user"))
         XCTAssertTrue(readableText.contains("この記録を残して"))
         XCTAssertTrue(readableText.contains("personaSnapshot.name: 保存テスト"))
+    }
+
+    func testPersonaExportShareItemOwnsBytesAfterSourceFileIsRemoved() throws {
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Kizuna-Persona-ShareItem-\(UUID().uuidString).json")
+        let expectedData = Data("{\"shared\":true}".utf8)
+        try expectedData.write(to: sourceURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let shareItem = try KizunaPersonaExportShareItem(fileURL: sourceURL)
+        try FileManager.default.removeItem(at: sourceURL)
+
+        XCTAssertEqual(shareItem.data, expectedData)
+        XCTAssertEqual(shareItem.fileName, sourceURL.lastPathComponent)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
+    }
+
+    func testPersonaStoreInitializationRetriesOrphanedExportCleanup() throws {
+        let directoryURL = KizunaPersonaExportFileLifecycle.directoryURL
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        let orphanURL = directoryURL
+            .appendingPathComponent("orphan-\(UUID().uuidString).json")
+        try Data("orphan".utf8).write(to: orphanURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: orphanURL) }
+
+        let suiteName = "KizunaAITests.PersonaExportCleanup.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        _ = PersonaChatStore(defaults: defaults)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphanURL.path))
     }
 
     @MainActor
