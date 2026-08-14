@@ -1328,6 +1328,7 @@ final class StorySessionService: ObservableObject {
         // the presentation/generation boundary, so it may use the translated
         // copy without allowing that copy to leak into StorySession storage.
         let promptWorld = world.localizedForCurrentLanguage
+        let storyInitiativeEnabled = StoryInitiativeFlags.isEnabled(for: generationModel)
 
         if session.currentObjective?.nonEmpty == nil, session.storyState == nil {
             session.currentObjective = scene.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty
@@ -1744,7 +1745,7 @@ final class StorySessionService: ObservableObject {
         let selectedStoryMemories = selectStoryMemories(
             query: effectiveUserText,
             candidates: storyMemoryCandidates,
-            topK: 12
+            topK: 1
         )
         if !selectedStoryMemories.isEmpty {
             try? await storyMemoryRepo.markUsed(ids: selectedStoryMemories.map(\.id))
@@ -1851,7 +1852,8 @@ final class StorySessionService: ObservableObject {
                 storyState: promptStoryState,
                 selectedLorebookEntries: selectedLorebookEntries,
                 selectedStoryMemories: selectedStoryMemories,
-                userCharacterName: userCharacterName
+                userCharacterName: userCharacterName,
+                storyInitiativeEnabled: storyInitiativeEnabled
             )
         } else {
             prompt = promptBuilder.buildLocalRuntimePrompt(
@@ -1864,7 +1866,8 @@ final class StorySessionService: ObservableObject {
                 session: session,
                 storyState: promptStoryState,
                 selectedLorebookEntries: selectedLorebookEntries,
-                userCharacterName: userCharacterName
+                userCharacterName: userCharacterName,
+                storyInitiativeEnabled: storyInitiativeEnabled
             )
         }
         guard isGenerationActive(generationID) else {
@@ -2122,6 +2125,13 @@ final class StorySessionService: ObservableObject {
         var acceptedStructuredProgressUpdate = structuredProgressUpdate
         let modelStatePatchForSafety = modelStatePatch
         let statePatchForSafety = modelStatePatchForSafety ?? structuredProgressUpdate?.storyState
+        // With the initiative canary disabled, a generated reply cannot prove
+        // that it was user-directed. Keep explicit user-requested changes
+        // available as the baseline, but do not accept a model-invented world
+        // change merely because the model wrote it into its own visible text.
+        let stateEvidenceText = storyInitiativeEnabled
+            ? [rawFinal, effectiveUserText]
+            : [effectiveUserText]
         var stateSafetyAction: SafetyAction?
         if let statePatchForSafety {
             if let safetyText = statePatchForSafety.safetyEvaluationText() {
@@ -2303,7 +2313,7 @@ final class StorySessionService: ObservableObject {
             StoryNaturalChangePolicy.acceptedPatch(
                 from: $0,
                 currentState: session.storyState,
-                evidenceText: [rawFinal, effectiveUserText]
+                evidenceText: stateEvidenceText
             )
         }
         let stateAfterAcceptedPatch: StoryState? = {

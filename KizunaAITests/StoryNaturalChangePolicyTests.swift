@@ -2,6 +2,129 @@ import XCTest
 @testable import KizunaAI
 
 final class StoryNaturalChangePolicyTests: XCTestCase {
+    func testStoryInitiativeFlagsAreIndependentAndDefaultOff() {
+        let suiteName = "KizunaStoryInitiativeFlags.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertFalse(StoryInitiativeFlags.isEnabled(for: .b31, defaults: defaults))
+        XCTAssertFalse(StoryInitiativeFlags.isEnabled(for: .e4b, defaults: defaults))
+
+        StoryInitiativeFlags.setEnabled(true, for: .b31, defaults: defaults)
+        XCTAssertTrue(StoryInitiativeFlags.isEnabled(for: .b31, defaults: defaults))
+        XCTAssertFalse(StoryInitiativeFlags.isEnabled(for: .e4b, defaults: defaults))
+
+        StoryInitiativeFlags.setEnabled(true, for: .e4b, defaults: defaults)
+        StoryInitiativeFlags.setEnabled(false, for: .b31, defaults: defaults)
+        XCTAssertFalse(StoryInitiativeFlags.isEnabled(for: .b31, defaults: defaults))
+        XCTAssertTrue(StoryInitiativeFlags.isEnabled(for: .e4b, defaults: defaults))
+    }
+
+    func testNAGISystemPromptDoesNotEmbedCurrentUserMessage() {
+        let world = StoryWorld(id: UUID(), title: "Prompt test")
+        let scene = StoryScene(storyWorldId: world.id)
+        let session = StorySession(storyWorldId: world.id)
+        let userToken = "UNIQUE_CURRENT_USER_INPUT_7F2C"
+
+        let prompt = StoryPromptBuilder().build(
+            world: world,
+            scene: scene,
+            activeCast: [],
+            inactiveCast: [],
+            characterIndex: [:],
+            selectedMemories: [],
+            session: session,
+            recentMessages: [],
+            userInput: userToken,
+            generationModel: .b31,
+            safetyDecision: nil,
+            storyState: StoryState(),
+            storyInitiativeEnabled: true
+        )
+
+        XCTAssertFalse(
+            prompt.contains(userToken),
+            "NAGI receives the current user message through the user-role request"
+        )
+    }
+
+    func testLocalPromptKeepsInitiativeContextWithinByteLimitAndOneStoryMemory() {
+        let world = StoryWorld(
+            id: UUID(),
+            title: "Harbor",
+            worldSetting: "A quiet harbor",
+            storyGoal: "Find the lighthouse key"
+        )
+        let characterID = UUID()
+        let character = CharacterProfile(
+            id: characterID,
+            name: "Nagi",
+            displayName: "Nagi",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            personality: "calm",
+            speakingStyle: "brief",
+            relationshipToUser: "trusted partner",
+            scenario: "find the key before dusk"
+        )
+        let castMember = CastMember(
+            storyWorldId: world.id,
+            characterId: characterID,
+            relationshipToUser: "watchful",
+            isActiveInCurrentScene: true
+        )
+        let scene = StoryScene(
+            storyWorldId: world.id,
+            location: "harbor",
+            timeOfDay: "dusk",
+            mood: "quiet",
+            sceneGoal: "Find the lighthouse key"
+        )
+        let state = StoryState(
+            characterStates: [
+                StoryCharacterState(
+                    characterId: characterID,
+                    characterName: "Nagi",
+                    goal: "protect the key",
+                    relationship: "trust"
+                )
+            ]
+        )
+        let session = StorySession(storyWorldId: world.id)
+        let firstMemory = StoryMemory(
+            storyWorldId: world.id,
+            text: "first-memory",
+            importance: 0.9,
+            storySessionId: session.id
+        )
+        let secondMemory = StoryMemory(
+            storyWorldId: world.id,
+            text: "second-memory",
+            importance: 0.8,
+            storySessionId: session.id
+        )
+
+        let prompt = StoryPromptBuilder().buildLocalRuntimePrompt(
+            world: world,
+            scene: scene,
+            activeCast: [castMember],
+            characterIndex: [characterID: character],
+            selectedMemories: [],
+            selectedStoryMemories: [firstMemory, secondMemory],
+            session: session,
+            storyState: state,
+            selectedLorebookEntries: [],
+            userCharacterName: nil,
+            storyInitiativeEnabled: true
+        )
+
+        XCTAssertLessThanOrEqual(prompt.lengthOfBytes(using: .utf8), 1_250)
+        XCTAssertTrue(prompt.contains("find the key before dusk"))
+        XCTAssertTrue(prompt.contains("protect the key"))
+        XCTAssertTrue(prompt.contains("first-memory"))
+        XCTAssertFalse(prompt.contains("second-memory"))
+    }
+
     func testAcceptsOneEnvironmentChangeGroup() {
         let patch = StoryStatePatch(
             location: "駅前",
