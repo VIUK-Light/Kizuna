@@ -313,6 +313,14 @@ enum LocalAssistantStructuredTurnUpdate: Equatable {
     case toolCallPreview(String)
 }
 
+/// Result of a local model generation. The identity is reported only after
+/// the selected runtime returns usable text, so callers never treat a
+/// configured-but-unused model path as an observed generation identity.
+struct LocalAssistantGenerationResult: Sendable {
+    let text: String?
+    let modelIdentity: String?
+}
+
 private struct BundledServerSession {
     let process: Process
     let port: Int
@@ -1792,18 +1800,18 @@ final class BundledServerLogAggregator {
         seedOverride: UInt32? = nil,
         generationID: UUID? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
-    ) async -> String? {
+    ) async -> LocalAssistantGenerationResult {
         guard let installedModelURL = overrideModelURL ?? LocalAssistantModelManager.shared.installedModelURL else {
-            return nil
+            return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
         }
 
         guard availability(installedModelURL: installedModelURL) == .executable else {
-            return nil
+            return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
         }
 
         let preferredEngine = preferredRuntimeEngine(forModelPath: installedModelURL.path)
         guard hasAvailableRuntimeEngine(preferredEngine) else {
-            return nil
+            return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
         }
 
         let conversationPrompt = runtimeConversationPrompt(for: prompt, contextPrompt: contextPrompt)
@@ -1861,14 +1869,19 @@ final class BundledServerLogAggregator {
                         self.cachedAvailability = .executable
                         self.lastRuntimeError = nil
                         self.lastRuntimeDiagnostic = nil
-                        continuation.resume(returning: text)
+                        continuation.resume(
+                            returning: LocalAssistantGenerationResult(
+                                text: text,
+                                modelIdentity: installedModelURL.path
+                            )
+                        )
                     } else {
                         self.recordGenerationFailure(
                             modelPath: installedModelURL.path,
                             rawMessage: result.errorMessage,
                             terminationStatus: nil
                         )
-                        continuation.resume(returning: nil)
+                        continuation.resume(returning: LocalAssistantGenerationResult(text: nil, modelIdentity: nil))
                     }
                 }
             }
@@ -1892,14 +1905,19 @@ final class BundledServerLogAggregator {
                     self.cachedAvailability = .executable
                     self.lastRuntimeError = nil
                     self.lastRuntimeDiagnostic = nil
-                    continuation.resume(returning: text)
+                    continuation.resume(
+                        returning: LocalAssistantGenerationResult(
+                            text: text,
+                            modelIdentity: installedModelURL.path
+                        )
+                    )
                 } else {
                     self.recordGenerationFailure(
                         modelPath: installedModelURL.path,
                         rawMessage: result.errorMessage,
                         terminationStatus: nil
                     )
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: LocalAssistantGenerationResult(text: nil, modelIdentity: nil))
                 }
             }
         }

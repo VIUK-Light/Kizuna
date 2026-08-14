@@ -1204,7 +1204,7 @@ final class StorySessionService: ObservableObject {
             let manager = LocalAssistantModelManager.shared
             let selectedModelURL = generationModel.installedModelURL ?? manager.installedModelURL
             guard manager.runtimeAvailability == .executable, selectedModelURL != nil else { return nil }
-            raw = await LocalAssistantRuntimeBridge.shared.generateReply(
+            let generation = await LocalAssistantRuntimeBridge.shared.generateReply(
                 prompt: userPrompt,
                 contextPrompt: nil,
                 coachMode: .studio,
@@ -1218,6 +1218,7 @@ final class StorySessionService: ObservableObject {
                 overrideModelURL: selectedModelURL,
                 onUpdate: nil
             )
+            raw = generation.text
         }
         return normalizeRestSuggestion(raw)
     }
@@ -1991,7 +1992,7 @@ final class StorySessionService: ObservableObject {
                 availability: availability,
                 selectedModelURL: availableModelURL
             )
-            let reply = await LocalAssistantRuntimeBridge.shared.generateReply(
+            let generation = await LocalAssistantRuntimeBridge.shared.generateReply(
                 prompt: effectiveUserText,
                 contextPrompt: nil,
                 coachMode: .studio,
@@ -2010,7 +2011,7 @@ final class StorySessionService: ObservableObject {
                     self?.handleStreamUpdate(update, generationID: generationID)
                 }
             )
-            guard let reply else {
+            guard let reply = generation.text else {
                 let runtimeError = LocalAssistantRuntimeBridge.shared.latestDebugSnapshot().errorMessage
                 streamingStatusText = runtimeError?.contains("記号だけ") == true
                     ? statusText("ローカル出力が無効", "On-device output was invalid")
@@ -2028,7 +2029,7 @@ final class StorySessionService: ObservableObject {
                 runtimeNotice: false,
                 backend: backend,
                 retryWhenLocalReady: false,
-                modelIdentity: availableModelURL?.path
+                modelIdentity: generation.modelIdentity
             )
         }
 

@@ -88,7 +88,7 @@ extension LocalAssistantRuntimeBridge: PersonaReplyGenerating {
         generationID: UUID?,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
     ) async -> String? {
-        await generateReply(
+        let result = await generateReply(
             prompt: prompt,
             contextPrompt: contextPrompt,
             coachMode: coachMode,
@@ -102,6 +102,7 @@ extension LocalAssistantRuntimeBridge: PersonaReplyGenerating {
             generationID: generationID,
             onUpdate: onUpdate
         )
+        return result.text
     }
 }
 
