@@ -126,7 +126,7 @@ successful record cannot claim an unverified model or provider.
     "model_identity": "/isolated/storage/LocalModels/Gemma4E4B4bit/viuk-story-...Q4_K_M.gguf",
     "model_identity_observed": true,
     "prompt_observed": true,
-    "model_sha256": "eafe6431810b2a2a17f6c4b0be338364440707e10ff6648d07665e10875039a"
+    "model_sha256": "eafe6431810b2a2a17f6c4b0be338364440707e10ff6648d07665e10875039a5"
   }
 }
 ~~~
