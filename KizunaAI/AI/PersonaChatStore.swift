@@ -40,6 +40,17 @@ struct PersonaMessage: Codable, Hashable, Identifiable {
         self.text = text
         self.createdAt = createdAt
     }
+
+    static func isPendingAssistantText(_ text: String) -> Bool {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty || ["…", "・・・", "・・", "...", "..", "."].contains(normalized)
+    }
+}
+
+enum PersonaAssistantCommitResult: Equatable {
+    case inserted
+    case alreadyPresent
+    case rejected
 }
 
 struct PersonaThread: Codable, Hashable, Identifiable {
@@ -362,30 +373,22 @@ final class PersonaChatStore: ObservableObject {
 
     // MARK: - Messages
 
-    func appendMessage(_ message: PersonaMessage, toThread threadID: UUID) {
-        guard canMutatePersistedState() else { return }
-        guard let idx = threads.firstIndex(where: { $0.id == threadID }) else { return }
+    @discardableResult
+    func appendMessage(_ message: PersonaMessage, toThread threadID: UUID) -> Bool {
+        guard canMutatePersistedState() else { return false }
+        guard let idx = threads.firstIndex(where: { $0.id == threadID }) else { return false }
         threads[idx].messages.append(message)
         threads[idx].updatedAt = Date()
         // 最新スレッドを先頭に
         let updated = threads.remove(at: idx)
         threads.insert(updated, at: 0)
         persist()
-    }
-
-    /// アシスタント応答のストリーミング途中で「最新メッセージのテキスト」を上書きする用。
-    func updateLastAssistantMessage(in threadID: UUID, text: String) {
-        guard canMutatePersistedState() else { return }
-        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
-        guard let lastIdx = threads[threadIdx].messages.lastIndex(where: { $0.role == .assistant }) else { return }
-        threads[threadIdx].messages[lastIdx].text = text
-        threads[threadIdx].updatedAt = Date()
-        // ストリーミング毎の persist は重いので、ここでは保存しない。最終 finalize 側で persist する。
+        return true
     }
 
     /// Commit the final assistant text and activity order as one MainActor
-    /// operation. Streaming updates use `updateLastAssistantMessage` so this
-    /// sort/persist work happens only once per completed turn.
+    /// operation. Streaming previews stay in the service/UI layer and never
+    /// mutate the persisted message array.
     @discardableResult
     func finalizeLastAssistantMessage(in threadID: UUID, text: String) -> Bool {
         guard canMutatePersistedState() else { return false }
@@ -397,8 +400,53 @@ final class PersonaChatStore: ObservableObject {
         return true
     }
 
-    /// 生成開始直後に作った空のアシスタント枠を、ユーザーが停止した時だけ取り除く。
-    /// 部分応答がある場合は呼び出し側がその本文を保存するため、ここでは削除しない。
+    /// Commit a specific assistant placeholder. Generation cleanup must use
+    /// the message identity it created instead of whichever assistant happens
+    /// to be last after a concurrent history update.
+    @discardableResult
+    func finalizeAssistantMessage(in threadID: UUID, messageID: UUID, text: String) -> Bool {
+        guard canMutatePersistedState() else { return false }
+        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return false }
+        guard let messageIdx = threads[threadIdx].messages.firstIndex(where: {
+            $0.id == messageID && $0.role == .assistant
+        }) else { return false }
+        threads[threadIdx].messages[messageIdx].text = text
+        threads[threadIdx].updatedAt = Date()
+        persistAfterActivityUpdate()
+        return true
+    }
+
+    /// Add a completed assistant response after it has crossed the output
+    /// safety boundary. A generation ID makes the commit idempotent and keeps
+    /// a retry or duplicate completion from appending the same response twice.
+    @discardableResult
+    func appendFinalizedAssistantMessage(
+        in threadID: UUID,
+        messageID: UUID,
+        text: String
+    ) -> PersonaAssistantCommitResult {
+        guard canMutatePersistedState(),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else {
+            return .rejected
+        }
+        if let existing = threads[threadIdx].messages.first(where: { $0.id == messageID }) {
+            guard existing.role == .assistant, existing.text == text else {
+                return .rejected
+            }
+            return .alreadyPresent
+        }
+        threads[threadIdx].messages.append(
+            PersonaMessage(id: messageID, role: .assistant, text: text)
+        )
+        threads[threadIdx].updatedAt = Date()
+        persistAfterActivityUpdate()
+        return .inserted
+    }
+
+    /// 旧バージョンが生成開始時に保存した空のアシスタント枠を、
+    /// 別経路へ切り替える時に取り除く。新しい生成経路は枠を保存せず、
+    /// `appendFinalizedAssistantMessage`でSafety評価済みの本文だけを保存する。
     func removePendingAssistantMessage(in threadID: UUID) {
         guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }) else { return }
@@ -420,8 +468,23 @@ final class PersonaChatStore: ObservableObject {
         persistAfterActivityUpdate()
     }
 
+    /// Remove only the assistant placeholder owned by the active generation.
+    /// Requiring the message ID prevents cancellation from deleting a prior
+    /// completed response when the placeholder append was lost in a race.
+    @discardableResult
+    func removeAssistantMessage(in threadID: UUID, messageID: UUID) -> Bool {
+        guard canMutatePersistedState() else { return false }
+        guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
+              let messageIdx = threads[threadIdx].messages.firstIndex(where: {
+                  $0.id == messageID && $0.role == .assistant
+              }) else { return false }
+        threads[threadIdx].messages.remove(at: messageIdx)
+        threads[threadIdx].updatedAt = Date()
+        persistAfterActivityUpdate()
+        return true
+    }
+
     /// 失敗したターンを再送する前に、直前のユーザー発話だけを取り除く。
-    /// アシスタント側の空枠は `removePendingAssistantMessage` で先に処理する。
     func removeLastUserMessage(in threadID: UUID, matching text: String? = nil) {
         guard canMutatePersistedState() else { return }
         guard let threadIdx = threads.firstIndex(where: { $0.id == threadID }),
@@ -446,7 +509,6 @@ final class PersonaChatStore: ObservableObject {
     }
 
     private func isPendingAssistantText(_ text: String) -> Bool {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized.isEmpty || ["…", "・・・", "・・", "...", "..", "."].contains(normalized)
+        PersonaMessage.isPendingAssistantText(text)
     }
 }

@@ -835,6 +835,9 @@ struct PersonaChatView: View {
     private func threadRow(_ thread: PersonaThread) -> some View {
         let isActive = store.activeThreadID == thread.id
         let style = PersonaAvatarStyle(profile: thread.personaSnapshot)
+        let previewText = thread.messages.last {
+            !($0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text))
+        }?.text ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation")
         return Button {
             store.selectThread(id: thread.id)
             if horizontalSizeClass == .compact {
@@ -848,7 +851,7 @@ struct PersonaChatView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                Text(thread.messages.last?.text ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation"))
+                Text(previewText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1112,21 +1115,17 @@ struct PersonaChatView: View {
     }
 
     private func messageList(for thread: PersonaThread) -> some View {
-        // 生成中の最新アシスタント枠は、ストリーミングプレビューと二重に描かない。
-        // 完了後は保存された本文を通常のメッセージとして表示する。
+        // ストリーミングプレビューはサービスが一時表示し、完成後にだけ
+        // 保存済み本文を通常のメッセージとして表示する。旧バージョンの
+        // 空assistant枠も本文がないため、同じ条件で表示しない。
         // `phase` はサービス全体の状態だが、表示対象は thread ID と組み合わせる。
         // IDだけが一瞬残る遷移でも、別スレッドへプレビューを漏らさない。
         let isGeneratingThisThread = service.activeGenerationThreadID == thread.id
             && service.phase == .thinking
         let isErrorThisThread = service.lastErrorThreadID == thread.id
             && isGenerationError
-        let pendingAssistantID: UUID? = {
-            guard isGeneratingThisThread else { return nil }
-            return thread.messages.last(where: { $0.role == .assistant })?.id
-        }()
         let visibleMessages = thread.messages.filter { msg in
-            guard msg.id != pendingAssistantID else { return false }
-            return !(msg.role == .assistant && msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            return !(msg.role == .assistant && PersonaMessage.isPendingAssistantText(msg.text))
         }
         return ScrollViewReader { proxy in
             ZStack(alignment: .bottomTrailing) {
@@ -1582,6 +1581,7 @@ struct PersonaMessageBubble: View {
 
 struct PersonaComposer: View {
     let thread: PersonaThread
+    @ObservedObject private var store = PersonaChatStore.shared
     @StateObject private var service = PersonaChatService.shared
     @Binding private var text: String
     @FocusState private var focused: Bool
@@ -1682,15 +1682,16 @@ struct PersonaComposer: View {
 
     private var canSubmit: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !store.isPersistenceRecoveryRequired
             && !isGeneratingAnotherThread
     }
 
     private func submit() {
         guard canSubmit else { return }
         let toSend = text
+        guard service.send(toSend, to: thread) else { return }
         text = ""
         focused = false
-        service.send(toSend, to: thread)
     }
 }
 

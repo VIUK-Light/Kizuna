@@ -1395,10 +1395,10 @@ final class KizunaAITests: XCTestCase {
         let activeThreadBeforeMutation = store.activeThreadID
         store.finalizePersist()
         XCTAssertNil(store.createThread(with: persona, characterID: UUID()))
-        store.appendMessage(
+        XCTAssertFalse(store.appendMessage(
             PersonaMessage(role: .assistant, text: "hello"),
             toThread: UUID()
-        )
+        ))
 
         XCTAssertEqual(store.threads, threadsBeforeMutation)
         XCTAssertEqual(store.activeThreadID, activeThreadBeforeMutation)
@@ -1638,6 +1638,199 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testPersonaUnfinishedAssistantIsNotPersistedBeforeFinalization() throws {
+        let suiteName = "KizunaPersonaStoreTests.UnfinishedAssistant.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let thread = try XCTUnwrap(
+            PersonaChatStore(defaults: defaults).createThread(with: profile)
+        )
+        let userMessage = PersonaMessage(role: .user, text: "hello")
+        let generationID = UUID()
+        let store = PersonaChatStore(defaults: defaults)
+        store.appendMessage(userMessage, toThread: thread.id)
+
+        let afterInterruptedGeneration = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(
+            afterInterruptedGeneration.thread(id: thread.id)?.messages.map(\.role),
+            [.user]
+        )
+        XCTAssertEqual(
+            afterInterruptedGeneration.appendFinalizedAssistantMessage(
+                in: thread.id,
+                messageID: generationID,
+                text: "completed"
+            ),
+            .inserted
+        )
+        XCTAssertEqual(
+            afterInterruptedGeneration.appendFinalizedAssistantMessage(
+                in: thread.id,
+                messageID: generationID,
+                text: "duplicate"
+            ),
+            .rejected
+        )
+        XCTAssertEqual(
+            afterInterruptedGeneration.appendFinalizedAssistantMessage(
+                in: thread.id,
+                messageID: generationID,
+                text: "completed"
+            ),
+            .alreadyPresent
+        )
+        let reloaded = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(
+            reloaded.thread(id: thread.id)?.messages.map(\.text),
+            ["hello", "completed"]
+        )
+    }
+
+    func testPersonaCancellationRemovesMeaningfulUnscreenedPartial() throws {
+        let suiteName = "KizunaPersonaStoreTests.PartialCancellation.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let threadID = UUID()
+        let thread = PersonaThread(
+            id: threadID,
+            personaSnapshot: profile,
+            title: "Partial",
+            messages: [
+                PersonaMessage(role: .user, text: "first"),
+                PersonaMessage(role: .assistant, text: "completed response"),
+                PersonaMessage(role: .user, text: "second"),
+                PersonaMessage(role: .assistant, text: "unscreened partial response")
+            ]
+        )
+        defaults.set(
+            try JSONEncoder().encode([thread]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults)
+        store.removeLastAssistantMessage(in: threadID)
+
+        XCTAssertEqual(
+            store.thread(id: threadID)?.messages.map(\.text),
+            ["first", "completed response", "second"]
+        )
+        let reloaded = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(
+            reloaded.thread(id: threadID)?.messages.map(\.text),
+            ["first", "completed response", "second"]
+        )
+    }
+
+    func testPersonaActiveAssistantRemovalDoesNotDeleteCompletedResponse() throws {
+        let suiteName = "KizunaPersonaStoreTests.IdentityCleanup.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let threadID = UUID()
+        let completedID = UUID()
+        let thread = PersonaThread(
+            id: threadID,
+            personaSnapshot: profile,
+            title: "Completed",
+            messages: [
+                PersonaMessage(role: .user, text: "first"),
+                PersonaMessage(
+                    id: completedID,
+                    role: .assistant,
+                    text: "completed response"
+                )
+            ]
+        )
+        defaults.set(
+            try JSONEncoder().encode([thread]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults)
+        XCTAssertFalse(
+            store.removeAssistantMessage(in: threadID, messageID: UUID())
+        )
+        XCTAssertEqual(
+            store.thread(id: threadID)?.messages.map(\.text),
+            ["first", "completed response"]
+        )
+    }
+
+    func testPersonaOutputSafetyPolicyNeverFallsBackToUnsafeText() {
+        XCTAssertNil(PersonaOutputSafetyPolicy.completedText(from: nil))
+        XCTAssertNil(PersonaOutputSafetyPolicy.completedText(from: "   "))
+        XCTAssertNil(PersonaOutputSafetyPolicy.completedText(from: "…"))
+        XCTAssertEqual(
+            PersonaOutputSafetyPolicy.completedText(from: "<think>private</think>reply"),
+            "reply"
+        )
+        XCTAssertNil(
+            PersonaOutputSafetyPolicy.persistableText(
+                action: .requireEdit,
+                original: "unsafe original",
+                rewritten: nil
+            )
+        )
+        XCTAssertNil(
+            PersonaOutputSafetyPolicy.persistableText(
+                action: .requireEdit,
+                original: "unsafe original",
+                rewritten: "safe-looking rewrite"
+            )
+        )
+        XCTAssertNil(
+            PersonaOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: "  \n"
+            )
+        )
+        XCTAssertEqual(
+            PersonaOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: "  safe rewrite  \n"
+            ),
+            "safe rewrite"
+        )
+        XCTAssertEqual(
+            PersonaOutputSafetyPolicy.sanitizedRewrite("<think>private</think>  safe rewrite  "),
+            "safe rewrite"
+        )
+        XCTAssertTrue(PersonaMessage.isPendingAssistantText("  …  "))
+        XCTAssertTrue(PersonaMessage.isPendingAssistantText("..."))
+        XCTAssertTrue(PersonaMessage.isPendingAssistantText(" \n"))
+        XCTAssertFalse(PersonaMessage.isPendingAssistantText("completed"))
+        XCTAssertEqual(
+            PersonaOutputSafetyPolicy.persistableText(
+                action: .warn,
+                original: "allowed with warning",
+                rewritten: nil
+            ),
+            "allowed with warning"
+        )
+    }
+
     func testStoryOutputSafetyPolicyNeverFallsBackToBlockedText() {
         XCTAssertNil(
             StoryOutputSafetyPolicy.persistableText(
@@ -1815,5 +2008,496 @@ final class KizunaAITests: XCTestCase {
             ),
             original
         )
+    }
+
+    func testPersonaServicePersistsOnlyCompletedReply() async throws {
+        let (_, store, thread) = try makePersonaServiceTestContext()
+        let runtime = PersonaTestRuntime(reply: "completed reply", preview: "partial preview")
+        let service = PersonaChatService(
+            runtime: runtime,
+            store: store,
+            safetyPipeline: SafetyPipeline(
+                outputChecker: PersonaTestOutputSafetyChecker(decision: .allow)
+            ),
+            watchdogNanoseconds: 1_000_000_000
+        )
+
+        XCTAssertTrue(service.send("hello", to: thread))
+        await waitForPersonaService(service) { runtime.generatedRequestCount > 0 && $0 == .idle }
+
+        XCTAssertEqual(
+            store.thread(id: thread.id)?.messages.map(\.text),
+            ["hello", "completed reply"]
+        )
+        XCTAssertFalse(store.thread(id: thread.id)?.messages.contains { $0.text == "partial preview" } == true)
+    }
+
+    func testPersonaServiceCancellationDropsUnscreenedPreviewAndKeepsUserTurn() async throws {
+        let (_, store, thread) = try makePersonaServiceTestContext()
+        let runtime = PersonaTestRuntime(
+            reply: "late reply",
+            preview: "unscreened partial",
+            delayNanoseconds: 1_000_000_000
+        )
+        let service = PersonaChatService(
+            runtime: runtime,
+            store: store,
+            watchdogNanoseconds: 2_000_000_000
+        )
+
+        XCTAssertTrue(service.send("stop this", to: thread))
+        await waitForPersonaService(service) { _ in runtime.generatedRequestCount > 0 }
+        service.cancel()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(store.thread(id: thread.id)?.messages.map(\.text), ["stop this"])
+        XCTAssertEqual(service.phase, .idle)
+        XCTAssertGreaterThan(runtime.cancelledGenerationCount, 0)
+    }
+
+    func testPersonaServiceFailureLeavesRetryableUserTurn() async throws {
+        let (_, store, thread) = try makePersonaServiceTestContext()
+        let runtime = PersonaTestRuntime(reply: nil)
+        let service = PersonaChatService(
+            runtime: runtime,
+            store: store,
+            watchdogNanoseconds: 1_000_000_000
+        )
+
+        XCTAssertTrue(service.send("try again", to: thread))
+        await waitForPersonaService(service) {
+            if case .error = $0 { return true }
+            return false
+        }
+        XCTAssertEqual(store.thread(id: thread.id)?.messages.map(\.text), ["try again"])
+
+        runtime.reply = "retried reply"
+        service.retryLastMessage()
+        await waitForPersonaService(service) { runtime.generatedRequestCount > 1 && $0 == .idle }
+        XCTAssertEqual(
+            store.thread(id: thread.id)?.messages.map(\.text),
+            ["try again", "retried reply"]
+        )
+    }
+
+    func testPersonaServiceWatchdogDropsUnfinishedGeneration() async throws {
+        let (_, store, thread) = try makePersonaServiceTestContext()
+        let runtime = PersonaTestRuntime(
+            reply: "too late",
+            preview: "watchdog preview",
+            delayNanoseconds: 1_000_000_000
+        )
+        let service = PersonaChatService(
+            runtime: runtime,
+            store: store,
+            watchdogNanoseconds: 20_000_000
+        )
+
+        XCTAssertTrue(service.send("wait", to: thread))
+        await waitForPersonaService(service) {
+            if case .error = $0 { return true }
+            return false
+        }
+
+        XCTAssertEqual(store.thread(id: thread.id)?.messages.map(\.text), ["wait"])
+        XCTAssertGreaterThan(runtime.cancelledGenerationCount, 0)
+    }
+
+    func testPersonaServiceSafetyFailureNeverPersistsOriginalReply() async throws {
+        let (_, requireEditStore, requireEditThread) = try makePersonaServiceTestContext()
+        let requireEditService = PersonaChatService(
+            runtime: PersonaTestRuntime(reply: "unsafe original"),
+            store: requireEditStore,
+            safetyPipeline: SafetyPipeline(
+                outputChecker: PersonaTestOutputSafetyChecker(
+                    decision: SafetyDecision(action: .requireEdit)
+                )
+            ),
+            watchdogNanoseconds: 1_000_000_000
+        )
+
+        XCTAssertTrue(requireEditService.send("unsafe", to: requireEditThread))
+        await waitForPersonaService(requireEditService) {
+            if case .error = $0 { return true }
+            return false
+        }
+        XCTAssertEqual(requireEditStore.thread(id: requireEditThread.id)?.messages.map(\.text), ["unsafe"])
+
+        let (_, softenStore, softenThread) = try makePersonaServiceTestContext()
+        let softenService = PersonaChatService(
+            runtime: PersonaTestRuntime(reply: "unsafe original"),
+            store: softenStore,
+            safetyPipeline: SafetyPipeline(
+                outputChecker: PersonaTestOutputSafetyChecker(
+                    decision: SafetyDecision(
+                        action: .soften,
+                        rewrittenText: "<think>hidden</think> safe rewrite"
+                    )
+                )
+            ),
+            watchdogNanoseconds: 1_000_000_000
+        )
+
+        XCTAssertTrue(softenService.send("rewrite", to: softenThread))
+        await waitForPersonaService(softenService) { $0 == .idle }
+        XCTAssertEqual(
+            softenStore.thread(id: softenThread.id)?.messages.map(\.text),
+            ["rewrite", "safe rewrite"]
+        )
+    }
+
+    func testPersonaServiceCharacterPipelinePersistsOnlySafeOutput() async throws {
+        let character = CharacterProfile(
+            name: "Library Character",
+            displayName: "Library Character",
+            category: .chatBuddy,
+            relationshipGenre: .none
+        )
+
+        let (allowDefaults, allowStore, allowThread) = try makePersonaServiceTestContext(character: character)
+        let allowRuntime = PersonaTestRuntime(reply: "character reply")
+        let allowRepository = PersonaTestCharacterRepository(character: character)
+        let allowService = makeCharacterPersonaService(
+            character: character,
+            store: allowStore,
+            runtime: allowRuntime,
+            outputDecision: SafetyDecision(action: .allow),
+            characterRepository: allowRepository
+        )
+        XCTAssertTrue(allowService.send("hello", to: allowThread))
+        await waitForPersonaService(allowService) { $0 == .idle }
+        XCTAssertEqual(allowRepository.fetchCount, 1)
+        XCTAssertEqual(allowRuntime.generatedRequestCount, 1)
+        XCTAssertTrue(allowRuntime.lastOverrideSystemPrompt?.contains("Library Character") == true)
+        XCTAssertEqual(
+            allowStore.thread(id: allowThread.id)?.messages.map(\.text),
+            ["hello", "character reply"]
+        )
+        XCTAssertFalse(
+            allowStore.thread(id: allowThread.id)?.messages.contains {
+                $0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text)
+            } == true
+        )
+        let reloadedAllowStore = PersonaChatStore(defaults: allowDefaults)
+        XCTAssertEqual(
+            reloadedAllowStore.thread(id: allowThread.id)?.messages.map(\.text),
+            ["hello", "character reply"]
+        )
+
+        let (_, requireEditStore, requireEditThread) = try makePersonaServiceTestContext(character: character)
+        let requireEditService = makeCharacterPersonaService(
+            character: character,
+            store: requireEditStore,
+            runtime: PersonaTestRuntime(reply: "unsafe character reply"),
+            outputDecision: SafetyDecision(action: .requireEdit)
+        )
+        XCTAssertTrue(requireEditService.send("unsafe", to: requireEditThread))
+        await waitForPersonaService(requireEditService) {
+            if case .error = $0 { return true }
+            return false
+        }
+        XCTAssertEqual(
+            requireEditStore.thread(id: requireEditThread.id)?.messages.map(\.text),
+            ["unsafe"]
+        )
+
+        let (_, softenStore, softenThread) = try makePersonaServiceTestContext(character: character)
+        let softenService = makeCharacterPersonaService(
+            character: character,
+            store: softenStore,
+            runtime: PersonaTestRuntime(reply: "unsafe character reply"),
+            outputDecision: SafetyDecision(
+                action: .soften,
+                rewrittenText: "<think>hidden</think>  softened character reply  "
+            )
+        )
+        XCTAssertTrue(softenService.send("rewrite", to: softenThread))
+        await waitForPersonaService(softenService) { $0 == .idle }
+        XCTAssertEqual(
+            softenStore.thread(id: softenThread.id)?.messages.map(\.text),
+            ["rewrite", "softened character reply"]
+        )
+    }
+
+    func testPersonaServiceCharacterPipelineWatchdogDropsLateReplyAndAllowsRetry() async throws {
+        let character = CharacterProfile(
+            name: "Watchdog Character",
+            displayName: "Watchdog Character",
+            category: .chatBuddy,
+            relationshipGenre: .none
+        )
+        let (_, store, thread) = try makePersonaServiceTestContext(character: character)
+        let runtime = PersonaTestRuntime(
+            reply: "late character reply",
+            delayNanoseconds: 1_000_000_000
+        )
+        let service = makeCharacterPersonaService(
+            character: character,
+            store: store,
+            runtime: runtime,
+            outputDecision: SafetyDecision(action: .allow),
+            watchdogNanoseconds: 20_000_000
+        )
+
+        XCTAssertTrue(service.send("wait", to: thread))
+        await waitForPersonaService(service) {
+            if case .error = $0 { return true }
+            return false
+        }
+        XCTAssertEqual(store.thread(id: thread.id)?.messages.map(\.text), ["wait"])
+        XCTAssertGreaterThan(runtime.cancelledGenerationCount, 0)
+
+        runtime.delayNanoseconds = 0
+        runtime.reply = "retried character reply"
+        service.retryLastMessage()
+        await waitForPersonaService(service) { $0 == .idle }
+        XCTAssertEqual(
+            store.thread(id: thread.id)?.messages.map(\.text),
+            ["wait", "retried character reply"]
+        )
+    }
+
+    func testPersonaServiceRejectsSendWhileRecoveryIsRequired() throws {
+        let suiteName = "KizunaPersonaServiceTests.Recovery.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(Data([0x00, 0xFF, 0x7B]), forKey: "persona.threads.v1")
+        let store = PersonaChatStore(defaults: defaults)
+        let profile = PersonaProfile(
+            name: "Recovery",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let thread = PersonaThread(personaSnapshot: profile, title: "Recovery")
+        let runtime = PersonaTestRuntime(reply: "must not run")
+        let service = PersonaChatService(runtime: runtime, store: store)
+
+        XCTAssertTrue(store.isPersistenceRecoveryRequired)
+        XCTAssertFalse(service.send("blocked", to: thread))
+        XCTAssertEqual(runtime.generatedRequestCount, 0)
+        XCTAssertTrue(store.threads.isEmpty)
+        XCTAssertEqual(defaults.data(forKey: "persona.threads.v1"), Data([0x00, 0xFF, 0x7B]))
+    }
+
+    private func makePersonaServiceTestContext(
+        character: CharacterProfile? = nil
+    ) throws -> (UserDefaults, PersonaChatStore, PersonaThread) {
+        let suiteName = "KizunaPersonaServiceTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let store = PersonaChatStore(defaults: defaults)
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let thread = try XCTUnwrap(
+            store.createThread(with: profile, characterID: character?.id)
+        )
+        return (defaults, store, thread)
+    }
+
+    private func makeCharacterPersonaService(
+        character: CharacterProfile,
+        store: PersonaChatStore,
+        runtime: PersonaReplyGenerating,
+        outputDecision: SafetyDecision,
+        characterRepository: CharacterRepository? = nil,
+        watchdogNanoseconds: UInt64 = 1_000_000_000
+    ) -> PersonaChatService {
+        PersonaChatService(
+            runtime: runtime,
+            store: store,
+            safetyPipeline: SafetyPipeline(
+                outputChecker: PersonaTestOutputSafetyChecker(decision: outputDecision)
+            ),
+            characterRepo: characterRepository ?? PersonaTestCharacterRepository(character: character),
+            memoryRepo: PersonaTestMemoryRepository(),
+            smallClassifier: PersonaTestSmallModelClassifier(),
+            memorySelector: PersonaTestMemorySelector(),
+            memorySummarizer: PersonaTestMemorySummarizer(),
+            watchdogNanoseconds: watchdogNanoseconds
+        )
+    }
+
+    private func waitForPersonaService(
+        _ service: PersonaChatService,
+        condition: (PersonaChatService.Phase) -> Bool
+    ) async {
+        for _ in 0..<100 {
+            if condition(service.phase) { return }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Persona service did not reach the expected state: \(service.phase)")
+    }
+}
+
+private final class PersonaTestCharacterRepository: CharacterRepository, @unchecked Sendable {
+    private let lock = NSLock()
+    let character: CharacterProfile
+    private var fetchCountStorage = 0
+
+    var fetchCount: Int {
+        withLock { fetchCountStorage }
+    }
+
+    init(character: CharacterProfile) {
+        self.character = character
+    }
+
+    func fetchCharacters() async throws -> [CharacterProfile] {
+        withLock { fetchCountStorage += 1 }
+        return [character]
+    }
+
+    func saveCharacter(_ character: CharacterProfile) async throws {}
+
+    func deleteCharacter(id: UUID) async throws -> CharacterDeletionResult {
+        .notFound
+    }
+
+    func fetchLorebook(characterId: UUID) async throws -> CharacterLorebook? {
+        nil
+    }
+
+    func saveLorebook(_ lorebook: CharacterLorebook) async throws {}
+
+    private func withLock<Result>(_ body: () -> Result) -> Result {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
+private final class PersonaTestMemoryRepository: MemoryRepository, @unchecked Sendable {
+    func fetchMemories(characterId: UUID) async throws -> [CharacterMemory] {
+        []
+    }
+
+    func saveMemory(_ memory: CharacterMemory) async throws {}
+
+    func deleteMemory(id: UUID) async throws {}
+
+    func deleteAllMemories(characterId: UUID) async throws {}
+
+    func markUsed(ids: [UUID]) async throws {}
+}
+
+private final class PersonaTestSmallModelClassifier: SmallModelClassifying, @unchecked Sendable {
+    func classify(text: String, labels: [String]) async -> SmallModelClassification {
+        SmallModelClassification(label: "casual_chat", confidence: 1.0)
+    }
+}
+
+private final class PersonaTestMemorySelector: MemorySelecting, @unchecked Sendable {
+    func select(query: String, candidates: [CharacterMemory], topK: Int) async -> [CharacterMemory] {
+        Array(candidates.prefix(topK))
+    }
+}
+
+private final class PersonaTestMemorySummarizer: MemorySummarizing, @unchecked Sendable {
+    func extract(
+        userText: String,
+        assistantText: String,
+        character: CharacterProfile
+    ) async -> [CharacterMemory] {
+        []
+    }
+}
+
+private final class PersonaTestRuntime: PersonaReplyGenerating, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedReply: String?
+    private var storedDelayNanoseconds: UInt64
+    private var storedOverrideSystemPrompt: String?
+    let preview: String?
+
+    var delayNanoseconds: UInt64 {
+        get { withLock { storedDelayNanoseconds } }
+        set { withLock { storedDelayNanoseconds = newValue } }
+    }
+
+    var lastOverrideSystemPrompt: String? {
+        withLock { storedOverrideSystemPrompt }
+    }
+
+    var reply: String? {
+        get { withLock { storedReply } }
+        set { withLock { storedReply = newValue } }
+    }
+
+    var generatedRequestCount: Int {
+        withLock { generatedRequestCountStorage }
+    }
+
+    var cancelledGenerationCount: Int {
+        withLock { cancelledGenerationCountStorage }
+    }
+
+    private var generatedRequestCountStorage = 0
+    private var cancelledGenerationCountStorage = 0
+
+    init(reply: String?, preview: String? = nil, delayNanoseconds: UInt64 = 0) {
+        self.storedReply = reply
+        self.storedDelayNanoseconds = delayNanoseconds
+        self.preview = preview
+        self.storedOverrideSystemPrompt = nil
+    }
+
+    deinit {}
+
+    func generatePersonaReply(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> String? {
+        let (currentReply, currentDelayNanoseconds) = withLock {
+            generatedRequestCountStorage += 1
+            storedOverrideSystemPrompt = overrideSystemPrompt
+            return (storedReply, storedDelayNanoseconds)
+        }
+        if let preview {
+            await onUpdate?(.visiblePreview(preview))
+        }
+        if currentDelayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: currentDelayNanoseconds)
+        }
+        return currentReply
+    }
+
+    func cancelActiveGeneration(generationID: UUID?) {
+        withLock {
+            cancelledGenerationCountStorage += 1
+        }
+    }
+
+    private func withLock<Result>(_ body: () -> Result) -> Result {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
+private final class PersonaTestOutputSafetyChecker: OutputSafetyChecking, @unchecked Sendable {
+    let decision: SafetyDecision
+
+    init(decision: SafetyDecision) {
+        self.decision = decision
+    }
+
+    func evaluate(_ text: String, character: CharacterProfile) async -> SafetyDecision {
+        decision
     }
 }

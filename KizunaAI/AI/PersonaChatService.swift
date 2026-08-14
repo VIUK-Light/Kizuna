@@ -10,6 +10,101 @@
 import Foundation
 import Combine
 
+/// Defines which Persona output may cross the history persistence boundary.
+/// The Story pipeline has the same contract, but this local policy keeps the
+/// Persona fix independent so it can be merged without changing Story's PR.
+enum PersonaOutputSafetyPolicy {
+    /// Only a runtime-completed reply may cross into the output-safety stage.
+    /// A nil/empty result means the runtime failed, timed out, or was
+    /// cancelled; the last visible stream preview must never be promoted to
+    /// a completed assistant message.
+    static func completedText(from reply: String?) -> String? {
+        guard let reply else { return nil }
+        let sanitized = PersonaResponseSanitizer.sanitize(reply)
+        let cleaned = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        let placeholders: Set<String> = ["…", "・・・", "・・", "...", "..", "."]
+        guard !placeholders.contains(cleaned) else { return nil }
+        return sanitized
+    }
+
+    /// Safety rewrites come from a separate pipeline and must cross the same
+    /// protocol/reasoning sanitization boundary as runtime output before they
+    /// can be displayed or persisted.
+    static func sanitizedRewrite(_ rewritten: String?) -> String? {
+        guard let completed = completedText(from: rewritten) else { return nil }
+        let trimmed = completed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    static func persistableText(
+        action: SafetyAction,
+        original: String,
+        rewritten: String?
+    ) -> String? {
+        switch action {
+        case .block, .requireEdit:
+            return nil
+        case .soften:
+            return sanitizedRewrite(rewritten)
+        case .allow, .warn:
+            return original
+        }
+    }
+}
+
+/// The small runtime surface Persona needs. Keeping this separate from the
+/// large runtime bridge makes completion, cancellation, and watchdog paths
+/// deterministic in tests without changing the production runtime.
+protocol PersonaReplyGenerating: AnyObject {
+    func generatePersonaReply(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> String?
+
+    func cancelActiveGeneration(generationID: UUID?)
+}
+
+extension LocalAssistantRuntimeBridge: PersonaReplyGenerating {
+    func generatePersonaReply(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> String? {
+        await generateReply(
+            prompt: prompt,
+            contextPrompt: contextPrompt,
+            coachMode: coachMode,
+            reasoningMode: reasoningMode,
+            researchMode: .off,
+            childAge: childAge,
+            pageInfo: pageInfo,
+            safetySnapshot: safetySnapshot,
+            advancedSettings: advancedSettings,
+            overrideSystemPrompt: overrideSystemPrompt,
+            generationID: generationID,
+            onUpdate: onUpdate
+        )
+    }
+}
+
 @MainActor
 final class PersonaChatService: ObservableObject {
     static let shared = PersonaChatService()
@@ -35,55 +130,79 @@ final class PersonaChatService: ObservableObject {
     /// This prevents a slow background sanitizer result from overwriting the
     /// newest text after it returns to the main actor.
     private var streamPreviewRevision = 0
-    private var lastVisibleText: String = ""
-    /// The runtime may finish before the latest background sanitizer returns.
-    /// Retain the raw cumulative preview so finalization can still sanitize the
-    /// full response synchronously instead of dropping the final update.
-    private var latestRawStreamingText: String?
     private var activeGenerationID: UUID?
     private var activeThreadID: UUID?
+    private var activeAssistantMessageID: UUID?
     private var lastRequestThreadID: UUID?
     private var lastRequestText: String?
 
-    private init() {}
+    private let runtime: PersonaReplyGenerating
+    private let store: PersonaChatStore
+    private let watchdogNanoseconds: UInt64
+
+    init(
+        runtime: PersonaReplyGenerating = LocalAssistantRuntimeBridge.shared,
+        store: PersonaChatStore = PersonaChatStore.shared,
+        safetyPipeline: SafetyPipeline = SafetyPipeline.shared,
+        characterRepo: CharacterRepository = LocalJSONCharacterRepository(),
+        memoryRepo: MemoryRepository = LocalJSONMemoryRepository(),
+        smallClassifier: SmallModelClassifying = MockSmallModelClassifier(),
+        memorySelector: MemorySelecting = MockMemorySelector(),
+        memorySummarizer: MemorySummarizing = MockMemorySummarizer(),
+        watchdogNanoseconds: UInt64 = 75_000_000_000
+    ) {
+        self.runtime = runtime
+        self.store = store
+        self.safetyPipeline = safetyPipeline
+        self.characterRepo = characterRepo
+        self.memoryRepo = memoryRepo
+        self.smallClassifier = smallClassifier
+        self.memorySelector = memorySelector
+        self.memorySummarizer = memorySummarizer
+        self.watchdogNanoseconds = watchdogNanoseconds
+    }
 
     /// 指定スレッドにユーザー発話を追加し、Gemma 4 のペルソナモードで応答を生成する。
-    // MARK: - DI for Character Library pipeline (default: Local + Mock)
+    // MARK: - Character Library pipeline dependencies
     /// 既存挙動を壊さないために、スレッドに characterID が紐付いている場合だけ使う。
-    private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
-    private let memoryRepo: MemoryRepository = LocalJSONMemoryRepository()
-    private let safetyPipeline = SafetyPipeline.shared
-    private let smallClassifier: SmallModelClassifying = MockSmallModelClassifier()
-    private let memorySelector: MemorySelecting = MockMemorySelector()
-    private let memorySummarizer: MemorySummarizing = MockMemorySummarizer()
+    private let characterRepo: CharacterRepository
+    private let memoryRepo: MemoryRepository
+    private let safetyPipeline: SafetyPipeline
+    private let smallClassifier: SmallModelClassifying
+    private let memorySelector: MemorySelecting
+    private let memorySummarizer: MemorySummarizing
     private let promptBuilder = PromptBuilder()
 
-    func send(_ userText: String, to thread: PersonaThread) {
+    @discardableResult
+    func send(_ userText: String, to thread: PersonaThread) -> Bool {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard phase != .thinking else { return }
+        guard !trimmed.isEmpty else { return false }
+        guard phase != .thinking else { return false }
+        // PersonaChatStore deliberately blocks all mutations while corrupt
+        // history recovery is required. Do not start a generation that can
+        // never persist its user turn or final assistant reply.
+        guard !store.isPersistenceRecoveryRequired else { return false }
 
-        // ユーザーメッセージ & 空のアシスタントメッセージを追加 (アシスタント側はストリームで埋める)
-        PersonaChatStore.shared.appendMessage(
+        // 旧バージョンが残したpending assistant枠を先に整理する。
+        // 新しい生成ではユーザー発話だけを先に保存し、assistant本文はSafety評価を通過した
+        // 完成時にだけ追加し、アプリ終了やキャンセルで未確定の空枠を残さない。
+        store.removePendingAssistantMessage(in: thread.id)
+        guard store.appendMessage(
             PersonaMessage(role: .user, text: trimmed),
             toThread: thread.id
-        )
-        PersonaChatStore.shared.appendMessage(
-            PersonaMessage(role: .assistant, text: ""),
-            toThread: thread.id
-        )
+        ) else { return false }
+        let assistantMessageID = UUID()
 
         phase = .thinking
         streamingResponse = ""
         lastErrorThreadID = nil
         invalidatePendingStreamSanitization()
-        lastVisibleText = ""
-        latestRawStreamingText = nil
         lastRequestThreadID = thread.id
         lastRequestText = trimmed
         let generationID = UUID()
         activeGenerationID = generationID
         activeThreadID = thread.id
+        activeAssistantMessageID = assistantMessageID
         activeGenerationThreadID = thread.id
 
         if let charID = thread.characterID {
@@ -102,6 +221,7 @@ final class PersonaChatService: ObservableObject {
             }
         }
         startWatchdog(threadID: thread.id, generationID: generationID)
+        return true
     }
 
     private func runLegacyPersonaGeneration(
@@ -113,7 +233,7 @@ final class PersonaChatService: ObservableObject {
         // switched threads. Do not start another runtime generation for that
         // stale generation.
         guard isGenerationActive(generationID) else { return }
-        guard let thread = PersonaChatStore.shared.thread(id: threadID) else {
+        guard let thread = store.thread(id: threadID) else {
             // スレッド削除・破損などで本文を取得できない場合も、生成タスクを
             // 無反応のまま終了させず、サービス状態を解放してエラー導線を出す。
             await MainActor.run {
@@ -131,12 +251,11 @@ final class PersonaChatService: ObservableObject {
         let composedPrompt = buildPrompt(forThread: thread, latestUser: userText)
         let personaPrompt = legacyPersonaSystemPrompt(for: thread.personaSnapshot)
         let advanced = voiceOptimizedAdvancedSettings
-        let reply = await LocalAssistantRuntimeBridge.shared.generateReply(
+        let reply = await runtime.generatePersonaReply(
             prompt: composedPrompt,
             contextPrompt: nil,
             coachMode: .studio,
             reasoningMode: .persona,
-            researchMode: .off,
             childAge: 12,
             pageInfo: nil,
             safetySnapshot: nil,
@@ -144,22 +263,45 @@ final class PersonaChatService: ObservableObject {
             overrideSystemPrompt: personaPrompt,
             generationID: generationID,
             onUpdate: { @MainActor [weak self] update in
-                self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
+                self?.handleStreamUpdate(update, generationID: generationID)
             }
         )
+        guard let rawFinalText = PersonaOutputSafetyPolicy.completedText(from: reply) else {
+            await MainActor.run {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "応答本文を受け取れませんでした。入力欄からもう一度試してください。",
+                        english: "No reply text was received. Try sending the message again."
+                    )
+                )
+            }
+            return
+        }
+        guard isGenerationActive(generationID) else { return }
+        let outputSafety = await safetyPipeline.evaluateOutput(
+            rawFinalText,
+            character: safetyCharacter(for: thread.personaSnapshot)
+        )
         await MainActor.run {
-            self.finalize(reply: reply, threadID: threadID, generationID: generationID)
+            self.finalize(
+                reply: reply,
+                threadID: threadID,
+                generationID: generationID,
+                outputSafety: outputSafety
+            )
         }
     }
 
     func addNarration(_ text: String, to thread: PersonaThread) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        PersonaChatStore.shared.appendMessage(
+        store.appendMessage(
             PersonaMessage(role: .narrator, text: trimmed),
             toThread: thread.id
         )
-        PersonaChatStore.shared.finalizePersist()
+        store.finalizePersist()
     }
 
     /// CharacterLibrary 由来スレッドのフルパイプライン。
@@ -191,18 +333,9 @@ final class PersonaChatService: ObservableObject {
         guard let character = allCharacters.first(where: { $0.id == characterID }) else {
             // キャラ本体が削除されてもスレッドのスナップショットで会話を続ける。
             // 参照だけを残して永久にエラーにするのではなく、旧Personaパスへ移行する。
-            PersonaChatStore.shared.detachCharacterReference(threadID: threadID)
-            let canFallback = await MainActor.run { () -> Bool in
-                guard self.isGenerationActive(generationID) else { return false }
-                PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
-                // updateLastAssistantMessageは末尾のassistant枠を更新する。
-                // 先ほどの削除後に空枠を再追加して、旧応答を上書きせず
-                // フォールバック本文をこのターンへ保存できるようにする。
-                PersonaChatStore.shared.appendMessage(
-                    PersonaMessage(role: .assistant, text: ""),
-                    toThread: threadID
-                )
-                return true
+            store.detachCharacterReference(threadID: threadID)
+            let canFallback = await MainActor.run {
+                self.isGenerationActive(generationID)
             }
             guard canFallback else { return }
             await runLegacyPersonaGeneration(threadID: threadID, userText: userText, generationID: generationID)
@@ -216,18 +349,27 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         if inSafety.action == .block {
             // ブロックされたらキャラから穏当な拒否メッセージを返して終了
-            let polite = inSafety.rewrittenText ?? KizunaCopy.text(
+            let polite = PersonaOutputSafetyPolicy.sanitizedRewrite(inSafety.rewrittenText)
+                ?? KizunaCopy.text(
                 japanese: "ごめん、その話題には乗れないな。別の話、しよ?",
                 english: "I can't continue with that topic. Could we talk about something else?"
             )
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
-                PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: polite)
-                self.streamingResponse = polite
+                guard self.finalizeAssistantMessage(in: threadID, text: polite) else {
+                    self.failGeneration(
+                        threadID: threadID,
+                        generationID: generationID,
+                        message: self.persistenceFailureMessage
+                    )
+                    return
+                }
+                self.streamingResponse = ""
                 self.phase = .idle
                 self.invalidatePendingStreamSanitization()
                 self.activeGenerationID = nil
                 self.activeThreadID = nil
+                self.activeAssistantMessageID = nil
                 self.activeGenerationThreadID = nil
             }
             return
@@ -267,8 +409,8 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         // ── 4) PromptBuilder ──
         let recent = await MainActor.run { () -> [PersonaMessage] in
-            (PersonaChatStore.shared.threads.first(where: { $0.id == threadID })?.messages ?? [])
-                .filter { !($0.role == .assistant && $0.text.isEmpty) }
+            (store.threads.first(where: { $0.id == threadID })?.messages ?? [])
+                .filter { !($0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text)) }
                 .suffix(6)
                 .map { $0 }
         }
@@ -284,13 +426,11 @@ final class PersonaChatService: ObservableObject {
 
         // ── 5) E4B 生成 (overrideSystemPrompt 経路) ──
         let advanced = voiceOptimizedAdvancedSettings
-        let bridge = LocalAssistantRuntimeBridge.shared
-        let reply = await bridge.generateReply(
+        let reply = await runtime.generatePersonaReply(
             prompt: effectiveUserText,
             contextPrompt: nil,
             coachMode: .studio,
             reasoningMode: .persona,
-            researchMode: .off,
             childAge: 12,
             pageInfo: nil,
             safetySnapshot: nil,
@@ -298,14 +438,13 @@ final class PersonaChatService: ObservableObject {
             overrideSystemPrompt: systemPrompt,
             generationID: generationID,
             onUpdate: { @MainActor [weak self] update in
-                self?.handleStreamUpdate(update, threadID: threadID, generationID: generationID)
+                self?.handleStreamUpdate(update, generationID: generationID)
             }
         )
         guard isGenerationActive(generationID) else { return }
 
         // ── 6) 出力 safety ──
-        let rawFinalText = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
-        guard var finalText = meaningfulResponse(rawFinalText) else {
+        guard var finalText = PersonaOutputSafetyPolicy.completedText(from: reply) else {
             await MainActor.run {
                 self.failGeneration(
                     threadID: threadID,
@@ -322,28 +461,54 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         switch outSafety.action {
         case .block:
-            finalText = outSafety.rewrittenText ?? KizunaCopy.text(
+            finalText = PersonaOutputSafetyPolicy.sanitizedRewrite(outSafety.rewrittenText)
+                ?? KizunaCopy.text(
                 japanese: "うまく言えないけど、それは話したくないな。別の話にしよう?",
                 english: "I can't put that into words, and I'd rather not discuss it. Let's talk about something else."
             )
         case .soften, .requireEdit:
-            if let rewritten = outSafety.rewrittenText, !rewritten.isEmpty {
-                finalText = rewritten
+            guard let persistable = PersonaOutputSafetyPolicy.persistableText(
+                action: outSafety.action,
+                original: finalText,
+                rewritten: outSafety.rewrittenText
+            ) else {
+                await MainActor.run {
+                    self.failGeneration(
+                        threadID: threadID,
+                        generationID: generationID,
+                        message: KizunaCopy.text(
+                            japanese: "安全上の理由で応答を保存できませんでした。別の表現で試してください。",
+                            english: "The response was not saved for safety reasons. Try a different phrasing."
+                        )
+                    )
+                }
+                return
             }
+            finalText = persistable
         case .warn, .allow:
             break
         }
 
-        await MainActor.run {
-            guard self.activeGenerationID == generationID else { return }
-            self.streamingResponse = finalText
-            PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: finalText)
+        let didPersistAssistant = await MainActor.run { () -> Bool in
+            guard self.activeGenerationID == generationID else { return false }
+            guard self.finalizeAssistantMessage(in: threadID, text: finalText) else {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: self.persistenceFailureMessage
+                )
+                return false
+            }
+            self.streamingResponse = ""
             self.phase = .idle
             self.invalidatePendingStreamSanitization()
             self.activeGenerationID = nil
             self.activeThreadID = nil
+            self.activeAssistantMessageID = nil
             self.activeGenerationThreadID = nil
+            return true
         }
+        guard didPersistAssistant else { return }
 
         // ── 7) メモリー抽出 (UI を idle にした後に await。中断されても致命的ではない) ──
         let newMemories = await memorySummarizer.extract(
@@ -360,18 +525,10 @@ final class PersonaChatService: ObservableObject {
         generationTask?.cancel()
         generationTask = nil
         invalidatePendingStreamSanitization()
-        LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: activeGenerationID)
-        if let threadID = activeThreadID {
-            let partial = (latestRawStreamingText ?? streamingResponse)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if let meaningful = meaningfulResponse(partial) {
-                PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: meaningful)
-            } else {
-                PersonaChatStore.shared.removePendingAssistantMessage(in: threadID)
-            }
-        }
+        runtime.cancelActiveGeneration(generationID: activeGenerationID)
         activeGenerationID = nil
         activeThreadID = nil
+        activeAssistantMessageID = nil
         activeGenerationThreadID = nil
         lastErrorThreadID = nil
         streamingResponse = ""
@@ -383,13 +540,13 @@ final class PersonaChatService: ObservableObject {
         guard phase != .thinking,
               let threadID = lastRequestThreadID,
               let requestText = lastRequestText,
-              let storedThread = PersonaChatStore.shared.thread(id: threadID),
+              let storedThread = store.thread(id: threadID),
               let last = storedThread.messages.last,
               last.role == .user,
               last.text == requestText else { return }
 
-        PersonaChatStore.shared.removeLastUserMessage(in: threadID, matching: requestText)
-        guard let retryThread = PersonaChatStore.shared.thread(id: threadID) else { return }
+        store.removeLastUserMessage(in: threadID, matching: requestText)
+        guard let retryThread = store.thread(id: threadID) else { return }
         send(requestText, to: retryThread)
     }
 
@@ -402,11 +559,10 @@ final class PersonaChatService: ObservableObject {
 
     // MARK: - Streaming
 
-    private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, threadID: UUID, generationID: UUID) {
+    private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, generationID: UUID) {
         guard activeGenerationID == generationID else { return }
         guard case let .visiblePreview(text) = update else { return }
 
-        latestRawStreamingText = text
         streamPreviewRevision &+= 1
         let revision = streamPreviewRevision
         streamSanitizationTask?.cancel()
@@ -422,7 +578,6 @@ final class PersonaChatService: ObservableObject {
             guard !Task.isCancelled else { return }
             await self?.applySanitizedStreamPreview(
                 sanitized,
-                threadID: threadID,
                 generationID: generationID,
                 revision: revision
             )
@@ -431,15 +586,12 @@ final class PersonaChatService: ObservableObject {
 
     private func applySanitizedStreamPreview(
         _ text: String,
-        threadID: UUID,
         generationID: UUID,
         revision: Int
     ) {
         guard activeGenerationID == generationID,
               streamPreviewRevision == revision else { return }
-        lastVisibleText = text
         streamingResponse = text
-        PersonaChatStore.shared.updateLastAssistantMessage(in: threadID, text: text)
     }
 
     private func invalidatePendingStreamSanitization() {
@@ -448,10 +600,14 @@ final class PersonaChatService: ObservableObject {
         streamSanitizationTask = nil
     }
 
-    private func finalize(reply: String?, threadID: UUID, generationID: UUID) {
+    private func finalize(
+        reply: String?,
+        threadID: UUID,
+        generationID: UUID,
+        outputSafety: SafetyDecision
+    ) {
         guard activeGenerationID == generationID else { return }
-        let final = reply?.isEmpty == false ? reply! : (latestRawStreamingText ?? streamingResponse)
-        guard let cleaned = meaningfulResponse(final) else {
+        guard let cleaned = PersonaOutputSafetyPolicy.completedText(from: reply) else {
             failGeneration(
                 threadID: threadID,
                 generationID: generationID,
@@ -462,46 +618,90 @@ final class PersonaChatService: ObservableObject {
             )
             return
         }
-        streamingResponse = cleaned
-        PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: cleaned)
+        let persistableText: String
+        switch outputSafety.action {
+        case .block:
+            if let rewritten = PersonaOutputSafetyPolicy.sanitizedRewrite(outputSafety.rewrittenText) {
+                persistableText = rewritten
+            } else {
+                persistableText = KizunaCopy.text(
+                    japanese: "うまく言えないけど、それは話したくないな。別の話にしよう?",
+                    english: "I can't put that into words, and I'd rather not discuss it. Let's talk about something else."
+                )
+            }
+        case .soften, .requireEdit:
+            guard let safeText = PersonaOutputSafetyPolicy.persistableText(
+                action: outputSafety.action,
+                original: cleaned,
+                rewritten: outputSafety.rewrittenText
+            ) else {
+                failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "安全上の理由で応答を保存できませんでした。別の表現で試してください。",
+                        english: "The response was not saved for safety reasons. Try a different phrasing."
+                    )
+                )
+                return
+            }
+            persistableText = safeText
+        case .warn, .allow:
+                persistableText = cleaned
+        }
+        guard finalizeAssistantMessage(in: threadID, text: persistableText) else {
+            failGeneration(
+                threadID: threadID,
+                generationID: generationID,
+                message: persistenceFailureMessage
+            )
+            return
+        }
+        streamingResponse = ""
         phase = .idle
         invalidatePendingStreamSanitization()
         activeGenerationID = nil
         activeThreadID = nil
+        activeAssistantMessageID = nil
         activeGenerationThreadID = nil
         lastErrorThreadID = nil
     }
 
+    /// Adapt a legacy PersonaProfile to the CharacterProfile context required
+    /// by the shared output checker. Legacy profiles have no independent
+    /// safety-rating field, so they use the existing general-audience default.
+    private func safetyCharacter(for profile: PersonaProfile) -> CharacterProfile {
+        CharacterProfile(
+            id: profile.id,
+            name: profile.name,
+            displayName: profile.name,
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            personality: profile.personality,
+            scenario: profile.freeFormAddendum,
+            safetyRating: .general
+        )
+    }
+
     private func startWatchdog(threadID: UUID, generationID: UUID) {
+        let watchdogNanoseconds = watchdogNanoseconds
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 75_000_000_000)
+            try? await Task.sleep(nanoseconds: watchdogNanoseconds)
             await MainActor.run {
                 guard let self,
                       self.activeGenerationID == generationID,
                       self.phase == .thinking else { return }
                 self.generationTask?.cancel()
                 self.generationTask = nil
-                LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
-                if let partial = self.meaningfulResponse(
-                    self.latestRawStreamingText ?? self.streamingResponse
-                ) {
-                    PersonaChatStore.shared.finalizeLastAssistantMessage(in: threadID, text: partial)
-                    self.streamingResponse = partial
-                    self.phase = .idle
-                    self.invalidatePendingStreamSanitization()
-                    self.activeGenerationID = nil
-                    self.activeThreadID = nil
-                    self.activeGenerationThreadID = nil
-                } else {
-                    self.failGeneration(
-                        threadID: threadID,
-                        generationID: generationID,
-                        message: KizunaCopy.text(
-                            japanese: "応答が時間内に完了しませんでした。もう一度試してください。",
-                            english: "The reply did not finish in time. Try again."
-                        )
+                self.runtime.cancelActiveGeneration(generationID: generationID)
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "応答が時間内に完了しませんでした。もう一度試してください。",
+                        english: "The reply did not finish in time. Try again."
                     )
-                }
+                )
             }
         }
     }
@@ -523,7 +723,7 @@ final class PersonaChatService: ObservableObject {
             case .user:
                 lines.append(userLabel + ": " + msg.text)
             case .assistant:
-                if !msg.text.isEmpty {
+                if !PersonaMessage.isPendingAssistantText(msg.text) {
                     lines.append("\(thread.personaSnapshot.name): " + msg.text)
                 }
             case .narrator:
@@ -564,25 +764,39 @@ final class PersonaChatService: ObservableObject {
         """
     }
 
-    private func meaningfulResponse(_ text: String) -> String? {
-        let sanitized = sanitize(text)
-        let cleaned = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return nil }
-        let placeholders: Set<String> = ["…", "・・・", "・・", "...", "..", "."]
-        guard !placeholders.contains(cleaned) else { return nil }
-        return sanitized
-    }
-
     private func failGeneration(threadID: UUID, generationID: UUID, message: String) {
         guard activeGenerationID == generationID else { return }
-        PersonaChatStore.shared.removeLastAssistantMessage(in: threadID)
         streamingResponse = ""
         phase = .error(message)
         invalidatePendingStreamSanitization()
         activeGenerationID = nil
         activeThreadID = nil
+        activeAssistantMessageID = nil
         activeGenerationThreadID = nil
         lastErrorThreadID = threadID
+    }
+
+    private var persistenceFailureMessage: String {
+        KizunaCopy.text(
+            japanese: "応答を保存できませんでした。保存先を確認してから再試行してください。",
+            english: "The reply could not be saved. Check storage and try again."
+        )
+    }
+
+    @discardableResult
+    private func finalizeAssistantMessage(in threadID: UUID, text: String) -> Bool {
+        guard let assistantMessageID = activeAssistantMessageID else { return false }
+        let result = store.appendFinalizedAssistantMessage(
+            in: threadID,
+            messageID: assistantMessageID,
+            text: text
+        )
+        switch result {
+        case .inserted, .alreadyPresent:
+            return true
+        case .rejected:
+            return false
+        }
     }
 
     /// ペルソナ会話用 advancedSettings。ツール/検索を切り、内部システム指示を最小化する。
@@ -600,9 +814,4 @@ final class PersonaChatService: ObservableObject {
         return s
     }
 
-    /// The runtime exposes structured visible text. Keep this final safeguard
-    /// deliberately non-destructive because the value is persisted to history.
-    private func sanitize(_ text: String) -> String {
-        PersonaResponseSanitizer.sanitize(text)
-    }
 }
