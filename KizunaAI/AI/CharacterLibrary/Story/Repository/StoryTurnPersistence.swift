@@ -853,6 +853,10 @@ extension StoryTurnJournal {
                 .filter { $0.recordKind == .scene }
                 .map(\.recordID)
         )
+        try removeStoryMemoriesForDeletedSessionsUnlocked(
+            sessionIDs,
+            baseURL: baseURL
+        )
         let retainedSessions = sessions.filter { !sessionIDs.contains($0.id) }
         let retainedScenes = scenes.filter { !sceneIDs.contains($0.id) }
         try purgeMemoryRetriesForDeletedSessionsUnlocked(
@@ -876,6 +880,33 @@ extension StoryTurnJournal {
             )
         }
         tombstoneCache.entry?.needsReconciliation = false
+    }
+
+    /// Session deletion owns the lifecycle of session-scoped StoryMemory.
+    /// Keep this cleanup under the same lock as tombstone reconciliation so a
+    /// crash between the deletion intent and the session-file write cannot
+    /// leave a memory that can later be mistaken for live session state.
+    nonisolated static func removeStoryMemoriesForDeletedSessionsUnlocked(
+        _ deletedSessionIDs: Set<UUID>,
+        baseURL: URL
+    ) throws {
+        guard !deletedSessionIDs.isEmpty else { return }
+        var memories = try LocalJSONStoreTransaction.load(
+            StoryMemory.self,
+            fileName: "story_memories.json",
+            baseURL: baseURL
+        )
+        let retained = memories.filter { memory in
+            guard let sessionID = memory.storySessionId else { return true }
+            return !deletedSessionIDs.contains(sessionID)
+        }
+        guard retained.count != memories.count else { return }
+        memories = retained
+        try LocalJSONStoreTransaction.save(
+            memories,
+            fileName: "story_memories.json",
+            baseURL: baseURL
+        )
     }
 
     nonisolated private static func hasTombstone(

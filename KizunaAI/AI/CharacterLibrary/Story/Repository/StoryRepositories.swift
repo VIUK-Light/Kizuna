@@ -869,13 +869,29 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
 
     func deleteSession(id: UUID) async throws {
         let storageURL = self.storageURL
-        try await store.mutate { sessions in
-            try StoryTurnJournal.recordDeletionUnlocked(
-                recordID: id,
-                recordKind: .session,
-                baseURL: storageURL
-            )
-            sessions.removeAll { $0.id == id }
+        try await LocalJSONStoreTransaction.performOnFileIO {
+            try LocalJSONStoreTransaction.withSharedLock {
+                var sessions = try LocalJSONStoreTransaction.load(
+                    StorySession.self,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+                try StoryTurnJournal.recordDeletionUnlocked(
+                    recordID: id,
+                    recordKind: .session,
+                    baseURL: storageURL
+                )
+                sessions.removeAll { $0.id == id }
+                try StoryTurnJournal.removeStoryMemoriesForDeletedSessionsUnlocked(
+                    Set([id]),
+                    baseURL: storageURL
+                )
+                try LocalJSONStoreTransaction.save(
+                    sessions,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+            }
         }
     }
 }
@@ -1094,22 +1110,10 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
             if incoming.sourceTurnIds.isEmpty {
                 existing.importance = max(existing.importance, incoming.importance)
                 existing.lastUsedAt = now
-                // A legacy/source-less merge still changes the aggregate
-                // values. Keep every surviving provenance entry in sync so a
-                // later recompute cannot restore stale importance or usage
-                // timestamps from old metadata.
-                for sourceTurnID in existing.sourceTurnIds {
-                    var metadata = existing.sourceTurnMetadata[sourceTurnID]
-                        ?? StoryMemorySourceMetadata(
-                            importance: existing.importance,
-                            createdAt: existing.createdAt,
-                            lastUsedAt: existing.lastUsedAt
-                        )
-                    metadata.importance = existing.importance
-                    metadata.lastUsedAt = existing.lastUsedAt
-                    existing.sourceTurnMetadata[sourceTurnID] = metadata
-                }
-                existing.recomputeAggregatesFromSourceMetadata()
+                // The identity check above guarantees that this branch only
+                // handles source-less legacy records. Never fold a legacy
+                // contribution into source metadata for a turn-attributed
+                // record; that would make removeSourceTurnIds destructive.
             } else {
                 existing.sourceTurnIds.formUnion(incoming.sourceTurnIds)
                 existing.sourceTurnMetadata.merge(incoming.sourceTurnMetadata) { _, new in new }

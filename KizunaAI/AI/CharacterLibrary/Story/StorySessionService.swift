@@ -2791,7 +2791,9 @@ final class StorySessionService: ObservableObject {
             characterMemories: remainingCharacterMemories,
             storyMemories: remainingStoryMemories,
             storySessionID: retry.storySessionID,
-            storyWorldID: retry.storyWorldID
+            storyWorldID: retry.storyWorldID,
+            missingSessionRestoreAttempts: retry.missingSessionRestoreAttempts,
+            isAbandoned: retry.isAbandoned
         )
     }
 

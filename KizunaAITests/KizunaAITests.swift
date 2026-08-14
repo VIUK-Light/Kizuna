@@ -467,6 +467,56 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(low.importance, 0.0)
     }
 
+    func testStoryMemorySourceMetadataImportanceIsClampedWhenDecoding() throws {
+        let sourceTurnID = UUID()
+        let memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "出典メタデータの重要度",
+            sourceTurnIds: [sourceTurnID]
+        )
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(memory)
+            ) as? [String: Any]
+        )
+        var metadata = try XCTUnwrap(
+            object["sourceTurnMetadata"] as? [String: Any]
+        )
+        var sourceMetadata = try XCTUnwrap(
+            metadata[sourceTurnID.uuidString] as? [String: Any]
+        )
+        sourceMetadata["importance"] = 9.0
+        metadata[sourceTurnID.uuidString] = sourceMetadata
+        object["sourceTurnMetadata"] = metadata
+
+        let decoded = try JSONDecoder().decode(
+            StoryMemory.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertEqual(
+            decoded.sourceTurnMetadata[sourceTurnID]?.importance,
+            1.0
+        )
+    }
+
+    func testStoryMemoryImportanceNormalizesNaNToZero() {
+        let sourceTurnID = UUID()
+        let metadata = StoryMemorySourceMetadata(
+            importance: .nan,
+            createdAt: Date()
+        )
+        let memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "NaN重要度を正規化する",
+            importance: .nan,
+            sourceTurnIds: [sourceTurnID]
+        )
+
+        XCTAssertEqual(metadata.importance, 0.0)
+        XCTAssertEqual(memory.importance, 0.0)
+        XCTAssertEqual(memory.sourceTurnMetadata[sourceTurnID]?.importance, 0.0)
+    }
+
     func testFileIOCancellationStateAtomicallyClaimsQueuedOperation() {
         let cancelled = LocalJSONStoreFileIOCancellationState()
         cancelled.cancel()
@@ -591,8 +641,7 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(memory.lastUsedAt, createdAt.addingTimeInterval(10))
     }
 
-    func testSourceLessStoryMemoryMergeKeepsProvenanceAggregatesInSync() {
-        let sourceTurnID = UUID()
+    func testSourceLessStoryMemoryMergeUpdatesLegacyAggregate() {
         let createdAt = Date(timeIntervalSince1970: 100)
         let existing = StoryMemory(
             storyWorldId: UUID(),
@@ -600,34 +649,24 @@ final class KizunaAITests: XCTestCase {
             importance: 0.2,
             createdAt: createdAt,
             lastUsedAt: createdAt,
-            sourceTurnIds: [sourceTurnID],
-            sourceTurnMetadata: [
-                sourceTurnID: StoryMemorySourceMetadata(
-                    importance: 0.2,
-                    createdAt: createdAt,
-                    lastUsedAt: createdAt
-                )
-            ]
+            sourceTurnIds: []
         )
         var incoming = existing
         incoming.id = UUID()
         incoming.importance = 0.8
-        incoming.sourceTurnIds = []
-        incoming.sourceTurnMetadata = [:]
 
         var values = [existing]
+        let mergeStartedAt = Date()
         LocalJSONStoryMemoryRepository.mergeMemory(incoming, &values)
+        let mergeFinishedAt = Date()
 
         let merged = values[0]
+        XCTAssertEqual(values.count, 1)
         XCTAssertEqual(merged.importance, 0.8)
-        XCTAssertEqual(
-            merged.sourceTurnMetadata[sourceTurnID]?.importance,
-            merged.importance
-        )
-        XCTAssertEqual(
-            merged.sourceTurnMetadata[sourceTurnID]?.lastUsedAt,
-            merged.lastUsedAt
-        )
+        XCTAssertEqual(merged.sourceTurnMetadata, [:])
+        XCTAssertGreaterThanOrEqual(merged.lastUsedAt ?? .distantPast, mergeStartedAt)
+        XCTAssertLessThanOrEqual(merged.lastUsedAt ?? .distantFuture, mergeFinishedAt)
+        XCTAssertGreaterThan(merged.lastUsedAt ?? .distantPast, existing.lastUsedAt ?? .distantPast)
     }
 
     func testSourceLessStoryMemoryDoesNotMergeWithAttributedRecord() {
@@ -1638,6 +1677,63 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testDeletingSessionRemovesOnlyItsStoryMemories() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let deletedSessionID = UUID()
+        let remainingSessionID = UUID()
+        let sessionRepository = LocalJSONStorySessionRepository(storageURL: storageURL)
+        try await sessionRepository.saveSession(
+            StorySession(id: deletedSessionID, storyWorldId: worldID)
+        )
+        try await sessionRepository.saveSession(
+            StorySession(id: remainingSessionID, storyWorldId: worldID)
+        )
+
+        let deletedMemory = StoryMemory(
+            storyWorldId: worldID,
+            text: "削除対象のSession記憶",
+            storySessionId: deletedSessionID
+        )
+        let remainingMemory = StoryMemory(
+            storyWorldId: worldID,
+            text: "残すSession記憶",
+            storySessionId: remainingSessionID
+        )
+        let legacyMemory = StoryMemory(
+            storyWorldId: worldID,
+            text: "残す旧形式記憶"
+        )
+        try LocalJSONStoreTransaction.save(
+            [deletedMemory, remainingMemory, legacyMemory],
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+
+        try await sessionRepository.deleteSession(id: deletedSessionID)
+
+        let sessions = try LocalJSONStoreTransaction.load(
+            StorySession.self,
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(sessions.map(\.id), [remainingSessionID])
+
+        let memories = try LocalJSONStoreTransaction.load(
+            StoryMemory.self,
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(Set(memories.map(\.id)), Set([remainingMemory.id, legacyMemory.id]))
+        XCTAssertTrue(try LocalJSONStoreTransaction.withSharedLock {
+            try StoryTurnJournal.hasTombstoneUnlocked(
+                recordID: deletedSessionID,
+                recordKind: .session,
+                baseURL: storageURL
+            )
+        })
+    }
+
     func testLegacyPayloadSessionTombstoneDoesNotResurrectStoryMemory() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
@@ -2102,6 +2198,38 @@ final class KizunaAITests: XCTestCase {
         XCTAssertNil(service.latestRuntimeNotice)
         let remainingRetries = try await retryRepository.fetchRetries()
         XCTAssertTrue(remainingRetries.isEmpty)
+    }
+
+    func testStoryServicePreservesMemoryRetryQuarantineStateAfterPartialSave() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "部分保存後も隔離状態を維持する",
+            characterMemories: [],
+            storyMemories: [
+                StoryMemory(storyWorldId: UUID(), text: "残った物語記憶")
+            ],
+            missingSessionRestoreAttempts: 2,
+            isAbandoned: false
+        )
+        let memoryRepository = TestStoryMemoryRepository(shouldFailSaves: true)
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: storageURL)
+        try await retryRepository.saveRetry(retry)
+
+        let service = StorySessionService(
+            memoryRepo: memoryRepository,
+            storyMemoryRepo: memoryRepository,
+            storyMemoryRetryRepo: retryRepository,
+            pendingStoryMemoryRetries: [retry]
+        )
+
+        await service.retryStoryMemorySave(retry)
+
+        let remaining = try await retryRepository.fetchRetries()
+        XCTAssertEqual(remaining.count, 1)
+        XCTAssertEqual(remaining[0].missingSessionRestoreAttempts, 2)
+        XCTAssertFalse(remaining[0].isAbandoned)
     }
 
     func testStoryServiceDeletesDurableMemoryRetryAfterSuccessfulSave() async throws {
@@ -3112,6 +3240,9 @@ final class KizunaAITests: XCTestCase {
             fileName: "story_turn_journal.json",
             baseURL: storageURL
         ).first?.scene
+        // The legacy ISO8601 encoder drops sub-second precision, so both
+        // records intentionally decode to the same second. Revision, not the
+        // rounded timestamp, is what proves that the journal scene wins.
         XCTAssertEqual(storedScene?.updatedAt, storedJournalScene?.updatedAt)
         XCTAssertEqual(storedScene?.persistenceRevision, 4)
         XCTAssertEqual(storedJournalScene?.persistenceRevision, 5)
@@ -4015,6 +4146,52 @@ final class KizunaAITests: XCTestCase {
         }
     }
 
+    func testStoryTurnJournalTombstoneRecoveryRemovesDeletedSessionMemories() throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let deletedSessionID = UUID()
+        let remainingSessionID = UUID()
+        try LocalJSONStoreTransaction.save(
+            [
+                StorySession(id: deletedSessionID, storyWorldId: worldID),
+                StorySession(id: remainingSessionID, storyWorldId: worldID)
+            ],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        let deletedMemory = StoryMemory(
+            storyWorldId: worldID,
+            text: "tombstoneで削除する記憶",
+            storySessionId: deletedSessionID
+        )
+        let remainingMemory = StoryMemory(
+            storyWorldId: worldID,
+            text: "残す記憶",
+            storySessionId: remainingSessionID
+        )
+        try LocalJSONStoreTransaction.save(
+            [deletedMemory, remainingMemory],
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+
+        try LocalJSONStoreTransaction.withSharedLock {
+            try StoryTurnJournal.recordDeletionUnlocked(
+                recordID: deletedSessionID,
+                recordKind: .session,
+                baseURL: storageURL
+            )
+        }
+        try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
+
+        let memories = try LocalJSONStoreTransaction.load(
+            StoryMemory.self,
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(memories.map(\.id), [remainingMemory.id])
+    }
+
     func testStoryTurnJournalRetainsJournalWhenTombstoneFileIsUnreadable() throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let fixture = makeCommittedJournalFixture()
@@ -4297,7 +4474,10 @@ final class KizunaAITests: XCTestCase {
             fileName: "story_turn_journal.json",
             baseURL: storageURL
         ).first?.scene
-        XCTAssertEqual(storedScene?.updatedAt, storedJournalScene?.updatedAt)
+        // Native LocalJSONStore dates preserve sub-second precision. This is
+        // the complementary case to the legacy ISO8601 fixture above.
+        XCTAssertEqual(storedScene?.updatedAt, baseDate)
+        XCTAssertEqual(storedJournalScene?.updatedAt, laterSameSecond)
         XCTAssertEqual(storedScene?.persistenceRevision, 4)
         XCTAssertEqual(storedJournalScene?.persistenceRevision, 5)
 
