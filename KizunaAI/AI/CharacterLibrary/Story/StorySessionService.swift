@@ -70,6 +70,236 @@ enum StoryRuntimeNoticeRetryAction: Equatable {
     case userTurn
     case narration(text: String)
     case restAcknowledgement(characterID: UUID, characterName: String)
+    case storyTurnCommit(StoryTurnCommitRetry)
+    case storyMemory(StoryMemoryRetry)
+
+    var isAuxiliarySave: Bool {
+        switch self {
+        case .storyTurnCommit, .storyMemory:
+            return true
+        case .userTurn, .narration, .restAcknowledgement:
+            return false
+        }
+    }
+}
+
+/// A failed commit must be retried with the exact generated snapshot. Keeping
+/// the session/scene snapshot here prevents the retry UI from falling back to
+/// the user-turn path and invoking the model again.
+struct StoryTurnCommitRetry: Equatable {
+    let session: StorySession
+    let scene: StoryScene
+    let turnID: UUID
+    let attempt: Int
+    let assistantMessageIDs: [UUID]
+    let characterMemories: [CharacterMemory]
+    let storyMemories: [StoryMemory]
+    let userMessageID: UUID
+    let userText: String
+}
+
+/// A commit can throw after the journal has already made the session/scene
+/// snapshot durable. Only treat that recovery as successful when both records
+/// identify the exact generated turn and the scene fields owned by that turn
+/// are present. A committed session by itself is not enough: the scene write
+/// may still be missing or may have been left at an older snapshot.
+enum StoryTurnCommitRecovery {
+    private static func normalizedMessageIDs(_ ids: [UUID]) -> [UUID] {
+        var seen = Set<UUID>()
+        return ids.filter { seen.insert($0).inserted }
+    }
+
+    private static func storyStatesMatch(_ lhs: StoryState?, _ rhs: StoryState?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (lhs?, rhs?):
+            // updatedAt is deliberately excluded: the JSON date codec may
+            // round fractional seconds while the logical state remains the
+            // exact snapshot produced by this turn.
+            return lhs.location == rhs.location
+                && lhs.timeOfDay == rhs.timeOfDay
+                && lhs.mood == rhs.mood
+                && lhs.weather == rhs.weather
+                && lhs.relationshipStage == rhs.relationshipStage
+                && lhs.characterStates == rhs.characterStates
+                && lhs.inventory == rhs.inventory
+                && lhs.activeGoals == rhs.activeGoals
+        default:
+            return false
+        }
+    }
+
+    private static func generatedSessionFieldsMatch(
+        _ expected: StorySession,
+        _ persisted: StorySession,
+        retry: StoryTurnCommitRetry
+    ) -> Bool {
+        guard expected.id == persisted.id,
+              expected.storyWorldId == persisted.storyWorldId,
+              expected.progressLabel == persisted.progressLabel,
+              expected.currentObjective == persisted.currentObjective,
+              expected.relationshipStage == persisted.relationshipStage,
+              expected.lastTurnProgress == persisted.lastTurnProgress,
+              expected.lastSceneSummary == persisted.lastSceneSummary,
+              expected.unresolvedHooks == persisted.unresolvedHooks,
+              storyStatesMatch(expected.storyState, persisted.storyState),
+              expected.lastSelectedModelName == persisted.lastSelectedModelName,
+              expected.lastUsedBackendName == persisted.lastUsedBackendName else {
+            return false
+        }
+
+        // A retry owns only this turn's messages. Later system/narration
+        // messages may legitimately be appended after the commit, so compare
+        // the user and assistant records by stable ID instead of requiring an
+        // identical whole-message array.
+        var expectedMessages: [UUID: StoryMessage] = [:]
+        for message in expected.messages {
+            expectedMessages[message.id] = message
+        }
+        guard !expectedMessages.isEmpty else { return true }
+        var persistedMessages: [UUID: StoryMessage] = [:]
+        for message in persisted.messages {
+            persistedMessages[message.id] = message
+        }
+        let ownedMessageIDs = normalizedMessageIDs(
+            [retry.userMessageID] + retry.assistantMessageIDs
+        )
+        return ownedMessageIDs.allSatisfy { messageID in
+            guard let expectedMessage = expectedMessages[messageID],
+                  let persistedMessage = persistedMessages[messageID] else {
+                return false
+            }
+            return expectedMessage.author == persistedMessage.author
+                && expectedMessage.text == persistedMessage.text
+                && expectedMessage.generationID == persistedMessage.generationID
+                && persistedMessage.turnID == retry.turnID
+                && (expectedMessage.turnID == nil
+                    || expectedMessage.turnID == persistedMessage.turnID)
+                && expectedMessage.retryBackend == persistedMessage.retryBackend
+        }
+    }
+
+    static func committedSession(
+        matching retry: StoryTurnCommitRetry,
+        in sessions: [StorySession],
+        scenes: [StoryScene]
+    ) -> StorySession? {
+        guard let scene = scenes.first(where: {
+            $0.id == retry.scene.id && $0.storyWorldId == retry.scene.storyWorldId
+        }) else {
+            return nil
+        }
+
+        let expectedActiveCharacterIDs = Array(
+            retry.scene.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
+        )
+        guard scene.summary == retry.scene.summary,
+              scene.activeCharacterIds == expectedActiveCharacterIDs else {
+            return nil
+        }
+
+        return sessions.first { session in
+            guard session.id == retry.session.id,
+                  session.storyWorldId == retry.session.storyWorldId,
+                  session.currentSceneId == retry.scene.id,
+                  let checkpoint = session.latestTurnCheckpoint,
+                  checkpoint.turnID == retry.turnID,
+                  checkpoint.userMessageID == retry.userMessageID,
+                  checkpoint.attempt == retry.attempt,
+                  checkpoint.status == .committed else {
+                return false
+            }
+            guard normalizedMessageIDs(checkpoint.assistantMessageIDs)
+                    == normalizedMessageIDs(retry.assistantMessageIDs) else {
+                return false
+            }
+            if let expectedCheckpoint = retry.session.latestTurnCheckpoint {
+                guard checkpoint.baseRevision == expectedCheckpoint.baseRevision,
+                      checkpoint.ownerID == expectedCheckpoint.ownerID,
+                      checkpoint.userMessageID == expectedCheckpoint.userMessageID else {
+                    return false
+                }
+            }
+            return generatedSessionFieldsMatch(retry.session, session, retry: retry)
+        }
+    }
+}
+
+/// Memory writes happen after the conversation turn is committed. A failed
+/// memory write is therefore an auxiliary retry and must never regenerate the
+/// already-saved assistant response.
+struct StoryMemoryRetry: Codable, Equatable {
+    let turnID: UUID
+    let userMessageID: UUID
+    let userText: String
+    let characterMemories: [CharacterMemory]
+    let storyMemories: [StoryMemory]
+    /// Session/world scope is stored separately from the memory payload so a
+    /// retry can be restored before any memory is written into a repository.
+    /// The optionals keep in-memory/test callers and any future legacy retry
+    /// records decodable.
+    let storySessionID: UUID?
+    let storyWorldID: UUID?
+    /// A durable completion marker closes the crash window between removing
+    /// the retry queue and removing its turn journal. Older JSON has no key,
+    /// so decoding defaults to false.
+    var isCompleted: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case turnID
+        case userMessageID
+        case userText
+        case characterMemories
+        case storyMemories
+        case storySessionID
+        case storyWorldID
+        case isCompleted
+    }
+
+    init(
+        turnID: UUID,
+        userMessageID: UUID,
+        userText: String,
+        characterMemories: [CharacterMemory],
+        storyMemories: [StoryMemory],
+        storySessionID: UUID? = nil,
+        storyWorldID: UUID? = nil,
+        isCompleted: Bool = false
+    ) {
+        self.turnID = turnID
+        self.userMessageID = userMessageID
+        self.userText = userText
+        self.characterMemories = characterMemories
+        self.storyMemories = storyMemories
+        self.storySessionID = storySessionID
+        self.storyWorldID = storyWorldID
+        self.isCompleted = isCompleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        turnID = try container.decode(UUID.self, forKey: .turnID)
+        userMessageID = try container.decode(UUID.self, forKey: .userMessageID)
+        userText = try container.decode(String.self, forKey: .userText)
+        characterMemories = try container.decode([CharacterMemory].self, forKey: .characterMemories)
+        storyMemories = try container.decode([StoryMemory].self, forKey: .storyMemories)
+        storySessionID = try container.decodeIfPresent(UUID.self, forKey: .storySessionID)
+        storyWorldID = try container.decodeIfPresent(UUID.self, forKey: .storyWorldID)
+        isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(turnID, forKey: .turnID)
+        try container.encode(userMessageID, forKey: .userMessageID)
+        try container.encode(userText, forKey: .userText)
+        try container.encode(characterMemories, forKey: .characterMemories)
+        try container.encode(storyMemories, forKey: .storyMemories)
+        try container.encodeIfPresent(storySessionID, forKey: .storySessionID)
+        try container.encodeIfPresent(storyWorldID, forKey: .storyWorldID)
+        try container.encode(isCompleted, forKey: .isCompleted)
+    }
 }
 
 /// モデル状態/安全ブロック/保存失敗を会話履歴へ永続化せず表示する一時通知。
@@ -108,6 +338,16 @@ struct StoryRuntimeNotice: Identifiable, Equatable {
     }
 }
 
+extension StoryRuntimeNotice {
+    /// The user-turn retry ID comes from the notice, not a possibly stale
+    /// ViewModel session snapshot. The send preparation refreshes persistence
+    /// before using this ID.
+    var persistedUserMessageIDForRetry: UUID? {
+        guard case .userTurn = retryAction else { return nil }
+        return userMessageID
+    }
+}
+
 @MainActor
 final class StorySessionService: ObservableObject {
     enum Phase: Equatable {
@@ -125,17 +365,25 @@ final class StorySessionService: ObservableObject {
     @Published private(set) var latestSafetyConcern: SafetyConcern?
     /// エラー本文をStorySessionへ保存せず、現在の画面だけに表示する。
     @Published private(set) var latestRuntimeNotice: StoryRuntimeNotice?
+    /// 補助保存の再試行中は同じ操作を二重起動しない。
+    @Published private(set) var isRetryingAuxiliarySave = false
 
     // DI (デフォルトは Local + Mock)
-    private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
-    private let memoryRepo: MemoryRepository = LocalJSONMemoryRepository()
-    private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
-    private let castRepo: CastRepository = LocalJSONCastRepository()
-    private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
+    private let characterRepo: CharacterRepository
+    private let memoryRepo: MemoryRepository
+    private let worldRepo: StoryWorldRepository
+    private let castRepo: CastRepository
+    private let sessionRepo: StorySessionRepository
+    private let sceneRepo: StorySceneRepository
     // Lorebookは必要な項目だけを選択してプロンプトへ渡す。
-    private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
+    private let lorebookRepo: StoryLorebookRepository
     // 物語内メモリーは全体メモリー(CharacterMemory)と別ストアで管理する。
-    private let storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository()
+    private let storyMemoryRepo: StoryMemoryRepository
+    private let storyMemoryRetryRepo: StoryMemoryRetryRepository
+    /// Local JSON production wiring can use one cross-file transaction. Test
+    /// doubles and future repositories keep the existing per-repository
+    /// fallback unless they explicitly provide this capability.
+    private let storyMemoryRetryMemoryTransaction: StoryMemoryRetryMemoryTransaction?
     private let safetyPipeline = SafetyPipeline.shared
     private let sceneSelector: SceneCharacterSelecting = MockSceneCharacterSelector()
     private let summarizer: SceneSummarizing = MockSceneSummarizer()
@@ -169,6 +417,17 @@ final class StorySessionService: ObservableObject {
     private var activeTurnAttempt: Int?
     private var activeUserMessageID: UUID?
     private var activeUserText = ""
+    /// A failed turn commit remains pending until the exact generated snapshot
+    /// is committed or the app is reloaded and journal recovery handles it.
+    private var pendingStoryTurnCommitRetries: [UUID: StoryTurnCommitRetry] = [:]
+    /// Memory writes are best-effort after a committed turn, but failed writes
+    /// remain retryable for this view-model lifetime and are reattached after a
+    /// later successful turn if the user keeps chatting.
+    private var pendingStoryMemoryRetries: [UUID: StoryMemoryRetry] = [:]
+    /// Keep retry cards deterministic when more than one committed turn has
+    /// outstanding memory writes. Dictionary iteration order is not a UI
+    /// ordering contract.
+    private var pendingStoryMemoryRetryOrder: [UUID] = []
     /// Timeout notice persistence has its own validity token. A watchdog may
     /// suspend at a repository await; cancellation or a newer turn must then
     /// invalidate the pending save before it can write a stale snapshot.
@@ -224,6 +483,247 @@ final class StorySessionService: ObservableObject {
         return cappedSelectedIDs
     }
 
+    init(
+        characterRepo: CharacterRepository = LocalJSONCharacterRepository(),
+        memoryRepo: MemoryRepository = LocalJSONMemoryRepository(),
+        worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository(),
+        castRepo: CastRepository = LocalJSONCastRepository(),
+        sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository(),
+        sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository(),
+        lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository(),
+        storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository(),
+        storyMemoryRetryRepo: StoryMemoryRetryRepository = LocalJSONStoryMemoryRetryRepository(),
+        storyMemoryRetryMemoryTransaction: StoryMemoryRetryMemoryTransaction? = nil,
+        pendingStoryTurnCommitRetries: [StoryTurnCommitRetry] = [],
+        pendingStoryMemoryRetries: [StoryMemoryRetry] = []
+    ) {
+        self.characterRepo = characterRepo
+        self.memoryRepo = memoryRepo
+        self.worldRepo = worldRepo
+        self.castRepo = castRepo
+        self.sessionRepo = sessionRepo
+        self.sceneRepo = sceneRepo
+        self.lorebookRepo = lorebookRepo
+        self.storyMemoryRepo = storyMemoryRepo
+        self.storyMemoryRetryRepo = storyMemoryRetryRepo
+        if let storyMemoryRetryMemoryTransaction {
+            self.storyMemoryRetryMemoryTransaction = storyMemoryRetryMemoryTransaction
+        } else if memoryRepo is LocalJSONMemoryRepository,
+                  storyMemoryRepo is LocalJSONStoryMemoryRepository,
+                  let localTransaction = storyMemoryRetryRepo as? StoryMemoryRetryMemoryTransaction {
+            self.storyMemoryRetryMemoryTransaction = localTransaction
+        } else {
+            self.storyMemoryRetryMemoryTransaction = nil
+        }
+        for retry in pendingStoryTurnCommitRetries {
+            self.pendingStoryTurnCommitRetries[retry.turnID] = retry
+        }
+        for retry in pendingStoryMemoryRetries where !retry.isCompleted {
+            self.pendingStoryMemoryRetries[retry.turnID] = retry
+            self.pendingStoryMemoryRetryOrder.append(retry.turnID)
+        }
+    }
+
+    @discardableResult
+    private func enqueueStoryMemoryRetry(_ retry: StoryMemoryRetry) async -> Bool {
+        if pendingStoryMemoryRetries[retry.turnID] == nil {
+            pendingStoryMemoryRetryOrder.append(retry.turnID)
+        }
+        pendingStoryMemoryRetries[retry.turnID] = retry
+        do {
+            try await storyMemoryRetryRepo.saveRetry(retry)
+        } catch {
+            // Keep the in-memory retry visible for the current screen. The
+            // notice remains actionable, while the persistence error is not
+            // allowed to masquerade as a successful auxiliary save.
+            NSLog(
+                "[StorySession] memory retry queue save failed turn=%@: %@",
+                retry.turnID.uuidString,
+                error.localizedDescription
+            )
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    private func removeStoryMemoryJournal(for turnID: UUID) async -> Bool {
+        do {
+            try await StoryTurnJournal.removeAsync(turnID: turnID)
+            return true
+        } catch {
+            // The auxiliary write is already complete. Retaining the journal
+            // is safe and lets the next recovery retry the idempotent cleanup.
+            NSLog(
+                "[StorySession] memory retry journal cleanup deferred turn=%@: %@",
+                turnID.uuidString,
+                error.localizedDescription
+            )
+            return false
+        }
+    }
+
+    /// Persist completion before deleting the journal. If the process stops
+    /// after the marker is written, recovery will not reintroduce the already
+    /// successful retry. The queue record is removed only after the journal is
+    /// gone, so a failed cleanup leaves a harmless marker rather than an
+    /// actionable stale retry.
+    @discardableResult
+    private func completeStoryMemoryRetry(_ retry: StoryMemoryRetry) async -> Bool {
+        guard !retry.isCompleted else { return true }
+        var completed = retry
+        completed.isCompleted = true
+        do {
+            try await storyMemoryRetryRepo.saveRetry(completed)
+        } catch let error as StoryTurnPersistenceError {
+            if case .recordDeleted = error {
+                // A tombstoned session cannot accept the completion marker.
+                // The retry itself is already stale, so remove only that
+                // queue entry and its journal instead of leaving an
+                // unremovable notice in memory.
+                pendingStoryMemoryRetries.removeValue(forKey: retry.turnID)
+                pendingStoryMemoryRetryOrder.removeAll { $0 == retry.turnID }
+                do {
+                    try await storyMemoryRetryRepo.deleteRetry(turnID: retry.turnID)
+                } catch {
+                    NSLog(
+                        "[StorySession] deleted memory retry cleanup deferred turn=%@: %@",
+                        retry.turnID.uuidString,
+                        error.localizedDescription
+                    )
+                }
+                _ = await removeStoryMemoryJournal(for: retry.turnID)
+                return false
+            }
+            NSLog(
+                "[StorySession] memory retry completion marker failed turn=%@: %@",
+                retry.turnID.uuidString,
+                error.localizedDescription
+            )
+            return false
+        } catch {
+            NSLog(
+                "[StorySession] memory retry completion marker failed turn=%@: %@",
+                retry.turnID.uuidString,
+                error.localizedDescription
+            )
+            return false
+        }
+
+        pendingStoryMemoryRetries.removeValue(forKey: retry.turnID)
+        pendingStoryMemoryRetryOrder.removeAll { $0 == retry.turnID }
+        guard await removeStoryMemoryJournal(for: retry.turnID) else {
+            return false
+        }
+        do {
+            try await storyMemoryRetryRepo.deleteRetry(turnID: retry.turnID)
+            return true
+        } catch {
+            // The completion marker remains durable and is filtered during
+            // restore. Journal recovery can purge it once the journal is gone.
+            NSLog(
+                "[StorySession] completed memory retry cleanup deferred turn=%@: %@",
+                retry.turnID.uuidString,
+                error.localizedDescription
+            )
+            return false
+        }
+    }
+
+    /// Restores only retries belonging to the currently opened StorySession.
+    /// Other sessions remain in the shared queue for their own view to pick
+    /// up. Legacy records without a trustworthy Session ID remain queued for
+    /// migration, but are never assigned to a Session by World ID alone.
+    func restorePendingStoryMemoryRetries(
+        storySessionID: UUID,
+        storyWorldID: UUID
+    ) async throws {
+        let sessions = try await sessionRepo.fetchSessions(storyWorldId: storyWorldID)
+        guard let session = sessions.first(where: { $0.id == storySessionID }) else {
+            // A retry must never create memory for a deleted or otherwise
+            // missing session. Keep the durable record untouched here: the
+            // tombstone recovery path owns deletion, while an unknown legacy
+            // record may still belong to a session that is being restored.
+            return
+        }
+        // Fetch the auxiliary queue after session recovery. Tombstone
+        // reconciliation may have purged retries belonging to a deliberately
+        // deleted session; loading the queue first would retain a stale copy
+        // in this ViewModel for the remainder of the bootstrap.
+        let persisted = try await storyMemoryRetryRepo.fetchRetries()
+        let scoped = persisted.filter { retry in
+            let retrySessionIDs = Set(
+                [retry.storySessionID].compactMap { $0 }
+                    + retry.storyMemories.compactMap(\.storySessionId)
+            )
+            guard retrySessionIDs == Set([storySessionID]) else {
+                // A legacy record without a trustworthy owner, or a malformed
+                // record that mixes sessions, must remain queued for diagnosis
+                // and must never appear as this Session's retry notice.
+                return false
+            }
+            guard retry.storyWorldID == nil || retry.storyWorldID == storyWorldID else {
+                return false
+            }
+            return retry.storyMemories.allSatisfy { $0.storyWorldId == storyWorldID }
+        }
+        let latestCheckpoint = session.latestTurnCheckpoint
+        for retry in scoped {
+            guard !retry.isCompleted else { continue }
+            let retryMemorySessionIDs = Set(
+                retry.storyMemories.compactMap(\.storySessionId)
+            )
+            let isLatestTurnKnownUncommitted = latestCheckpoint?.turnID == retry.turnID
+                && latestCheckpoint?.status != .committed
+
+            // Only delete when the session has positive evidence that this
+            // retry belongs to a pending/failed turn. An older committed turn
+            // has no longer got its own checkpoint, so "not the latest" is not
+            // evidence that its memory work is stale.
+            if isLatestTurnKnownUncommitted {
+                do {
+                    // Keep the source journal as a recovery record, but fence
+                    // its auxiliary retry before removing it from the active
+                    // queue. If the journal is retained because the paired
+                    // Scene is missing, the next recovery must not resurrect
+                    // discarded memory work.
+                    var discarded = retry
+                    discarded.isCompleted = true
+                    try await storyMemoryRetryRepo.saveRetry(discarded)
+                    pendingStoryMemoryRetries.removeValue(forKey: retry.turnID)
+                    pendingStoryMemoryRetryOrder.removeAll { $0 == retry.turnID }
+                } catch {
+                    NSLog(
+                        "[StorySession] stale memory retry cleanup failed turn=%@: %@",
+                        retry.turnID.uuidString,
+                        error.localizedDescription
+                    )
+                }
+                continue
+            }
+
+            // The filter above already established that every known owner is
+            // exactly this Session. Keep this second assertion close to the
+            // enqueue boundary so a future filter change cannot accidentally
+            // reintroduce cross-Session assignment.
+            guard retry.storySessionID == storySessionID
+                || retryMemorySessionIDs == Set([storySessionID]) else { continue }
+            guard pendingStoryMemoryRetries[retry.turnID] == nil else { continue }
+            pendingStoryMemoryRetries[retry.turnID] = retry
+            pendingStoryMemoryRetryOrder.append(retry.turnID)
+        }
+        if latestRuntimeNotice == nil,
+           let retry = oldestPendingStoryMemoryRetry {
+            latestRuntimeNotice = storyMemoryRetryNotice(retry)
+        }
+    }
+
+    private var oldestPendingStoryMemoryRetry: StoryMemoryRetry? {
+        pendingStoryMemoryRetryOrder
+            .compactMap { pendingStoryMemoryRetries[$0] }
+            .first
+    }
+
     private struct StoryProgressUpdate: Codable {
         var progressLabel: String?
         var currentObjective: String?
@@ -257,7 +757,10 @@ final class StorySessionService: ObservableObject {
         existingUserMessageID: UUID? = nil
     ) -> UUID? {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, phase != .thinking else { return nil }
+        guard !trimmed.isEmpty,
+              phase != .thinking,
+              !isRetryingAuxiliarySave,
+              pendingStoryTurnCommitRetries.isEmpty else { return nil }
         ensureTurnOwnerRegistered()
         phase = .thinking
         streamingResponse = ""
@@ -376,6 +879,21 @@ final class StorySessionService: ObservableObject {
         backend: StoryGenerationBackend,
         retryAction: StoryRuntimeNoticeRetryAction
     ) {
+        // A failed turn commit is the only retry that keeps the composer
+        // disabled. Never replace that recovery path with a less critical
+        // narration/acknowledgement failure; doing so would leave the user
+        // unable to reach the exact generated snapshot. If an earlier path
+        // already cleared the notice, rebuild it from the durable pending
+        // retry instead of leaving the composer permanently disabled with no
+        // visible recovery action.
+        if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+            if case let .storyTurnCommit(existingRetry)? = latestRuntimeNotice?.retryAction,
+               pendingStoryTurnCommitRetries[existingRetry.turnID] == existingRetry {
+                return
+            }
+            latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+            return
+        }
         let lastUserMessage = session.messages.last(where: { $0.author.isUser })
         latestRuntimeNotice = StoryRuntimeNotice(
             text: text,
@@ -399,7 +917,27 @@ final class StorySessionService: ObservableObject {
     }
 
     func dismissRuntimeNotice() {
+        if let retry = oldestPendingStoryTurnCommitRetry {
+            latestRuntimeNotice = storyTurnCommitRetryNotice(retry)
+            return
+        }
         latestRuntimeNotice = nil
+    }
+
+    private var oldestPendingStoryTurnCommitRetry: StoryTurnCommitRetry? {
+        pendingStoryTurnCommitRetries.values.min { lhs, rhs in
+            if lhs.session.updatedAt != rhs.session.updatedAt {
+                return lhs.session.updatedAt < rhs.session.updatedAt
+            }
+            return lhs.turnID.uuidString < rhs.turnID.uuidString
+        }
+    }
+
+    /// A pending turn commit must be completed before another user turn can
+    /// start; otherwise the repository would correctly reject the new turn as
+    /// `turnInProgress` while the UI appears to accept it.
+    var hasPendingStoryCommitRetry: Bool {
+        !pendingStoryTurnCommitRetries.isEmpty
     }
 
     /// アプリから明示的に依頼された時だけ、休憩提案の本文を 1 回生成する。
@@ -789,7 +1327,8 @@ final class StorySessionService: ObservableObject {
                     session: session,
                     scene: scene,
                     turnID: turnID,
-                    assistantMessageIDs: [narration.id]
+                    assistantMessageIDs: [narration.id],
+                    memoryRetries: []
                 )
             } catch {
                 // 入力自体は先の保存で確定しているが、安全ブロックの案内を
@@ -924,7 +1463,10 @@ final class StorySessionService: ObservableObject {
         // 参加していないキャラの記憶まで一括注入すると、同じ本文を持つ
         // 別キャラの経験が混ざるため、共通(nil)または今回のactive castだけに絞る。
         let contextualCharacterIDs = Set(activeCast.map(\.characterId))
-        let storyMemoryCandidates = ((try? await storyMemoryRepo.fetchMemories(storyWorldId: world.id)) ?? [])
+        let scopedStoryMemoryCandidates = ((try? await storyMemoryRepo.fetchMemories(
+            storyWorldId: world.id,
+            storySessionId: session.id
+        )) ?? [])
             .filter { memory in
                 // キャラ削除後に古いメモリーJSONが残っていても、次のターンへ
                 // そのキャラを再注入しない。世界イベント(nil)は保持する。
@@ -932,6 +1474,15 @@ final class StorySessionService: ObservableObject {
                 return validCastCharacterIDs.contains(characterID)
                     && contextualCharacterIDs.contains(characterID)
             }
+        // Memory provenance uses the durable turn identity. generationID is an
+        // execution-attempt ID and must not decide whether a saved memory still
+        // belongs to the visible session history.
+        let activeSourceTurnIDs = Set(session.messages.compactMap(\.turnID))
+        let storyMemoryCandidates = StoryMemory.scoped(
+            to: session.id,
+            sourceTurnIds: activeSourceTurnIDs,
+            from: scopedStoryMemoryCandidates
+        )
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
@@ -1563,41 +2114,18 @@ final class StorySessionService: ObservableObject {
             )
         )
         session.storyState = stateAfterAcceptedPatch
-        do {
-            session = try await sessionRepo.commitTurn(
-                session: session,
-                scene: scene,
-                turnID: turnID,
-                assistantMessageIDs: turnMessages.map(\.id)
-            )
-        } catch {
-            NSLog("[StorySession] turn commit failed: %@", error.localizedDescription)
-            await finishGenerationWithoutSaving(
-                generationID: generationID,
-                notice: localizedNotice(
-                    "今回の応答を一貫して保存できませんでした。AI本文は再生成せず、保存状態を確認してから同じ発言を再試行してください。",
-                    "The turn could not be committed consistently. The AI reply was not regenerated; check storage and retry the same message."
-                ),
-                backend: .persistence,
-                userMessageID: userMessageID,
-                userText: userText,
-                backendName: "turn commit failed"
-            )
-            return
-        }
-        guard isGenerationActive(generationID) else {
-            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
-            return
-        }
 
-        // 13) メモリー抽出。ユーザー事実は全体、出来事は物語内へ保存する。
-        // ここを phase=.idle / activeGenerationID=nil より後に置くと、下の
-        // isGenerationActive ガードが常に失敗してメモリーが一件も保存されない。
-        // 本文の永続化は済んでいるため、抽出だけを完了させてからUIをidleへ戻す。
+        // Memory extraction is deterministic input to the same turn boundary.
+        // Prepare the records before commit, but do not write them until the
+        // session/scene snapshot is committed. If commit fails, the retry can
+        // carry these exact records forward without re-running the model or
+        // memory extractor.
         let userVisibleAssistant = newMessages.map { (message: StoryMessage) in
             message.text
         }.joined(separator: "\n")
         var extractedStoryMemoryTexts = Set<String>()
+        var characterMemoriesToSave: [CharacterMemory] = []
+        var storyMemoriesToSave: [StoryMemory] = []
         for member in activeCast {
             guard isGenerationActive(generationID) else {
                 await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
@@ -1615,19 +2143,20 @@ final class StorySessionService: ObservableObject {
                     return
                 }
                 if isGlobalMemoryCategory(memory.category) {
-                    // ユーザーのプロフィール・好みは、別の物語でも使える全体メモリー。
-                    try? await memoryRepo.saveMemory(memory)
-                }
-                if !isGlobalMemoryCategory(memory.category) {
-                    let storyMemory = StoryMemory(
-                        storyWorldId: world.id,
-                        characterId: memory.characterId,
-                        text: memory.text,
-                        category: memory.category,
-                        importance: memory.importance,
-                        source: memory.source
+                    characterMemoriesToSave.append(memory)
+                } else {
+                    storyMemoriesToSave.append(
+                        StoryMemory(
+                            storyWorldId: world.id,
+                            characterId: memory.characterId,
+                            text: memory.text,
+                            category: memory.category,
+                            importance: memory.importance,
+                            source: memory.source,
+                            storySessionId: session.id,
+                            sourceTurnIds: [turnID]
+                        )
                     )
-                    try? await storyMemoryRepo.saveMemory(storyMemory)
                     extractedStoryMemoryTexts.insert(memory.text)
                 }
             }
@@ -1643,20 +2172,130 @@ final class StorySessionService: ObservableObject {
                 await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
                 return
             }
-            try? await storyMemoryRepo.saveMemory(
+            storyMemoriesToSave.append(
                 StoryMemory(
                     storyWorldId: world.id,
                     text: progress,
                     category: .event,
                     importance: 0.6,
-                    source: .summary
+                    source: .summary,
+                    storySessionId: session.id,
+                    sourceTurnIds: [turnID]
                 )
             )
         }
+        let pendingMemoryRetry: StoryMemoryRetry? = {
+            guard !characterMemoriesToSave.isEmpty || !storyMemoriesToSave.isEmpty else {
+                return nil
+            }
+            return StoryMemoryRetry(
+                turnID: turnID,
+                userMessageID: userMessageID,
+                userText: userText,
+                characterMemories: characterMemoriesToSave,
+                storyMemories: storyMemoriesToSave,
+                storySessionID: session.id,
+                storyWorldID: world.id
+            )
+        }()
+        do {
+            session = try await sessionRepo.commitTurn(
+                session: session,
+                scene: scene,
+                turnID: turnID,
+                assistantMessageIDs: turnMessages.map(\.id),
+                memoryRetries: pendingMemoryRetry.map { [$0] } ?? []
+            )
+        } catch {
+            NSLog("[StorySession] turn commit failed: %@", error.localizedDescription)
+            let retry = StoryTurnCommitRetry(
+                session: session,
+                scene: scene,
+                turnID: turnID,
+                attempt: attempt,
+                assistantMessageIDs: turnMessages.map(\.id),
+                characterMemories: characterMemoriesToSave,
+                storyMemories: storyMemoriesToSave,
+                userMessageID: userMessageID,
+                userText: userText
+            )
+            await finishGenerationWithCommitRetry(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "今回の応答を保存しきれませんでした。AI本文は再生成せず、保存だけを再試行できます。",
+                    "The response could not be fully saved. Retry saving without regenerating the AI response."
+                ),
+                retry: retry
+            )
+            return
+        }
+        // 13) メモリー保存。抽出はcommit前に済ませているため、ここで
+        // 失敗しても同じ候補だけを再試行でき、AI本文は再生成しない。
+        var failedCharacterMemories: [CharacterMemory] = []
+        var failedStoryMemories: [StoryMemory] = []
+        var canContinueMemorySaves = true
+        for (index, memory) in characterMemoriesToSave.enumerated() {
+            guard isGenerationActive(generationID) else {
+                // The conversation turn is already committed. Cancellation
+                // must not finish it again or discard candidates that were
+                // still waiting for their auxiliary save.
+                failedCharacterMemories.append(contentsOf: characterMemoriesToSave[index...])
+                failedStoryMemories.append(contentsOf: storyMemoriesToSave)
+                canContinueMemorySaves = false
+                break
+            }
+            do {
+                try await memoryRepo.saveMemory(memory)
+            } catch {
+                failedCharacterMemories.append(memory)
+                NSLog("[StorySession] character memory save failed turn=%@ memory=%@: %@", turnID.uuidString, memory.id.uuidString, error.localizedDescription)
+            }
+        }
+        if canContinueMemorySaves {
+            for (index, memory) in storyMemoriesToSave.enumerated() {
+                guard isGenerationActive(generationID) else {
+                    failedStoryMemories.append(contentsOf: storyMemoriesToSave[index...])
+                    break
+                }
+                do {
+                    try await storyMemoryRepo.saveMemory(memory)
+                } catch {
+                    failedStoryMemories.append(memory)
+                    NSLog("[StorySession] story memory save failed turn=%@ memory=%@: %@", turnID.uuidString, memory.id.uuidString, error.localizedDescription)
+                }
+            }
+        }
 
-        await MainActor.run {
-            guard self.activeGenerationID == generationID else { return }
+        var memoryRetry: StoryMemoryRetry?
+        if !failedCharacterMemories.isEmpty || !failedStoryMemories.isEmpty {
+            let retry = StoryMemoryRetry(
+                turnID: turnID,
+                userMessageID: userMessageID,
+                userText: userText,
+                characterMemories: failedCharacterMemories,
+                storyMemories: failedStoryMemories,
+                storySessionID: session.id,
+                storyWorldID: world.id
+            )
+            if await enqueueStoryMemoryRetry(retry) {
+                _ = await removeStoryMemoryJournal(for: turnID)
+            }
+            memoryRetry = retry
+        } else if let pendingMemoryRetry {
+            // The journal made the candidates durable before the turn commit.
+            // Once every auxiliary write succeeds, remove that handoff so a
+            // later restart cannot replay already-persisted memories.
+            _ = await completeStoryMemoryRetry(pendingMemoryRetry)
+        }
+
+        let didPublishNotice = await MainActor.run { () -> Bool in
+            guard self.activeGenerationID == generationID else { return false }
             self.latestSafetyConcern = safetyConcern
+            if let memoryRetry {
+                self.latestRuntimeNotice = self.storyMemoryRetryNotice(memoryRetry)
+            } else if let pendingRetry = self.oldestPendingStoryMemoryRetry {
+                self.latestRuntimeNotice = self.storyMemoryRetryNotice(pendingRetry)
+            }
             self.streamingResponse = rawFinal
             self.streamingSpeakerName = newMessages.last?.speakerDisplayName
             self.streamingStatusText = ""
@@ -1669,6 +2308,23 @@ final class StorySessionService: ObservableObject {
             self.activeTurnAttempt = nil
             self.activeUserMessageID = nil
             self.activeUserText = ""
+            return true
+        }
+
+        guard !didPublishNotice else { return }
+        // The turn was committed but its generation owner disappeared before
+        // the auxiliary-save notice could be published. Do not leave the
+        // checkpoint pending with no visible recovery path.
+        do {
+            try await sessionRepo.finishTurn(
+                sessionID: session.id,
+                turnID: turnID,
+                attempt: attempt,
+                status: .failed,
+                failureCode: "memory_retry_notice_unavailable"
+            )
+        } catch {
+            NSLog("[StorySession] failed to close committed turn after notice loss: %@", error.localizedDescription)
         }
     }
 
@@ -1681,6 +2337,356 @@ final class StorySessionService: ObservableObject {
             author: .system,
             text: StoryRetryMetadata.attachingUserMessageID(userMessageID, to: text),
             retryBackend: backend
+        )
+    }
+
+    /// Keeps a failed commit pending so the retry can reuse the exact session,
+    /// scene, and assistant message IDs produced by the completed generation.
+    /// Calling finishTurn here would make the checkpoint non-pending and force
+    /// the next attempt through the model-generation path.
+    private func recoveredCommittedSession(for retry: StoryTurnCommitRetry) async -> StorySession? {
+        do {
+            let sessions = try await sessionRepo.fetchSessions(storyWorldId: retry.session.storyWorldId)
+            let scenes = try await sceneRepo.fetchScenes(storyWorldId: retry.scene.storyWorldId)
+            return StoryTurnCommitRecovery.committedSession(
+                matching: retry,
+                in: sessions,
+                scenes: scenes
+            )
+        } catch {
+            // A failed recovery must keep the exact-snapshot retry path. Do not
+            // turn an unreadable or partially recovered store into a false
+            // success.
+            NSLog(
+                "[StorySession] commit recovery check failed turn=%@: %@",
+                retry.turnID.uuidString,
+                error.localizedDescription
+            )
+            return nil
+        }
+    }
+
+    /// Journal recovery may have completed a partially successful commit
+    /// before the original commit call reported its later save error. In that
+    /// case the user-visible result is already durable: refresh normally and
+    /// retry only auxiliary memories, without presenting a misleading save
+    /// failure or invoking the model again.
+    private func finishRecoveredCommittedTurn(
+        generationID: UUID,
+        retry: StoryTurnCommitRetry
+    ) async {
+        pendingStoryTurnCommitRetries.removeValue(forKey: retry.turnID)
+
+        var memoryRetry: StoryMemoryRetry?
+        if !retry.characterMemories.isEmpty || !retry.storyMemories.isEmpty {
+            let candidate = StoryMemoryRetry(
+                turnID: retry.turnID,
+                userMessageID: retry.userMessageID,
+                userText: retry.userText,
+                characterMemories: retry.characterMemories,
+                storyMemories: retry.storyMemories,
+                storySessionID: retry.session.id,
+                storyWorldID: retry.scene.storyWorldId
+            )
+            if let remaining = await saveStoryMemoryRetryRecords(candidate) {
+                if await enqueueStoryMemoryRetry(remaining) {
+                    _ = await removeStoryMemoryJournal(for: retry.turnID)
+                }
+                memoryRetry = remaining
+            } else {
+                _ = await completeStoryMemoryRetry(candidate)
+            }
+        }
+
+        let didPublish = await MainActor.run { () -> Bool in
+            guard self.activeGenerationID == generationID else { return false }
+            if let pendingRetry = self.oldestPendingStoryTurnCommitRetry {
+                self.latestRuntimeNotice = self.storyTurnCommitRetryNotice(pendingRetry)
+            } else if let memoryRetry {
+                self.latestRuntimeNotice = self.storyMemoryRetryNotice(memoryRetry)
+            } else if let pendingRetry = self.oldestPendingStoryMemoryRetry {
+                self.latestRuntimeNotice = self.storyMemoryRetryNotice(pendingRetry)
+            } else {
+                self.latestRuntimeNotice = nil
+            }
+            // The persisted session is the source of truth. The ViewModel's
+            // normal saved-turn refresh will show the recovered messages.
+            self.streamingResponse = ""
+            self.streamingSpeakerName = nil
+            self.streamingStatusText = ""
+            self.savedTurnRevision += 1
+            self.generationWatchdogDeadline = nil
+            self.phase = .idle
+            self.activeGenerationID = nil
+            self.activeGenerationModel = nil
+            self.activeTurnID = nil
+            self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
+            return true
+        }
+
+        if !didPublish {
+            NSLog(
+                "[StorySession] recovered committed turn without active UI owner turn=%@",
+                retry.turnID.uuidString
+            )
+        }
+    }
+
+    private func finishGenerationWithCommitRetry(
+        generationID: UUID,
+        notice: String,
+        retry: StoryTurnCommitRetry
+    ) async {
+        if await recoveredCommittedSession(for: retry) != nil {
+            NSLog(
+                "[StorySession] commit failure already recovered turn=%@",
+                retry.turnID.uuidString
+            )
+            await finishRecoveredCommittedTurn(generationID: generationID, retry: retry)
+            return
+        }
+
+        let didPublishNotice = await MainActor.run { () -> Bool in
+            guard self.activeGenerationID == generationID else { return false }
+            self.pendingStoryTurnCommitRetries[retry.turnID] = retry
+            self.latestRuntimeNotice = StoryRuntimeNotice(
+                text: notice,
+                userMessageID: retry.userMessageID,
+                userText: retry.userText,
+                backendName: "turn commit failed",
+                backend: .persistence,
+                retryAction: .storyTurnCommit(retry)
+            )
+            self.streamingResponse = notice
+            self.streamingSpeakerName = "システム"
+            self.streamingStatusText = ""
+            self.generationWatchdogDeadline = nil
+            self.phase = .idle
+            self.activeGenerationID = nil
+            self.activeGenerationModel = nil
+            self.activeTurnID = nil
+            self.activeSessionID = nil
+            self.activeTurnAttempt = nil
+            self.activeUserMessageID = nil
+            self.activeUserText = ""
+            return true
+        }
+        guard !didPublishNotice else { return }
+
+        // The retry target must never be left in an invisible pending state.
+        // Release the repository checkpoint when the owning generation has
+        // already disappeared before the notice could be published.
+        do {
+            try await sessionRepo.finishTurn(
+                sessionID: retry.session.id,
+                turnID: retry.turnID,
+                attempt: retry.attempt,
+                status: .failed,
+                failureCode: "commit_retry_notice_unavailable"
+            )
+        } catch {
+            NSLog("[StorySession] failed to close turn after commit retry notice loss: %@", error.localizedDescription)
+        }
+    }
+
+    /// Retries only the persistence boundary for a previously generated turn.
+    /// Journal recovery may already have committed the snapshot; commitTurn is
+    /// idempotent for that case and returns the persisted session.
+    func retryStoryTurnCommit(_ retry: StoryTurnCommitRetry) async {
+        guard !isRetryingAuxiliarySave,
+              let pendingRetry = pendingStoryTurnCommitRetries[retry.turnID] else { return }
+        isRetryingAuxiliarySave = true
+        defer { isRetryingAuxiliarySave = false }
+        latestRuntimeNotice = nil
+        let memoryRetry: StoryMemoryRetry? = {
+            guard !pendingRetry.characterMemories.isEmpty || !pendingRetry.storyMemories.isEmpty else {
+                return nil
+            }
+            return StoryMemoryRetry(
+                turnID: pendingRetry.turnID,
+                userMessageID: pendingRetry.userMessageID,
+                userText: pendingRetry.userText,
+                characterMemories: pendingRetry.characterMemories,
+                storyMemories: pendingRetry.storyMemories,
+                storySessionID: pendingRetry.session.id,
+                storyWorldID: pendingRetry.scene.storyWorldId
+            )
+        }()
+        do {
+            _ = try await sessionRepo.commitTurn(
+                session: pendingRetry.session,
+                scene: pendingRetry.scene,
+                turnID: pendingRetry.turnID,
+                assistantMessageIDs: pendingRetry.assistantMessageIDs,
+                memoryRetries: memoryRetry.map { [$0] } ?? []
+            )
+            pendingStoryTurnCommitRetries.removeValue(forKey: pendingRetry.turnID)
+            // The conversation turn is durable once commitTurn succeeds.
+            // Auxiliary memory persistence must not delay or suppress the
+            // revision signal used by the UI to reload the committed reply.
+            savedTurnRevision += 1
+            if let memoryRetry {
+                if let remaining = await saveStoryMemoryRetryRecords(memoryRetry) {
+                    if await enqueueStoryMemoryRetry(remaining) {
+                        _ = await removeStoryMemoryJournal(for: pendingRetry.turnID)
+                    }
+                    if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+                        latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+                    } else {
+                        latestRuntimeNotice = storyMemoryRetryNotice(remaining)
+                    }
+                } else {
+                    _ = await completeStoryMemoryRetry(memoryRetry)
+                    if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+                        latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+                    }
+                }
+            } else {
+                if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+                    latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+                }
+            }
+        } catch {
+            NSLog("[StorySession] auxiliary turn commit retry failed turn=%@: %@", pendingRetry.turnID.uuidString, error.localizedDescription)
+            latestRuntimeNotice = StoryRuntimeNotice(
+                text: localizedNotice(
+                    "保存を完了できませんでした。AI本文は再生成せず、保存先を確認してからもう一度試してください。",
+                    "The save could not be completed. The AI response was not regenerated; check storage and try again."
+                ),
+                userMessageID: pendingRetry.userMessageID,
+                userText: pendingRetry.userText,
+                backendName: "turn commit retry failed",
+                backend: .persistence,
+                retryAction: .storyTurnCommit(pendingRetry)
+            )
+        }
+    }
+
+    /// Retries only failed memory writes. The committed conversation is never
+    /// sent back through `send` or the model pipeline.
+    func retryStoryMemorySave(_ retry: StoryMemoryRetry) async {
+        guard pendingStoryTurnCommitRetries.isEmpty else {
+            if let pendingRetry = oldestPendingStoryTurnCommitRetry {
+                latestRuntimeNotice = storyTurnCommitRetryNotice(pendingRetry)
+            }
+            return
+        }
+        guard !isRetryingAuxiliarySave,
+              let pendingRetry = pendingStoryMemoryRetries[retry.turnID],
+              !pendingRetry.isCompleted else { return }
+        isRetryingAuxiliarySave = true
+        defer { isRetryingAuxiliarySave = false }
+        latestRuntimeNotice = nil
+
+        guard let remaining = await saveStoryMemoryRetryRecords(pendingRetry) else {
+            _ = await completeStoryMemoryRetry(pendingRetry)
+            savedTurnRevision += 1
+            return
+        }
+
+        await enqueueStoryMemoryRetry(remaining)
+        latestRuntimeNotice = storyMemoryRetryNotice(remaining)
+    }
+
+    private func saveStoryMemoryRetryRecords(_ retry: StoryMemoryRetry) async -> StoryMemoryRetry? {
+        if let transaction = storyMemoryRetryMemoryTransaction,
+           retry.storySessionID != nil {
+            do {
+                return try await transaction.saveMemoryRetryRecords(retry)
+            } catch {
+                // Keep the complete retry payload if the cross-file
+                // transaction could not commit. It is safer to retry an
+                // idempotent merge than to acknowledge a partial write.
+                NSLog(
+                    "[StorySession] memory retry transaction failed turn=%@: %@",
+                    retry.turnID.uuidString,
+                    error.localizedDescription
+                )
+                return retry
+            }
+        }
+
+        var remainingCharacterMemories: [CharacterMemory] = []
+        for memory in retry.characterMemories {
+            do {
+                try await memoryRepo.saveMemory(memory)
+            } catch {
+                remainingCharacterMemories.append(memory)
+                NSLog("[StorySession] character memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, memory.id.uuidString, error.localizedDescription)
+            }
+        }
+        var remainingStoryMemories: [StoryMemory] = []
+        for memory in retry.storyMemories {
+            var ownedMemory = memory
+            // Legacy retry payloads may carry the owner only on the retry
+            // envelope. Promote it before the repository write so a stale
+            // service cannot save world-scoped memory after Session deletion.
+            if ownedMemory.storySessionId == nil {
+                ownedMemory.storySessionId = retry.storySessionID
+            }
+            do {
+                try await storyMemoryRepo.saveMemory(ownedMemory)
+            } catch let error as StoryTurnPersistenceError {
+                if case .recordDeleted = error {
+                    // An intentional Session deletion is terminal for this
+                    // payload. Retrying it forever would keep an impossible
+                    // notice visible and could resurrect deleted state in a
+                    // replaceable repository implementation.
+                    NSLog(
+                        "[StorySession] dropped story memory retry for deleted session turn=%@ memory=%@",
+                        retry.turnID.uuidString,
+                        ownedMemory.id.uuidString
+                    )
+                    continue
+                }
+                remainingStoryMemories.append(ownedMemory)
+                NSLog("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, ownedMemory.id.uuidString, error.localizedDescription)
+            } catch {
+                remainingStoryMemories.append(ownedMemory)
+                NSLog("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, ownedMemory.id.uuidString, error.localizedDescription)
+            }
+        }
+
+        guard !remainingCharacterMemories.isEmpty || !remainingStoryMemories.isEmpty else { return nil }
+        return StoryMemoryRetry(
+            turnID: retry.turnID,
+            userMessageID: retry.userMessageID,
+            userText: retry.userText,
+            characterMemories: remainingCharacterMemories,
+            storyMemories: remainingStoryMemories,
+            storySessionID: retry.storySessionID,
+            storyWorldID: retry.storyWorldID
+        )
+    }
+
+    private func storyMemoryRetryNotice(_ retry: StoryMemoryRetry) -> StoryRuntimeNotice {
+        StoryRuntimeNotice(
+            text: localizedNotice(
+                "応答は保存されましたが、物語の記憶を保存できませんでした。記憶だけ再試行できます。",
+                "The response was saved, but some story memories were not. Retry the memory save without regenerating the response."
+            ),
+            userMessageID: retry.userMessageID,
+            userText: retry.userText,
+            backendName: "memory save failed",
+            backend: .persistence,
+            retryAction: .storyMemory(retry)
+        )
+    }
+
+    private func storyTurnCommitRetryNotice(_ retry: StoryTurnCommitRetry) -> StoryRuntimeNotice {
+        StoryRuntimeNotice(
+            text: localizedNotice(
+                "保存を完了できませんでした。AI本文は再生成せず、同じ結果の保存だけ再試行できます。",
+                "The turn could not be committed. Retry saving the same generated result without regenerating it."
+            ),
+            userMessageID: retry.userMessageID,
+            userText: retry.userText,
+            backendName: "turn commit failed",
+            backend: .persistence,
+            retryAction: .storyTurnCommit(retry)
         )
     }
 

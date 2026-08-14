@@ -1513,6 +1513,10 @@ final class StorySessionViewModel: ObservableObject {
     @Published private(set) var cast: [CastMember] = []
     @Published private(set) var characterIndex: [UUID: CharacterProfile] = [:]
     @Published private(set) var bootstrapError: String?
+    /// Optional auxiliary retry state must not block the conversation. Keep a
+    /// lightweight warning so the user can distinguish "loaded" from
+    /// "loaded, but retry work could not be restored".
+    @Published private(set) var bootstrapWarning: String?
     /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
     @Published var restSuggestion: StoryRestSuggestion?
     /// 了承メッセージの保存中は通常送信を止め、保存結果を待つ。
@@ -1586,6 +1590,7 @@ final class StorySessionViewModel: ObservableObject {
     }
 
     func bootstrap() async {
+        bootstrapWarning = nil
         do {
             // 前回のプロセス終了時に残ったpendingターンは、生成を再開せず
             // interruptedとして明示的に終了させる。通常ターンのpolling中に
@@ -1601,6 +1606,21 @@ final class StorySessionViewModel: ObservableObject {
             )
             NSLog("[StorySessionVM] interrupted turn recovery failed: %@", error.localizedDescription)
             return
+        }
+        do {
+            // Auxiliary memory saves are independent from the visible turn,
+            // but their retry payload must survive view dismissal and app
+            // restart. Restore only this Session's queue before enabling chat.
+            try await service.restorePendingStoryMemoryRetries(
+                storySessionID: session.id,
+                storyWorldID: world.id
+            )
+        } catch {
+            bootstrapWarning = KizunaCopy.text(
+                japanese: "保存待ちの記憶を読み込めませんでした。保存先を確認して再試行してください。",
+                english: "Pending memory saves could not be loaded. Check storage and try again."
+            )
+            NSLog("[StorySessionVM] memory retry restore failed: %@", error.localizedDescription)
         }
         do {
             async let castFetch = castRepo.fetchCast(storyWorldId: world.id)
@@ -1793,14 +1813,27 @@ final class StorySessionViewModel: ObservableObject {
         return enqueueSend(userMessage.text, existingUserMessageID: targetUserMessageID)
     }
 
-    /// 永続化されていない一時ランタイム通知を再試行する。保存済みの
-    /// userMessageIDが現在のセッションにあれば同じターンを再利用し、初回入力の
-    /// 保存自体に失敗していた場合は本文を新しいユーザー発話として送る。
+    /// 永続化されていない一時ランタイム通知を再試行する。補助保存の
+    /// 通知は保存操作だけを再実行し、userTurn通知だけが本文生成へ戻る。
     @discardableResult
     func retryRuntimeNotice(_ notice: StoryRuntimeNotice) -> Bool {
-        service.dismissRuntimeNotice()
         switch notice.retryAction {
+        case let .storyTurnCommit(retry):
+            Task { [weak self] in
+                guard let self else { return }
+                await self.service.retryStoryTurnCommit(retry)
+                await self.refreshAfterTurn()
+            }
+            return true
+        case let .storyMemory(retry):
+            Task { [weak self] in
+                guard let self else { return }
+                await self.service.retryStoryMemorySave(retry)
+                await self.refreshAfterTurn()
+            }
+            return true
         case let .narration(text):
+            service.dismissRuntimeNotice()
             Task { [weak self] in
                 guard let self else { return }
                 await self.service.addNarration(text, session: self.session)
@@ -1808,6 +1841,7 @@ final class StorySessionViewModel: ObservableObject {
             }
             return true
         case let .restAcknowledgement(characterID, characterName):
+            service.dismissRuntimeNotice()
             Task { [weak self] in
                 guard let self else { return }
                 do {
@@ -1832,15 +1866,17 @@ final class StorySessionViewModel: ObservableObject {
             }
             return true
         case .userTurn:
-            break
+            service.dismissRuntimeNotice()
+            // enqueueSend refreshes the persisted session immediately before
+            // calling the service. Always carry the stable notice ID instead
+            // of deciding from this possibly stale ViewModel snapshot; the
+            // repository beginTurn path is idempotent whether the message is
+            // already persisted or needs to be appended.
+            return enqueueSend(
+                notice.userText,
+                existingUserMessageID: notice.persistedUserMessageIDForRetry
+            )
         }
-        let hasPersistedUserTurn = session.messages.contains { message in
-            message.id == notice.userMessageID && message.author.isUser
-        }
-        return enqueueSend(
-            notice.userText,
-            existingUserMessageID: hasPersistedUserTurn ? notice.userMessageID : nil
-        )
     }
 
     /// Resolves a system card to its persisted user turn. The metadata path is

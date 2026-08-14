@@ -34,29 +34,50 @@ final class LocalJSONMemoryRepository: MemoryRepository {
     }
 
     func saveMemory(_ memory: CharacterMemory) async throws {
-        // dedupe: 同じ characterId で text 正規化が一致するものは置き換え
+        let perCharacterLimit = self.perCharacterLimit
         try await store.mutate { all in
-            let normalized = normalize(memory.text)
-            if let idx = all.firstIndex(where: { $0.characterId == memory.characterId && normalize($0.text) == normalized }) {
-                var existing = all[idx]
-                // importance は上書き (max を取る)、lastUsedAt は今に更新
-                existing.importance = max(existing.importance, memory.importance)
-                existing.lastUsedAt = Date()
-                all[idx] = existing
-            } else {
-                all.append(memory)
+            Self.mergeMemory(
+                memory,
+                into: &all,
+                perCharacterLimit: perCharacterLimit
+            )
+        }
+    }
+
+    /// Applies one memory save to an already-loaded collection. The helper is
+    /// shared with the cross-file Story memory retry transaction so the
+    /// regular repository and the retry path keep identical dedupe and limit
+    /// semantics.
+    static func mergeMemory(
+        _ memory: CharacterMemory,
+        into all: inout [CharacterMemory],
+        perCharacterLimit: Int = 60
+    ) {
+        // dedupe: 同じ characterId で text 正規化が一致するものは置き換え
+        let normalized = Self.normalize(memory.text)
+        if let idx = all.firstIndex(where: {
+            $0.characterId == memory.characterId
+                && Self.normalize($0.text) == normalized
+        }) {
+            var existing = all[idx]
+            // importance は上書き (max を取る)、lastUsedAt は今に更新
+            existing.importance = max(existing.importance, memory.importance)
+            existing.lastUsedAt = Date()
+            all[idx] = existing
+        } else {
+            all.append(memory)
+        }
+
+        // 上限超過時に古い lastUsedAt から削除
+        let byCharacter = Dictionary(grouping: all, by: { $0.characterId })
+        all = byCharacter.values.flatMap { items in
+            let sorted = items.sorted { lhs, rhs in
+                let lhsKey = lhs.lastUsedAt ?? lhs.createdAt
+                let rhsKey = rhs.lastUsedAt ?? rhs.createdAt
+                if lhs.importance != rhs.importance { return lhs.importance > rhs.importance }
+                return lhsKey > rhsKey
             }
-            // 上限超過時に古い lastUsedAt から削除
-            let byCharacter = Dictionary(grouping: all, by: { $0.characterId })
-            all = byCharacter.values.flatMap { items in
-                let sorted = items.sorted { lhs, rhs in
-                    let lhsKey = lhs.lastUsedAt ?? lhs.createdAt
-                    let rhsKey = rhs.lastUsedAt ?? rhs.createdAt
-                    if lhs.importance != rhs.importance { return lhs.importance > rhs.importance }
-                    return lhsKey > rhsKey
-                }
-                return Array(sorted.prefix(perCharacterLimit))
-            }
+            return Array(sorted.prefix(max(1, perCharacterLimit)))
         }
     }
 
@@ -78,7 +99,7 @@ final class LocalJSONMemoryRepository: MemoryRepository {
         }
     }
 
-    private func normalize(_ s: String) -> String {
+    private static func normalize(_ s: String) -> String {
         s.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .whitespacesAndNewlines)
