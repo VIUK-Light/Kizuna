@@ -41,6 +41,11 @@ enum StoryGemma31BAPIError: LocalizedError {
     }
 }
 
+struct StoryGemma31BGenerationResult {
+    let text: String
+    let modelName: String
+}
+
 final class StoryGemma31BAPIService {
     static let shared = StoryGemma31BAPIService()
 
@@ -60,8 +65,9 @@ final class StoryGemma31BAPIService {
         systemPrompt: String,
         userPrompt: String,
         temperature: Double = 0.72,
-        maxOutputTokens: Int = 4096
-    ) async throws -> String {
+        maxOutputTokens: Int = 4096,
+        seed: Int? = nil
+    ) async throws -> StoryGemma31BGenerationResult {
         guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
             throw StoryGemma31BAPIError.missingAPIKey
         }
@@ -70,18 +76,19 @@ final class StoryGemma31BAPIService {
             userPrompt: userPrompt,
             temperature: temperature,
             maxOutputTokens: maxOutputTokens,
-            thinkingLevel: "high"
+            thinkingLevel: "high",
+            seed: seed
         )
 
-        let data = try await performRequestWithRetry(
+        let generation = try await performRequestWithRetry(
             apiKey: apiKey,
             body: body,
             modelNames: [primaryModelName] + fallbackModelNames
         )
 
-        let decoded = try decoder.decode(StoryGemma31BGenerateContentResponse.self, from: data)
+        let decoded = try decoder.decode(StoryGemma31BGenerateContentResponse.self, from: generation.data)
         if let text = visibleText(from: decoded), !text.isEmpty {
-            return text
+            return StoryGemma31BGenerationResult(text: text, modelName: generation.modelName)
         }
 
         logEmptyResponse(decoded)
@@ -95,16 +102,20 @@ final class StoryGemma31BAPIService {
             userPrompt: userPrompt,
             temperature: temperature,
             maxOutputTokens: max(maxOutputTokens, 1_536),
-            thinkingLevel: "minimal"
+            thinkingLevel: "minimal",
+            seed: seed
         )
-        let fallbackData = try await performRequestWithRetry(
+        let fallbackGeneration = try await performRequestWithRetry(
             apiKey: apiKey,
             body: fallbackBody,
             modelNames: [primaryModelName] + fallbackModelNames
         )
-        let fallbackResponse = try decoder.decode(StoryGemma31BGenerateContentResponse.self, from: fallbackData)
+        let fallbackResponse = try decoder.decode(
+            StoryGemma31BGenerateContentResponse.self,
+            from: fallbackGeneration.data
+        )
         if let text = visibleText(from: fallbackResponse), !text.isEmpty {
-            return text
+            return StoryGemma31BGenerationResult(text: text, modelName: fallbackGeneration.modelName)
         }
         logEmptyResponse(fallbackResponse)
         throw StoryGemma31BAPIError.emptyText
@@ -115,7 +126,8 @@ final class StoryGemma31BAPIService {
         userPrompt: String,
         temperature: Double,
         maxOutputTokens: Int,
-        thinkingLevel: String
+        thinkingLevel: String,
+        seed: Int?
     ) throws -> Data {
         // The API has a native systemInstruction field. Putting the system
         // prompt and a literal <Thinking> marker into user content makes the
@@ -125,7 +137,8 @@ final class StoryGemma31BAPIService {
             userPrompt: userPrompt,
             temperature: temperature,
             maxOutputTokens: maxOutputTokens,
-            thinkingLevel: thinkingLevel
+            thinkingLevel: thinkingLevel,
+            seed: seed
         ))
     }
 
@@ -159,7 +172,7 @@ final class StoryGemma31BAPIService {
         apiKey: String,
         body: Data,
         modelNames: [String]
-    ) async throws -> Data {
+    ) async throws -> (data: Data, modelName: String) {
         var lastFailure: StoryGemma31BAPIError?
         let maxAttemptsPerModel = 5
         for modelName in modelNames {
@@ -178,7 +191,7 @@ final class StoryGemma31BAPIService {
             for attempt in 0..<maxAttemptsPerModel {
                 do {
                     let data = try await performSingleRequest(request)
-                    return data
+                    return (data: data, modelName: modelName)
                 } catch let error as StoryGemma31BAPIError {
                     lastFailure = error
                     if !error.isRetryable || attempt == maxAttemptsPerModel - 1 {

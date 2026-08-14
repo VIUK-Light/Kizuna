@@ -7,7 +7,8 @@ VIUK Kizunaは、以下のサードパーティーソフトウェアを含みま
 - Project: `llama.cpp`
 - Copyright: Copyright (c) 2023-2026 The ggml authors
 - License: MIT License
-- Usage: macOS向けローカルAIランタイム、ヘッダー、静的ライブラリ
+- Revision: `b10434` (`7e4c0a96880dae4fc4268ad441f8a6446bd5460a`)
+- Usage: macOS向けローカルAIランタイム（llama-cli、llama-server、動的ライブラリ）、ヘッダー、静的ライブラリ
 
 MIT License の条件に従い、著作権表示と許諾表示を、ソフトウェアの複製または重要な部分に含める必要があります。ソフトウェアは無保証で提供されます。
 

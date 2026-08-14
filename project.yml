@@ -178,10 +178,68 @@ targets:
           - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-cli
           - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-server
           - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-cli.source-revision
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/llama-server.source-revision
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-base.0.20.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-base.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-base.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-blas.0.20.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-blas.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-blas.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-cpu.0.20.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-cpu.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-cpu.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-metal.0.20.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-metal.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-metal.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-rpc.0.20.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-rpc.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml-rpc.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml.0.20.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libggml.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-cli-impl.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-common.0.1.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-common.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-common.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama-server-impl.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama.0.1.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libllama.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libmtmd.0.1.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libmtmd.0.dylib
+          - $(PROJECT_DIR)/KizunaAI/AI/LocalRuntime/libmtmd.dylib
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-cli
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-server
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-cli.source-revision
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/llama-server.source-revision
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-base.0.20.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-base.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-base.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-blas.0.20.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-blas.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-blas.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-cpu.0.20.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-cpu.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-cpu.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-metal.0.20.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-metal.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-metal.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-rpc.0.20.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-rpc.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml-rpc.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml.0.20.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libggml.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libllama-cli-impl.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libllama-common.0.1.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libllama-common.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libllama-common.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libllama-server-impl.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libllama.0.1.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libllama.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libmtmd.0.1.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libmtmd.0.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/libmtmd.dylib
         script: |
           set -euo pipefail
           if [[ "${PLATFORM_NAME:-}" != "macosx" ]]; then
@@ -193,13 +251,19 @@ targets:
           APP_RESOURCES="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
           mkdir -p "$APP_RESOURCES"
 
-          for FILE in llama-cli llama-server llama-cli.source-revision; do
+          for FILE in llama-cli llama-server llama-cli.source-revision llama-server.source-revision; do
             cp -fX "$SRC_RUNTIME/$FILE" "$APP_RESOURCES/$FILE"
+          done
+          for FILE in "$SRC_RUNTIME"/lib*.dylib; do
+            cp -fR "$FILE" "$APP_RESOURCES/"
           done
           chmod +x "$APP_RESOURCES/llama-cli" "$APP_RESOURCES/llama-server"
           xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 
           if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" && -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]]; then
+            for FILE in "$APP_RESOURCES"/lib*.dylib; do
+              /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none "$FILE"
+            done
             for FILE in llama-cli llama-server; do
               /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none "$APP_RESOURCES/$FILE"
             done

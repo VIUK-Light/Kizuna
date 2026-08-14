@@ -609,7 +609,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 userPrompt: brief,
                 temperature: 0.45,
                 maxOutputTokens: 8192
-            )
+            ).text
         } catch {
             NSLog("[StoryWorldCreateVM] template generation failed: %@", error.localizedDescription)
             saveError = KizunaCopy.text(

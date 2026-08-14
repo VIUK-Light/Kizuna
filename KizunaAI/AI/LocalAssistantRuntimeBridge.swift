@@ -313,6 +313,14 @@ enum LocalAssistantStructuredTurnUpdate: Equatable {
     case toolCallPreview(String)
 }
 
+/// Result of a local model generation. The identity is reported only after
+/// the selected runtime returns usable text, so callers never treat a
+/// configured-but-unused model path as an observed generation identity.
+struct LocalAssistantGenerationResult: Sendable {
+    let text: String?
+    let modelIdentity: String?
+}
+
 private struct BundledServerSession {
     let process: Process
     let port: Int
@@ -1144,6 +1152,14 @@ final class LocalAssistantRuntimeBridge {
             )
             lastBundledServerLaunchErrorMessage = diagnostic.detailedMessage
             bundledServerSession = nil
+
+            // 空きポート確認と子プロセスのbindにはTOCTOUがある。
+            // 明確なbind競合だけは次の候補へ進み、モデル・引数・runtimeの
+            // readiness失敗は診断を保ったまま終了する。
+            if isBundledServerPortConflict(in: message) {
+                continue
+            }
+            return nil
         }
 
         return nil
@@ -1173,6 +1189,12 @@ final class LocalAssistantRuntimeBridge {
                 bind(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
             }
         }
+    }
+
+    private func isBundledServerPortConflict(in message: String) -> Bool {
+        let lowercased = message.lowercased()
+        return lowercased.contains("eaddrinuse")
+            || lowercased.contains("address already in use")
     }
 
     private func waitForBundledServerReady(
@@ -1787,20 +1809,23 @@ final class BundledServerLogAggregator {
         /// LiteRT-LMへrole付きで渡す短い会話履歴。SDK非対応のruntimeでは使わない。
         initialMessages: [LocalAssistantLiteRTLMHistoryMessage] = [],
         overrideModelURL: URL? = nil,
+        /// Internal acceptance runs may pin the sampler seed. Ordinary Story
+        /// turns keep the production per-turn seed behavior when this is nil.
+        seedOverride: UInt32? = nil,
         generationID: UUID? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
-    ) async -> String? {
+    ) async -> LocalAssistantGenerationResult {
         guard let installedModelURL = overrideModelURL ?? LocalAssistantModelManager.shared.installedModelURL else {
-            return nil
+            return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
         }
 
         guard availability(installedModelURL: installedModelURL) == .executable else {
-            return nil
+            return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
         }
 
         let preferredEngine = preferredRuntimeEngine(forModelPath: installedModelURL.path)
         guard hasAvailableRuntimeEngine(preferredEngine) else {
-            return nil
+            return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
         }
 
         let conversationPrompt = runtimeConversationPrompt(for: prompt, contextPrompt: contextPrompt)
@@ -1829,7 +1854,8 @@ final class BundledServerLogAggregator {
         let parameters = generationParameters(
             for: reasoningMode,
             researchMode: researchMode,
-            advancedSettings: advancedSettings
+            advancedSettings: advancedSettings,
+            seedOverride: seedOverride
         )
         let startedAt = Date()
 
@@ -1844,6 +1870,7 @@ final class BundledServerLogAggregator {
                 stage: .generation,
                 startedAt: startedAt,
                 initialMessages: initialMessages,
+                seedOverride: seedOverride,
                 generationID: generationID,
                 onUpdate: onUpdate
             )
@@ -1856,14 +1883,21 @@ final class BundledServerLogAggregator {
                         self.cachedAvailability = .executable
                         self.lastRuntimeError = nil
                         self.lastRuntimeDiagnostic = nil
-                        continuation.resume(returning: text)
+                        continuation.resume(
+                            returning: LocalAssistantGenerationResult(
+                                text: text,
+                                modelIdentity: self.observedModelIdentity(
+                                    forModelPath: installedModelURL.path
+                                )
+                            )
+                        )
                     } else {
                         self.recordGenerationFailure(
                             modelPath: installedModelURL.path,
                             rawMessage: result.errorMessage,
                             terminationStatus: nil
                         )
-                        continuation.resume(returning: nil)
+                        continuation.resume(returning: LocalAssistantGenerationResult(text: nil, modelIdentity: nil))
                     }
                 }
             }
@@ -1887,14 +1921,21 @@ final class BundledServerLogAggregator {
                     self.cachedAvailability = .executable
                     self.lastRuntimeError = nil
                     self.lastRuntimeDiagnostic = nil
-                    continuation.resume(returning: text)
+                    continuation.resume(
+                        returning: LocalAssistantGenerationResult(
+                            text: text,
+                            modelIdentity: self.observedModelIdentity(
+                                forModelPath: installedModelURL.path
+                            )
+                        )
+                    )
                 } else {
                     self.recordGenerationFailure(
                         modelPath: installedModelURL.path,
                         rawMessage: result.errorMessage,
                         terminationStatus: nil
                     )
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: LocalAssistantGenerationResult(text: nil, modelIdentity: nil))
                 }
             }
         }
@@ -2026,6 +2067,18 @@ final class BundledServerLogAggregator {
         }
     }
 
+    /// Returns a stable, non-sensitive identifier for the model that the
+    /// selected runtime actually used. The app must not export the absolute
+    /// application-support path in acceptance artifacts or diagnostics.
+    private func observedModelIdentity(forModelPath modelPath: String) -> String? {
+        let fileName = URL(fileURLWithPath: modelPath).lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fileName.isEmpty, fileName != ".", fileName != ".." else {
+            return nil
+        }
+        return fileName
+    }
+
     private func recordGenerationFailure(
         modelPath: String,
         rawMessage: String?,
@@ -2079,7 +2132,8 @@ final class BundledServerLogAggregator {
                 parameters: parameters,
                 stage: .supportBrief,
                 startedAt: Date(),
-                initialMessages: []
+                initialMessages: [],
+                seedOverride: parameters.seed
             )
             return await withCheckedContinuation { continuation in
                 queue.async {
@@ -2750,13 +2804,14 @@ final class BundledServerLogAggregator {
         stage: LocalAssistantRuntimeDiagnostic.Stage,
         startedAt: Date,
         initialMessages: [LocalAssistantLiteRTLMHistoryMessage],
+        seedOverride: UInt32? = nil,
         generationID: UUID? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> VIUKEmbeddedRuntimeResult {
         // A fixed seed made every retry repeat the same poor first token path.
         // Story chat is intentionally creative, so vary the sampler per turn
         // while retaining the preset as its reproducible base.
-        let turnSeed = parameters.seed &+ UInt32(truncatingIfNeeded: Int64(Date().timeIntervalSince1970 * 1_000))
+        let turnSeed = seedOverride ?? (parameters.seed &+ UInt32(truncatingIfNeeded: Int64(Date().timeIntervalSince1970 * 1_000)))
         let warmState = warmState(for: .liteRTLM, modelPath: modelPath)
         let runnerLabel = runtimeRunnerLabel(for: .liteRTLM, runnerPath: nil)
         emitStatus(
@@ -7130,7 +7185,8 @@ final class BundledServerLogAggregator {
     private func generationParameters(
         for reasoningMode: ReasoningMode,
         researchMode: ResearchMode = .on,
-        advancedSettings: GemmaAdvancedSettings = makeRuntimeDefaultGemmaAdvancedSettings()
+        advancedSettings: GemmaAdvancedSettings = makeRuntimeDefaultGemmaAdvancedSettings(),
+        seedOverride: UInt32? = nil
     ) -> (maxTokens: Int, temperature: Float, topP: Float, topK: Int, seed: UInt32) {
         let preset = LocalAssistantModelProfile.generationPreset(
             for: reasoningMode,
@@ -7150,7 +7206,7 @@ final class BundledServerLogAggregator {
             temperature: effectiveTemperature,
             topP: preset.topP,
             topK: preset.topK,
-            seed: preset.seed
+            seed: seedOverride ?? preset.seed
         )
     }
 

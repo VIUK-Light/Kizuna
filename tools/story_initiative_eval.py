@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
 import re
 import secrets
@@ -45,8 +46,13 @@ VIOLATION_KEYS = (
     "irrelevant_event",
     "continuity_error",
 )
+FORBIDDEN_RATING_KEYS = frozenset(
+    {"prompt", "system_prompt", "user_prompt", "state_update"}
+)
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 PRESENTATION_SALT_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+EXPECTED_IORI_MODEL_IDENTITY = "viuk-story-gemma4-e2b-fullft-hard-identity-Q4_K_M.gguf"
+EXPECTED_IORI_MODEL_SHA256 = "eafe6431810b2a2a17f6c4b0be338364440707e10ff6648d07665e10875039a5"
 BOOTSTRAP_RESAMPLES = 10_000
 BOOTSTRAP_SEED = 20260814
 
@@ -75,10 +81,29 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def write_jsonl(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
+    file_descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+        os.fchmod(handle.fileno(), 0o600)
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
             handle.write("\n")
+
+
+def validate_no_forbidden_rating_keys(value: Any, *, path: str = "record") -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in FORBIDDEN_RATING_KEYS:
+                raise EvaluationError(
+                    f"rating input must not contain raw prompt field {key!r} at {path}"
+                )
+            validate_no_forbidden_rating_keys(child, path=f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            validate_no_forbidden_rating_keys(child, path=f"{path}[{index}]")
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -319,16 +344,11 @@ def validate_generation_records(
             status = record.get("status")
             if status not in GENERATION_STATUSES:
                 raise EvaluationError(f"status must be one of {GENERATION_STATUSES}")
-            response_text = record.get("response_text", "")
-            if not isinstance(response_text, str):
-                raise EvaluationError("response_text must be a string")
-            if status == "completed" and not response_text.strip():
-                raise EvaluationError("completed output must have non-empty response_text")
-            if status != "completed" and record.get("state_update") is not None:
-                raise EvaluationError("failed output cannot contain state_update")
-            context = record.get("context")
-            if not isinstance(context, dict) or not context:
-                raise EvaluationError("context must be a non-empty object")
+            for raw_key in ("response_text", "context", "state_update"):
+                if raw_key in record:
+                    raise EvaluationError(
+                        f"generation metadata must not contain raw field {raw_key!r}"
+                    )
             canary = record.get("canary")
             if not isinstance(canary, dict) or not isinstance(
                 canary.get("initiative_enabled"), bool
@@ -343,10 +363,49 @@ def validate_generation_records(
                 raise EvaluationError("baseline activation_source must be none")
             if condition == "initiative" and activation_source == "none":
                 raise EvaluationError("initiative requires an activation source")
+            runtime = record.get("runtime")
+            if not isinstance(runtime, dict):
+                raise EvaluationError("runtime must contain app-path identity metadata")
+            for runtime_key in ("provider", "backend", "model_identity"):
+                runtime_value = runtime.get(runtime_key)
+                if not isinstance(runtime_value, str) or not runtime_value.strip():
+                    raise EvaluationError(
+                        f"runtime.{runtime_key} must be a non-empty string"
+                    )
+            model_identity = runtime["model_identity"]
+            if "/" in model_identity or "\\" in model_identity:
+                raise EvaluationError(
+                    "runtime.model_identity must not contain an absolute or nested path"
+                )
+            if model == "iori" and status == "completed":
+                if model_identity != EXPECTED_IORI_MODEL_IDENTITY:
+                    raise EvaluationError(
+                        "completed iori output must identify the trusted VIUK Story artifact"
+                    )
+            model_identity_observed = runtime.get("model_identity_observed")
+            if not isinstance(model_identity_observed, bool):
+                raise EvaluationError("runtime.model_identity_observed must be boolean")
+            prompt_observed = runtime.get("prompt_observed")
+            if not isinstance(prompt_observed, bool):
+                raise EvaluationError("runtime.prompt_observed must be boolean")
+            if status == "completed" and not model_identity_observed:
+                raise EvaluationError(
+                    "completed output must identify the model actually used by the app path"
+                )
+            if status == "completed" and not prompt_observed:
+                raise EvaluationError("completed output must observe the app prompt")
+            model_sha256 = runtime.get("model_sha256")
+            if model_sha256 is not None:
+                if not isinstance(model_sha256, str) or not SHA256_PATTERN.fullmatch(
+                    model_sha256.lower()
+                ):
+                    raise EvaluationError("runtime.model_sha256 must be a SHA-256 hex digest")
+            if model == "iori" and status == "completed":
+                if model_sha256 != EXPECTED_IORI_MODEL_SHA256:
+                    raise EvaluationError(
+                        "completed iori output must include the trusted model SHA-256"
+                    )
             latency = _validate_latency(record)
-            state_update = record.get("state_update")
-            if state_update is not None and not isinstance(state_update, dict):
-                raise EvaluationError("state_update must be an object or null")
             key = (language, model, scenario_id, seed, condition)
             if key in seen:
                 raise EvaluationError(f"duplicate generation record for {key!r}")
@@ -377,13 +436,6 @@ def validate_generation_records(
         fixture_hashes = {record["fixture_sha256"] for record in pair_records}
         if len(fixture_hashes) > 1:
             errors.append(f"baseline and initiative fixtures differ for {slot!r}")
-        contexts = {
-            json.dumps(record["context"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            for record in pair_records
-        }
-        if len(contexts) > 1:
-            errors.append(f"baseline and initiative contexts differ for {slot!r}")
-
     if errors:
         raise EvaluationError("\n".join(errors))
 
@@ -394,18 +446,88 @@ def validate_generation_records(
     ]
 
 
-def _generation_index(
+def validate_rating_input_records(
     records: Sequence[Mapping[str, Any]],
-) -> dict[tuple[str, str, str, int, str], dict[str, Any]]:
-    return {
-        (*_slot(record), str(record["condition"])): dict(record)
-        for record in records
+    generation_records: Sequence[Mapping[str, Any]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Validate the private local raw-response artifact used for blind rating."""
+    expected = {
+        (str(record["pair_id"]), str(record["condition"]))
+        for record in generation_records
     }
+    seen: dict[tuple[str, str], dict[str, Any]] = {}
+    errors: list[str] = []
+
+    for index, original in enumerate(records, start=1):
+        record = dict(original)
+        try:
+            if record.get("schema_version") != SCHEMA_VERSION:
+                raise EvaluationError("schema_version must be 1")
+            if record.get("record_type") != "rating_input":
+                raise EvaluationError("record_type must be rating_input")
+            validate_no_forbidden_rating_keys(record)
+            pair_id = record.get("pair_id")
+            condition = record.get("condition")
+            if not isinstance(pair_id, str) or not pair_id.strip():
+                raise EvaluationError("pair_id must be a non-empty string")
+            if condition not in CONDITIONS:
+                raise EvaluationError("condition must be baseline or initiative")
+            key = (pair_id, condition)
+            if key not in expected:
+                raise EvaluationError(f"unexpected rating input {key!r}")
+            if key in seen:
+                raise EvaluationError(f"duplicate rating input {key!r}")
+            status = record.get("status")
+            if status not in GENERATION_STATUSES:
+                raise EvaluationError(f"rating input status is invalid for {key!r}")
+            generation = next(
+                item
+                for item in generation_records
+                if item["pair_id"] == pair_id and item["condition"] == condition
+            )
+            if status != generation["status"]:
+                raise EvaluationError(f"rating input status differs from generation for {key!r}")
+            context = record.get("context")
+            if not isinstance(context, dict) or not context:
+                raise EvaluationError("rating input context must be a non-empty object")
+            response_text = record.get("response_text")
+            if not isinstance(response_text, str):
+                raise EvaluationError("rating input response_text must be a string")
+            if status == "completed" and not response_text.strip():
+                raise EvaluationError("completed rating input must have non-empty response_text")
+            if status != "completed" and response_text:
+                raise EvaluationError("failed rating input must not contain response_text")
+            seen[key] = record
+        except (EvaluationError, StopIteration) as error:
+            errors.append(f"rating input record {index}: {error}")
+
+    for key in sorted(expected):
+        if key not in seen:
+            errors.append(f"missing rating input record for {key!r}")
+
+    for pair_id in sorted({pair_id for pair_id, _ in expected}):
+        pair_contexts = {
+            json.dumps(
+                seen[(pair_id, condition)]["context"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            for condition in CONDITIONS
+            if (pair_id, condition) in seen
+        }
+        if len(pair_contexts) > 1:
+            errors.append(f"baseline and initiative rating contexts differ for {pair_id!r}")
+
+    if errors:
+        raise EvaluationError("\n".join(errors))
+    return seen
 
 
 def create_blind_artifacts(
     records: Sequence[Mapping[str, Any]],
     *,
+    rating_records: Sequence[Mapping[str, Any]],
     presentation_salt: str | None = None,
     languages: Sequence[str] = DEFAULT_LANGUAGES,
     models: Sequence[str] = DEFAULT_MODELS,
@@ -443,7 +565,7 @@ def create_blind_artifacts(
             "cannot create blind artifacts with incomplete outputs: "
             + ", ".join(sorted(set(incomplete)))
         )
-    indexed = _generation_index(validated)
+    rating_index = validate_rating_input_records(rating_records, validated)
     blind_pairs: list[dict[str, Any]] = []
     answer_key: list[dict[str, Any]] = []
 
@@ -485,8 +607,8 @@ def create_blind_artifacts(
     for index, slot in enumerate(randomized_slots, start=1):
         language, model, scenario_id, seed = slot
         pair_id = _pair_id(language, model, scenario_id, seed)
-        baseline = indexed[(language, model, scenario_id, seed, "baseline")]
-        initiative = indexed[(language, model, scenario_id, seed, "initiative")]
+        baseline = rating_index[(f"{language}-{model}-{scenario_id}-{seed}", "baseline")]
+        initiative = rating_index[(f"{language}-{model}-{scenario_id}-{seed}", "initiative")]
         a_condition, b_condition = (
             ("initiative", "baseline")
             if index <= initiative_first_count
@@ -887,12 +1009,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     validate_parser = subparsers.add_parser("validate", help="validate the full generation matrix")
     validate_parser.add_argument("--input", required=True, type=Path)
+    validate_parser.add_argument(
+        "--rating-input",
+        required=True,
+        type=Path,
+        help="private local raw-response/context artifact paired with --input",
+    )
 
     blind_parser = subparsers.add_parser(
         "generate-blind",
         help="create a blinded A/B file and a separate private answer key",
     )
     blind_parser.add_argument("--input", required=True, type=Path)
+    blind_parser.add_argument(
+        "--rating-input",
+        required=True,
+        type=Path,
+        help="private local raw-response/context artifact used only for blind rating",
+    )
     blind_parser.add_argument("--blind-output", required=True, type=Path)
     blind_parser.add_argument("--key-output", required=True, type=Path)
 
@@ -912,6 +1046,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_fixture_sha256=fixture_sha256,
                 expected_scenario_version=fixture_version,
             )
+            validate_rating_input_records(read_jsonl(args.rating_input), records)
             status_counts = _status_counts(records)
             complete = status_counts["completed"] == len(records)
             print(
@@ -922,6 +1057,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "paired_turns": len(records) // 2,
                         "model_outputs": len(records),
                         "status_counts": status_counts,
+                        "rating_input_valid": True,
                         "complete": complete,
                         "valid": complete,
                     },
@@ -937,6 +1073,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             blind, key = create_blind_artifacts(
                 read_jsonl(args.input),
+                rating_records=read_jsonl(args.rating_input),
                 expected_fixture_sha256=fixture_sha256,
                 expected_scenario_version=fixture_version,
             )

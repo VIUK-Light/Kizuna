@@ -21,6 +21,12 @@ enum KizunaDataMigration {
     nonisolated private static let migrationLock = KizunaDataMigrationLock()
 
     nonisolated private static let applicationSupportURL: URL = {
+#if DEBUG || KIZUNA_INTERNAL_CANARY
+        if let acceptanceRoot = ProcessInfo.processInfo.environment["KIZUNA_ACCEPTANCE_STORAGE_ROOT"],
+           !acceptanceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return URL(fileURLWithPath: acceptanceRoot, isDirectory: true)
+        }
+#endif
         let support = (try? FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,

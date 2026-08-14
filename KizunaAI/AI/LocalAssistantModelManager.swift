@@ -273,6 +273,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     /// URLSessionの古いdelegate callbackが、後から開始した転送へ混ざらないための世代。
     private var activeTransferID = UUID()
     private var isEnvironmentRefreshScheduled = false
+    /// Startup discovery may touch a model state file on an external volume.
+    /// Keep that read off the main thread so a slow or temporarily unavailable
+    /// volume cannot freeze the app before the first frame is rendered.
+    private var environmentRefreshTask: Task<Void, Never>?
     // 端末内 runtime の確認は UI ボタンではなく、モデル検出後に一度だけ自動実行する。
     // 同じモデルで refreshEnvironment() が連続しても、重いモデル初期化を重ねない。
     private var automaticRuntimeCheckTask: Task<Void, Never>?
@@ -310,6 +314,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     deinit {
         automaticRuntimeCheckTask?.cancel()
         candidateRuntimeValidationTask?.cancel()
+        environmentRefreshTask?.cancel()
         lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
@@ -832,20 +837,66 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func performEnvironmentRefresh() {
-        restorePersistedDownloadState()
-        refreshInstalledState()
-        refreshRuntimeAvailabilitySnapshot()
-        // 起動直後はモデルの存在確認とランタイムの環境確認が別々の非同期経路で
-        // 走るため、先に環境が更新されると prewarm が一度も実行されないことがある。
-        // インストール済みモデルを再検出した直後に一度だけ暖機を試し、保存済み
-        // モデルが「確認待ち」のまま残らないようにする。
-        LocalAssistantRuntimeBridge.shared.prewarmIfPossible()
-        DispatchQueue.main.async { [weak self] in
-            self?.runtimeRefreshedAt = Date()
+        environmentRefreshTask?.cancel()
+        environmentRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let refreshTransferID = self.activeTransferID
+            let wasDownloading = self.isDownloading
+            let stateRead = await Self.readPersistedDownloadState(at: self.downloadStateURL)
+            guard !Task.isCancelled else { return }
+            // A download may start, finish, or be cancelled while the
+            // external-volume read is suspended. Do not apply that stale
+            // snapshot to a newer transfer generation.
+            guard self.activeTransferID == refreshTransferID,
+                  self.isDownloading == wasDownloading else {
+                return
+            }
+
+            switch stateRead {
+            case .missing:
+                self.restorePersistedDownloadState()
+            case let .loaded(data):
+                self.restorePersistedDownloadState(prefetchedData: data)
+            case .failed:
+                // Do not perform a second synchronous read on the main actor.
+                // Feeding an empty payload through the existing recovery path
+                // keeps the failure visible and leaves the original file intact.
+                self.restorePersistedDownloadState(prefetchedData: Data())
+            }
+
+            self.refreshInstalledState()
+            self.refreshRuntimeAvailabilitySnapshot()
+            // 起動直後はモデルの存在確認とランタイムの環境確認が別々の非同期経路で
+            // 走るため、先に環境が更新されると prewarm が一度も実行されないことがある。
+            // インストール済みモデルを再検出した直後に一度だけ暖機を試し、保存済み
+            // モデルが「確認待ち」のまま残らないようにする。
+            LocalAssistantRuntimeBridge.shared.prewarmIfPossible()
+            self.runtimeRefreshedAt = Date()
+            if self.isDownloading == false {
+                self.scheduleStatusPresentationRefresh()
+            }
         }
-        if isDownloading == false {
-            scheduleStatusPresentationRefresh()
-        }
+    }
+
+    private enum PersistedDownloadStateReadResult: Sendable {
+        case missing
+        case loaded(Data)
+        case failed
+    }
+
+    private static func readPersistedDownloadState(
+        at url: URL
+    ) async -> PersistedDownloadStateReadResult {
+        await Task.detached(priority: .utility) {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                return .missing
+            }
+            do {
+                return .loaded(try Data(contentsOf: url))
+            } catch {
+                return .failed
+            }
+        }.value
     }
 
     private func scheduleStatusPresentationRefresh() {
@@ -2740,7 +2791,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         state.replacementBackupPath = nil
     }
 
-    private func restorePersistedDownloadState() {
+    private func restorePersistedDownloadState(prefetchedData: Data? = nil) {
         guard FileManager.default.fileExists(atPath: downloadStateURL.path) else {
             persistedDownloadState = nil
             hasInvalidPersistedDownloadState = false
@@ -2754,7 +2805,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
 
         do {
-            let data = try Data(contentsOf: downloadStateURL)
+            let data = try prefetchedData ?? Data(contentsOf: downloadStateURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             var state = try decoder.decode(LocalAssistantDownloadState.self, from: data)

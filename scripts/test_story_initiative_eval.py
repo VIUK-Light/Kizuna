@@ -8,12 +8,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from story_initiative_eval import (  # noqa: E402
+    EXPECTED_IORI_MODEL_IDENTITY,
+    EXPECTED_IORI_MODEL_SHA256,
     EvaluationError,
     create_blind_artifacts,
     load_scenario_fixture,
     main,
     score_evaluation,
     validate_generation_records,
+    write_jsonl,
 )
 
 
@@ -33,12 +36,6 @@ def make_generation(condition, *, language="ja", model="iori", scenario_id="stor
         "seed": {"requested": seed, "effective": seed, "mode": "sampler"},
         "condition": condition,
         "status": "completed",
-        "response_text": f"{condition} response",
-        "state_update": None,
-        "context": {
-            "user_message": "The lantern flickers beside the old map.",
-            "scene": {"location": "station", "mood": "quiet"},
-        },
         "canary": {
             "initiative_enabled": condition == "initiative",
             "activation_source": "none" if condition == "baseline" else "launch_argument",
@@ -47,12 +44,56 @@ def make_generation(condition, *, language="ja", model="iori", scenario_id="stor
             "model": 90 if condition == "baseline" else 95,
             "turn_end_to_end": 100 if condition == "baseline" else 105,
         },
+        "runtime": {
+            "provider": "local-story-runtime",
+            "backend": "test-runtime",
+            "model_identity": EXPECTED_IORI_MODEL_IDENTITY,
+            "model_identity_observed": True,
+            "prompt_observed": True,
+            "model_sha256": EXPECTED_IORI_MODEL_SHA256,
+        },
+    }
+
+
+def make_rating_input(
+    condition,
+    *,
+    language="ja",
+    model="iori",
+    scenario_id="story-01",
+    seed=1,
+    status="completed",
+    response_text=None,
+):
+    pair_id = f"{language}-{model}-{scenario_id}-{seed}"
+    return {
+        "schema_version": 1,
+        "record_type": "rating_input",
+        "pair_id": pair_id,
+        "condition": condition,
+        "status": status,
+        "context": {
+            "user_message": "The lantern flickers beside the old map.",
+            "scene": {"location": "station", "mood": "quiet"},
+        },
+        "response_text": (
+            f"{condition} response" if response_text is None else response_text
+        ),
     }
 
 
 def make_matrix():
     return [
         make_generation(condition, scenario_id=scenario_id, seed=seed)
+        for scenario_id in ("story-01", "story-02")
+        for seed in (1, 2)
+        for condition in ("baseline", "initiative")
+    ]
+
+
+def make_rating_matrix():
+    return [
+        make_rating_input(condition, scenario_id=scenario_id, seed=seed)
         for scenario_id in ("story-01", "story-02")
         for seed in (1, 2)
         for condition in ("baseline", "initiative")
@@ -82,11 +123,103 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
         self.assertEqual(len(validated), 8)
 
         with self.assertRaisesRegex(EvaluationError, "missing generation"):
-            validate_generation_records(records[:-1], **self.matrix_kwargs)
+            validate_generation_records(make_matrix()[:-1], **self.matrix_kwargs)
 
-        records[-1] = dict(records[-1], pair_input_sha256="b" * 64)
+        mismatched_records = make_matrix()
+        mismatched_records[-1] = dict(mismatched_records[-1], pair_input_sha256="b" * 64)
         with self.assertRaisesRegex(EvaluationError, "inputs differ"):
-            validate_generation_records(records, **self.matrix_kwargs)
+            validate_generation_records(mismatched_records, **self.matrix_kwargs)
+
+    def test_runtime_metadata_is_required_and_well_formed(self):
+        cases = (
+            (
+                "non-dict runtime",
+                lambda record: dict(record, runtime=[]),
+                "runtime must contain app-path identity metadata",
+            ),
+            (
+                "empty provider",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], provider=""),
+                ),
+                "runtime.provider must be a non-empty string",
+            ),
+            (
+                "empty backend",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], backend=""),
+                ),
+                "runtime.backend must be a non-empty string",
+            ),
+            (
+                "empty model identity",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_identity=""),
+                ),
+                "runtime.model_identity must be a non-empty string",
+            ),
+            (
+                "model identity not observed",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_identity_observed=False),
+                ),
+                "identify the model",
+            ),
+            (
+                "prompt not observed",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], prompt_observed=False),
+                ),
+                "observe the app prompt",
+            ),
+            (
+                "invalid model sha256",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_sha256="not-a-sha"),
+                ),
+                "runtime.model_sha256 must be a SHA-256 hex digest",
+            ),
+            (
+                "nested model identity path",
+                lambda record: dict(
+                    record,
+                    runtime=dict(
+                        record["runtime"],
+                        model_identity="/private/tmp/kizuna-test-model.gguf",
+                    ),
+                ),
+                "must not contain an absolute or nested path",
+            ),
+            (
+                "untrusted iori model identity",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_identity="generic-gemma.gguf"),
+                ),
+                "trusted VIUK Story artifact",
+            ),
+            (
+                "missing trusted iori sha256",
+                lambda record: dict(
+                    record,
+                    runtime=dict(record["runtime"], model_sha256=None),
+                ),
+                "trusted model SHA-256",
+            ),
+        )
+
+        for name, mutate, message in cases:
+            with self.subTest(name=name):
+                records = make_matrix()
+                records[0] = mutate(records[0])
+                with self.assertRaisesRegex(EvaluationError, message):
+                    validate_generation_records(records, **self.matrix_kwargs)
 
     def test_scenario_fixture_is_complete_and_versioned(self):
         fixture, digest = load_scenario_fixture()
@@ -106,7 +239,9 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
         )
 
     def test_blind_artifact_does_not_expose_condition_or_latency(self):
-        blind, key = create_blind_artifacts(make_matrix(), **self.matrix_kwargs)
+        blind, key = create_blind_artifacts(
+            make_matrix(), rating_records=make_rating_matrix(), **self.matrix_kwargs
+        )
 
         self.assertEqual(len(blind), 4)
         self.assertEqual(len(key), 4)
@@ -144,11 +279,13 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
     def test_same_presentation_salt_reproduces_blind_mapping(self):
         first_blind, first_key = create_blind_artifacts(
             make_matrix(),
+            rating_records=make_rating_matrix(),
             presentation_salt="a" * 32,
             **self.matrix_kwargs,
         )
         second_blind, second_key = create_blind_artifacts(
             make_matrix(),
+            rating_records=make_rating_matrix(),
             presentation_salt="a" * 32,
             **self.matrix_kwargs,
         )
@@ -165,6 +302,8 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
                         "generate-blind",
                         "--input",
                         str(Path(directory) / "missing.jsonl"),
+                        "--rating-input",
+                        str(Path(directory) / "missing-rating.jsonl"),
                         "--blind-output",
                         str(output),
                         "--key-output",
@@ -176,14 +315,79 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
 
     def test_blind_artifact_rejects_incomplete_output(self):
         records = make_matrix()
-        records[0] = dict(records[0], status="timeout", response_text="")
+        records[0] = dict(records[0], status="timeout")
 
         with self.assertRaisesRegex(EvaluationError, "incomplete outputs"):
-            create_blind_artifacts(records, **self.matrix_kwargs)
+            create_blind_artifacts(
+                records,
+                rating_records=make_rating_matrix(),
+                **self.matrix_kwargs,
+            )
+
+    def test_rating_input_is_required_and_kept_out_of_generation_metadata(self):
+        generations = make_matrix()
+        self.assertTrue(all("response_text" not in record for record in generations))
+        self.assertTrue(all("context" not in record for record in generations))
+
+        raw_generation = dict(generations[0], response_text="must not be serialized")
+        with self.assertRaisesRegex(EvaluationError, "raw field 'response_text'"):
+            validate_generation_records(
+                [raw_generation, *generations[1:]],
+                **self.matrix_kwargs,
+            )
+
+        with self.assertRaisesRegex(EvaluationError, "missing rating input"):
+            create_blind_artifacts(
+                generations,
+                rating_records=make_rating_matrix()[:-1],
+                **self.matrix_kwargs,
+            )
+
+        rating_inputs = make_rating_matrix()
+        rating_inputs[0] = dict(rating_inputs[0], prompt="must not be persisted")
+        with self.assertRaisesRegex(EvaluationError, "raw prompt field"):
+            create_blind_artifacts(
+                generations,
+                rating_records=rating_inputs,
+                **self.matrix_kwargs,
+            )
+
+    def test_rating_input_rejects_nested_raw_prompt_fields(self):
+        generations = make_matrix()
+        rating_inputs = make_rating_matrix()
+        rating_inputs[0] = dict(
+            rating_inputs[0],
+            context={
+                "scene": [
+                    {"metadata": {"notes": [{"state_update": "hidden"}]}}
+                ]
+            },
+        )
+
+        with self.assertRaisesRegex(EvaluationError, "raw prompt field 'state_update'"):
+            create_blind_artifacts(
+                generations,
+                rating_records=rating_inputs,
+                **self.matrix_kwargs,
+            )
+
+    def test_write_jsonl_is_private_before_first_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private.jsonl"
+            write_jsonl(path, [{"secret": "local-only"}])
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+            path.chmod(0o644)
+            write_jsonl(path, [{"secret": "local-only-again"}])
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_score_maps_blind_preference_and_reports_release_gates(self):
         generations = make_matrix()
-        _, key = create_blind_artifacts(generations, **self.matrix_kwargs)
+        _, key = create_blind_artifacts(
+            generations,
+            rating_records=make_rating_matrix(),
+            **self.matrix_kwargs,
+        )
         ratings = []
         for answer in key:
             preferred_side = "a" if answer["a_condition"] == "initiative" else "b"
@@ -217,7 +421,11 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
 
     def test_ties_count_as_rated_and_half_preference(self):
         generations = make_matrix()
-        _, key = create_blind_artifacts(generations, **self.matrix_kwargs)
+        _, key = create_blind_artifacts(
+            generations,
+            rating_records=make_rating_matrix(),
+            **self.matrix_kwargs,
+        )
         ratings = [
             {
                 "schema_version": 1,
@@ -245,7 +453,11 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
 
     def test_invalid_ratings_fail_the_go_gate(self):
         generations = make_matrix()
-        _, key = create_blind_artifacts(generations, **self.matrix_kwargs)
+        _, key = create_blind_artifacts(
+            generations,
+            rating_records=make_rating_matrix(),
+            **self.matrix_kwargs,
+        )
         ratings = [
             {
                 "schema_version": 1,
@@ -271,7 +483,11 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
 
     def test_baseline_only_agency_and_safety_flags_do_not_fail_initiative_gates(self):
         generations = make_matrix()
-        _, key = create_blind_artifacts(generations, **self.matrix_kwargs)
+        _, key = create_blind_artifacts(
+            generations,
+            rating_records=make_rating_matrix(),
+            **self.matrix_kwargs,
+        )
         ratings = []
         for answer in key:
             assessment = {"a": make_assessment(), "b": make_assessment()}

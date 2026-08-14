@@ -196,6 +196,9 @@ jobs:
             -o "$RUNNER_TEMP/model-replacement-tests"
           "$RUNNER_TEMP/model-replacement-tests"
 
+      - name: Verify bundled macOS llama.cpp runtime
+        run: scripts/verify_local_runtime_bundle.sh
+
       - name: Build KizunaAI
         run: |
           xcodebuild build \
