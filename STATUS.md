@@ -51,6 +51,9 @@ Updated: 2026-08-15 JST
 - The official-model local canary now passes persistence and artifact
   discovery, but the bundled `llama-server` health endpoint repeatedly refuses
   connections. The runner records errors, not completed generations.
+- A ready failure after a successfully launched server now stops immediately
+  after preserving stderr, instead of retrying the same runtime up to 16 ports;
+  the remaining binary/health failure is still unresolved.
 - The 384-output formal run is not GO evidence yet.
 - NAGI/Google API evaluation is paused until the user explicitly authorizes
   sending Story fixtures/prompts to the external API.

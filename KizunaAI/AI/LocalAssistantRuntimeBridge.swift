@@ -1152,6 +1152,14 @@ final class LocalAssistantRuntimeBridge {
             )
             lastBundledServerLaunchErrorMessage = diagnostic.detailedMessage
             bundledServerSession = nil
+
+            // process.run() が成功した後のready失敗は、ポート競合ではなく
+            // server実行ファイル・モデル・引数・ランタイムの問題である。
+            // 同じ条件のままポートだけを変えて再試行すると、診断を隠しながら
+            // 最大16回のタイムアウトを発生させるため、起動済みプロセスでは
+            // ここで終了する。process.run() 自体の失敗だけは上のcontinueで
+            // 次の空きポート候補を試す。
+            return nil
         }
 
         return nil
