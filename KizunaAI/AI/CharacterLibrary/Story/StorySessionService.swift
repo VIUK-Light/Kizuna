@@ -1295,7 +1295,14 @@ final class StorySessionService: ObservableObject {
             // beginTurn reloads the persisted Session as its concurrency
             // source of truth. Promote again so an existing blank State from
             // disk cannot erase the legacy value before commitTurn persists
-            // the canonical State.
+            // the canonical State. Same-turn re-entry may return a persisted
+            // Session whose State is still nil, so bootstrap that path too.
+            session.storyState = StoryStateBootstrap.preservingExistingState(
+                session.storyState,
+                scene: scene,
+                initialObjective: session.currentObjective,
+                initialRelationshipStage: session.relationshipStage
+            )
             Self.promoteLegacyRelationshipStage(&session)
         } catch {
             await finishGenerationWithoutSaving(

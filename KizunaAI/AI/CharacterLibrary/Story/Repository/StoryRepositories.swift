@@ -1084,7 +1084,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
     let fileName: String
     private let perScopeLimit: Int
 
-    private static func memoryFileFingerprint(
+    private static func fileFingerprint(
         storageURL: URL,
         fileName: String
     ) -> LegacyMemoryFileFingerprint {
@@ -1133,11 +1133,11 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
         let migrationFileName = Self.legacyMigrationFileName
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
-                let currentSessionFingerprint = Self.memoryFileFingerprint(
+                let currentSessionFingerprint = Self.fileFingerprint(
                     storageURL: storageURL,
                     fileName: sessionFileName
                 )
-                let currentFingerprint = Self.memoryFileFingerprint(
+                let currentFingerprint = Self.fileFingerprint(
                     storageURL: storageURL,
                     fileName: fileName
                 )
@@ -1149,6 +1149,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                 guard !markers.items.contains(where: {
                     $0.storyWorldId == storyWorldId
                         && $0.memoryFileFingerprint == currentFingerprint
+                        && $0.sessionFileFingerprint == currentSessionFingerprint
                 }) else {
                     // This is a one-time compatibility migration. New
                     // StoryMemory writes always carry a Session ID, so a
@@ -1200,6 +1201,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                     // out of prompt injection rather than guessing ownership.
                     // A marker is still safe here because a later Session
                     // change or memory-file change invalidates the check.
+                    guard markers.invalidCount == 0 else { return }
                     var updatedMarkers = markers.items
                     updatedMarkers.removeAll { $0.storyWorldId == storyWorldId }
                     updatedMarkers.append(
@@ -1210,7 +1212,6 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                             completedAt: Date()
                         )
                     )
-                    guard markers.invalidCount == 0 else { return }
                     try LocalJSONStoreTransaction.save(
                         updatedMarkers,
                         fileName: migrationFileName,
@@ -1245,20 +1246,20 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                 // because an old file exceeds the current per-scope limit.
                 // The existing saveMemory path remains the only path that
                 // applies that limit, preserving its established behavior.
+                guard markers.invalidCount == 0 else { return }
                 var updatedMarkers = markers.items
                 updatedMarkers.removeAll { $0.storyWorldId == storyWorldId }
                 updatedMarkers.append(
                     LegacyMemoryMigrationMarker(
                         storyWorldId: storyWorldId,
                         sessionFileFingerprint: currentSessionFingerprint,
-                        memoryFileFingerprint: Self.memoryFileFingerprint(
+                        memoryFileFingerprint: Self.fileFingerprint(
                             storageURL: storageURL,
                             fileName: fileName
                         ),
                         completedAt: Date()
                     )
                 )
-                guard markers.invalidCount == 0 else { return }
                 try LocalJSONStoreTransaction.save(
                     updatedMarkers,
                     fileName: migrationFileName,

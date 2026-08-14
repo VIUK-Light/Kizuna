@@ -638,6 +638,46 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(trimmed.first?.id, third.id)
     }
 
+    func testLegacyWorldMemoryMigrationRechecksWhenOnlySessionFileChanges() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let legacy = StoryMemory(storyWorldId: worldID, text: "Session追加待ちの旧メモリー")
+
+        try LocalJSONStoreTransaction.save(
+            [],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [legacy],
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStoryMemoryRepository(storageURL: storageURL)
+        try await repository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+
+        // Only the Session file changes. The migration marker must notice the
+        // new owner without requiring a write to story_memories.json.
+        try LocalJSONStoreTransaction.save(
+            [StorySession(id: sessionID, storyWorldId: worldID)],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 2_000_000_000)],
+            ofItemAtPath: storageURL.appendingPathComponent("story_sessions.json").path
+        )
+
+        try await repository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+        let migrated = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: sessionID
+        )
+        XCTAssertEqual(migrated.map(\.id), [legacy.id])
+    }
+
     func testStoryMemoryRepositoryLegacyAssignmentContract() async throws {
         let worldID = UUID()
         let sessionID = UUID()
