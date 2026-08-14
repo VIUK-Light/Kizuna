@@ -1227,10 +1227,13 @@ final class KizunaAITests: XCTestCase {
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        var rawItems = try JSONSerialization.jsonObject(
+        let rawObject = try JSONSerialization.jsonObject(
             with: encoder.encode([validEntry]),
             options: [.fragmentsAllowed]
-        ) as! [Any]
+        )
+        guard var rawItems = rawObject as? [Any] else {
+            return XCTFail("encoded journal must be a JSON array")
+        }
         rawItems.append(["turnID": "not-a-uuid"])
         let journalData = try JSONSerialization.data(
             withJSONObject: rawItems,
@@ -1558,6 +1561,185 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(
             PersonaThreadOrdering.mostRecentFirst([second, first]).map(\.id),
             [firstID, secondID]
+        )
+    }
+
+    func testStoryOutputSafetyPolicyNeverFallsBackToBlockedText() {
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .requireEdit,
+                original: "unsafe original",
+                rewritten: nil
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .requireEdit,
+                original: "unsafe original",
+                rewritten: "apparently safe rewrite"
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: nil
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: ""
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: "   "
+            )
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .soften,
+                original: "unsafe original",
+                rewritten: "safe rewrite"
+            ),
+            "safe rewrite"
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableText(
+                action: .warn,
+                original: "allowed with warning",
+                rewritten: nil
+            ),
+            "allowed with warning"
+        )
+    }
+
+    func testStoryOutputSafetyPolicyDropsStatePatchWhenTextIsRewritten() {
+        let original = StoryStatePatch(
+            location: "unsafe original location",
+            mood: "tense"
+        )
+
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableStatePatch(
+                action: .soften,
+                original: original
+            )
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableStatePatch(
+                action: .allow,
+                original: original
+            ),
+            original
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableStatePatch(
+                action: .requireEdit,
+                original: original
+            )
+        )
+    }
+
+    func testStoryStatePatchSafetyPayloadIncludesNestedState() throws {
+        let patch = StoryStatePatch(
+            location: "山奥の倉庫",
+            characterUpdates: [
+                StoryCharacterStatePatch(
+                    characterName: "ナギ",
+                    innerThought: "秘密の計画を隠している"
+                )
+            ],
+            inventoryChanges: [
+                StoryInventoryChange(
+                    action: .add,
+                    name: "封印された箱",
+                    detail: "開けると危険な手順が書かれている",
+                    owner: "ナギ"
+                )
+            ],
+            activeGoals: ["倉庫から脱出する"]
+        )
+
+        let safetyText = try XCTUnwrap(patch.safetyEvaluationText())
+        XCTAssertTrue(safetyText.hasPrefix("STATE_UPDATE: {"))
+        XCTAssertTrue(safetyText.contains("山奥の倉庫"))
+        XCTAssertTrue(safetyText.contains("秘密の計画を隠している"))
+        XCTAssertTrue(safetyText.contains("危険な手順が書かれている"))
+        XCTAssertTrue(safetyText.contains("倉庫から脱出する"))
+    }
+
+    func testStoryOutputSafetyPolicyKeepsStatePatchForAllowAndWarn() {
+        let original = StoryStatePatch(
+            location: "harbor",
+            mood: "calm"
+        )
+
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableStatePatch(
+                action: .allow,
+                original: original
+            ),
+            original
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableStatePatch(
+                action: .warn,
+                original: original
+            ),
+            original
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableStatePatch(
+                action: .soften,
+                original: original
+            )
+        )
+    }
+
+    func testStoryOutputSafetyPolicyDropsPreRewriteStructuredState() {
+        let original = StoryStatePatch(
+            location: "unsafe location",
+            mood: "unsafe mood"
+        )
+
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableStructuredStatePatch(
+                outputAction: .soften,
+                stateAction: .allow,
+                dedicatedPatch: nil,
+                fallbackPatch: original
+            )
+        )
+        XCTAssertNil(
+            StoryOutputSafetyPolicy.persistableStructuredStatePatch(
+                outputAction: .allow,
+                stateAction: .soften,
+                dedicatedPatch: nil,
+                fallbackPatch: original
+            )
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableStructuredStatePatch(
+                outputAction: .allow,
+                stateAction: .allow,
+                dedicatedPatch: original,
+                fallbackPatch: StoryStatePatch(location: "unselected fallback")
+            ),
+            original
+        )
+        XCTAssertEqual(
+            StoryOutputSafetyPolicy.persistableStructuredStatePatch(
+                outputAction: .warn,
+                stateAction: .warn,
+                dedicatedPatch: nil,
+                fallbackPatch: original
+            ),
+            original
         )
     }
 }

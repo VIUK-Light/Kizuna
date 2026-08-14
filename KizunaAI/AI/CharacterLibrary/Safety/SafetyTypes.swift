@@ -85,6 +85,69 @@ enum SafetyAction: String, Codable, CaseIterable, Hashable {
     case requireEdit   // 修正必須 (保存させない / 出力させない)
 }
 
+/// Decide which output text is eligible to reach the Story persistence path.
+/// A rewrite is mandatory for `.soften`; `.requireEdit` never produces a
+/// persistable output, so the original model text can never fall through.
+enum StoryOutputSafetyPolicy {
+    static func persistableText(
+        action: SafetyAction,
+        original: String,
+        rewritten: String?
+    ) -> String? {
+        switch action {
+        case .block, .requireEdit:
+            return nil
+        case .soften:
+            guard let rewritten,
+                  !rewritten.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return rewritten
+        case .allow, .warn:
+            return original
+        }
+    }
+
+    /// Model-emitted state is coupled to the text that was evaluated. A
+    /// rewritten `.soften` response therefore cannot carry the original
+    /// response's state delta into persistence. Only actions that preserve the
+    /// evaluated text may keep its already-parsed state patch.
+    static func persistableStatePatch(
+        action: SafetyAction,
+        original: StoryStatePatch?
+    ) -> StoryStatePatch? {
+        switch action {
+        case .allow, .warn:
+            return original
+        case .soften, .block, .requireEdit:
+            return nil
+        }
+    }
+
+    /// Keep one state patch only when both the visible output boundary and the
+    /// state patch's own safety evaluation allow it. A patch parsed from the
+    /// pre-rewrite progress object is only a fallback candidate; `.soften`
+    /// must never carry it across the rewritten-text boundary.
+    static func persistableStructuredStatePatch(
+        outputAction: SafetyAction,
+        stateAction: SafetyAction?,
+        dedicatedPatch: StoryStatePatch?,
+        fallbackPatch: StoryStatePatch?
+    ) -> StoryStatePatch? {
+        switch outputAction {
+        case .allow, .warn:
+            break
+        case .soften, .block, .requireEdit:
+            return nil
+        }
+        let candidate = dedicatedPatch ?? fallbackPatch
+        return persistableStatePatch(
+            action: stateAction ?? .block,
+            original: candidate
+        )
+    }
+}
+
 /// 重要度。
 enum SafetySeverity: String, Codable, CaseIterable, Hashable {
     case info

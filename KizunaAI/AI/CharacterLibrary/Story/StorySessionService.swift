@@ -1271,6 +1271,24 @@ final class StorySessionService: ObservableObject {
             )
             return
         }
+        // The structured STATE_UPDATE is persisted outside the visible text,
+        // so evaluate it through the same output-safety boundary before it can
+        // reach StoryState. An unsafe metadata patch is discarded while a safe
+        // visible reply can still be saved.
+        let structuredProgressUpdate = parseProgressUpdate(rawFinal)
+        var acceptedStructuredProgressUpdate = structuredProgressUpdate
+        let modelStatePatchForSafety = modelStatePatch
+        let statePatchForSafety = modelStatePatchForSafety ?? structuredProgressUpdate?.storyState
+        var stateSafetyAction: SafetyAction?
+        if let statePatchForSafety {
+            if let safetyText = statePatchForSafety.safetyEvaluationText() {
+                stateSafetyAction = await safetyPipeline
+                    .evaluateOutput(safetyText, character: representativeCharacter)
+                    .action
+            } else {
+                NSLog("[StorySession] STATE_UPDATE could not be serialized for safety evaluation; dropping patch")
+            }
+        }
         let outSafety = await safetyPipeline.evaluateOutput(rawFinal, character: representativeCharacter)
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
@@ -1294,13 +1312,53 @@ final class StorySessionService: ObservableObject {
                 safetyConcern: safetyConcern
             )
             return
-        case .soften, .requireEdit:
-            // Safety rewrite後の本文と、書き換え前本文から抽出したSTATE_UPDATEは
-            // 同じ意味を保証できない。元のPatchを破棄し、見えている本文だけを保存する。
-            modelStatePatch = nil
-            if let rewritten = outSafety.rewrittenText, !rewritten.isEmpty { rawFinal = rewritten }
-        case .warn, .allow:
-            break
+        default:
+            guard let persistableText = StoryOutputSafetyPolicy.persistableText(
+                action: outSafety.action,
+                original: rawFinal,
+                rewritten: outSafety.rewrittenText
+            ) else {
+                let notice = localizedNotice(
+                    "安全上の理由でこの応答は保存しませんでした。別の表現で続けてください。",
+                    "This response was not saved for safety reasons. Try a different way to continue."
+                )
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: notice,
+                    backend: generationModel == .e4b ? .local : .gemmaAPI,
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: usedBackendName + "・安全編集未完了",
+                    safetyConcern: safetyConcern
+                )
+                return
+            }
+            // A safety rewrite is a new text boundary. Do not retain the
+            // original model's STATE_UPDATE, and do not let a marker embedded
+            // in the rewrite bypass the same metadata parser. A patch that was
+            // not serializable or did not pass its own safety check is also
+            // omitted, without discarding an otherwise safe visible reply.
+            let persistableStatePatch = StoryOutputSafetyPolicy
+                .persistableStructuredStatePatch(
+                    outputAction: outSafety.action,
+                    stateAction: stateSafetyAction,
+                    dedicatedPatch: modelStatePatchForSafety,
+                    fallbackPatch: structuredProgressUpdate?.storyState
+                )
+            // Whether accepted or rejected, consume the fallback candidate so
+            // it cannot be applied a second time below after `modelStatePatch`
+            // becomes nil.
+            if statePatchForSafety != nil {
+                acceptedStructuredProgressUpdate?.storyState = nil
+            }
+            modelStatePatch = persistableStatePatch
+            let persistableMetadata = parseStateMetadata(from: persistableText)
+            rawFinal = sanitizedFinalText(persistableMetadata.visibleText)
+            if case .soften = outSafety.action {
+                // A rewrite is a new text boundary. Do not carry progress
+                // fields parsed from the original model output into it.
+                acceptedStructuredProgressUpdate = nil
+            }
         }
         rawFinal = sanitize(rawFinal)
         guard isMeaningfulStoryText(rawFinal) else {
@@ -1394,7 +1452,6 @@ final class StorySessionService: ObservableObject {
         // same response, reuse it here. This is intentionally opportunistic:
         // ordinary dialogue does not decode and stays on the deterministic
         // path, while structured state is applied without a second LLM call.
-        let structuredProgressUpdate = parseProgressUpdate(rawFinal)
         var deterministicState = session.storyState ?? StoryState()
         if !scene.location.isEmpty { deterministicState.location = scene.location }
         if !scene.timeOfDay.isEmpty { deterministicState.timeOfDay = scene.timeOfDay }
@@ -1408,22 +1465,22 @@ final class StorySessionService: ObservableObject {
         deterministicState.updatedAt = Date()
         session.storyState = deterministicState
 
-        let progressStatePatch = modelStatePatch ?? structuredProgressUpdate?.storyState
+        let progressStatePatch = modelStatePatch ?? acceptedStructuredProgressUpdate?.storyState
         let progressUpdate = StoryProgressUpdate(
-            progressLabel: structuredProgressUpdate?.progressLabel.nonEmpty
+            progressLabel: acceptedStructuredProgressUpdate?.progressLabel.nonEmpty
                 ?? session.progressLabel.nonEmpty
                 ?? "第1章 きっかけ",
-            currentObjective: structuredProgressUpdate?.currentObjective.nonEmpty
+            currentObjective: acceptedStructuredProgressUpdate?.currentObjective.nonEmpty
                 ?? session.currentObjective.nonEmpty
                 ?? scene.sceneGoal.nonEmpty
                 ?? world.storyGoal.nonEmpty,
-            lastTurnProgress: structuredProgressUpdate?.lastTurnProgress.nonEmpty
+            lastTurnProgress: acceptedStructuredProgressUpdate?.lastTurnProgress.nonEmpty
                 ?? synthesizeTurnProgress(from: newMessages),
-            lastSceneSummary: structuredProgressUpdate?.lastSceneSummary.nonEmpty
+            lastSceneSummary: acceptedStructuredProgressUpdate?.lastSceneSummary.nonEmpty
                 ?? newSummary.nonEmpty
                 ?? session.lastSceneSummary.nonEmpty,
             unresolvedHooks: normalizedHooks(
-                structuredProgressUpdate?.unresolvedHooks,
+                acceptedStructuredProgressUpdate?.unresolvedHooks,
                 fallback: unresolvedHooks(world: world, scene: scene, previous: session.unresolvedHooks)
             ),
             storyState: progressStatePatch
