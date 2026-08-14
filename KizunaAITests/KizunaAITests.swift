@@ -3218,8 +3218,10 @@ final class KizunaAITests: XCTestCase {
             fileName: "story_turn_journal.json",
             baseURL: storageURL
         ).first?.scene
-        XCTAssertEqual(storedScene?.updatedAt, baseDate)
-        XCTAssertEqual(storedJournalScene?.updatedAt, laterSameSecond)
+        // The legacy ISO8601 encoder drops sub-second precision, so both
+        // records intentionally decode to the same second. Revision, not the
+        // rounded timestamp, is what proves that the journal scene wins.
+        XCTAssertEqual(storedScene?.updatedAt, storedJournalScene?.updatedAt)
         XCTAssertEqual(storedScene?.persistenceRevision, 4)
         XCTAssertEqual(storedJournalScene?.persistenceRevision, 5)
 
@@ -4448,7 +4450,10 @@ final class KizunaAITests: XCTestCase {
             fileName: "story_turn_journal.json",
             baseURL: storageURL
         ).first?.scene
-        XCTAssertEqual(storedScene?.updatedAt, storedJournalScene?.updatedAt)
+        // Native LocalJSONStore dates preserve sub-second precision. This is
+        // the complementary case to the legacy ISO8601 fixture above.
+        XCTAssertEqual(storedScene?.updatedAt, baseDate)
+        XCTAssertEqual(storedJournalScene?.updatedAt, laterSameSecond)
         XCTAssertEqual(storedScene?.persistenceRevision, 4)
         XCTAssertEqual(storedJournalScene?.persistenceRevision, 5)
 
