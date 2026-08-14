@@ -1518,6 +1518,11 @@ final class StorySessionViewModel: ObservableObject {
     /// "loaded, but retry work could not be restored".
     @Published private(set) var bootstrapWarning: String?
     @Published private(set) var isRestoringBootstrapWarning = false
+    /// A relaunch-recovered turn is actionable in the chat surface. Keep the
+    /// operation state separate from the normal generation phase so a failed
+    /// discard never makes the incomplete turn look silently resolved.
+    @Published private(set) var isHandlingInterruptedTurn = false
+    @Published private(set) var interruptedTurnRecoveryError: String?
     /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
     @Published var restSuggestion: StoryRestSuggestion?
     /// 了承メッセージの保存中は通常送信を止め、保存結果を待つ。
@@ -1592,6 +1597,7 @@ final class StorySessionViewModel: ObservableObject {
 
     func bootstrap() async {
         bootstrapWarning = nil
+        interruptedTurnRecoveryError = nil
         do {
             // 前回のプロセス終了時に残ったpendingターンは、生成を再開せず
             // interruptedとして明示的に終了させる。通常ターンのpolling中に
@@ -1600,6 +1606,14 @@ final class StorySessionViewModel: ObservableObject {
                 storyWorldId: world.id,
                 activeOwnerIDs: StoryTurnOwnerRegistry.shared.activeOwnerIDs()
             )
+            // recoverInterruptedTurns mutates the durable snapshot. Refresh the
+            // local copy before the view decides whether to show recovery UI;
+            // otherwise it would keep displaying the stale pending checkpoint
+            // that was passed in before recovery ran.
+            let recoveredSessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
+            if let recovered = recoveredSessions.first(where: { $0.id == session.id }) {
+                session = recovered
+            }
         } catch {
             bootstrapError = KizunaCopy.text(
                 japanese: "物語の保存状態を確認できませんでした。再試行してください。",
@@ -1756,6 +1770,52 @@ final class StorySessionViewModel: ObservableObject {
     @discardableResult
     func send(_ userText: String) -> Bool {
         enqueueSend(userText, existingUserMessageID: nil)
+    }
+
+    /// Reuses the exact user message and logical turn after a relaunch marked
+    /// its pending checkpoint as interrupted. StorySessionService increments
+    /// the persisted attempt and beginTurn keeps the user message idempotent.
+    @discardableResult
+    func retryInterruptedTurn() -> Bool {
+        guard !isHandlingInterruptedTurn,
+              let message = interruptedTurnMessage else { return false }
+        interruptedTurnRecoveryError = nil
+        return enqueueSend(message.text, existingUserMessageID: message.id)
+    }
+
+    /// Removes only the incomplete turn after a CAS against the snapshot that
+    /// the user saw. A late model callback then cannot pass commitTurn because
+    /// the checkpoint has been removed under the same file lock.
+    func discardInterruptedTurn() {
+        guard !isHandlingInterruptedTurn,
+              let checkpoint = interruptedTurn,
+              session.latestTurnCheckpoint?.attempt == checkpoint.attempt else { return }
+        let sessionID = session.id
+        let turnID = checkpoint.turnID
+        let attempt = checkpoint.attempt
+        let expectedRevision = session.effectivePersistenceRevision
+        isHandlingInterruptedTurn = true
+        interruptedTurnRecoveryError = nil
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isHandlingInterruptedTurn = false }
+            do {
+                let updated = try await self.sessionRepo.discardInterruptedTurn(
+                    sessionID: sessionID,
+                    turnID: turnID,
+                    attempt: attempt,
+                    expectedRevision: expectedRevision
+                )
+                guard self.session.id == sessionID else { return }
+                self.session = updated
+            } catch {
+                self.interruptedTurnRecoveryError = KizunaCopy.text(
+                    japanese: "中断した発言を破棄できませんでした。保存状態を再確認してください。",
+                    english: "The interrupted message could not be discarded. Check the saved state and try again."
+                )
+                await self.refreshAfterTurn()
+            }
+        }
     }
 
     /// Starts a normal or retry turn through the same preparation path. A retry
@@ -2096,6 +2156,17 @@ final class StorySessionViewModel: ObservableObject {
     var activeCharacters: [CharacterProfile] {
         session.resolvedActiveCharacterIds(fallback: scene)
             .compactMap { characterIndex[$0] }
+    }
+
+    var interruptedTurn: StoryTurnCheckpoint? {
+        guard let checkpoint = session.latestTurnCheckpoint,
+              checkpoint.status == .interrupted else { return nil }
+        return checkpoint
+    }
+
+    var interruptedTurnMessage: StoryMessage? {
+        guard let checkpoint = interruptedTurn else { return nil }
+        return session.messages.first { $0.id == checkpoint.userMessageID }
     }
 }
 

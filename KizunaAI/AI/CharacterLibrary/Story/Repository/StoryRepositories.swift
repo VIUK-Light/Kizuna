@@ -142,6 +142,16 @@ protocol StorySessionRepository: AnyObject {
         storyWorldId: UUID,
         activeOwnerIDs: Set<UUID>
     ) async throws
+    /// Discard an interrupted turn only when the caller still owns the exact
+    /// persisted revision. The incomplete user message and any assistant IDs
+    /// recorded by the checkpoint are removed together with the checkpoint.
+    /// A late model callback must therefore fail the normal commit boundary.
+    func discardInterruptedTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int,
+        expectedRevision: UInt64
+    ) async throws -> StorySession
     func deleteSession(id: UUID) async throws
 }
 
@@ -831,6 +841,63 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
             if changed {
                 try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
             }
+            }
+        }
+    }
+
+    func discardInterruptedTurn(
+        sessionID: UUID,
+        turnID: UUID,
+        attempt: Int,
+        expectedRevision: UInt64
+    ) async throws -> StorySession {
+        let storageURL = self.storageURL
+        try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
+        return try await LocalJSONStoreTransaction.performOnFileIO {
+            try LocalJSONStoreTransaction.withSharedLock {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: sessionID,
+                    recordKind: .session,
+                    tombstones: tombstones
+                )
+                var sessions = try LocalJSONStoreTransaction.load(
+                    StorySession.self,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+                guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
+                    throw StoryTurnPersistenceError.sessionNotFound
+                }
+
+                var current = sessions[index]
+                guard current.effectivePersistenceRevision == expectedRevision else {
+                    throw StoryTurnPersistenceError.revisionConflict(
+                        expected: expectedRevision,
+                        actual: current.effectivePersistenceRevision
+                    )
+                }
+                guard let checkpoint = current.latestTurnCheckpoint,
+                      checkpoint.turnID == turnID,
+                      checkpoint.attempt == attempt,
+                      checkpoint.status == .interrupted else {
+                    throw StoryTurnPersistenceError.turnNotPending
+                }
+
+                let incompleteMessageIDs = Set(
+                    [checkpoint.userMessageID] + checkpoint.assistantMessageIDs
+                )
+                current.messages.removeAll { incompleteMessageIDs.contains($0.id) }
+                current.latestTurnCheckpoint = nil
+                current.persistenceRevision = current.effectivePersistenceRevision + 1
+                current.updatedAt = Date()
+                sessions[index] = current
+                try LocalJSONStoreTransaction.save(
+                    sessions,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+                return current
             }
         }
     }

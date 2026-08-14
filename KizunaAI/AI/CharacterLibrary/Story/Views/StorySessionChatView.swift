@@ -458,6 +458,7 @@ private struct StorySessionChatBody: View {
     @State private var isShowingCharacterSheet = false
     @State private var isShowingSafetyResources = false
     @State private var isShowingSafetyHelp = false
+    @State private var isShowingInterruptedDiscardConfirmation = false
     @State private var unavailableModelMessage = ""
     @State private var isShowingUnavailableModelAlert = false
     @State private var isStoryChatNearLatest = true
@@ -488,6 +489,7 @@ private struct StorySessionChatBody: View {
                                     streamingPreview
                                 }
                                 bootstrapWarningCard
+                                interruptedTurnCard
                                 // 最新のキャラクター発話の後ろに、会話の一部として表示する。
                                 restSuggestionCard
                                 safetySupportCard
@@ -699,6 +701,102 @@ private struct StorySessionChatBody: View {
             )
             .accessibilityElement(children: .contain)
             .id("story.bootstrap-warning")
+        }
+    }
+
+    /// A pending turn becomes interrupted after relaunch. Keep this recovery
+    /// surface in the conversation itself; it is not a story event or a new
+    /// navigation mode, and it must remain visible until retry or discard has
+    /// completed successfully.
+    @ViewBuilder
+    private var interruptedTurnCard: some View {
+        if service.phase != .thinking, let checkpoint = vm.interruptedTurn {
+            let messageText = vm.interruptedTurnMessage?.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            VStack(alignment: .leading, spacing: 11) {
+                Label(
+                    storyCopy("前回の生成が中断されました", "The previous generation was interrupted"),
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(storyText)
+
+                Text(
+                    messageText?.isEmpty == false
+                        ? messageText!
+                        : storyCopy("中断した発言の本文を確認できません。破棄してください。", "The interrupted message is unavailable. Discard it.")
+                )
+                    .font(.subheadline)
+                    .foregroundStyle(storyText.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let error = vm.interruptedTurnRecoveryError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: 10) {
+                    if vm.isHandlingInterruptedTurn {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel(storyCopy("処理中", "Working"))
+                    }
+                    Button {
+                        _ = vm.retryInterruptedTurn()
+                    } label: {
+                        Label(
+                            storyCopy("この発言を再試行", "Retry this message"),
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                        .buttonStyle(.borderedProminent)
+                        .frame(minHeight: 44)
+                        .disabled(vm.isHandlingInterruptedTurn || vm.interruptedTurnMessage == nil)
+
+                    Button(role: .destructive) {
+                        isShowingInterruptedDiscardConfirmation = true
+                    } label: {
+                        Label(
+                            storyCopy("この発言を破棄", "Discard this message"),
+                            systemImage: "trash"
+                        )
+                    }
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
+                        .disabled(vm.isHandlingInterruptedTurn)
+                }
+            }
+            .padding(14)
+            .background(storyPanel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("story.interrupted-turn")
+            .transition(accessibilityReduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
+            .confirmationDialog(
+                storyCopy("中断した発言を破棄しますか？", "Discard the interrupted message?"),
+                isPresented: $isShowingInterruptedDiscardConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(
+                    storyCopy("この発言を破棄", "Discard this message"),
+                    role: .destructive
+                ) {
+                    vm.discardInterruptedTurn()
+                }
+                Button(storyCopy("キャンセル", "Cancel"), role: .cancel) { }
+            } message: {
+                Text(storyCopy(
+                    "未完了の発言と生成待ち状態を履歴から取り除きます。",
+                    "The incomplete message and its pending generation state will be removed from this story."
+                ))
+            }
+            .id("story.interrupted-turn-\(checkpoint.turnID.uuidString)")
         }
     }
 
