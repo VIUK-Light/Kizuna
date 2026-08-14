@@ -1670,13 +1670,13 @@ final class KizunaAITests: XCTestCase {
 
         let deletedMemory = StoryMemory(
             storyWorldId: worldID,
-            storySessionId: deletedSessionID,
-            text: "削除対象のSession記憶"
+            text: "削除対象のSession記憶",
+            storySessionId: deletedSessionID
         )
         let remainingMemory = StoryMemory(
             storyWorldId: worldID,
-            storySessionId: remainingSessionID,
-            text: "残すSession記憶"
+            text: "残すSession記憶",
+            storySessionId: remainingSessionID
         )
         let legacyMemory = StoryMemory(
             storyWorldId: worldID,
@@ -4137,13 +4137,13 @@ final class KizunaAITests: XCTestCase {
         )
         let deletedMemory = StoryMemory(
             storyWorldId: worldID,
-            storySessionId: deletedSessionID,
-            text: "tombstoneで削除する記憶"
+            text: "tombstoneで削除する記憶",
+            storySessionId: deletedSessionID
         )
         let remainingMemory = StoryMemory(
             storyWorldId: worldID,
-            storySessionId: remainingSessionID,
-            text: "残す記憶"
+            text: "残す記憶",
+            storySessionId: remainingSessionID
         )
         try LocalJSONStoreTransaction.save(
             [deletedMemory, remainingMemory],
