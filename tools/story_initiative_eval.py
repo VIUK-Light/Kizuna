@@ -21,6 +21,7 @@ import json
 import math
 import random
 import re
+import secrets
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -45,6 +46,7 @@ VIOLATION_KEYS = (
     "continuity_error",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+PRESENTATION_SALT_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 BOOTSTRAP_RESAMPLES = 10_000
 BOOTSTRAP_SEED = 20260814
 
@@ -127,9 +129,16 @@ def load_scenario_fixture(path: Path = ROOT / "tools" / "story_initiative_scenar
             localized = scenario.get(language)
             if not isinstance(localized, dict):
                 raise EvaluationError(f"{scenario_id}: missing {language} scenario data")
-            for key in ("user_message", "scene", "story_state", "character"):
-                if not isinstance(localized.get(key), (dict, str)):
-                    raise EvaluationError(f"{scenario_id}/{language}: missing {key}")
+            user_message = localized.get("user_message")
+            if not isinstance(user_message, str) or not user_message.strip():
+                raise EvaluationError(
+                    f"{scenario_id}/{language}: user_message must be a non-empty string"
+                )
+            for key in ("scene", "story_state", "character"):
+                if not isinstance(localized.get(key), dict):
+                    raise EvaluationError(
+                        f"{scenario_id}/{language}: {key} must be an object"
+                    )
             if not isinstance(localized.get("history"), list):
                 raise EvaluationError(f"{scenario_id}/{language}: history must be an array")
             if not isinstance(localized.get("hard_facts"), list):
@@ -397,6 +406,7 @@ def _generation_index(
 def create_blind_artifacts(
     records: Sequence[Mapping[str, Any]],
     *,
+    presentation_salt: str | None = None,
     languages: Sequence[str] = DEFAULT_LANGUAGES,
     models: Sequence[str] = DEFAULT_MODELS,
     scenario_ids: Sequence[str] = DEFAULT_SCENARIOS,
@@ -404,7 +414,16 @@ def create_blind_artifacts(
     expected_fixture_sha256: str | None = None,
     expected_scenario_version: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return (blind_pairs, private_answer_key) with deterministic A/B order."""
+    """Return blind pairs and a private, per-run salted answer key."""
+    if presentation_salt is None:
+        presentation_salt = secrets.token_hex(16)
+    if (
+        not isinstance(presentation_salt, str)
+        or not PRESENTATION_SALT_PATTERN.fullmatch(presentation_salt)
+    ):
+        raise EvaluationError(
+            "presentation_salt must be a lowercase 32-character hexadecimal string"
+        )
     validated = validate_generation_records(
         records,
         languages=languages,
@@ -439,7 +458,7 @@ def create_blind_artifacts(
     randomized_slots = sorted(
         slots,
         key=lambda slot: hashlib.sha256(
-            f"presentation-v1:{_pair_id(*slot)}".encode("utf-8")
+            f"presentation-v2:{presentation_salt}:{_pair_id(*slot)}".encode()
         ).digest(),
     )
     if len(randomized_slots) % 2 != 0:
@@ -493,6 +512,7 @@ def create_blind_artifacts(
                 "pair_id": pair_id,
                 "a_condition": a_condition,
                 "b_condition": b_condition,
+                "presentation_salt": presentation_salt,
             }
         )
 
@@ -584,6 +604,7 @@ def score_evaluation(
     }
     key_by_blind_id: dict[str, dict[str, Any]] = {}
     pair_to_blind_id: dict[str, str] = {}
+    presentation_salts: set[str] = set()
     for record in answer_key_records:
         pair_id = record.get("pair_id")
         blind_id = record.get("blind_id")
@@ -593,12 +614,23 @@ def score_evaluation(
             raise EvaluationError("blind key blind_id must be a non-empty string")
         if not isinstance(pair_id, str) or pair_id not in expected_pairs:
             raise EvaluationError(f"duplicate or unexpected blind key pair {pair_id!r}")
+        presentation_salt = record.get("presentation_salt")
+        if (
+            not isinstance(presentation_salt, str)
+            or not PRESENTATION_SALT_PATTERN.fullmatch(presentation_salt)
+        ):
+            raise EvaluationError(
+                f"blind key presentation_salt is invalid for {blind_id!r}"
+            )
+        presentation_salts.add(presentation_salt)
         if blind_id in key_by_blind_id or pair_id in pair_to_blind_id:
             raise EvaluationError(f"duplicate blind key {blind_id!r}")
         if {record.get("a_condition"), record.get("b_condition")} != set(CONDITIONS):
             raise EvaluationError(f"blind key must contain both conditions for {blind_id!r}")
         key_by_blind_id[blind_id] = dict(record)
         pair_to_blind_id[pair_id] = blind_id
+    if len(presentation_salts) != 1:
+        raise EvaluationError("blind key must use exactly one presentation_salt")
     if set(pair_to_blind_id) != expected_pairs:
         missing = sorted(expected_pairs - set(pair_to_blind_id))
         extra = sorted(set(pair_to_blind_id) - expected_pairs)
@@ -729,8 +761,8 @@ def score_evaluation(
     initiative_irrelevant_rate = flag_rates["initiative"]["irrelevant_event"]
     initiative_continuity_rate = flag_rates["initiative"]["continuity_error"]
     baseline_continuity_rate = flag_rates["baseline"]["continuity_error"]
-    all_user_agency = sum(flags[condition]["user_agency_violation"] for condition in CONDITIONS)
-    all_safety_violations = sum(flags[condition]["safety_hard_violation"] for condition in CONDITIONS)
+    initiative_user_agency = flags["initiative"]["user_agency_violation"]
+    initiative_safety_violations = flags["initiative"]["safety_hard_violation"]
 
     gates = {
         "minimum_rated_pairs": {
@@ -749,13 +781,13 @@ def score_evaluation(
             "required_exclusive": 0.50,
         },
         "no_user_agency_violation": {
-            "passed": all_user_agency == 0,
-            "actual": all_user_agency,
+            "passed": initiative_user_agency == 0,
+            "actual": initiative_user_agency,
             "required": 0,
         },
         "no_safety_hard_violation": {
-            "passed": all_safety_violations == 0,
-            "actual": all_safety_violations,
+            "passed": initiative_safety_violations == 0,
+            "actual": initiative_safety_violations,
             "required": 0,
         },
         "initiative_irrelevant_event_rate_at_most_5_percent": {
@@ -899,6 +931,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0 if complete else 2
         elif args.command == "generate-blind":
+            if args.blind_output.resolve() == args.key_output.resolve():
+                raise EvaluationError(
+                    "--blind-output and --key-output must be different paths"
+                )
             blind, key = create_blind_artifacts(
                 read_jsonl(args.input),
                 expected_fixture_sha256=fixture_sha256,

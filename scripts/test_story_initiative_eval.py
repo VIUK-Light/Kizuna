@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from story_initiative_eval import (  # noqa: E402
     EvaluationError,
     create_blind_artifacts,
     load_scenario_fixture,
+    main,
     score_evaluation,
     validate_generation_records,
 )
@@ -24,7 +26,7 @@ def make_generation(condition, *, language="ja", model="iori", scenario_id="stor
         "language": language,
         "model": model,
         "scenario_id": scenario_id,
-        "scenario_version": "story-initiative-fixture-v1",
+        "scenario_version": "story-initiative-fixture-v2",
         "fixture_sha256": "a" * 64,
         "prompt_sha256": "b" * 64 if condition == "baseline" else "c" * 64,
         "pair_input_sha256": "d" * 64,
@@ -89,12 +91,18 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
     def test_scenario_fixture_is_complete_and_versioned(self):
         fixture, digest = load_scenario_fixture()
 
-        self.assertEqual(fixture["fixture_version"], "story-initiative-fixture-v1")
+        self.assertEqual(fixture["fixture_version"], "story-initiative-fixture-v2")
         self.assertEqual(len(fixture["scenarios"]), 16)
         self.assertEqual(len(digest), 64)
         self.assertEqual(
             {scenario["scenario_id"] for scenario in fixture["scenarios"]},
             {f"story-{index:02d}" for index in range(1, 17)},
+        )
+        self.assertTrue(
+            any(
+                scenario["oracle"]["safety_class"] != "ordinary"
+                for scenario in fixture["scenarios"]
+            )
         )
 
     def test_blind_artifact_does_not_expose_condition_or_latency(self):
@@ -102,7 +110,7 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
 
         self.assertEqual(len(blind), 4)
         self.assertEqual(len(key), 4)
-        for pair, answer in zip(blind, key):
+        for pair, answer in zip(blind, key, strict=True):
             self.assertNotIn("condition", pair)
             self.assertNotIn("pair_input_sha256", pair)
             self.assertNotIn("latency_ms", pair)
@@ -110,7 +118,19 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
             self.assertNotIn("scenario_id", pair)
             self.assertNotIn("seed", pair)
             self.assertNotIn("pair_id", pair)
+            self.assertNotIn("presentation_salt", pair)
+            for hidden in (
+                "condition",
+                "model",
+                "scenario_id",
+                "seed",
+                "pair_id",
+                "prompt_sha256",
+                "presentation_salt",
+            ):
+                self.assertNotIn(hidden, pair["context"])
             self.assertTrue(pair["blind_id"])
+            self.assertRegex(answer["presentation_salt"], r"^[0-9a-f]{32}$")
             self.assertEqual(
                 {answer["a_condition"], answer["b_condition"]},
                 {"baseline", "initiative"},
@@ -120,6 +140,39 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
             sum(answer["a_condition"] == "initiative" for answer in key),
             2,
         )
+
+    def test_same_presentation_salt_reproduces_blind_mapping(self):
+        first_blind, first_key = create_blind_artifacts(
+            make_matrix(),
+            presentation_salt="a" * 32,
+            **self.matrix_kwargs,
+        )
+        second_blind, second_key = create_blind_artifacts(
+            make_matrix(),
+            presentation_salt="a" * 32,
+            **self.matrix_kwargs,
+        )
+
+        self.assertEqual(first_blind, second_blind)
+        self.assertEqual(first_key, second_key)
+
+    def test_cli_rejects_same_blind_and_key_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "same.jsonl"
+            self.assertEqual(
+                main(
+                    [
+                        "generate-blind",
+                        "--input",
+                        str(Path(directory) / "missing.jsonl"),
+                        "--blind-output",
+                        str(output),
+                        "--key-output",
+                        str(output),
+                    ]
+                ),
+                1,
+            )
 
     def test_blind_artifact_rejects_incomplete_output(self):
         records = make_matrix()
@@ -215,6 +268,39 @@ class StoryInitiativeEvaluationTests(unittest.TestCase):
         self.assertEqual(report["preference"]["invalid"], 4)
         self.assertFalse(report["go"])
         self.assertFalse(report["gates"]["no_invalid_ratings"]["passed"])
+
+    def test_baseline_only_agency_and_safety_flags_do_not_fail_initiative_gates(self):
+        generations = make_matrix()
+        _, key = create_blind_artifacts(generations, **self.matrix_kwargs)
+        ratings = []
+        for answer in key:
+            assessment = {"a": make_assessment(), "b": make_assessment()}
+            for side in ("a", "b"):
+                if answer[f"{side}_condition"] == "baseline":
+                    assessment[side]["user_agency_violation"] = True
+                    assessment[side]["safety_hard_violation"] = True
+            preferred_side = "a" if answer["a_condition"] == "initiative" else "b"
+            ratings.append(
+                {
+                    "schema_version": 1,
+                    "record_type": "rating",
+                    "blind_id": answer["blind_id"],
+                    "preference": preferred_side,
+                    "assessment": assessment,
+                }
+            )
+
+        report = score_evaluation(
+            generations,
+            key,
+            ratings,
+            minimum_rated_pairs=1,
+            **self.matrix_kwargs,
+        )
+
+        self.assertTrue(report["gates"]["no_user_agency_violation"]["passed"])
+        self.assertTrue(report["gates"]["no_safety_hard_violation"]["passed"])
+        self.assertGreater(report["violations"]["counts"]["baseline"]["safety_hard_violation"], 0)
 
 
 if __name__ == "__main__":
