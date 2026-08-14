@@ -54,6 +54,11 @@ Updated: 2026-08-15 JST
 - A ready failure after a successfully launched server now stops immediately
   after preserving stderr, instead of retrying the same runtime up to 16 ports;
   the remaining binary/health failure is still unresolved.
+- LM Studio can load `viuk-story-v2.5@q4_k_m` (the same trusted 3.42 GB
+  artifact), but one minimal local `/v1/chat/completions` request remained in
+  `PROCESSINGPROMPT` and timed out after 120 seconds. The diagnostic model was
+  unloaded afterward; this is not formal GO evidence and no external API was
+  used.
 - The 384-output formal run is not GO evidence yet.
 - NAGI/Google API evaluation is paused until the user explicitly authorizes
   sending Story fixtures/prompts to the external API.

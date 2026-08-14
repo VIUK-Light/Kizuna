@@ -20,6 +20,10 @@
 - A green XCTest wrapper is insufficient. A completed record requires an
   observed runtime identity, observed prompt, trusted iori filename, and
   trusted iori SHA-256.
+- LM Studio is useful as a local runtime comparison, but its successful model
+  load does not prove Kizuna's app-path runtime works. The trusted Q4 model
+  loaded there, while a minimal local completion timed out in
+  `PROCESSINGPROMPT`; keep this separate from the formal gate.
 - Acceptance output is an external local artifact. Raw prompt text is not
   serialized; generated response text is retained only for local human
   rating and must not be committed or uploaded.
