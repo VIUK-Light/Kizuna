@@ -972,6 +972,42 @@ struct StoryMemorySourceMetadata: Codable, Equatable, Hashable {
     var importance: Double
     var createdAt: Date
     var lastUsedAt: Date?
+
+    init(
+        importance: Double,
+        createdAt: Date,
+        lastUsedAt: Date? = nil
+    ) {
+        self.importance = Self.clampedImportance(importance)
+        self.createdAt = createdAt
+        self.lastUsedAt = lastUsedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case importance
+        case createdAt
+        case lastUsedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        importance = Self.clampedImportance(
+            try container.decode(Double.self, forKey: .importance)
+        )
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(importance, forKey: .importance)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(lastUsedAt, forKey: .lastUsedAt)
+    }
+
+    private static func clampedImportance(_ value: Double) -> Double {
+        min(max(value, 0.0), 1.0)
+    }
 }
 
 /// 全体メモリー(CharacterMemory)とは分離して、StoryWorld内の出来事だけを保持する。
