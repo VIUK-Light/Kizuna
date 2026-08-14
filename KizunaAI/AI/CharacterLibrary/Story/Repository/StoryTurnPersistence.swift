@@ -206,6 +206,22 @@ enum StoryTurnJournal {
     nonisolated private static let memoryRetryFileName = "story_memory_retries.json"
     nonisolated private static let tombstoneFileName = "story_turn_journal_tombstones.json"
 
+    private enum RecordOrdering: Equatable {
+        case older
+        case equal
+        /// Revision and timestamp are tied, but the payload differs. There is
+        /// no safe ordering signal, so the enclosing pair must remain in the
+        /// journal for a later, explicit resolution.
+        case ambiguous
+        case newer
+    }
+
+    private enum PairRecoveryDecision {
+        case apply
+        case discard
+        case retain
+    }
+
     private struct TombstoneFileSignature: Equatable {
         let basePath: String
         let exists: Bool
@@ -341,6 +357,10 @@ enum StoryTurnJournal {
                         "[StoryTurnJournal] discarded tombstoned entry turn=%@",
                         entry.turnID.uuidString
                     )
+                    try purgeMemoryRetriesForTurnIDsUnlocked(
+                        Set([entry.turnID]),
+                        baseURL: baseURL
+                    )
                     continue
                 }
                 guard let sessionIndex = sessions.firstIndex(where: { $0.id == entry.session.id }),
@@ -351,6 +371,37 @@ enum StoryTurnJournal {
                         entry.turnID.uuidString
                     )
                     continue
+                }
+
+                let persistedSession = sessions[sessionIndex]
+                let persistedScene = scenes[sceneIndex]
+                let sessionOrdering = ordering(entry.session, over: persistedSession)
+                let sceneOrdering = ordering(entry.scene, over: persistedScene)
+
+                switch recoveryDecision(
+                    session: sessionOrdering,
+                    scene: sceneOrdering
+                ) {
+                case .retain:
+                    // A pair cannot be consumed when one side is newer than
+                    // the other, or when either side has an equal-metadata
+                    // payload mismatch. Do not hand off memory retries before
+                    // the pair decision is known.
+                    unresolvedEntries.append(entry)
+                    NSLog(
+                        "[StoryTurnJournal] retained unresolved pair turn=%@ session=%@ scene=%@",
+                        entry.turnID.uuidString,
+                        String(describing: sessionOrdering),
+                        String(describing: sceneOrdering)
+                    )
+                    continue
+                case .discard:
+                    // The persisted pair is already at least as new as the
+                    // journal pair. Nothing from this stale entry may be
+                    // handed off to the retry queue.
+                    continue
+                case .apply:
+                    break
                 }
 
                 if !entry.memoryRetries.isEmpty {
@@ -374,13 +425,11 @@ enum StoryTurnJournal {
                     }
                 }
 
-                let persistedSession = sessions[sessionIndex]
-                if shouldApply(entry.session, over: persistedSession) {
+                if sessionOrdering == .newer {
                     sessions[sessionIndex] = entry.session
                     sessionsChanged = true
                 }
-                let persistedScene = scenes[sceneIndex]
-                if shouldApply(entry.scene, over: persistedScene) {
+                if sceneOrdering == .newer {
                     scenes[sceneIndex] = entry.scene
                     scenesChanged = true
                 }
@@ -509,11 +558,35 @@ enum StoryTurnJournal {
         case rootIsNotArray
     }
 
-    nonisolated private static func shouldApply(_ journal: StorySession, over persisted: StorySession) -> Bool {
+    nonisolated private static func recoveryDecision(
+        session: RecordOrdering,
+        scene: RecordOrdering
+    ) -> PairRecoveryDecision {
+        switch (session, scene) {
+        case (.ambiguous, _), (_, .ambiguous):
+            return .retain
+        case (.newer, .older), (.older, .newer):
+            return .retain
+        case (.newer, _), (_, .newer):
+            return .apply
+        case (.older, _), (_, .older), (.equal, .equal):
+            return .discard
+        }
+    }
+
+    nonisolated private static func ordering(
+        _ journal: StorySession,
+        over persisted: StorySession
+    ) -> RecordOrdering {
         if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
+                ? .newer
+                : .older
         }
-        return journal.updatedAt > persisted.updatedAt
+        if journal.updatedAt != persisted.updatedAt {
+            return journal.updatedAt > persisted.updatedAt ? .newer : .older
+        }
+        return journal == persisted ? .equal : .ambiguous
     }
 
     nonisolated private static func isValid(_ entry: StoryTurnJournalEntry) -> Bool {
@@ -526,11 +599,19 @@ enum StoryTurnJournal {
         return true
     }
 
-    nonisolated private static func shouldApply(_ journal: StoryScene, over persisted: StoryScene) -> Bool {
+    nonisolated private static func ordering(
+        _ journal: StoryScene,
+        over persisted: StoryScene
+    ) -> RecordOrdering {
         if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
+                ? .newer
+                : .older
         }
-        return journal.updatedAt > persisted.updatedAt
+        if journal.updatedAt != persisted.updatedAt {
+            return journal.updatedAt > persisted.updatedAt ? .newer : .older
+        }
+        return journal == persisted ? .equal : .ambiguous
     }
 
     /// Merge journal-owned auxiliary work into the durable retry queue while
@@ -568,6 +649,24 @@ enum StoryTurnJournal {
         let retained = existing.filter { retry in
             !retry.isCompleted || keepingTurnIDs.contains(retry.turnID)
         }
+        guard retained.count != existing.count else { return }
+        try LocalJSONStoreTransaction.save(
+            retained,
+            fileName: memoryRetryFileName,
+            baseURL: baseURL
+        )
+    }
+
+    /// A tombstoned pair must not leave a retry that can later recreate memory
+    /// for the deleted turn. This runs under the same shared lock as journal
+    /// recovery, so the deletion fence and retry purge are observed together.
+    private static func purgeMemoryRetriesForTurnIDsUnlocked(
+        _ turnIDs: Set<UUID>,
+        baseURL: URL
+    ) throws {
+        guard !turnIDs.isEmpty else { return }
+        let existing = try loadMemoryRetriesUnlocked(baseURL: baseURL)
+        let retained = existing.filter { !turnIDs.contains($0.turnID) }
         guard retained.count != existing.count else { return }
         try LocalJSONStoreTransaction.save(
             retained,
