@@ -6,8 +6,9 @@
 
 - Worktree: /Volumes/SSD/Workspace/Projects/Kizuna_ai_acceptance_20260814
 - Branch: codex/story-acceptance-20260814
-- HEAD: d3639df6679ed73d12cd7daae05c4afb8931b073
-- HEAD message: [Evaluation][Story] Make natural initiative acceptance reproducible
+- HEAD: 232915c
+- HEAD message: [Docs] Record Kizuna plan status and decisions
+- implementation commit: d3639df6679ed73d12cd7daae05c4afb8931b073
 - 最新確認時点でworktreeはclean
 - 共有canonical checkoutは変更していない
 
