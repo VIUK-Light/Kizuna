@@ -14,9 +14,33 @@ protocol MemoryRepository: AnyObject {
     func markUsed(ids: [UUID]) async throws
 }
 
-final class LocalJSONMemoryRepository: MemoryRepository {
-    private let store = LocalJSONStore<CharacterMemory>(fileName: "memories.json")
+/// Identifies the JSON file used by a memory repository. The story retry
+/// transaction may only combine repositories that expose matching identities.
+protocol LocalJSONStorageIdentityProviding: AnyObject {
+    var storageURL: URL { get }
+}
+
+protocol LocalJSONMemoryFileIdentityProviding: LocalJSONStorageIdentityProviding {
+    var fileName: String { get }
+}
+
+final class LocalJSONMemoryRepository: MemoryRepository, LocalJSONMemoryFileIdentityProviding {
+    let storageURL: URL
+    let fileName: String
+    private let store: LocalJSONStore<CharacterMemory>
     private let perCharacterLimit = 60   // キャラごとの上限
+
+    init(
+        fileName: String = "memories.json",
+        storageURL: URL = KizunaDataMigration.characterLibraryURL
+    ) {
+        self.fileName = fileName
+        self.storageURL = storageURL
+        self.store = LocalJSONStore<CharacterMemory>(
+            fileName: fileName,
+            baseURL: storageURL
+        )
+    }
 
     func fetchMemories(characterId: UUID) async throws -> [CharacterMemory] {
         // 1件の旧形式/破損レコードで全メモリーを空に見せない。

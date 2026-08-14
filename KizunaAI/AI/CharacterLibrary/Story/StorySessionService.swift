@@ -245,6 +245,13 @@ struct StoryMemoryRetry: Codable, Equatable {
     /// the retry queue and removing its turn journal. Older JSON has no key,
     /// so decoding defaults to false.
     var isCompleted: Bool
+    /// Counts restore attempts for a retry whose owning StorySession is no
+    /// longer present. Keeping this bounded prevents an orphaned record from
+    /// remaining actionable forever after its session was deleted or lost.
+    var missingSessionRestoreAttempts: Int
+    /// Terminal diagnostic state for an orphaned retry. The record remains in
+    /// JSON for diagnosis, but is excluded from the active retry queue.
+    var isAbandoned: Bool
 
     private enum CodingKeys: String, CodingKey {
         case turnID
@@ -255,6 +262,8 @@ struct StoryMemoryRetry: Codable, Equatable {
         case storySessionID
         case storyWorldID
         case isCompleted
+        case missingSessionRestoreAttempts
+        case isAbandoned
     }
 
     init(
@@ -265,7 +274,9 @@ struct StoryMemoryRetry: Codable, Equatable {
         storyMemories: [StoryMemory],
         storySessionID: UUID? = nil,
         storyWorldID: UUID? = nil,
-        isCompleted: Bool = false
+        isCompleted: Bool = false,
+        missingSessionRestoreAttempts: Int = 0,
+        isAbandoned: Bool = false
     ) {
         self.turnID = turnID
         self.userMessageID = userMessageID
@@ -275,6 +286,8 @@ struct StoryMemoryRetry: Codable, Equatable {
         self.storySessionID = storySessionID
         self.storyWorldID = storyWorldID
         self.isCompleted = isCompleted
+        self.missingSessionRestoreAttempts = max(0, missingSessionRestoreAttempts)
+        self.isAbandoned = isAbandoned
     }
 
     init(from decoder: Decoder) throws {
@@ -287,6 +300,11 @@ struct StoryMemoryRetry: Codable, Equatable {
         storySessionID = try container.decodeIfPresent(UUID.self, forKey: .storySessionID)
         storyWorldID = try container.decodeIfPresent(UUID.self, forKey: .storyWorldID)
         isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+        missingSessionRestoreAttempts = max(
+            0,
+            try container.decodeIfPresent(Int.self, forKey: .missingSessionRestoreAttempts) ?? 0
+        )
+        isAbandoned = try container.decodeIfPresent(Bool.self, forKey: .isAbandoned) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -299,6 +317,8 @@ struct StoryMemoryRetry: Codable, Equatable {
         try container.encodeIfPresent(storySessionID, forKey: .storySessionID)
         try container.encodeIfPresent(storyWorldID, forKey: .storyWorldID)
         try container.encode(isCompleted, forKey: .isCompleted)
+        try container.encode(missingSessionRestoreAttempts, forKey: .missingSessionRestoreAttempts)
+        try container.encode(isAbandoned, forKey: .isAbandoned)
     }
 }
 
@@ -435,6 +455,7 @@ final class StorySessionService: ObservableObject {
     private var generationWatchdogDeadline: Date?
     private static let generationWatchdogDuration: TimeInterval = 75
     private static let localRuntimeSystemPromptLimit = 1_250
+    private static let maxMissingSessionRestoreAttempts = 3
     private let progressDecoder = JSONDecoder()
 
     deinit {
@@ -483,6 +504,32 @@ final class StorySessionService: ObservableObject {
         return cappedSelectedIDs
     }
 
+    private static func canonicalStorageURL(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    /// The built-in cross-file transaction has fixed target filenames. It is
+    /// safe only when all injected local repositories point at the same
+    /// storage root and those filenames match the transaction's targets.
+    private static func localJSONMemoryTransactionIsCompatible(
+        memoryRepo: MemoryRepository,
+        storyMemoryRepo: StoryMemoryRepository,
+        storyMemoryRetryRepo: StoryMemoryRetryRepository
+    ) -> Bool {
+        guard let memory = memoryRepo as? LocalJSONMemoryFileIdentityProviding,
+              let storyMemory = storyMemoryRepo as? LocalJSONMemoryFileIdentityProviding,
+              let retry = storyMemoryRetryRepo as? LocalJSONStorageIdentityProviding else {
+            return false
+        }
+        let memoryURL = canonicalStorageURL(memory.storageURL)
+        let storyMemoryURL = canonicalStorageURL(storyMemory.storageURL)
+        let retryURL = canonicalStorageURL(retry.storageURL)
+        return memoryURL == storyMemoryURL
+            && storyMemoryURL == retryURL
+            && memory.fileName == "memories.json"
+            && storyMemory.fileName == "story_memories.json"
+    }
+
     init(
         characterRepo: CharacterRepository = LocalJSONCharacterRepository(),
         memoryRepo: MemoryRepository = LocalJSONMemoryRepository(),
@@ -507,10 +554,24 @@ final class StorySessionService: ObservableObject {
         self.storyMemoryRepo = storyMemoryRepo
         self.storyMemoryRetryRepo = storyMemoryRetryRepo
         if let storyMemoryRetryMemoryTransaction {
-            self.storyMemoryRetryMemoryTransaction = storyMemoryRetryMemoryTransaction
+            let hasLocalStorageIdentities = memoryRepo is LocalJSONMemoryFileIdentityProviding
+                && storyMemoryRepo is LocalJSONMemoryFileIdentityProviding
+                && storyMemoryRetryRepo is LocalJSONStorageIdentityProviding
+            self.storyMemoryRetryMemoryTransaction = hasLocalStorageIdentities
+                ? (Self.localJSONMemoryTransactionIsCompatible(
+                    memoryRepo: memoryRepo,
+                    storyMemoryRepo: storyMemoryRepo,
+                    storyMemoryRetryRepo: storyMemoryRetryRepo
+                ) ? storyMemoryRetryMemoryTransaction : nil)
+                : storyMemoryRetryMemoryTransaction
         } else if memoryRepo is LocalJSONMemoryRepository,
                   storyMemoryRepo is LocalJSONStoryMemoryRepository,
-                  let localTransaction = storyMemoryRetryRepo as? StoryMemoryRetryMemoryTransaction {
+                  let localTransaction = storyMemoryRetryRepo as? StoryMemoryRetryMemoryTransaction,
+                  Self.localJSONMemoryTransactionIsCompatible(
+                      memoryRepo: memoryRepo,
+                      storyMemoryRepo: storyMemoryRepo,
+                      storyMemoryRetryRepo: storyMemoryRetryRepo
+                  ) {
             self.storyMemoryRetryMemoryTransaction = localTransaction
         } else {
             self.storyMemoryRetryMemoryTransaction = nil
@@ -518,7 +579,7 @@ final class StorySessionService: ObservableObject {
         for retry in pendingStoryTurnCommitRetries {
             self.pendingStoryTurnCommitRetries[retry.turnID] = retry
         }
-        for retry in pendingStoryMemoryRetries where !retry.isCompleted {
+        for retry in pendingStoryMemoryRetries where !retry.isCompleted && !retry.isAbandoned {
             self.pendingStoryMemoryRetries[retry.turnID] = retry
             self.pendingStoryMemoryRetryOrder.append(retry.turnID)
         }
@@ -641,9 +702,41 @@ final class StorySessionService: ObservableObject {
         let sessions = try await sessionRepo.fetchSessions(storyWorldId: storyWorldID)
         guard let session = sessions.first(where: { $0.id == storySessionID }) else {
             // A retry must never create memory for a deleted or otherwise
-            // missing session. Keep the durable record untouched here: the
-            // tombstone recovery path owns deletion, while an unknown legacy
-            // record may still belong to a session that is being restored.
+            // missing session. Quarantine matching records after a bounded
+            // number of restore attempts so an orphan cannot remain an active
+            // retry forever. Unknown legacy records are left untouched because
+            // assigning them to this missing session would be unsafe.
+            let persisted = try await storyMemoryRetryRepo.fetchRetries()
+            for retry in persisted where
+                !retry.isCompleted
+                    && !retry.isAbandoned
+                    && Self.retryNeedsOrphanQuarantine(
+                        retry,
+                        storySessionID: storySessionID,
+                        storyWorldID: storyWorldID
+                    ) {
+                var quarantined = retry
+                quarantined.missingSessionRestoreAttempts = min(
+                    Self.maxMissingSessionRestoreAttempts,
+                    retry.missingSessionRestoreAttempts + 1
+                )
+                if quarantined.missingSessionRestoreAttempts
+                    >= Self.maxMissingSessionRestoreAttempts {
+                    quarantined.isAbandoned = true
+                }
+                do {
+                    try await storyMemoryRetryRepo.saveRetry(quarantined)
+                } catch let error as StoryTurnPersistenceError {
+                    if case .recordDeleted = error {
+                        // A tombstone is stronger evidence than a missing
+                        // session. Remove only the stale queue entry; do not
+                        // touch any memory payload here.
+                        try await storyMemoryRetryRepo.deleteRetry(turnID: retry.turnID)
+                        continue
+                    }
+                    throw error
+                }
+            }
             return
         }
         // Fetch the auxiliary queue after session recovery. Tombstone
@@ -652,20 +745,17 @@ final class StorySessionService: ObservableObject {
         // in this ViewModel for the remainder of the bootstrap.
         let persisted = try await storyMemoryRetryRepo.fetchRetries()
         let scoped = persisted.filter { retry in
-            let retrySessionIDs = Set(
-                [retry.storySessionID].compactMap { $0 }
-                    + retry.storyMemories.compactMap(\.storySessionId)
-            )
-            guard retrySessionIDs == Set([storySessionID]) else {
+            guard Self.retryBelongsToSession(
+                retry,
+                storySessionID: storySessionID,
+                storyWorldID: storyWorldID
+            ) else {
                 // A legacy record without a trustworthy owner, or a malformed
                 // record that mixes sessions, must remain queued for diagnosis
                 // and must never appear as this Session's retry notice.
                 return false
             }
-            guard retry.storyWorldID == nil || retry.storyWorldID == storyWorldID else {
-                return false
-            }
-            return retry.storyMemories.allSatisfy { $0.storyWorldId == storyWorldID }
+            return !retry.isCompleted && !retry.isAbandoned
         }
         let latestCheckpoint = session.latestTurnCheckpoint
         for retry in scoped {
@@ -722,6 +812,46 @@ final class StorySessionService: ObservableObject {
         pendingStoryMemoryRetryOrder
             .compactMap { pendingStoryMemoryRetries[$0] }
             .first
+    }
+
+    private static func retryBelongsToSession(
+        _ retry: StoryMemoryRetry,
+        storySessionID: UUID,
+        storyWorldID: UUID
+    ) -> Bool {
+        let retrySessionIDs = Set(
+            [retry.storySessionID].compactMap { $0 }
+                + retry.storyMemories.compactMap(\.storySessionId)
+        )
+        guard retrySessionIDs == Set([storySessionID]) else { return false }
+        guard retry.storyWorldID == nil || retry.storyWorldID == storyWorldID else {
+            return false
+        }
+        return retry.storyMemories.allSatisfy { $0.storyWorldId == storyWorldID }
+    }
+
+    private static func retryNeedsOrphanQuarantine(
+        _ retry: StoryMemoryRetry,
+        storySessionID: UUID,
+        storyWorldID: UUID
+    ) -> Bool {
+        let retrySessionIDs = Set(
+            [retry.storySessionID].compactMap { $0 }
+                + retry.storyMemories.compactMap(\.storySessionId)
+        )
+        guard retry.storyWorldID == nil || retry.storyWorldID == storyWorldID else {
+            return false
+        }
+        guard retry.storyMemories.allSatisfy({ $0.storyWorldId == storyWorldID }) else {
+            return false
+        }
+        if retrySessionIDs == Set([storySessionID]) {
+            return true
+        }
+        // Legacy records without an owner and malformed records that mix
+        // owners cannot be assigned safely. Bound their lifetime as active
+        // work, while leaving the JSON record available for diagnosis.
+        return retrySessionIDs.isEmpty || retrySessionIDs.count > 1
     }
 
     private struct StoryProgressUpdate: Codable {
@@ -2576,7 +2706,8 @@ final class StorySessionService: ObservableObject {
         }
         guard !isRetryingAuxiliarySave,
               let pendingRetry = pendingStoryMemoryRetries[retry.turnID],
-              !pendingRetry.isCompleted else { return }
+              !pendingRetry.isCompleted,
+              !pendingRetry.isAbandoned else { return }
         isRetryingAuxiliarySave = true
         defer { isRetryingAuxiliarySave = false }
         latestRuntimeNotice = nil

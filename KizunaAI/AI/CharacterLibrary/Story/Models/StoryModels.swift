@@ -1059,7 +1059,10 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         characterId = try container.decodeIfPresent(UUID.self, forKey: .characterId)
         text = try container.decode(String.self, forKey: .text)
         category = try container.decode(MemoryCategory.self, forKey: .category)
-        importance = try container.decode(Double.self, forKey: .importance)
+        importance = min(
+            max(try container.decode(Double.self, forKey: .importance), 0.0),
+            1.0
+        )
         source = try container.decode(MemorySource.self, forKey: .source)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)

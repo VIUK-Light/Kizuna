@@ -427,6 +427,8 @@ final class KizunaAITests: XCTestCase {
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
         object.removeValue(forKey: "isCompleted")
+        object.removeValue(forKey: "missingSessionRestoreAttempts")
+        object.removeValue(forKey: "isAbandoned")
         let legacyData = try JSONSerialization.data(
             withJSONObject: object,
             options: [.sortedKeys]
@@ -435,6 +437,34 @@ final class KizunaAITests: XCTestCase {
         let decoded = try JSONDecoder().decode(StoryMemoryRetry.self, from: legacyData)
         XCTAssertEqual(decoded, retry)
         XCTAssertFalse(decoded.isCompleted)
+        XCTAssertEqual(decoded.missingSessionRestoreAttempts, 0)
+        XCTAssertFalse(decoded.isAbandoned)
+    }
+
+    func testStoryMemoryImportanceIsClampedWhenDecodingUntrustedJSON() throws {
+        let memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "範囲外の重要度",
+            importance: 0.5
+        )
+        let encoder = JSONEncoder()
+        var highObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoder.encode(memory)) as? [String: Any]
+        )
+        highObject["importance"] = 9.0
+        let high = try JSONDecoder().decode(
+            StoryMemory.self,
+            from: JSONSerialization.data(withJSONObject: highObject)
+        )
+        XCTAssertEqual(high.importance, 1.0)
+
+        var lowObject = highObject
+        lowObject["importance"] = -4.0
+        let low = try JSONDecoder().decode(
+            StoryMemory.self,
+            from: JSONSerialization.data(withJSONObject: lowObject)
+        )
+        XCTAssertEqual(low.importance, 0.0)
     }
 
     func testFileIOCancellationStateAtomicallyClaimsQueuedOperation() {
@@ -1043,7 +1073,7 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(remainingRetries, [retry])
     }
 
-    func testStoryMemoryRetryRestoreSkipsMissingSession() async throws {
+    func testStoryMemoryRetryRestoreQuarantinesMissingSessionAfterBoundedAttempts() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
         let sessionID = UUID()
@@ -1071,6 +1101,17 @@ final class KizunaAITests: XCTestCase {
             storyMemoryRetryRepo: retryRepository
         )
 
+        for attempt in 1...2 {
+            try await service.restorePendingStoryMemoryRetries(
+                storySessionID: sessionID,
+                storyWorldID: worldID
+            )
+            let remaining = try await retryRepository.fetchRetries()
+            XCTAssertEqual(remaining.count, 1)
+            XCTAssertEqual(remaining[0].missingSessionRestoreAttempts, attempt)
+            XCTAssertFalse(remaining[0].isAbandoned)
+        }
+
         try await service.restorePendingStoryMemoryRetries(
             storySessionID: sessionID,
             storyWorldID: worldID
@@ -1078,7 +1119,15 @@ final class KizunaAITests: XCTestCase {
 
         XCTAssertNil(service.latestRuntimeNotice)
         let remainingRetries = try await retryRepository.fetchRetries()
-        XCTAssertEqual(remainingRetries, [retry])
+        XCTAssertTrue(remainingRetries.isEmpty)
+        let quarantined = try LocalJSONStoreTransaction.load(
+            StoryMemoryRetry.self,
+            fileName: "story_memory_retries.json",
+            baseURL: storageURL
+        )
+        XCTAssertEqual(quarantined.count, 1)
+        XCTAssertEqual(quarantined[0].missingSessionRestoreAttempts, 3)
+        XCTAssertTrue(quarantined[0].isAbandoned)
     }
 
     func testStaleMemoryRetryUsesCompletionFenceWhenJournalRetainsMissingScene() async throws {
@@ -1303,6 +1352,84 @@ final class KizunaAITests: XCTestCase {
         XCTAssertNotNil(service.latestRuntimeNotice)
         let remainingRetries = try await retryRepository.fetchRetries()
         XCTAssertEqual(remainingRetries, [retry])
+    }
+
+    func testMismatchedLocalMemoryStorageRootsUsePerRepositoryFallback() async throws {
+        let root = try makeStoryPersistenceTestDirectory()
+        let memoryURL = root.appendingPathComponent("character-memory")
+        let storyMemoryURL = root.appendingPathComponent("story-memory")
+        let retryURL = root.appendingPathComponent("retry-queue")
+        let worldID = UUID()
+        let sessionID = UUID()
+        let retry = StoryMemoryRetry(
+            turnID: UUID(),
+            userMessageID: UUID(),
+            userText: "保存先が異なる場合も正しいファイルへ保存する",
+            characterMemories: [
+                CharacterMemory(
+                    characterId: UUID(),
+                    text: "キャラクターの記憶",
+                    category: .event,
+                    source: .aiOutput
+                )
+            ],
+            storyMemories: [
+                StoryMemory(
+                    storyWorldId: worldID,
+                    text: "物語の記憶",
+                    storySessionId: sessionID
+                )
+            ],
+            storySessionID: sessionID,
+            storyWorldID: worldID
+        )
+        let memoryRepository = LocalJSONMemoryRepository(storageURL: memoryURL)
+        let storyMemoryRepository = LocalJSONStoryMemoryRepository(storageURL: storyMemoryURL)
+        let retryRepository = LocalJSONStoryMemoryRetryRepository(storageURL: retryURL)
+        let service = StorySessionService(
+            memoryRepo: memoryRepository,
+            sessionRepo: TestStorySessionRepository(
+                sessions: [StorySession(id: sessionID, storyWorldId: worldID)]
+            ),
+            storyMemoryRepo: storyMemoryRepository,
+            storyMemoryRetryRepo: retryRepository,
+            pendingStoryMemoryRetries: [retry]
+        )
+
+        try await retryRepository.saveRetry(retry)
+        await service.retryStoryMemorySave(retry)
+
+        let characterMemories = try LocalJSONStoreTransaction.load(
+            CharacterMemory.self,
+            fileName: "memories.json",
+            baseURL: memoryURL
+        )
+        let storyMemories = try LocalJSONStoreTransaction.load(
+            StoryMemory.self,
+            fileName: "story_memories.json",
+            baseURL: storyMemoryURL
+        )
+        XCTAssertEqual(characterMemories.map(\.text), ["キャラクターの記憶"])
+        XCTAssertEqual(storyMemories.map(\.text), ["物語の記憶"])
+
+        // The built-in transaction must not have written into the retry
+        // repository's unrelated storage root.
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                CharacterMemory.self,
+                fileName: "memories.json",
+                baseURL: retryURL
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            try LocalJSONStoreTransaction.load(
+                StoryMemory.self,
+                fileName: "story_memories.json",
+                baseURL: retryURL
+            ).isEmpty
+        )
+        let remainingRetries = try await retryRepository.fetchRetries()
+        XCTAssertTrue(remainingRetries.isEmpty)
     }
 
     func testLegacyWorldOnlyStoryMemoryRetryRemainsUnwrittenInTransaction() async throws {

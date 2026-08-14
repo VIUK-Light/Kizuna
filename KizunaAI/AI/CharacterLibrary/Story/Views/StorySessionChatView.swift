@@ -518,6 +518,18 @@ private struct StorySessionChatBody: View {
                                 unreadStoryMessageCount += 1
                             }
                         }
+                        .onChange(of: vm.bootstrapWarning) { _, warning in
+                            guard warning != nil, isStoryChatNearLatest else { return }
+                            Task { @MainActor in
+                                // Wait for the conditional card to enter the
+                                // LazyVStack before scrolling to its stable ID.
+                                await Task.yield()
+                                guard vm.bootstrapWarning != nil else { return }
+                                withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
+                                    proxy.scrollTo("story.bootstrap-warning", anchor: .bottom)
+                                }
+                            }
+                        }
                         .task(id: vm.session.id) {
                             // 既存セッションを開いた直後は messages.count が変化しないため、
                             // onChangeだけでは保存済みの最新発話へ移動できない。LazyVStackの
@@ -640,16 +652,40 @@ private struct StorySessionChatBody: View {
     @ViewBuilder
     private var bootstrapWarningCard: some View {
         if let warning = vm.bootstrapWarning {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "info.circle.fill")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.orange.opacity(0.9))
-                    .frame(width: 18)
-                Text(warning)
-                    .font(.footnote)
-                    .foregroundStyle(storyText.opacity(0.78))
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "info.circle.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.orange.opacity(0.9))
+                        .frame(width: 18)
+                    Text(warning)
+                        .font(.footnote)
+                        .foregroundStyle(storyText.opacity(0.78))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                HStack {
+                    Spacer(minLength: 0)
+                    if vm.isRestoringBootstrapWarning {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel(storyCopy("再試行中", "Retrying"))
+                    }
+                    Button {
+                        Task { @MainActor in
+                            await vm.retryBootstrapMemoryRestore()
+                        }
+                    } label: {
+                        Label(
+                            storyCopy("再試行", "Retry"),
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(minHeight: 44)
+                    .disabled(vm.isRestoringBootstrapWarning)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -661,8 +697,8 @@ private struct StorySessionChatBody: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(Color.orange.opacity(0.16), lineWidth: 1)
             )
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(warning)
+            .accessibilityElement(children: .contain)
+            .id("story.bootstrap-warning")
         }
     }
 

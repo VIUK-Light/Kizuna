@@ -992,14 +992,15 @@ final class LocalJSONStoryLorebookRepository: StoryLorebookRepository {
 // MARK: - Local Story Memory implementation
 
 /// 現在はローカルJSON。将来クラウド同期へ差し替えてもService側の呼び出しは変えない。
-final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
+final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemoryFileIdentityProviding {
     private struct MemoryScope: Hashable, Sendable {
         let storyWorldId: UUID
         let storySessionId: UUID?
     }
 
     private let store: LocalJSONStore<StoryMemory>
-    private let storageURL: URL
+    let storageURL: URL
+    let fileName: String
     private let perScopeLimit: Int
 
     init(
@@ -1009,6 +1010,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository {
     ) {
         self.perScopeLimit = max(1, perScopeLimit)
         self.storageURL = storageURL
+        self.fileName = fileName
         store = LocalJSONStore<StoryMemory>(fileName: fileName, baseURL: storageURL)
     }
 
@@ -1388,9 +1390,9 @@ private enum LocalJSONStoryMemoryRetryMemoryTransaction {
 /// Persists memory-only retry work independently from the conversation and
 /// memory stores. A failed retry must survive view dismissal and app restart,
 /// while a successful retry can remove only its own turnID atomically.
-final class LocalJSONStoryMemoryRetryRepository: StoryMemoryRetryRepository, StoryMemoryRetryMemoryTransaction {
+final class LocalJSONStoryMemoryRetryRepository: StoryMemoryRetryRepository, StoryMemoryRetryMemoryTransaction, LocalJSONStorageIdentityProviding {
     private let store: LocalJSONStore<StoryMemoryRetry>
-    private let storageURL: URL
+    let storageURL: URL
 
     init(
         fileName: String = "story_memory_retries.json",
@@ -1417,7 +1419,7 @@ final class LocalJSONStoryMemoryRetryRepository: StoryMemoryRetryRepository, Sto
         // LocalJSONStore preserves insertion order. Sorting by UUID changes
         // the user's oldest-first retry order after an app restart.
         try await store.loadRecoveringCorruptRecords()
-            .filter { !$0.isCompleted }
+            .filter { !$0.isCompleted && !$0.isAbandoned }
     }
 
     func saveRetry(_ retry: StoryMemoryRetry) async throws {
