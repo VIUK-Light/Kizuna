@@ -10,6 +10,21 @@ final class StoryNaturalChangePolicyTests: XCTestCase {
         XCTAssertFalse(StoryInitiativeFlags.isEnabled(for: .b31, defaults: defaults))
         XCTAssertFalse(StoryInitiativeFlags.isEnabled(for: .e4b, defaults: defaults))
 
+        XCTAssertTrue(
+            StoryInitiativeFlags.isEnabled(
+                for: .b31,
+                defaults: defaults,
+                arguments: ["KizunaAI", StoryInitiativeFlags.nagiLaunchArgument]
+            )
+        )
+        XCTAssertFalse(
+            StoryInitiativeFlags.isEnabled(
+                for: .e4b,
+                defaults: defaults,
+                arguments: ["KizunaAI", StoryInitiativeFlags.nagiLaunchArgument]
+            )
+        )
+
         StoryInitiativeFlags.setEnabled(true, for: .b31, defaults: defaults)
         XCTAssertTrue(StoryInitiativeFlags.isEnabled(for: .b31, defaults: defaults))
         XCTAssertFalse(StoryInitiativeFlags.isEnabled(for: .e4b, defaults: defaults))

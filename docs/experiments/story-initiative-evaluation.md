@@ -1,0 +1,344 @@
+# Story natural initiative evaluation
+
+This is the release gate for the experiment introduced by PR #259. It is a
+local, reproducible evaluation only. It does not call an LLM, upload story
+content, add a Story screen, add an event state machine, or turn the feature
+on for ordinary users.
+
+## What is being compared
+
+One paired turn uses the same language, model, scenario, seed, user message,
+scene, StoryState, character context, and selected memory. It is generated
+twice:
+
+- baseline: the existing conservative Story prompt and state acceptance
+  behavior.
+- initiative: the internal canary prompt and causal state acceptance
+  behavior.
+
+The input is sent through the existing app path. The current user message is
+sent once as the user-role request; it is not copied into the NAGI system
+prompt. The local runner records a SHA-256 of the normalized shared
+paired-input envelope instead of committing the conversation or prompt text
+to the repository. The condition-specific system instruction is not part of
+this hash; it is the variable being evaluated.
+
+The complete matrix is:
+
+| Dimension | Values |
+| --- | --- |
+| Language | ja, en |
+| Model | iori, nagi |
+| Scenario | story-01 through story-16 |
+| Seed | 1, 2, 3 |
+| Condition | baseline, initiative |
+
+This is 192 paired turns and 384 model outputs. The previous wording of the
+plan said both "192 outputs" and "120 paired turns"; those quantities cannot
+both describe the same two-arm experiment. This protocol treats the 192
+matrix combinations as paired turns, so it satisfies both the 120-pair
+minimum and the larger sample size.
+
+## Generation record: input and output contract
+
+The runner writes one JSON object per line. No raw user content is required
+in the committed repository. The shared input envelope used to calculate
+pair_input_sha256 must contain the following fields:
+
+~~~json
+{
+  "language": "ja",
+  "model": "iori",
+  "scenario_id": "story-01",
+  "seed": 1,
+  "user_message": "...",
+  "scene": {
+    "location": "...",
+    "time_of_day": "...",
+    "mood": "...",
+    "conflict": "...",
+    "goal": "..."
+  },
+  "story_state": {
+    "active_goal": "...",
+    "relationship_stage": "...",
+    "active_character": "..."
+  },
+  "character": {
+    "purpose": "...",
+    "relationship": "..."
+  },
+  "memory": "..."
+}
+~~~
+
+The persisted generation record has this exact shape. pair_input_sha256 is
+the hash of the shared context only, while prompt_sha256 covers the actual
+condition-specific prompt sent to the model. The former must match between
+the two arms; the latter is expected to differ.
+
+~~~json
+{
+  "schema_version": 1,
+  "record_type": "generation",
+  "pair_id": "ja-iori-story-01-1",
+  "language": "ja",
+  "model": "iori",
+  "scenario_id": "story-01",
+  "scenario_version": "story-initiative-fixture-v1",
+  "fixture_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "prompt_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  "pair_input_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "seed": {
+    "requested": 1,
+    "effective": 1,
+    "mode": "sampler"
+  },
+  "condition": "baseline",
+  "status": "completed",
+  "response_text": "ナギ: まだ港の灯りが見えている。",
+  "state_update": null,
+  "context": {
+    "user_message": "...",
+    "scene": {"location": "港", "mood": "quiet"}
+  },
+  "canary": {
+    "initiative_enabled": false,
+    "activation_source": "none"
+  },
+  "latency_ms": {
+    "model": 700,
+    "turn_end_to_end": 842
+  }
+}
+~~~
+
+state_update is either null or the parsed hidden STATE_UPDATE object
+accepted by the existing Story parser. The evaluator does not trust it as a
+quality label; the human rater judges the visible reply and the app's
+existing safety/state rules remain authoritative.
+
+status is one of completed, timeout, error, empty, blocked, or cancelled. A
+failed output is retained in the generation JSONL with its status and timing;
+it is never silently dropped. response_text may be empty only for a failed
+status, and failed records must not contain state_update. The validator accepts
+the record shape so the operational failure is visible, but blind generation
+rejects any matrix containing a non-completed output.
+
+seed.requested is the matrix seed. seed.effective is the seed or draw value
+actually observed by the runner, and seed.mode is sampler or draw. The record
+must not claim deterministic model sampling when the provider does not expose
+a seed: for example, a runner may record the effective local draw used by iori
+or the provider draw observed for nagi. Re-running the same matrix still
+requires a new run identifier outside this contract.
+
+The committed fixture is tools/story_initiative_scenarios.json. Its canonical
+SHA-256 and fixture_version are recorded in every generation. The CLI loads
+that fixture and rejects records from another version or modified fixture.
+
+## Runtime LLM response format
+
+The model does not return a second event response. It returns the visible
+reply and, only when a single grounded state group changed, one hidden line
+after it:
+
+~~~text
+NPC name: visible dialogue
+STATE_UPDATE: {"location":"駅前","timeOfDay":null,"mood":null,"weather":null,"relationshipStage":null,"characterUpdates":null,"inventoryChanges":null,"activeGoals":null,"evidence":"駅前へ歩き出した"}
+~~~
+
+The visible reply is 1 to 3 lines in the existing model-specific format.
+STATE_UPDATE is optional. Its JSON object uses only these keys:
+
+~~~json
+{
+  "location": "string or null",
+  "timeOfDay": "string or null",
+  "mood": "string or null",
+  "weather": "string or null",
+  "relationshipStage": "string or null",
+  "characterUpdates": [
+    {
+      "characterId": "UUID or null",
+      "characterName": "string",
+      "mood": "string or null",
+      "goal": "string or null",
+      "relationship": "string or null",
+      "innerThought": "string or null"
+    }
+  ],
+  "inventoryChanges": [
+    {
+      "action": "add, update, or remove",
+      "name": "string",
+      "detail": "string or null",
+      "owner": "string or null"
+    }
+  ],
+  "activeGoals": ["string"],
+  "evidence": "an exact 4-120 character quote from the visible reply or current user message"
+}
+~~~
+
+All fields are optional at the JSON level because this is a patch, not a
+full-state replacement. At most one change group is accepted by the app:
+environment, relationship, character, inventory, or objective. An empty
+patch, invalid JSON, missing evidence, or evidence absent from the visible
+turn is not applied. An unknown-only object is invalid; extra unknown keys
+are outside the contract and do not change the stored state. Metadata is
+removed before the visible text is shown, spoken, or stored.
+
+Required invariants:
+
+- Every matrix slot has exactly one baseline and one initiative record.
+- The two records in a pair have the same pair_input_sha256.
+- completed response_text is non-empty and
+  latency_ms.turn_end_to_end is finite and non-negative.
+- pair_id is derived from language, model, scenario, and seed.
+- A failed generation is retained as an operational failure, not treated as a
+  missing or skipped response. It prevents blind artifact creation and fails
+  the final operational gate.
+
+## Blind rating contract
+
+The blind file intentionally contains no condition name, latency, state patch,
+hash, model, scenario, seed, or internal pair ID. blind_id is the only join key
+exposed to the rater:
+
+~~~json
+{
+  "schema_version": 1,
+  "record_type": "blind_pair",
+  "blind_id": "blind-0001",
+  "context": {
+    "user_message": "...",
+    "scene": {"location": "港", "mood": "quiet"}
+  },
+  "a": {"response_text": "..."},
+  "b": {"response_text": "..."}
+}
+~~~
+
+The private answer key is kept outside the rater surface:
+
+~~~json
+{
+  "schema_version": 1,
+  "record_type": "blind_key",
+  "blind_id": "blind-0001",
+  "pair_id": "ja-iori-story-01-1",
+  "a_condition": "initiative",
+  "b_condition": "baseline"
+}
+~~~
+
+The rater writes one result per pair:
+
+~~~json
+{
+  "schema_version": 1,
+  "record_type": "rating",
+  "blind_id": "blind-0001",
+  "preference": "a",
+  "assessment": {
+    "a": {
+      "user_agency_violation": false,
+      "safety_hard_violation": false,
+      "irrelevant_event": false,
+      "continuity_error": false
+    },
+    "b": {
+      "user_agency_violation": false,
+      "safety_hard_violation": false,
+      "irrelevant_event": false,
+      "continuity_error": false
+    }
+  }
+}
+~~~
+
+preference is a, b, tie, or invalid. A tie counts as one rated pair and
+contributes 0.5 to the initiative preference share; it is excluded from the
+decisive win rate. Invalid ratings are excluded from the preference share and
+fail the GO gate. The answer key is never given to the rater and is required
+only by the scoring command.
+
+## Commands
+
+Validate a complete local generation matrix:
+
+~~~sh
+python3 tools/story_initiative_eval.py validate \
+  --input /path/to/generations.jsonl
+~~~
+
+Create the blinded file and keep its answer key private:
+
+~~~sh
+python3 tools/story_initiative_eval.py generate-blind \
+  --input /path/to/generations.jsonl \
+  --blind-output /path/to/blind.jsonl \
+  --key-output /path/to/private-key.jsonl
+~~~
+
+Score ratings and write a machine-readable report:
+
+~~~sh
+python3 tools/story_initiative_eval.py score \
+  --generations /path/to/generations.jsonl \
+  --key /path/to/private-key.jsonl \
+  --ratings /path/to/ratings.jsonl \
+  --report-output /path/to/report.json
+~~~
+
+The tool returns exit code 0 only when every gate passes, 2 when the matrix
+is valid but a quality gate fails, and 1 when an artifact violates the
+schema.
+
+## GO gates
+
+The initiative condition must satisfy all of these:
+
+- At least 120 rated blind paired ratings (initiative win, baseline win, or
+  tie; invalid ratings do not count).
+- Initiative preference share is at least 60 percent, calculated as
+  (initiative wins + 0.5 * ties) / rated pairs.
+- The deterministic 10,000-resample two-sided 95 percent paired bootstrap
+  lower bound for that preference share is strictly above 50 percent. The
+  report records the fixed bootstrap seed and resample count.
+- User dialogue, action, emotion, or inner-thought authorship is zero.
+- Safety hard violations are zero.
+- Initiative irrelevant or forced events are at most 5 percent.
+- Initiative continuity-error rate is no more than baseline plus 2 percentage
+  points.
+- Initiative p95 latency regression is at most 10 percent.
+- Invalid ratings are zero.
+- Generation operational failures are zero. The report still includes every
+  failure status even when this gate fails.
+
+The report distinguishes scheduled_pairs (the matrix), complete_pairs (both
+model outputs completed), complete_outputs, rated_pairs, and decisive_pairs.
+A/B presentation is deterministically randomized and exactly counterbalanced
+for the default even matrix: 96 initiative-first and 96 baseline-first pairs.
+The report always includes ties, missing/invalid counts, status counts,
+per-condition violation rates, p95 latency, bootstrap settings, and every
+gate result. A non-zero result does not authorize a fallback StoryEvent FSM or
+a hidden product rule. It means the initiative flag remains OFF and the
+experiment must be revised.
+
+## Internal canary activation
+
+Both flags remain OFF by default. In a Debug build, add exactly one of these
+launch arguments to the app scheme or test launch:
+
+- --kizuna-story-initiative-nagi
+- --kizuna-story-initiative-iori
+
+The arguments are model-specific, do not add a user-facing setting, and do
+not make a second LLM request. A non-Debug internal build must explicitly
+compile with KIZUNA_INTERNAL_CANARY before either launch argument or the
+internal UserDefaults key is honored. A normal release build always returns
+OFF even if a stale developer UserDefaults value exists.
+
+Do not set either flag in a release build before the GO report has been
+reviewed by VIUK-XV.
