@@ -7,7 +7,7 @@ Updated: 2026-08-15 JST
 - Repository: `VIUK-Light/Kizuna`
 - PR: [#263](https://github.com/VIUK-Light/Kizuna/pull/263)
 - Branch: `codex/story-acceptance-runner-20260814`
-- State: open, mergeable, approved; not merged
+- State: open, mergeable; latest review requested changes, rerun pending; not merged
 - Actor: `VIUK-Codex-Bot`
 
 ## Completed before this update
