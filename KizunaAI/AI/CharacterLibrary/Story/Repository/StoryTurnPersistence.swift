@@ -206,6 +206,22 @@ enum StoryTurnJournal {
     nonisolated private static let memoryRetryFileName = "story_memory_retries.json"
     nonisolated private static let tombstoneFileName = "story_turn_journal_tombstones.json"
 
+    private enum RecordOrdering: Equatable {
+        case older
+        case equal
+        /// Revision and timestamp are tied, but the payload differs. There is
+        /// no safe ordering signal, so the enclosing pair must remain in the
+        /// journal for a later, explicit resolution.
+        case ambiguous
+        case newer
+    }
+
+    private enum PairRecoveryDecision: Equatable {
+        case apply
+        case discard
+        case retain
+    }
+
     private struct TombstoneFileSignature: Equatable {
         let basePath: String
         let exists: Bool
@@ -341,6 +357,10 @@ enum StoryTurnJournal {
                         "[StoryTurnJournal] discarded tombstoned entry turn=%@",
                         entry.turnID.uuidString
                     )
+                    try purgeMemoryRetriesForTurnIDsUnlocked(
+                        Set([entry.turnID]),
+                        baseURL: baseURL
+                    )
                     continue
                 }
                 guard let sessionIndex = sessions.firstIndex(where: { $0.id == entry.session.id }),
@@ -353,34 +373,66 @@ enum StoryTurnJournal {
                     continue
                 }
 
-                if !entry.memoryRetries.isEmpty {
-                    do {
-                        try mergeMemoryRetriesUnlocked(
-                            entry.memoryRetries,
-                            baseURL: baseURL
-                        )
-                    } catch {
-                        // Do not consume a journal entry while its auxiliary
-                        // retry store is unreadable. The conversation
-                        // snapshot and its memory candidates must remain
-                        // recoverable on the next launch.
-                        unresolvedEntries.append(entry)
-                        NSLog(
-                            "[StoryTurnJournal] retained entry while merging memory retries turn=%@: %@",
-                            entry.turnID.uuidString,
-                            error.localizedDescription
-                        )
+                let persistedSession = sessions[sessionIndex]
+                let persistedScene = scenes[sceneIndex]
+                let sessionOrdering = ordering(entry.session, over: persistedSession)
+                let sceneOrdering = ordering(entry.scene, over: persistedScene)
+
+                let decision = recoveryDecision(
+                    session: sessionOrdering,
+                    scene: sceneOrdering
+                )
+                switch decision {
+                case .retain:
+                    // A pair cannot be consumed when one side is newer than
+                    // the other, or when either side has an equal-metadata
+                    // payload mismatch. Do not hand off memory retries before
+                    // the pair decision is known.
+                    unresolvedEntries.append(entry)
+                    NSLog(
+                        "[StoryTurnJournal] retained unresolved pair turn=%@ session=%@ scene=%@",
+                        entry.turnID.uuidString,
+                        String(describing: sessionOrdering),
+                        String(describing: sceneOrdering)
+                    )
+                    continue
+                case .discard, .apply:
+                    // A stale pair must not overwrite a later pair, but its
+                    // auxiliary memory work is still valid. The later pair
+                    // may have been committed before the memory writes
+                    // completed, so dropping these retries would lose
+                    // session-owned memories. Handoff is idempotent by
+                    // turnID and must finish before consuming the journal.
+                    if !entry.memoryRetries.isEmpty {
+                        do {
+                            try mergeMemoryRetriesUnlocked(
+                                entry.memoryRetries,
+                                baseURL: baseURL
+                            )
+                        } catch {
+                            // Do not consume an entry while its auxiliary
+                            // retry store is unreadable. The memory
+                            // candidates remain recoverable on the next
+                            // launch.
+                            unresolvedEntries.append(entry)
+                            NSLog(
+                                "[StoryTurnJournal] retained entry while merging memory retries turn=%@: %@",
+                                entry.turnID.uuidString,
+                                error.localizedDescription
+                            )
+                            continue
+                        }
+                    }
+                    if decision == .discard {
                         continue
                     }
                 }
 
-                let persistedSession = sessions[sessionIndex]
-                if shouldApply(entry.session, over: persistedSession) {
+                if sessionOrdering == .newer {
                     sessions[sessionIndex] = entry.session
                     sessionsChanged = true
                 }
-                let persistedScene = scenes[sceneIndex]
-                if shouldApply(entry.scene, over: persistedScene) {
+                if sceneOrdering == .newer {
                     scenes[sceneIndex] = entry.scene
                     scenesChanged = true
                 }
@@ -509,11 +561,35 @@ enum StoryTurnJournal {
         case rootIsNotArray
     }
 
-    nonisolated private static func shouldApply(_ journal: StorySession, over persisted: StorySession) -> Bool {
+    nonisolated private static func recoveryDecision(
+        session: RecordOrdering,
+        scene: RecordOrdering
+    ) -> PairRecoveryDecision {
+        switch (session, scene) {
+        case (.ambiguous, _), (_, .ambiguous):
+            return .retain
+        case (.newer, .older), (.older, .newer):
+            return .retain
+        case (.newer, _), (_, .newer):
+            return .apply
+        case (.older, _), (_, .older), (.equal, .equal):
+            return .discard
+        }
+    }
+
+    nonisolated private static func ordering(
+        _ journal: StorySession,
+        over persisted: StorySession
+    ) -> RecordOrdering {
         if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
+                ? .newer
+                : .older
         }
-        return journal.updatedAt > persisted.updatedAt
+        if journal.updatedAt != persisted.updatedAt {
+            return journal.updatedAt > persisted.updatedAt ? .newer : .older
+        }
+        return journal == persisted ? .equal : .ambiguous
     }
 
     nonisolated private static func isValid(_ entry: StoryTurnJournalEntry) -> Bool {
@@ -526,11 +602,19 @@ enum StoryTurnJournal {
         return true
     }
 
-    nonisolated private static func shouldApply(_ journal: StoryScene, over persisted: StoryScene) -> Bool {
+    nonisolated private static func ordering(
+        _ journal: StoryScene,
+        over persisted: StoryScene
+    ) -> RecordOrdering {
         if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
+                ? .newer
+                : .older
         }
-        return journal.updatedAt > persisted.updatedAt
+        if journal.updatedAt != persisted.updatedAt {
+            return journal.updatedAt > persisted.updatedAt ? .newer : .older
+        }
+        return journal == persisted ? .equal : .ambiguous
     }
 
     /// Merge journal-owned auxiliary work into the durable retry queue while
@@ -568,6 +652,24 @@ enum StoryTurnJournal {
         let retained = existing.filter { retry in
             !retry.isCompleted || keepingTurnIDs.contains(retry.turnID)
         }
+        guard retained.count != existing.count else { return }
+        try LocalJSONStoreTransaction.save(
+            retained,
+            fileName: memoryRetryFileName,
+            baseURL: baseURL
+        )
+    }
+
+    /// A tombstoned pair must not leave a retry that can later recreate memory
+    /// for the deleted turn. This runs under the same shared lock as journal
+    /// recovery, so the deletion fence and retry purge are observed together.
+    private static func purgeMemoryRetriesForTurnIDsUnlocked(
+        _ turnIDs: Set<UUID>,
+        baseURL: URL
+    ) throws {
+        guard !turnIDs.isEmpty else { return }
+        let existing = try loadMemoryRetriesUnlocked(baseURL: baseURL)
+        let retained = existing.filter { !turnIDs.contains($0.turnID) }
         guard retained.count != existing.count else { return }
         try LocalJSONStoreTransaction.save(
             retained,
