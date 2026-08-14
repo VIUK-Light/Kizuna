@@ -112,6 +112,35 @@ final class KizunaAITests: XCTestCase {
             "信頼",
             "legacy Session relationshipStage is promoted only during the initial State bootstrap"
         )
+
+        let existingWithoutStage = StoryState(location: "駅前")
+        XCTAssertEqual(
+            StoryStateBootstrap.preservingExistingState(
+                existingWithoutStage,
+                scene: scene,
+                initialRelationshipStage: "信頼"
+            ).relationshipStage,
+            "",
+            "bootstrap must not overwrite an existing StoryState; the caller owns legacy promotion"
+        )
+
+        var legacySession = StorySession(
+            storyWorldId: scene.storyWorldId,
+            relationshipStage: "信頼",
+            storyState: existingWithoutStage
+        )
+        StorySessionService.promoteLegacyRelationshipStage(&legacySession)
+        XCTAssertEqual(legacySession.storyState?.relationshipStage, "信頼")
+        XCTAssertNil(legacySession.relationshipStage)
+
+        var canonicalSession = StorySession(
+            storyWorldId: scene.storyWorldId,
+            relationshipStage: "旧データ",
+            storyState: StoryState(location: "駅前", relationshipStage: "親密")
+        )
+        StorySessionService.promoteLegacyRelationshipStage(&canonicalSession)
+        XCTAssertEqual(canonicalSession.storyState?.relationshipStage, "親密")
+        XCTAssertNil(canonicalSession.relationshipStage)
     }
 
     func testStorySessionUsesSessionCastAndLegacySceneFallback() {
@@ -494,6 +523,156 @@ final class KizunaAITests: XCTestCase {
         )
         XCTAssertTrue(firstSessionMemories.isEmpty)
         XCTAssertTrue(secondSessionMemories.isEmpty)
+    }
+
+    func testLegacyWorldMemoryMigrationPreservesCorruptRecords() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let validLegacy = StoryMemory(storyWorldId: worldID, text: "読める旧メモリー")
+
+        try LocalJSONStoreTransaction.save(
+            [StorySession(id: sessionID, storyWorldId: worldID)],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [validLegacy],
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+
+        let memoryURL = storageURL.appendingPathComponent("story_memories.json")
+        let encodedRecords = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: memoryURL),
+            options: [.fragmentsAllowed]
+        ) as? [Any]
+        var records = try XCTUnwrap(encodedRecords)
+        records.append(["malformed": true])
+        try JSONSerialization.data(withJSONObject: records, options: [.sortedKeys])
+            .write(to: memoryURL, options: [.atomic])
+
+        let repository = LocalJSONStoryMemoryRepository(storageURL: storageURL)
+        try await repository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+
+        let preservedRecords = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: memoryURL),
+            options: [.fragmentsAllowed]
+        ) as? [Any]
+        XCTAssertEqual(
+            preservedRecords?.count,
+            2,
+            "migration must not save a recovered array and drop the malformed source record"
+        )
+        let worldMemories = try await repository.fetchMemories(storyWorldId: worldID)
+        XCTAssertEqual(worldMemories.map(\.id), [validLegacy.id])
+        XCTAssertNil(worldMemories.first?.storySessionId)
+    }
+
+    func testLegacyWorldMemoryMigrationRechecksChangedFileAndDefersTrimToSave() async throws {
+        let storageURL = try makeStoryPersistenceTestDirectory()
+        let worldID = UUID()
+        let sessionID = UUID()
+        let first = StoryMemory(
+            storyWorldId: worldID,
+            text: "最初の旧メモリー",
+            importance: 0.2
+        )
+        let second = StoryMemory(
+            storyWorldId: worldID,
+            text: "後から追加された旧メモリー",
+            importance: 0.9
+        )
+        try LocalJSONStoreTransaction.save(
+            [StorySession(id: sessionID, storyWorldId: worldID)],
+            fileName: "story_sessions.json",
+            baseURL: storageURL
+        )
+        try LocalJSONStoreTransaction.save(
+            [first],
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+
+        let repository = LocalJSONStoryMemoryRepository(
+            storageURL: storageURL,
+            perScopeLimit: 1
+        )
+        try await repository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+
+        var records = try LocalJSONStoreTransaction.load(
+            StoryMemory.self,
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+        records.append(second)
+        try LocalJSONStoreTransaction.save(
+            records,
+            fileName: "story_memories.json",
+            baseURL: storageURL
+        )
+
+        // The changed file fingerprint invalidates the marker, so a legacy
+        // record restored/imported after the first check is still migrated.
+        try await repository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+        let migrated = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: sessionID
+        )
+        XCTAssertEqual(Set(migrated.map(\.id)), Set([first.id, second.id]))
+
+        // Migration itself is lossless. The established save path, not the
+        // compatibility pass, owns the per-session limit.
+        let third = StoryMemory(
+            storyWorldId: worldID,
+            text: "新しいメモリー",
+            importance: 1.0,
+            storySessionId: sessionID
+        )
+        try await repository.saveMemory(third)
+        let trimmed = try await repository.fetchMemories(
+            storyWorldId: worldID,
+            storySessionId: sessionID
+        )
+        XCTAssertEqual(trimmed.count, 1)
+        XCTAssertEqual(trimmed.first?.id, third.id)
+    }
+
+    func testStoryMemoryRepositoryLegacyAssignmentContract() async throws {
+        let worldID = UUID()
+        let sessionID = UUID()
+        let legacy = StoryMemory(storyWorldId: worldID, text: "契約テストの旧メモリー")
+
+        let singleSessionRepository = TestStoryMemoryRepository(
+            storySessions: [StorySession(id: sessionID, storyWorldId: worldID)],
+            storyMemories: [legacy]
+        )
+        try await singleSessionRepository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+        XCTAssertEqual(
+            try await singleSessionRepository.fetchMemories(storyWorldId: worldID).first?.storySessionId,
+            sessionID,
+            "exactly one live Session may claim a world-scoped legacy memory"
+        )
+
+        let ambiguousRepository = TestStoryMemoryRepository(
+            storySessions: [
+                StorySession(storyWorldId: worldID),
+                StorySession(storyWorldId: worldID)
+            ],
+            storyMemories: [legacy]
+        )
+        try await ambiguousRepository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+        XCTAssertNil(
+            try await ambiguousRepository.fetchMemories(storyWorldId: worldID).first?.storySessionId,
+            "multiple Sessions must not guess which Session owns the legacy memory"
+        )
+
+        let noSessionRepository = TestStoryMemoryRepository(storyMemories: [legacy])
+        try await noSessionRepository.assignLegacyMemoriesIfSingleSession(storyWorldId: worldID)
+        XCTAssertNil(
+            try await noSessionRepository.fetchMemories(storyWorldId: worldID).first?.storySessionId,
+            "zero Sessions must leave the legacy memory unassigned"
+        )
     }
 
     func testMemoryPromptScopeRejectsUndoPreservedUserOnlyTurn() {
@@ -6726,15 +6905,21 @@ private actor TestStoryMemoryRepository: MemoryRepository, StoryMemoryRepository
 
     private let shouldFailSaves: Bool
     private let shouldThrowStoryRecordDeleted: Bool
+    private let storySessions: [StorySession]
+    private var storyMemories: [StoryMemory]
     private var characterSaveCount = 0
     private var storySaveCount = 0
 
     init(
         shouldFailSaves: Bool = false,
-        shouldThrowStoryRecordDeleted: Bool = false
+        shouldThrowStoryRecordDeleted: Bool = false,
+        storySessions: [StorySession] = [],
+        storyMemories: [StoryMemory] = []
     ) {
         self.shouldFailSaves = shouldFailSaves
         self.shouldThrowStoryRecordDeleted = shouldThrowStoryRecordDeleted
+        self.storySessions = storySessions
+        self.storyMemories = storyMemories
     }
 
     func fetchMemories(characterId: UUID) async throws -> [CharacterMemory] { [] }
@@ -6748,11 +6933,26 @@ private actor TestStoryMemoryRepository: MemoryRepository, StoryMemoryRepository
     func deleteAllMemories(characterId: UUID) async throws {}
     func markUsed(ids: [UUID]) async throws {}
 
-    func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] { [] }
+    func fetchMemories(storyWorldId: UUID) async throws -> [StoryMemory] {
+        storyMemories.filter { $0.storyWorldId == storyWorldId }
+    }
 
-    func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory] { [] }
+    func fetchMemories(storyWorldId: UUID, storySessionId: UUID) async throws -> [StoryMemory] {
+        StoryMemory.scoped(
+            to: storySessionId,
+            from: storyMemories.filter { $0.storyWorldId == storyWorldId }
+        )
+    }
 
-    func assignLegacyMemoriesIfSingleSession(storyWorldId: UUID) async throws {}
+    func assignLegacyMemoriesIfSingleSession(storyWorldId: UUID) async throws {
+        let sessions = storySessions.filter { $0.storyWorldId == storyWorldId }
+        guard sessions.count == 1, let sessionID = sessions.first?.id else { return }
+        for index in storyMemories.indices {
+            guard storyMemories[index].storyWorldId == storyWorldId,
+                  storyMemories[index].storySessionId == nil else { continue }
+            storyMemories[index].storySessionId = sessionID
+        }
+    }
 
     func saveMemory(_ memory: StoryMemory) async throws {
         if shouldThrowStoryRecordDeleted {
