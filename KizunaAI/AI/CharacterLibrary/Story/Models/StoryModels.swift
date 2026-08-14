@@ -967,6 +967,15 @@ struct StoryLorebookEntry: Codable, Identifiable, Equatable, Hashable {
 
 // MARK: - StoryMemory (この物語だけの思い出)
 
+private enum StoryMemoryImportance {
+    static func normalized(_ value: Double) -> Double {
+        // JSON and model-derived values can contain NaN. Swift's min/max do
+        // not turn NaN into a bounded number, so normalize it before clamping.
+        let finiteCandidate = value.isNaN ? 0.0 : value
+        return min(max(finiteCandidate, 0.0), 1.0)
+    }
+}
+
 /// 1つの生成ターンがMemoryへ与えた重要度・利用時刻。
 struct StoryMemorySourceMetadata: Codable, Equatable, Hashable {
     var importance: Double
@@ -1006,7 +1015,7 @@ struct StoryMemorySourceMetadata: Codable, Equatable, Hashable {
     }
 
     private static func clampedImportance(_ value: Double) -> Double {
-        min(max(value, 0.0), 1.0)
+        StoryMemoryImportance.normalized(value)
     }
 }
 
@@ -1055,7 +1064,7 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
                 (
                     $0,
                     StoryMemorySourceMetadata(
-                        importance: min(max(importance, 0.0), 1.0),
+                        importance: StoryMemoryImportance.normalized(importance),
                         createdAt: createdAt,
                         lastUsedAt: lastUsedAt
                     )
@@ -1065,7 +1074,7 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         self.characterId = characterId
         self.text = text
         self.category = category
-        self.importance = min(max(importance, 0.0), 1.0)
+        self.importance = StoryMemoryImportance.normalized(importance)
         self.source = source
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
@@ -1095,9 +1104,8 @@ struct StoryMemory: Codable, Identifiable, Equatable, Hashable {
         characterId = try container.decodeIfPresent(UUID.self, forKey: .characterId)
         text = try container.decode(String.self, forKey: .text)
         category = try container.decode(MemoryCategory.self, forKey: .category)
-        importance = min(
-            max(try container.decode(Double.self, forKey: .importance), 0.0),
-            1.0
+        importance = StoryMemoryImportance.normalized(
+            try container.decode(Double.self, forKey: .importance)
         )
         source = try container.decode(MemorySource.self, forKey: .source)
         createdAt = try container.decode(Date.self, forKey: .createdAt)

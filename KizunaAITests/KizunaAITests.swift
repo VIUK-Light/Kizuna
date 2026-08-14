@@ -499,6 +499,24 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryMemoryImportanceNormalizesNaNToZero() {
+        let sourceTurnID = UUID()
+        let metadata = StoryMemorySourceMetadata(
+            importance: .nan,
+            createdAt: Date()
+        )
+        let memory = StoryMemory(
+            storyWorldId: UUID(),
+            text: "NaN重要度を正規化する",
+            importance: .nan,
+            sourceTurnIds: [sourceTurnID]
+        )
+
+        XCTAssertEqual(metadata.importance, 0.0)
+        XCTAssertEqual(memory.importance, 0.0)
+        XCTAssertEqual(memory.sourceTurnMetadata[sourceTurnID]?.importance, 0.0)
+    }
+
     func testFileIOCancellationStateAtomicallyClaimsQueuedOperation() {
         let cancelled = LocalJSONStoreFileIOCancellationState()
         cancelled.cancel()
@@ -1703,13 +1721,13 @@ final class KizunaAITests: XCTestCase {
             baseURL: storageURL
         )
         XCTAssertEqual(Set(memories.map(\.id)), Set([remainingMemory.id, legacyMemory.id]))
-        XCTAssertTrue(
+        XCTAssertTrue(try LocalJSONStoreTransaction.withSharedLock {
             try StoryTurnJournal.hasTombstoneUnlocked(
                 recordID: deletedSessionID,
                 recordKind: .session,
                 baseURL: storageURL
             )
-        )
+        })
     }
 
     func testLegacyPayloadSessionTombstoneDoesNotResurrectStoryMemory() async throws {
@@ -4153,11 +4171,13 @@ final class KizunaAITests: XCTestCase {
             baseURL: storageURL
         )
 
-        try StoryTurnJournal.recordDeletionUnlocked(
-            recordID: deletedSessionID,
-            recordKind: .session,
-            baseURL: storageURL
-        )
+        try LocalJSONStoreTransaction.withSharedLock {
+            try StoryTurnJournal.recordDeletionUnlocked(
+                recordID: deletedSessionID,
+                recordKind: .session,
+                baseURL: storageURL
+            )
+        }
         try StoryTurnJournal.recoverIfNeeded(baseURL: storageURL)
 
         let memories = try LocalJSONStoreTransaction.load(
