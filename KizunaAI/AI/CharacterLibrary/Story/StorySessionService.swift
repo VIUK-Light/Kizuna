@@ -143,6 +143,12 @@ final class StorySessionService: ObservableObject {
     private let memorySelector: MemorySelecting = MockMemorySelector()
     private let memorySummarizer: MemorySummarizing = MockMemorySummarizer()
     private let promptBuilder = StoryPromptBuilder()
+    /// Serviceインスタンスごとのowner。プロセス共通IDにすると、画面を
+    /// 作り直したServiceが、まだ生きている別Serviceと区別できない。
+    /// nonisolated leaseにすることで、ViewModelのnonisolated deinitから
+    /// cleanup Taskの起動前にownerを解除できる。
+    private nonisolated let turnOwnerLease = StoryTurnOwnerLease()
+    private var isOwnerRegistered = true
 
     private var generationTask: Task<Void, Never>?
     /// cancel()/watchdogが開始したcheckpoint終了処理。次の送信は、
@@ -172,6 +178,37 @@ final class StorySessionService: ObservableObject {
     private static let localRuntimeSystemPromptLimit = 1_250
     private let progressDecoder = JSONDecoder()
 
+    deinit {
+        turnOwnerLease.unregister()
+    }
+
+    /// ViewModel deinit用。Taskを作る前に同期的にownerを解放する。
+    nonisolated func releaseOwnerForTeardown() {
+        turnOwnerLease.unregister()
+    }
+
+    /// ViewModelが画面から外れる時に呼び出し、保存済みpending turnを
+    /// 新しいServiceが復旧できるようowner登録を先に解除する。
+    /// `cancel()`は非同期cleanupを開始するが、owner解放は待たない。
+    func shutdown() {
+        releaseTurnOwner()
+        cancel()
+    }
+
+    private func releaseTurnOwner() {
+        guard isOwnerRegistered else { return }
+        isOwnerRegistered = false
+        turnOwnerLease.unregister()
+    }
+
+    private func ensureTurnOwnerRegistered() {
+        guard !isOwnerRegistered else { return }
+        turnOwnerLease.register()
+        isOwnerRegistered = true
+    }
+
+    private var turnOwnerID: UUID { turnOwnerLease.id }
+
     private struct StoryProgressUpdate: Codable {
         var progressLabel: String?
         var currentObjective: String?
@@ -196,6 +233,7 @@ final class StorySessionService: ObservableObject {
     ) -> UUID? {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, phase != .thinking else { return nil }
+        ensureTurnOwnerRegistered()
         phase = .thinking
         streamingResponse = ""
         streamingSpeakerName = nil
@@ -416,6 +454,10 @@ final class StorySessionService: ObservableObject {
     }
 
     func cancel() {
+        // 新しいServiceがこのターンをstaleとして復旧できるよう、
+        // 非同期finishTurnを待たずにownerを解放する。cleanupが後から
+        // 到着しても、terminal checkpointには適用されない。
+        releaseTurnOwner()
         // Invalidate an in-flight timeout persistence task before cancelling
         // the backend. Repository calls may already be suspended at await and
         // cannot be assumed to observe Task cancellation immediately.
@@ -522,7 +564,8 @@ final class StorySessionService: ObservableObject {
                 session: session,
                 userMessage: userMsg,
                 turnID: turnID,
-                attempt: attempt
+                attempt: attempt,
+                ownerID: turnOwnerID
             )
         } catch {
             await finishGenerationWithoutSaving(
@@ -794,15 +837,7 @@ final class StorySessionService: ObservableObject {
         sceneWithSelectedCharacters.activeCharacterIds = Array(selectedIDs.prefix(activeCharacterLimit))
         // 選択結果はターンのcommitまでメモリ上に保持する。生成失敗時に
         // activeCharacterIdsだけが先に保存される部分成功を作らない。
-        guard isGenerationActive(generationID) else {
-            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
-            return
-        }
         scene = sceneWithSelectedCharacters
-        guard isGenerationActive(generationID) else {
-            await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
-            return
-        }
 
         let activeCast = cast.filter { scene.activeCharacterIds.contains($0.characterId) }
         let inactiveCast = cast.filter { !scene.activeCharacterIds.contains($0.characterId) }
@@ -1550,6 +1585,7 @@ final class StorySessionService: ObservableObject {
         retryWhenLocalReady: Bool = false
     ) async {
         guard isGenerationActive(generationID) else { return }
+        releaseTurnOwner()
         let sessionID = activeSessionID
         let turnID = activeTurnID
         let attempt = activeTurnAttempt
@@ -1797,6 +1833,7 @@ final class StorySessionService: ObservableObject {
                   self.phase == .thinking else { return }
             let timeoutToken = UUID()
             self.timeoutSaveToken = timeoutToken
+            self.releaseTurnOwner()
             // Invalidate the pipeline before cancelling it. Some native/API
             // backends do not observe cancellation immediately; keeping the
             // generation ID valid would let a late result pass the guards and

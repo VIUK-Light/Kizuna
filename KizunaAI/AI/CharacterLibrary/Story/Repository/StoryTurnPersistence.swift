@@ -19,15 +19,73 @@ enum StoryTurnPersistenceError: Error, Equatable {
     case corruptJournal
 }
 
+/// 同一プロセス内で現在生存しているStorySessionServiceを識別する。
+/// 永続化されたownerIDだけではServiceのdeinitを検知できないため、
+/// 新しい画面が古い画面の実行中turnを誤って中断しないよう登録状態を持つ。
+final class StoryTurnOwnerRegistry: @unchecked Sendable {
+    static let shared = StoryTurnOwnerRegistry()
+
+    private let lock = NSLock()
+    private var owners = Set<UUID>()
+
+    @discardableResult
+    func register() -> UUID {
+        register(UUID())
+    }
+
+    @discardableResult
+    func register(_ ownerID: UUID) -> UUID {
+        lock.lock()
+        owners.insert(ownerID)
+        lock.unlock()
+        return ownerID
+    }
+
+    func unregister(_ ownerID: UUID) {
+        lock.lock()
+        owners.remove(ownerID)
+        lock.unlock()
+    }
+
+    func activeOwnerIDs() -> Set<UUID> {
+        lock.lock()
+        defer { lock.unlock() }
+        return owners
+    }
+}
+
+/// A service-owned registration that can be released from a nonisolated
+/// teardown path. The registry itself is lock-protected, so deinit and the
+/// MainActor lifecycle methods can safely perform the same idempotent release.
+final class StoryTurnOwnerLease: @unchecked Sendable {
+    let id: UUID
+    private let registry: StoryTurnOwnerRegistry
+
+    init(registry: StoryTurnOwnerRegistry = .shared) {
+        self.id = UUID()
+        self.registry = registry
+        registry.register(id)
+    }
+
+    func register() {
+        registry.register(id)
+    }
+
+    func unregister() {
+        registry.unregister(id)
+    }
+}
+
 enum StoryTurnOwner {
-    /// アプリプロセス内で共有する所有者ID。プロセスが再起動すると変わる。
-    static let currentID = UUID()
+    /// 旧保存データと低レベルReducerの互換性用。実際のServiceは
+    /// `StoryTurnOwnerRegistry`からインスタンス単位のIDを取得する。
+    nonisolated static let currentID = UUID()
 }
 
 /// ターン状態の純粋な遷移部分。ファイルIOや時刻の取得を持たないため、
 /// JSONリポジトリのテストとは独立してライフサイクルを検証できる。
 enum StoryTurnReducer {
-    static func begin(
+    nonisolated static func begin(
         turnID: UUID,
         userMessageID: UUID,
         attempt: Int,
@@ -48,7 +106,7 @@ enum StoryTurnReducer {
         )
     }
 
-    static func commit(
+    nonisolated static func commit(
         pending: StoryTurnCheckpoint,
         assistantMessageIDs: [UUID],
         updatedAt: Date
@@ -66,7 +124,7 @@ enum StoryTurnReducer {
         )
     }
 
-    static func finish(
+    nonisolated static func finish(
         pending: StoryTurnCheckpoint,
         status: StoryTurnStatus,
         failureCode: String?,
@@ -97,14 +155,26 @@ struct StoryTurnJournalEntry: Codable, Equatable {
 /// 小さなジャーナルを原子的に置く。アプリ終了が session/scene の片方の
 /// 書き込み直後に起きても、次回の読み込みで同じスナップショットを再適用する。
 enum StoryTurnJournal {
-    private static let fileName = "story_turn_journal.json"
+    nonisolated private static let fileName = "story_turn_journal.json"
 
     private struct RecoverableEntries {
         let entries: [StoryTurnJournalEntry]
         let containsInvalidEntries: Bool
     }
 
-    static func recoverIfNeeded(
+    /// Async repositories use the dedicated file-I/O executor. The original
+    /// synchronous entry point remains available for low-level recovery tests.
+    /// Do not call this method from inside `performOnFileIO`: that method uses
+    /// the same serial queue, so a nested call would wait for itself forever.
+    nonisolated static func recoverIfNeededAsync(
+        baseURL: URL = KizunaDataMigration.characterLibraryURL
+    ) async throws {
+        try await LocalJSONStoreTransaction.performOnFileIO {
+            try recoverIfNeeded(baseURL: baseURL)
+        }
+    }
+
+    nonisolated static func recoverIfNeeded(
         baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws {
         try LocalJSONStoreTransaction.withSharedLock {
@@ -293,14 +363,14 @@ enum StoryTurnJournal {
         case rootIsNotArray
     }
 
-    private static func shouldApply(_ journal: StorySession, over persisted: StorySession) -> Bool {
+    nonisolated private static func shouldApply(_ journal: StorySession, over persisted: StorySession) -> Bool {
         if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
             return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
         }
         return journal.updatedAt > persisted.updatedAt
     }
 
-    private static func isValid(_ entry: StoryTurnJournalEntry) -> Bool {
+    nonisolated private static func isValid(_ entry: StoryTurnJournalEntry) -> Bool {
         guard entry.turnID == entry.session.latestTurnCheckpoint?.turnID,
               entry.session.latestTurnCheckpoint?.status == .committed,
               entry.session.storyWorldId == entry.scene.storyWorldId,
@@ -310,15 +380,18 @@ enum StoryTurnJournal {
         return true
     }
 
-    private static func shouldApply(_ journal: StoryScene, over persisted: StoryScene) -> Bool {
-        journal.updatedAt > persisted.updatedAt
+    nonisolated private static func shouldApply(_ journal: StoryScene, over persisted: StoryScene) -> Bool {
+        if journal.effectivePersistenceRevision != persisted.effectivePersistenceRevision {
+            return journal.effectivePersistenceRevision > persisted.effectivePersistenceRevision
+        }
+        return journal.updatedAt > persisted.updatedAt
     }
 }
 
 extension StoryTurnJournal {
     /// Repository実装だけがジャーナルの全体を扱うための短い書き込みAPI。
     /// 同じファイルロックの中から呼び出す前提で、二重ロックはしない。
-    static func prepareUnlocked(
+    nonisolated static func prepareUnlocked(
         _ entry: StoryTurnJournalEntry,
         baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws {
@@ -332,7 +405,7 @@ extension StoryTurnJournal {
         try LocalJSONStoreTransaction.save(entries, fileName: fileName, baseURL: baseURL)
     }
 
-    static func removeUnlocked(
+    nonisolated static func removeUnlocked(
         turnID: UUID,
         baseURL: URL = KizunaDataMigration.characterLibraryURL
     ) throws {
