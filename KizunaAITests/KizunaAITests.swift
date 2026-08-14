@@ -4786,12 +4786,14 @@ final class KizunaAITests: XCTestCase {
                     baseURL: storageURL
                 ).first
             )
-            let expectedSession = testCase.session == .newer
-                ? fixture.entry.session
-                : session
-            let expectedScene = testCase.scene == .newer
-                ? fixture.entry.scene
-                : scene
+            // A mixed newer/older pair is intentionally retained as a unit;
+            // neither side may be applied until the pair can be resolved.
+            let expectedSession = testCase.retains
+                ? session
+                : (testCase.session == .newer ? fixture.entry.session : session)
+            let expectedScene = testCase.retains
+                ? scene
+                : (testCase.scene == .newer ? fixture.entry.scene : scene)
             XCTAssertEqual(recoveredSession, expectedSession, testCase.name)
             XCTAssertEqual(recoveredScene, expectedScene, testCase.name)
 
