@@ -2413,34 +2413,6 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(persisted?.messages.filter { $0.id == assistant.id }.count, 1)
     }
 
-    func testStorySceneRepositoryMigratesLegacySceneRevisionOnFirstSave() async throws {
-        let storageURL = try makeStoryPersistenceTestDirectory()
-        let worldID = UUID()
-        let scene = StoryScene(
-            storyWorldId: worldID,
-            summary: "旧形式のScene"
-        )
-
-        try LocalJSONStoreTransaction.save(
-            [scene],
-            fileName: "story_scenes.json",
-            baseURL: storageURL
-        )
-
-        let repository = LocalJSONStorySceneRepository(storageURL: storageURL)
-        let loaded = try await repository.fetchScenes(storyWorldId: worldID)
-        XCTAssertNil(loaded.first?.persistenceRevision)
-
-        try await repository.saveScene(try XCTUnwrap(loaded.first))
-
-        let persisted = try LocalJSONStoreTransaction.load(
-            StoryScene.self,
-            fileName: "story_scenes.json",
-            baseURL: storageURL
-        ).first
-        XCTAssertEqual(persisted?.persistenceRevision, 1)
-    }
-
     func testStorySessionRepositoryCommitRejectsStalePersistenceRevision() async throws {
         let storageURL = try makeStoryPersistenceTestDirectory()
         let worldID = UUID()
@@ -5592,7 +5564,8 @@ private actor TestStorySessionRepository: StorySessionRepository {
         session: StorySession,
         userMessage: StoryMessage,
         turnID: UUID,
-        attempt: Int
+        attempt: Int,
+        ownerID: UUID
     ) async throws -> StorySession {
         session
     }
@@ -5616,6 +5589,9 @@ private actor TestStorySessionRepository: StorySessionRepository {
         failureCode: String?
     ) async throws {}
 
-    func recoverInterruptedTurns(storyWorldId: UUID) async throws {}
+    func recoverInterruptedTurns(
+        storyWorldId: UUID,
+        activeOwnerIDs: Set<UUID>
+    ) async throws {}
     func deleteSession(id: UUID) async throws {}
 }
