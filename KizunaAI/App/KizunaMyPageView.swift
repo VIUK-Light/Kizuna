@@ -67,10 +67,7 @@ struct KizunaMyPageView: View {
             Text(KizunaCopy.text(japanese: "マイページ", english: "My page"))
                 .font(.system(size: 32, weight: .heavy, design: .rounded))
                 .accessibilityIdentifier("workspace.myPage.heading")
-            Text(KizunaCopy.text(
-                japanese: "必要な設定だけ。",
-                english: "Only the essentials."
-            ))
+            
         }
     }
 
@@ -121,7 +118,7 @@ struct KizunaMyPageView: View {
     private var profileSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(profileStore.profile.visibleName.isEmpty
-                 ? KizunaCopy.text(japanese: "名前を決めずに始めています", english: "No profile name yet")
+                 ? KizunaCopy.text(japanese: "未設定", english: "No profile name yet")
                  : profileStore.profile.visibleName)
                 .font(.system(size: 24, weight: .bold, design: .rounded))
                 .lineLimit(2)
@@ -144,7 +141,7 @@ struct KizunaMyPageView: View {
                 KizunaCopy.text(japanese: "プロフィールを編集", english: "Edit profile"),
                 systemImage: "pencil"
             )
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 15, weight: .semibold))
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
@@ -166,8 +163,8 @@ struct KizunaMyPageView: View {
         settingsCard(
             title: KizunaCopy.text(japanese: "表示言語", english: "Display language"),
             subtitle: KizunaCopy.text(
-                japanese: "アプリ内の表示だけを切り替えます。",
-                english: "Changes kizuna's interface only."
+                japanese: "",
+                english: ""
             ),
             icon: "globe"
         ) {
@@ -177,10 +174,13 @@ struct KizunaMyPageView: View {
             ) {
                 ForEach(KizunaLanguage.allCases) { language in
                     Text(language.displayName).tag(language.rawValue)
+                       
+                    
                 }
             }
             .pickerStyle(.menu)
             .labelsHidden()
+            
         }
     }
 
@@ -209,7 +209,7 @@ struct KizunaMyPageView: View {
                     KizunaCopy.text(japanese: "詳細設定", english: "Details"),
                     systemImage: "slider.horizontal.3"
                 )
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
             }
             .buttonStyle(.bordered)
         }
@@ -231,7 +231,7 @@ struct KizunaMyPageView: View {
                     KizunaCopy.text(japanese: "初期設定を開く", english: "Open setup"),
                     systemImage: "arrow.counterclockwise"
                 )
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
             }
             .buttonStyle(.bordered)
         }
@@ -267,15 +267,16 @@ struct KizunaMyPageView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         surface {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .top, spacing: 10) {
                     iconBadge(icon)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(title)
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
                         Text(subtitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
                     }
                 }
                 content()
@@ -301,4 +302,8 @@ struct KizunaMyPageView: View {
             .frame(width: 32, height: 32)
             .background(color.opacity(0.12), in: Circle())
     }
+}
+
+#Preview{
+    KizunaMyPageView()
 }
