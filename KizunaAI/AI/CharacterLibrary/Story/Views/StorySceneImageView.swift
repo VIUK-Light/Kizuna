@@ -44,7 +44,11 @@ struct StorySceneImageView: View {
             }
         }
         .clipped()
-        .accessibilityLabel(scene.title.isEmpty ? "Story scene" : scene.title)
+        .accessibilityLabel(
+            scene.title.isEmpty
+                ? KizunaCopy.text(japanese: "ストーリーの場面", english: "Story scene")
+                : scene.title
+        )
     }
 
     private var storedImage: StoryScenePlatformImage? {
@@ -74,7 +78,7 @@ struct StorySceneImageView: View {
                 .foregroundStyle(.white.opacity(0.78))
             VStack(alignment: .leading, spacing: 4) {
                 Spacer()
-                Text(scene.location.isEmpty ? "Scene" : scene.location)
+                Text(scene.location.isEmpty ? KizunaCopy.text(japanese: "場面", english: "Scene") : scene.location)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.78))
                     .lineLimit(1)
