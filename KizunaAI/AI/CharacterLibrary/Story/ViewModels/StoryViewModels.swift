@@ -585,8 +585,8 @@ final class StoryWorldCreateViewModel: ObservableObject {
 
         guard StoryGemma31BAPIService.shared.hasAPIKey else {
             saveError = KizunaCopy.text(
-                japanese: "Gemma4 APIキーが未設定です。Kizunaの設定からNAGI APIキーを登録してください。",
-                english: "The Gemma4 API key is not set. Add the NAGI API key in Kizuna's settings."
+                japanese: "Gemma4 APIキーが未設定です。\(KizunaCopy.appName)の設定からNAGI APIキーを登録してください。",
+                english: "The Gemma4 API key is not set. Add the NAGI API key in \(KizunaCopy.appName)'s settings."
             )
             return
         }
@@ -1065,7 +1065,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
     }
 
     private static let storyTemplateSystemPrompt = """
-    あなたはKizunaのストーリー作成エンジンです。
+    あなたは\(KizunaCopy.appName)のストーリー作成エンジンです。
     ユーザーの短い説明から、カスタムGPTのように動く物語テンプレートを1つ作ります。
     出力はJSONオブジェクトのみ。Markdown、説明文、コードフェンスは禁止。
 
