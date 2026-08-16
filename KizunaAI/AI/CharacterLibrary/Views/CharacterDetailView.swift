@@ -405,7 +405,7 @@ struct CharacterDetailView: View {
             Button {
                 onStartChat?(character)
             } label: {
-                Label(KizunaCopy.text(japanese: "絆チャットを始める", english: "Start kizuna chat"), systemImage: "bubble.left.and.bubble.right.fill")
+                Label(KizunaCopy.text(japanese: "絆チャットを始める", english: "Start Kizuna chat"), systemImage: "bubble.left.and.bubble.right.fill")
                     .font(.system(size: 13, weight: .semibold))
             }
             .buttonStyle(.borderedProminent)

@@ -34,8 +34,8 @@ struct KizunaSettingsView: View {
                         }
                     }
                     Text(KizunaCopy.text(
-                        japanese: "kizuna内の表示だけが切り替わります。端末全体の言語は変更しません。",
-                        english: "Only kizuna changes language. Your device language stays the same."
+                        japanese: "Kizuna内の表示だけが切り替わります。端末全体の言語は変更しません。",
+                        english: "Only Kizuna changes language. Your device language stays the same."
                     ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -248,7 +248,7 @@ struct KizunaSettingsView: View {
                     }
                     Text(KizunaCopy.text(
                         japanese: "設定を閉じると、プロフィール設定へ移動します。",
-                        english: "After settings closes, kizuna opens profile setup."
+                        english: "After settings closes, Kizuna opens profile setup."
                     ))
                     .font(.caption)
                     .foregroundStyle(.secondary)

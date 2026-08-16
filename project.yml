@@ -82,7 +82,9 @@ targets:
     info:
       path: KizunaAI/Info.plist
       properties:
-        CFBundleDisplayName: kizuna
+        # ブランド表示名・バンドル名は KizunaAI/App/AppBrand.swift が正本。
+        # 変更時は AppBrand.displayName / bundleName と合わせること。
+        CFBundleDisplayName: Kizuna
         CFBundleName: KizunaAI
         LSApplicationCategoryType: public.app-category.entertainment
         NSAppTransportSecurity:

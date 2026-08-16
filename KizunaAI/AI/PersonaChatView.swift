@@ -593,7 +593,7 @@ struct PersonaChatView: View {
                         .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(KizunaCopy.text(japanese: "kizunaライブラリー", english: "kizuna library"))
+                .accessibilityLabel(KizunaCopy.text(japanese: "Kizunaライブラリー", english: "Kizuna library"))
             }
 
             Menu {
@@ -622,7 +622,7 @@ struct PersonaChatView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .accessibilityLabel(KizunaCopy.text(japanese: "kizunaメニュー", english: "kizuna menu"))
+            .accessibilityLabel(KizunaCopy.text(japanese: "Kizunaメニュー", english: "Kizuna menu"))
 
             if !showsStoryActions {
                 Button {
@@ -747,7 +747,7 @@ struct PersonaChatView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .accessibilityLabel(KizunaCopy.text(japanese: "kizunaメニュー", english: "kizuna menu"))
+        .accessibilityLabel(KizunaCopy.text(japanese: "Kizunaメニュー", english: "Kizuna menu"))
         .help(KizunaCopy.text(japanese: "ライブラリーと設定を開く", english: "Open library and settings"))
     }
 

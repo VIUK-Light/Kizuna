@@ -44,7 +44,7 @@ private struct KizunaMigrationGateView: View {
                         .font(.system(size: 54, weight: .bold))
                         .foregroundStyle(.tint)
                     ProgressView()
-                    Text(KizunaCopy.text(japanese: "kizunaのデータを準備しています", english: "Preparing kizuna"))
+                    Text(KizunaCopy.text(japanese: "Kizunaのデータを準備しています", english: "Preparing Kizuna"))
                         .font(.headline)
                     Text(KizunaCopy.text(
                         japanese: "初回だけ、キャラクターとローカルモデルを準備するため数分かかる場合があります。",

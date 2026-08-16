@@ -1534,7 +1534,7 @@ private struct StorySessionChatBody: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
-                    Text(speaker?.nonEmpty ?? storyCopy("kizuna", "kizuna"))
+                    Text(speaker?.nonEmpty ?? storyCopy("Kizuna", "Kizuna"))
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(storyText.opacity(0.88))
                     Text(status)
@@ -1564,7 +1564,7 @@ private struct StorySessionChatBody: View {
             Spacer(minLength: 40)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(storyCopy("\(speaker ?? "kizuna")が\(status)", "\(speaker ?? "kizuna") is \(status)"))
+        .accessibilityLabel(storyCopy("\(speaker ?? "Kizuna")が\(status)", "\(speaker ?? "Kizuna") is \(status)"))
         .accessibilityValue(Text(preview))
         .id("streaming-preview")
     }
@@ -1977,15 +1977,15 @@ struct viuk_web: View {
                 // 安全対策ページの位置づけを最初に明示する。
                 pageHeader(
                     title: storyCopy("責任あるAIアプリケーションと倫理", "Responsible AI and ethics"),
-                    subtitle: storyCopy("kizunaの安全対策", "kizuna safety principles")
+                    subtitle: storyCopy("Kizunaの安全対策", "Kizuna safety principles")
                 )
 
                 principleCard(
                     title: storyCopy("安全対策の基本方針", "Our safety approach"),
                     icon: "sun.max.fill",
                     text: storyCopy(
-                        "kizunaとVIUK-Lightは、『責任あるAIアプリケーションと倫理』を掲げています。AIとの対話を創作・娯楽・気持ちの整理に役立てながら、人の生活や選択を支配するものにはしないことを安全対策の前提にしています。",
-                        "kizuna and VIUK-Light aim for responsible AI and ethics. Conversation can support creativity, entertainment, and reflection without controlling a person's life or choices."
+                        "KizunaとVIUK-Lightは、『責任あるAIアプリケーションと倫理』を掲げています。AIとの対話を創作・娯楽・気持ちの整理に役立てながら、人の生活や選択を支配するものにはしないことを安全対策の前提にしています。",
+                        "Kizuna and VIUK-Light aim for responsible AI and ethics. Conversation can support creativity, entertainment, and reflection without controlling a person's life or choices."
                     )
                 )
 
@@ -1993,8 +1993,8 @@ struct viuk_web: View {
                     title: storyCopy("安全性と体験を対立させない理由", "Safety and a useful experience"),
                     icon: "scale.3d",
                     text: storyCopy(
-                        "危険を避けるために、すべての親密な会話や感情表現を機械的に止めると、キャラクターAIとしての価値や、利用者が得られる居場所まで失われます。だからkizunaは、危険度と文脈を見ながら必要な場面だけ安全な方向へ導き、通常の創作や物語はできるだけ続けられる設計を目指します。",
-                        "Blocking every intimate conversation or emotion would remove the value of character AI and the sense of space it can provide. kizuna considers context and risk, adds guidance only when needed, and keeps ordinary creative stories moving."
+                        "危険を避けるために、すべての親密な会話や感情表現を機械的に止めると、キャラクターAIとしての価値や、利用者が得られる居場所まで失われます。だからKizunaは、危険度と文脈を見ながら必要な場面だけ安全な方向へ導き、通常の創作や物語はできるだけ続けられる設計を目指します。",
+                        "Blocking every intimate conversation or emotion would remove the value of character AI and the sense of space it can provide. Kizuna considers context and risk, adds guidance only when needed, and keeps ordinary creative stories moving."
                     )
                 )
 
@@ -2011,8 +2011,8 @@ struct viuk_web: View {
                     title: storyCopy("過度な安全性も安全性の失敗", "Overblocking is also a safety failure"),
                     icon: "exclamationmark.triangle",
                     text: storyCopy(
-                        "安全性は、拒否する回数を増やせば完成するものではありません。必要以上に冷たく突き放したり、キャラクター性を消したりすれば、別のかたちで利用者の体験を傷つけます。kizunaは、危険を見逃さず、同時に過剰な制限も減らすことを安全設計の課題として扱います。",
-                        "Safety is not achieved by increasing refusals. A cold or characterless response can harm the experience in another way. kizuna works to catch real risks while reducing unnecessary restrictions."
+                        "安全性は、拒否する回数を増やせば完成するものではありません。必要以上に冷たく突き放したり、キャラクター性を消したりすれば、別のかたちで利用者の体験を傷つけます。Kizunaは、危険を見逃さず、同時に過剰な制限も減らすことを安全設計の課題として扱います。",
+                        "Safety is not achieved by increasing refusals. A cold or characterless response can harm the experience in another way. Kizuna works to catch real risks while reducing unnecessary restrictions."
                     )
                 )
 
@@ -2050,7 +2050,7 @@ struct viuk_web: View {
             }
             .padding(20)
         }
-        .navigationTitle(storyCopy("kizunaの安全対策", "kizuna safety principles"))
+        .navigationTitle(storyCopy("Kizunaの安全対策", "Kizuna safety principles"))
     }
 
     // 説明ページ内の見出しを統一するための小さなUI部品。

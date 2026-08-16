@@ -12,6 +12,20 @@
 - The feature stays default-OFF until the paired evaluation passes its release
   gate.
 
+## Brand
+
+- The product display name is `Kizuna` in both Japanese and English UI.
+  `AppBrand` (`KizunaAI/App/AppBrand.swift`) is the single source of truth for
+  the display name, bundle name (`KizunaAI`), bundle identifier
+  (`com.viuk.KizunaAI`), and Keychain service name.
+- `KizunaCopy.appName` delegates to `AppBrand.displayName`, so UI app-name
+  labels are never spelled `kizuna` (lowercase) or `KizunaAI`.
+- `project.yml` and `KizunaAI/Info.plist` must keep `CFBundleDisplayName` in
+  sync with `AppBrand.displayName` (currently `Kizuna`).
+- The persona/character chat feature is branded `絆` in Japanese and `Kizuna`
+  in English (e.g. `絆チャット` / `Kizuna chat`). It is a feature name, not the
+  app name, and is not routed through `AppBrand`.
+
 ## Evaluation
 
 - The formal iori artifact is the exact VIUK Story Q4_K_M file and SHA recorded

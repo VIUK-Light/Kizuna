@@ -13,8 +13,9 @@ enum KizunaCopy {
         language == .english ? english : japanese
     }
 
+    /// アプリ名はブランド正本 `AppBrand.displayName` を参照し、言語を問わず "Kizuna" に統一する。
     static var appName: String {
-        text(japanese: "kizuna", english: "Kizuna")
+        AppBrand.displayName
     }
 }
 
