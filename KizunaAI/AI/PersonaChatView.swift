@@ -63,8 +63,10 @@ struct PersonaChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            topSwitchBar
-            Divider()
+            if horizontalSizeClass == .compact {
+                compactTopSwitchBar
+                Divider()
+            }
             if store.isPersistenceRecoveryRequired {
                 personaRecoveryBanner
                 Divider()
@@ -567,17 +569,6 @@ struct PersonaChatView: View {
         }
     }
 
-    /// 上部の細いバー。AI Studio (通常モード) に戻る/モードを切り替える導線を必ず提供する。
-    private var topSwitchBar: some View {
-        Group {
-            if horizontalSizeClass == .compact {
-                compactTopSwitchBar
-            } else {
-                regularTopSwitchBar
-            }
-        }
-    }
-
     private var compactTopSwitchBar: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
@@ -681,110 +672,26 @@ struct PersonaChatView: View {
         .background(Color.appCanvasBackground)
     }
 
-    private var regularTopSwitchBar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 7) {
-                Image(systemName: "infinity.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                Text(KizunaCopy.appName)
-                    .font(.subheadline.weight(.bold))
-            }
-            .foregroundStyle(Color.accentColor)
-
-            Spacer()
-
-            if showsStoryActions {
-                Button {
-                    showWorldLibrary = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles.rectangle.stack.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"))
-                            .font(.callout.weight(.semibold))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .frame(minHeight: 44)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.16)))
-                    .foregroundStyle(Color.accentColor)
-                }
-                .buttonStyle(.plain)
-                .help(KizunaCopy.text(japanese: "関係性を続けられるシナリオを開く", english: "Open scenarios that continue your relationship"))
-            }
-
-            Menu {
-                if showsStoryActions {
-                    Button {
-                        showWorldLibrary = true
-                    } label: {
-                        Label(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"), systemImage: "sparkles.rectangle.stack.fill")
-                    }
-                }
-                Button {
-                    showLibrary = true
-                } label: {
-                    Label(KizunaCopy.text(japanese: "キャラライブラリー", english: "Character library"), systemImage: "person.2.fill")
-                }
-                Divider()
-                Button {
-                    showConfig = true
-                } label: {
-                    Label(KizunaCopy.text(japanese: "キャラクター設定", english: "Character settings"), systemImage: "slider.horizontal.3")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 44, height: 44)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .accessibilityLabel(KizunaCopy.text(japanese: "キャラクター操作メニュー", english: "Character actions menu"))
-            .help(KizunaCopy.text(japanese: "キャラクターなどの補助メニュー", english: "More character options"))
-
-            if !showsStoryActions {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .bold))
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(KizunaCopy.text(japanese: "閉じる", english: "Close"))
-            }
-
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.thinMaterial)
-    }
-
     // MARK: - Sidebar
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles.rectangle.stack.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.tint)
-                Text(KizunaCopy.appName)
-                    .font(.caption.weight(.bold))
-                    .tracking(0.6)
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
+                Text(KizunaCopy.text(japanese: "会話", english: "Conversations"))
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.primary)
                 Spacer()
-                if showsStoryActions {
+                personaActionsMenu
+                if !showsStoryActions {
                     Button {
-                        showWorldLibrary = true
+                        dismiss()
                     } label: {
-                        Image(systemName: "books.vertical.fill")
-                            .font(.system(size: 13, weight: .semibold))
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
                             .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(KizunaCopy.text(japanese: "シナリオライブラリーを開く", english: "Open scenario library"))
-                    .help(KizunaCopy.text(japanese: "kizunaライブラリーを開く", english: "Open the kizuna library"))
+                    .accessibilityLabel(KizunaCopy.text(japanese: "閉じる", english: "Close"))
                 }
             }
             .padding(.horizontal, 14)
@@ -792,17 +699,14 @@ struct PersonaChatView: View {
 
             Divider()
 
-            if let storyHistoryLoadError {
-                storyHistoryErrorBanner(storyHistoryLoadError)
-                Divider()
-            }
-
-            if storyHistoryItems.isEmpty && store.threads.isEmpty {
+            if store.threads.isEmpty {
                 emptyThreadState
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        storyListSections
+                        ForEach(store.threads) { thread in
+                            threadRow(thread)
+                        }
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 8)
@@ -810,28 +714,41 @@ struct PersonaChatView: View {
             }
 
             Spacer(minLength: 0)
+        }
+        .background(Color.appSecondaryBackground.opacity(0.22))
+    }
 
-            Divider()
+    /// ライブラリーとキャラ設定への導線を一箇所にまとめたメニュー。
+    /// シナリオ導線はここだけに集約し、トップバーやヘッダーへの重複を避ける。
+    private var personaActionsMenu: some View {
+        Menu {
             if showsStoryActions {
                 Button {
                     showWorldLibrary = true
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "sparkles.rectangle.stack.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(KizunaCopy.text(japanese: "シナリオを探す", english: "Browse scenarios"))
-                            .font(.callout.weight(.semibold))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+                    Label(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"), systemImage: "sparkles.rectangle.stack.fill")
                 }
-                .buttonStyle(.plain)
             }
+            Button {
+                showLibrary = true
+            } label: {
+                Label(KizunaCopy.text(japanese: "キャラライブラリー", english: "Character library"), systemImage: "person.2.fill")
+            }
+            Divider()
+            Button {
+                showConfig = true
+            } label: {
+                Label(KizunaCopy.text(japanese: "キャラクター設定", english: "Character settings"), systemImage: "slider.horizontal.3")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 44, height: 44)
         }
-        .background(Color.appSecondaryBackground.opacity(0.22))
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .accessibilityLabel(KizunaCopy.text(japanese: "kizunaメニュー", english: "kizuna menu"))
+        .help(KizunaCopy.text(japanese: "ライブラリーと設定を開く", english: "Open library and settings"))
     }
 
     private var compactStoryList: some View {
@@ -1174,72 +1091,17 @@ struct PersonaChatView: View {
     }
 
     private func chatHeader(_ thread: PersonaThread) -> some View {
-        let style = PersonaAvatarStyle(profile: thread.personaSnapshot)
-        return HStack(spacing: 12) {
-            PersonaAvatarView(profile: thread.personaSnapshot, size: 56)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 7) {
-                    Text(thread.personaSnapshot.name)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(.primary)
-                    Text(thread.personaSnapshot.relation.localizedDisplayName)
-                        .font(.caption.weight(.bold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(style.primary.opacity(0.16)))
-                        .foregroundStyle(style.primary)
-                }
-                Text(thread.personaSnapshot.tone.localizedDisplayName + KizunaCopy.text(japanese: " ・ ", english: " · ") + thread.personaSnapshot.personality)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer()
-            Menu {
-                if showsStoryActions {
-                    Button {
-                        showWorldLibrary = true
-                    } label: {
-                        Label(KizunaCopy.text(japanese: "シナリオライブラリー", english: "Scenario library"), systemImage: "sparkles.rectangle.stack.fill")
-                    }
-                }
-                Button {
-                    showConfig = true
-                } label: {
-                    Label(KizunaCopy.text(japanese: "新しい会話の設定", english: "New conversation settings"), systemImage: "slider.horizontal.3")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 44, height: 44)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .accessibilityLabel(KizunaCopy.text(japanese: "会話メニュー", english: "Conversation menu"))
-            .help(KizunaCopy.text(japanese: "シナリオとキャラクターの操作", english: "Scenario and character actions"))
+        HStack(spacing: 10) {
+            PersonaAvatarView(profile: thread.personaSnapshot, size: 36)
+            Text(thread.personaSnapshot.name)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            ZStack {
-                LinearGradient(
-                    colors: [
-                        style.highlight.opacity(colorScheme == .dark ? 0.12 : 0.24),
-                        Color.appSecondaryBackground.opacity(colorScheme == .dark ? 0.55 : 0.80)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .background(.thinMaterial)
-                Circle()
-                    .fill(style.primary.opacity(0.12))
-                    .frame(width: 180, height: 180)
-                    .blur(radius: 38)
-                    .offset(x: -120, y: -55)
-            }
-        )
+        .padding(.vertical, 10)
+        .background(.thinMaterial)
     }
 
     private var noActiveThreadState: some View {
