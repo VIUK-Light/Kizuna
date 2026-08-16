@@ -42,7 +42,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
-          model: opencode/deepseek-v4-flash
+          model: opencode/deepseek-v4-flash-free
           use_github_token: true
           mentions: "/summary,/sum"
           share: false
