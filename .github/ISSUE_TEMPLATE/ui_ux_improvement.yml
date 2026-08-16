@@ -1,0 +1,65 @@
+name: UI/UX improvement
+description: 画面設計・操作性・見た目・アクセシビリティの改善を提案する
+title: "[UI/UX]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: current_problem
+    attributes:
+      label: 現在の問題
+      description: どの画面・操作で、何が分かりにくい・使いにくい・不自然だと感じるか説明してください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_experience
+    attributes:
+      label: 望ましい体験
+      description: どのように改善されると分かりやすく、自然に使えるか説明してください。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 改善対象
+      options:
+        - レイアウト・情報設計
+        - 操作性・導線
+        - 文言・ラベル
+        - 視認性・配色・タイポグラフィ
+        - アクセシビリティ
+        - アニメーション・フィードバック
+        - iOS / macOS間の一貫性
+        - その他
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: 対象画面・場所
+      description: 分かる範囲で画面名、機能名、関連ファイルなどを記載してください。
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: スクリーンショット・具体例
+      description: 必要に応じて画像、動画、比較例、再現手順などを添付してください。
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 完了条件
+      description: このIssueを完了と判断できる状態を箇条書きで記載してください。
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 確認
+      options:
+        - label: 既存Issueに同じ改善提案がないか確認しました
+          required: true
+        - label: 単なる好みではなく、利用者の理解・操作・一貫性・アクセシビリティの改善点を記載しました
+          required: true
