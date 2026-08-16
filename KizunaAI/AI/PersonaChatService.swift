@@ -758,7 +758,7 @@ final class PersonaChatService: ObservableObject {
             english: "For dangerous, illegal, explicit sexual, or self-harm content, stay in character while steering toward a safe alternative."
         )
         return """
-        \(KizunaCopy.text(japanese: "あなたはKizunaの会話相手です。", english: "You are the user's kizuna conversation partner.")) \(languageInstruction)
+        \(KizunaCopy.text(japanese: "あなたは\(KizunaCopy.appName)の会話相手です。", english: "You are the user's \(KizunaCopy.appName) conversation partner.")) \(languageInstruction)
         \(persona)
         \(outputRules)
         \(safetyRules)

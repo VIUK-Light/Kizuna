@@ -59,6 +59,7 @@ def presentation_audit() -> dict[str, Any]:
     """
     execution_source = read_text("KizunaAI/AI/AIExecutionModes.swift")
     tool_source = read_text("KizunaAI/AI/AIToolCatalog.swift")
+    brand_source = read_text("KizunaAI/App/AppBrand.swift")
     copy_source = read_text("KizunaAI/App/KizunaCopy.swift")
     required_execution_accessors = (
         "localizedDisplayName",
@@ -73,7 +74,8 @@ def presentation_audit() -> dict[str, Any]:
     return {
         "missing_execution_ui_accessors": missing_execution_accessors,
         "tool_catalog_has_localized_label": "localizedDisplayName(forToolNamed" in tool_source,
-        "english_brand_is_kizuna": 'english: "Kizuna"' in copy_source,
+        "brand_display_name_is_kizuna": 'displayName = "Kizuna"' in brand_source,
+        "app_name_uses_brand_display_name": "AppBrand.displayName" in copy_source,
     }
 
 
@@ -197,7 +199,8 @@ def has_open_findings(report: dict[str, Any]) -> bool:
             report["xcstrings"]["missing_english_keys"],
             report["presentation"]["missing_execution_ui_accessors"],
             not report["presentation"]["tool_catalog_has_localized_label"],
-            not report["presentation"]["english_brand_is_kizuna"],
+            not report["presentation"]["brand_display_name_is_kizuna"],
+            not report["presentation"]["app_name_uses_brand_display_name"],
             report["direct_ui"]["character_create_raw_ui_lines"],
             report["story_detail"]["initial_scenes_left_untranslated_by_current_fallback"],
             report["story_detail"]["raw_japanese_spotlight_label_lines"],

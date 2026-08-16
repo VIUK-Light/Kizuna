@@ -18,7 +18,8 @@ class KizunaI18nAuditTests(unittest.TestCase):
             "presentation": {
                 "missing_execution_ui_accessors": [],
                 "tool_catalog_has_localized_label": True,
-                "english_brand_is_kizuna": True,
+                "brand_display_name_is_kizuna": True,
+                "app_name_uses_brand_display_name": True,
             },
             "direct_ui": {"character_create_raw_ui_lines": []},
             "story_detail": {
