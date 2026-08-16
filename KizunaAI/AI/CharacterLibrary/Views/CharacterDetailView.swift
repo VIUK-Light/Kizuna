@@ -39,6 +39,7 @@ struct CharacterDetailView: View {
 
     @StateObject private var vm: CharacterDetailViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showReport = false
     @State private var showDeleteConfirm = false
     @State private var deleteError: String?
     @State private var deleteErrorIsRetryable = false
@@ -86,6 +87,10 @@ struct CharacterDetailView: View {
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
         .task { await vm.reload() }
+        .sheet(isPresented: $showReport) {
+            ReportCharacterView(character: character)
+                .viukAdaptiveSheetSizing(minWidth: 420, minHeight: 460)
+        }
         .alert(KizunaCopy.text(japanese: "このキャラを削除しますか?", english: "Delete this character?"), isPresented: $showDeleteConfirm) {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
             Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
@@ -390,6 +395,11 @@ struct CharacterDetailView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Button {
+                showReport = true
+            } label: { Label(KizunaCopy.text(japanese: "通報", english: "Report"), systemImage: "flag") }
+                .buttonStyle(.bordered)
+
             Spacer()
 
             Button {
@@ -417,6 +427,11 @@ struct CharacterDetailView: View {
                         Label(KizunaCopy.text(japanese: "削除", english: "Delete"), systemImage: "trash")
                     }
                     .disabled(isDeleting)
+                }
+                Button {
+                    showReport = true
+                } label: {
+                    Label(KizunaCopy.text(japanese: "通報", english: "Report"), systemImage: "flag")
                 }
             } label: {
                 Label(KizunaCopy.text(japanese: "その他", english: "More"), systemImage: "ellipsis.circle")
