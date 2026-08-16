@@ -74,7 +74,7 @@ struct KizunaSettingsView: View {
                     Text(KizunaCopy.text(japanese: "プロフィール", english: "Profile"))
                 }
 
-                Section(KizunaCopy.text(japanese: "NAGI（Gemma4 31B API）", english: "NAGI (Gemma4 31B API)")) {
+                Section(KizunaCopy.text(japanese: "クラウドAI（Gemma 4）", english: "Cloud AI (Gemma 4)")) {
                     SecureField(KizunaCopy.text(japanese: "Google AI APIキー", english: "Google AI API key"), text: $nagiAPIKey)
                         .textContentType(.password)
 

@@ -212,7 +212,7 @@ struct CharacterLibraryView: View {
             Button {
                 showTemplatePicker = true
             } label: {
-                Label(KizunaCopy.text(japanese: "テンプレ", english: "Templates"), systemImage: "doc.on.doc")
+                Label(KizunaCopy.text(japanese: "テンプレート", english: "Templates"), systemImage: "doc.on.doc")
                     .font(.system(size: 12, weight: .semibold))
             }
             .buttonStyle(.bordered)
@@ -462,7 +462,7 @@ struct CharacterLibraryView: View {
                 .font(.system(size: 15, weight: .semibold))
             if vm.allCharacters.isEmpty {
                 Text(KizunaCopy.text(
-                    japanese: "テンプレから始めるか、新規作成してみよう。",
+                    japanese: "テンプレートから始めるか、新規作成してみよう。",
                     english: "Start from a template or create a character from scratch."
                 ))
                     .font(.system(size: 12))
@@ -471,7 +471,7 @@ struct CharacterLibraryView: View {
                     Button {
                         showTemplatePicker = true
                     } label: {
-                        Label(KizunaCopy.text(japanese: "テンプレから作る", english: "Use a template"), systemImage: "doc.on.doc")
+                        Label(KizunaCopy.text(japanese: "テンプレートから作る", english: "Use a template"), systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.bordered)
                     Button {
@@ -677,7 +677,7 @@ private struct TemplatePickerSheet: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(KizunaCopy.text(japanese: "テンプレから作る", english: "Use a template"))
+                Text(KizunaCopy.text(japanese: "テンプレートから作る", english: "Use a template"))
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Color.clear.frame(width: 48)

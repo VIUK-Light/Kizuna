@@ -302,7 +302,7 @@ struct CharacterDetailView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(m.text)
                                 .font(.system(size: 12))
-                            Text(m.category.localizedDisplayName + KizunaCopy.text(japanese: " ・ 重要度 ", english: " · Importance ") + String(format: "%.2f", m.importance))
+                            Text(m.category.localizedDisplayName + KizunaCopy.text(japanese: " ・ 重要度 ", english: " · Importance ") + importanceLabel(m.importance))
                                 .font(.system(size: 10))
                                 .foregroundStyle(.tertiary)
                         }
@@ -321,6 +321,18 @@ struct CharacterDetailView: View {
             .background(
                 RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05))
             )
+        }
+    }
+
+    /// 内部数値 (0.0...1.0) をユーザーが理解できる質的ラベルへ変換する。
+    /// 内部モデル実装が変わっても表示は安定させるため、UI層で変換する。
+    private func importanceLabel(_ importance: Double) -> String {
+        if importance >= 0.8 {
+            return KizunaCopy.text(japanese: "高", english: "High")
+        } else if importance >= 0.5 {
+            return KizunaCopy.text(japanese: "中", english: "Medium")
+        } else {
+            return KizunaCopy.text(japanese: "低", english: "Low")
         }
     }
 

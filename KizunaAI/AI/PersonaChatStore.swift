@@ -124,7 +124,7 @@ enum PersonaChatRecoveryError: LocalizedError {
         case .noCorruptPersistedValue:
             return "復旧対象の保存データが見つかりません。"
         case .noPersistedValue:
-            return "保存されたPersona履歴が見つかりません。"
+            return KizunaCopy.text(japanese: "保存された絆チャットの履歴が見つかりません。", english: "No saved Kizuna chat history was found.")
         case .persistenceRecoveryRequired:
             return "先に保存データを復旧またはバックアップしてください。"
         case .unsupportedPersistedValue:

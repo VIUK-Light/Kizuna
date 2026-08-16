@@ -49,7 +49,7 @@ struct KizunaPersonaDataManagementView: View {
             Text(errorMessage ?? "")
         }
         .confirmationDialog(
-            KizunaCopy.text(japanese: "Persona会話をすべて削除しますか？", english: "Delete all Persona conversations?"),
+            KizunaCopy.text(japanese: "絆チャットの会話をすべて削除しますか？", english: "Delete all Kizuna chat conversations?"),
             isPresented: $isShowingDeleteAllConfirmation,
             titleVisibility: .visible
         ) {
@@ -59,12 +59,12 @@ struct KizunaPersonaDataManagementView: View {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
             Text(KizunaCopy.text(
-                japanese: "この端末のPersona会話だけを削除します。Storyは削除されません。",
-                english: "Only Persona conversations on this device will be deleted. Story is not affected."
+                japanese: "この端末の絆チャットの会話だけを削除します。Storyは削除されません。",
+                english: "Only Kizuna chat conversations on this device will be deleted. Story is not affected."
             ))
         }
         .confirmationDialog(
-            KizunaCopy.text(japanese: "破損したPersona履歴をリセットしますか？", english: "Reset the corrupted Persona history?"),
+            KizunaCopy.text(japanese: "破損した絆チャットの履歴をリセットしますか？", english: "Reset the corrupted Kizuna chat history?"),
             isPresented: $isShowingRecoveryResetConfirmation,
             titleVisibility: .visible
         ) {
@@ -90,7 +90,7 @@ struct KizunaPersonaDataManagementView: View {
     private var summarySection: some View {
         Section {
             LabeledContent(
-                KizunaCopy.text(japanese: "Persona会話", english: "Persona conversations"),
+                KizunaCopy.text(japanese: "絆チャットの会話", english: "Kizuna chat conversations"),
                 value: KizunaCopy.text(
                     japanese: "\(store.threads.count)件",
                     english: "\(store.threads.count)"
@@ -185,7 +185,7 @@ struct KizunaPersonaDataManagementView: View {
     private var deletionSection: some View {
         Section {
             Button(
-                KizunaCopy.text(japanese: "Persona会話をすべて削除", english: "Delete all Persona conversations"),
+                KizunaCopy.text(japanese: "絆チャットの会話をすべて削除", english: "Delete all Kizuna chat conversations"),
                 role: .destructive
             ) {
                 isShowingDeleteAllConfirmation = true
@@ -282,7 +282,7 @@ struct KizunaPersonaDataManagementView: View {
             return
         }
         exportedShareItem = nil
-        statusMessage = KizunaCopy.text(japanese: "Persona会話を削除しました。", english: "Persona conversations deleted.")
+        statusMessage = KizunaCopy.text(japanese: "絆チャットの会話を削除しました。", english: "Kizuna chat conversations deleted.")
     }
 
     private func resetCorruptHistory() {

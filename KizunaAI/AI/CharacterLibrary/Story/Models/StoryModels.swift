@@ -30,15 +30,15 @@ enum StoryGenerationModel: String, Codable, CaseIterable, Identifiable, Hashable
 
     var displayName: String {
         switch self {
-        case .e4b: return "iori"
-        case .b31: return "NAGI"
+        case .e4b: return KizunaCopy.text(japanese: "端末内", english: "On-device")
+        case .b31: return KizunaCopy.text(japanese: "クラウド", english: "Cloud")
         }
     }
 
     var detailLabel: String {
         switch self {
-        case .e4b: return "iori"
-        case .b31: return "NAGI"
+        case .e4b: return KizunaCopy.text(japanese: "端末内モデル", english: "On-device model")
+        case .b31: return KizunaCopy.text(japanese: "クラウドAI", english: "Cloud AI")
         }
     }
 

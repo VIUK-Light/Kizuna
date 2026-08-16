@@ -260,8 +260,8 @@ struct PersonaChatView: View {
         }
         .confirmationDialog(
             KizunaCopy.text(
-                japanese: "壊れたPersona履歴をリセットしますか？",
-                english: "Reset the corrupted Persona history?"
+                japanese: "壊れた絆チャットの履歴をリセットしますか？",
+                english: "Reset the corrupted Kizuna chat history?"
             ),
             isPresented: $isShowingPersonaRecoveryResetConfirmation,
             titleVisibility: .visible
@@ -276,8 +276,8 @@ struct PersonaChatView: View {
         } message: {
             Text(
                 KizunaCopy.text(
-                    japanese: "リセット前にバックアップを書き出します。失敗した場合はリセットしません。読み込めなかったPersona履歴は新しい空状態に置き換わります。",
-                    english: "A backup is exported before resetting. If that fails, the reset is cancelled. Unreadable Persona history is replaced with a new empty state."
+                    japanese: "リセット前にバックアップを書き出します。失敗した場合はリセットしません。読み込めなかった絆チャットの履歴は新しい空状態に置き換わります。",
+                    english: "A backup is exported before resetting. If that fails, the reset is cancelled. Unreadable Kizuna chat history is replaced with a new empty state."
                 )
             )
         }
@@ -303,8 +303,8 @@ struct PersonaChatView: View {
             Label {
                 Text(
                     KizunaCopy.text(
-                        japanese: "Persona履歴を読み込めません",
-                        english: "Persona history could not be loaded"
+                        japanese: "絆チャットの履歴を読み込めません",
+                        english: "Kizuna chat history could not be loaded"
                     )
                 )
                 .font(.subheadline.weight(.semibold))

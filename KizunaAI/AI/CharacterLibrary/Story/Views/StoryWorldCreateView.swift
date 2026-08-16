@@ -131,7 +131,7 @@ struct StoryWorldCreateView: View {
                 .font(.headline.weight(.semibold))
             Spacer()
             if existing == nil {
-                Label(KizunaCopy.text(japanese: "31B Thinking", english: "31B Thinking"), systemImage: "sparkles")
+                Label(KizunaCopy.text(japanese: "AI生成", english: "AI"), systemImage: "sparkles")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
             } else {
@@ -259,7 +259,7 @@ struct StoryWorldCreateView: View {
                     } label: {
                         Label(vm.isGeneratingTemplate
                               ? KizunaCopy.text(japanese: "生成中", english: "Generating")
-                              : KizunaCopy.text(japanese: "31B Thinkingでテンプレート作成", english: "Build with 31B Thinking"), systemImage: "sparkles")
+                              : KizunaCopy.text(japanese: "AIでテンプレート作成", english: "Build with AI"), systemImage: "sparkles")
                             .font(.subheadline.weight(.bold))
                     }
                     .buttonStyle(.borderedProminent)
@@ -385,7 +385,7 @@ struct StoryWorldCreateView: View {
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.tertiary)
                     Text(KizunaCopy.text(
-                        japanese: "31B Thinkingで作ると、ここにタイトル・キャスト・初期シーンが表示されます。",
+                        japanese: "AIで作ると、ここにタイトル・キャスト・初期シーンが表示されます。",
                         english: "Your title, cast, and opening scene will appear here after generation."
                     ))
                         .font(.callout.weight(.medium))

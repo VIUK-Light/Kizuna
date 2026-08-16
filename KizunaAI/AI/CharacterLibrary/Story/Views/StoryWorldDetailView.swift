@@ -531,6 +531,17 @@ struct StoryWorldDetailView: View {
         }
     }
 
+    /// キャスト重要度 (0.0...1.0) をユーザーが理解できる質的ラベルへ変換する。
+    private func castImportanceLabel(_ importance: Double) -> String {
+        if importance >= 0.8 {
+            return KizunaCopy.text(japanese: "メイン", english: "Main")
+        } else if importance >= 0.5 {
+            return KizunaCopy.text(japanese: "サブ", english: "Supporting")
+        } else {
+            return KizunaCopy.text(japanese: "脇役", english: "Minor")
+        }
+    }
+
     private func castMemberImageCard(member: CastMember, character: CharacterProfile?) -> some View {
         Button {
             spotlightCharacter = character
@@ -559,7 +570,7 @@ struct StoryWorldDetailView: View {
                                 .padding(.vertical, 4)
                                 .background(Capsule().fill(Color.white.opacity(0.16)))
                             Spacer()
-                            Text("\(Int(member.importance * 100))%")
+                            Text(castImportanceLabel(member.importance))
                                 .font(.caption.weight(.bold).monospacedDigit())
                                 .foregroundStyle(.white.opacity(0.86))
                         }
