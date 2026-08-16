@@ -1,15 +1,21 @@
 name: Issue Summarizer
 
 on:
+  issues:
+    types: [opened]
   issue_comment:
     types: [created]
 
 jobs:
   summarize:
     if: |
-      github.event.issue.pull_request == null &&
-      (startsWith(github.event.comment.body, '/summary') ||
-       startsWith(github.event.comment.body, '/sum'))
+      github.event_name == 'issues' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request == null &&
+        (startsWith(github.event.comment.body, '/summary') ||
+         startsWith(github.event.comment.body, '/sum'))
+      )
     runs-on: ubuntu-latest
 
     permissions:
