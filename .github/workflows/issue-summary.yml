@@ -1,0 +1,55 @@
+name: Issue Summarizer
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  summarize:
+    if: |
+      github.event.issue.pull_request == null &&
+      (startsWith(github.event.comment.body, '/summary') ||
+       startsWith(github.event.comment.body, '/sum'))
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Create Issue Summarizer GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.ISSUE_SUMMARIZER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.ISSUE_SUMMARIZER_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+
+      - name: Run OpenCode Issue Summarizer
+        uses: anomalyco/opencode/github@latest
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        with:
+          model: opencode/deepseek-v4-flash
+          use_github_token: true
+          mentions: "/summary,/sum"
+          share: false
+          prompt: |
+            Summarize this GitHub issue and its discussion in Japanese.
+
+            Include:
+            - 問題の概要
+            - 現在分かっていること
+            - 原因候補
+            - 提案されている解決策
+            - 未解決事項
+            - 次に取るべき行動
+
+            Preserve important technical details, but keep the summary concise and structured.
+            Do not modify files, create commits, create branches, or open pull requests.
