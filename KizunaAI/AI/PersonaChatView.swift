@@ -258,6 +258,17 @@ struct PersonaChatView: View {
             isPersonaChatNearBottom = true
             unreadPersonaMessageCount = 0
         }
+        .onChange(of: service.phase) { oldValue, newValue in
+            handleGenerationPhaseChange(from: oldValue, to: newValue)
+        }
+        .sensoryFeedback(.error, trigger: service.phase) { _, newValue in
+            if case .error = newValue { return true }
+            return false
+        }
+        .sensoryFeedback(.success, trigger: service.phase) { oldValue, newValue in
+            guard case .thinking = oldValue, newValue == .idle else { return false }
+            return store.activeThread?.messages.last?.role == .assistant
+        }
         .confirmationDialog(
             KizunaCopy.text(
                 japanese: "壊れたPersona履歴をリセットしますか？",
@@ -1034,6 +1045,57 @@ struct PersonaChatView: View {
         .background(Color.orange.opacity(0.10))
     }
 
+    // MARK: - Generation feedback
+
+    /// 生成フェーズの変化を、触覚 (`.sensoryFeedback`) と VoiceOver アナウンスへ
+    /// 変換する。触覚は宣言的な `.sensoryFeedback` 側で処理し、ここでは
+    /// VoiceOver 利用者向けの完了・失敗アナウンスだけを担当する。
+    private func handleGenerationPhaseChange(
+        from oldValue: PersonaChatService.Phase,
+        to newValue: PersonaChatService.Phase
+    ) {
+        if case .error = newValue {
+            announceGenerationError()
+            return
+        }
+        guard case .thinking = oldValue, newValue == .idle else { return }
+        // キャンセルではアシスタント本文が保存されないため、最後のメッセージで
+        // 正常完了とキャンセルを区別する。
+        guard store.activeThread?.messages.last?.role == .assistant else { return }
+        announceGenerationCompleted()
+    }
+
+    private func announceGenerationCompleted() {
+        #if canImport(UIKit)
+        let name = store.activeThread?.personaSnapshot.name
+        let message: String
+        if let name, !name.isEmpty {
+            message = KizunaCopy.text(
+                japanese: "\(name)からの返信が届きました",
+                english: "A reply from \(name) has arrived"
+            )
+        } else {
+            message = KizunaCopy.text(
+                japanese: "返信が届きました",
+                english: "A reply has arrived"
+            )
+        }
+        UIAccessibility.post(notification: .announcement, argument: message)
+        #endif
+    }
+
+    private func announceGenerationError() {
+        #if canImport(UIKit)
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: KizunaCopy.text(
+                japanese: "応答を生成できませんでした",
+                english: "Could not generate a reply"
+            )
+        )
+        #endif
+    }
+
     // MARK: - Main chat area
 
     @ViewBuilder
@@ -1185,7 +1247,9 @@ struct PersonaChatView: View {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     } else {
-                        unreadPersonaMessageCount += 1
+                        withAnimation(accessibilityReduceMotion ? nil : .snappy) {
+                            unreadPersonaMessageCount += 1
+                        }
                     }
                 }
                 .onChange(of: service.streamingResponse) { _, _ in
@@ -1201,12 +1265,19 @@ struct PersonaChatView: View {
                         isPersonaChatNearBottom = true
                         unreadPersonaMessageCount = 0
                     } label: {
-                        Label(
-                            unreadPersonaMessageCount > 0
-                                ? "\(unreadPersonaMessageCount) " + KizunaCopy.text(japanese: "新しいメッセージ", english: "new messages")
-                                : KizunaCopy.text(japanese: "最新へ", english: "Latest"),
-                            systemImage: "arrow.down"
-                        )
+                        Label {
+                            HStack(spacing: 3) {
+                                if unreadPersonaMessageCount > 0 {
+                                    Text("\(unreadPersonaMessageCount)")
+                                        .contentTransition(.numericText())
+                                    Text(KizunaCopy.text(japanese: "新しいメッセージ", english: "new messages"))
+                                } else {
+                                    Text(KizunaCopy.text(japanese: "最新へ", english: "Latest"))
+                                }
+                            }
+                        } icon: {
+                            Image(systemName: "arrow.down")
+                        }
                         .font(.body.weight(.bold))
                         .padding(.horizontal, 11)
                         .padding(.vertical, 8)
@@ -1603,6 +1674,7 @@ struct PersonaComposer: View {
     @Binding private var text: String
     @FocusState private var focused: Bool
     @Environment(\.colorScheme) private var colorScheme
+    @State private var sendSuccessCount = 0
 
     init(thread: PersonaThread, draft: Binding<String>) {
         self.thread = thread
@@ -1695,6 +1767,7 @@ struct PersonaComposer: View {
         .padding(.vertical, 10)
         .background(.thinMaterial)
         .personaKeyboardDismissToolbar($focused)
+        .sensoryFeedback(.success, trigger: sendSuccessCount)
     }
 
     private var canSubmit: Bool {
@@ -1709,6 +1782,7 @@ struct PersonaComposer: View {
         guard service.send(toSend, to: thread) else { return }
         text = ""
         focused = false
+        sendSuccessCount += 1
     }
 }
 

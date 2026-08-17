@@ -53,7 +53,7 @@ struct KizunaConversationHomeView: View {
                 .viukAdaptiveSheetSizing(minWidth: 880, minHeight: 700)
         }
 #endif
-        .accessibilityIdentifier("workspace.conversation")
+        .accessibilityIdentifier("workspace.conversation.home")
         .accessibilityElement(children: .contain)
     }
 
