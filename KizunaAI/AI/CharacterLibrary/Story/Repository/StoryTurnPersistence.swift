@@ -314,7 +314,7 @@ enum StoryTurnJournal {
                         fileName: fileName,
                         baseURL: baseURL
                     )
-                    NSLog(
+                    AppLog.note(
                         "[StoryTurnJournal] quarantined corrupt journal=%@ reason=%@",
                         backupURL.lastPathComponent,
                         error.localizedDescription
@@ -333,7 +333,7 @@ enum StoryTurnJournal {
                         fileName: fileName,
                         baseURL: baseURL
                     )
-                    NSLog(
+                    AppLog.note(
                         "[StoryTurnJournal] quarantined journal with no decodable entries=%@",
                         backupURL.lastPathComponent
                     )
@@ -377,7 +377,7 @@ enum StoryTurnJournal {
                 ) {
                     // A turn snapshot is a pair. If either side was explicitly
                     // deleted, never replay the other side by itself.
-                    NSLog(
+                    AppLog.note(
                         "[StoryTurnJournal] discarded tombstoned entry turn=%@",
                         entry.turnID.uuidString
                     )
@@ -390,7 +390,7 @@ enum StoryTurnJournal {
                 guard let sessionIndex = sessions.firstIndex(where: { $0.id == entry.session.id }),
                       let sceneIndex = scenes.firstIndex(where: { $0.id == entry.scene.id }) else {
                     unresolvedEntries.append(entry)
-                    NSLog(
+                    AppLog.note(
                         "[StoryTurnJournal] retained journal entry with missing record turn=%@",
                         entry.turnID.uuidString
                     )
@@ -413,7 +413,7 @@ enum StoryTurnJournal {
                     // payload mismatch. Do not hand off memory retries before
                     // the pair decision is known.
                     unresolvedEntries.append(entry)
-                    NSLog(
+                    AppLog.note(
                         "[StoryTurnJournal] retained unresolved pair turn=%@ session=%@ scene=%@",
                         entry.turnID.uuidString,
                         String(describing: sessionOrdering),
@@ -450,7 +450,7 @@ enum StoryTurnJournal {
                             // candidates remain recoverable on the next
                             // launch.
                             unresolvedEntries.append(entry)
-                            NSLog(
+                            AppLog.note(
                                 "[StoryTurnJournal] retained entry while merging memory retries turn=%@: %@",
                                 entry.turnID.uuidString,
                                 error.localizedDescription
@@ -480,7 +480,7 @@ enum StoryTurnJournal {
             let requiresQuarantine = decoded.containsInvalidEntries || !invalidEntries.isEmpty
             if requiresQuarantine {
                 let backupURL = try LocalJSONStoreTransaction.backup(fileName: fileName, baseURL: baseURL)
-                NSLog(
+                AppLog.note(
                     "[StoryTurnJournal] quarantined journal=%@ invalid=%ld unresolved=%ld",
                     backupURL.lastPathComponent,
                     invalidEntries.count,
@@ -574,7 +574,7 @@ enum StoryTurnJournal {
                     entries.append(try decoder.decode(StoryTurnJournalEntry.self, from: itemData))
                 } catch {
                     containsInvalidEntries = true
-                    NSLog(
+                    AppLog.note(
                         "[StoryTurnJournal] skipped malformed entry index=%ld reason=%@",
                         index,
                         error.localizedDescription
@@ -756,7 +756,7 @@ enum StoryTurnJournal {
                     fileName: memoryRetryFileName,
                     baseURL: baseURL
                 )
-                NSLog(
+                AppLog.note(
                     "[StoryTurnJournal] quarantined malformed memory retry file=%@",
                     backupURL.lastPathComponent
                 )
@@ -788,7 +788,7 @@ enum StoryTurnJournal {
                 fileName: memoryRetryFileName,
                 baseURL: baseURL
             )
-            NSLog(
+            AppLog.note(
                 "[StoryTurnJournal] repaired memory retry file=%@ valid=%ld invalid=%ld",
                 backupURL.lastPathComponent,
                 validItems.count,

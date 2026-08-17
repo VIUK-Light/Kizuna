@@ -175,7 +175,7 @@ struct CharacterDetailView: View {
                 deleteError = KizunaCopy.language == .japanese
                     ? "\(message)\n\(error.localizedDescription)"
                     : message
-                NSLog("[CharacterDetailView] delete failed: %@", error.localizedDescription)
+                AppLog.error("[CharacterDetailView] delete failed: %@", error.localizedDescription)
             }
         }
     }

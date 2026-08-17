@@ -79,6 +79,9 @@ private struct KizunaMigrationGateView: View {
             guard phase == .background else { return }
             LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
             LocalAssistantLiteRTLMRuntime.shared.releaseResourcesForBackground()
+            // バックグラウンド中も平文シークレットをメモリに残さない。
+            // iOSのロック時は保護データ利用不可能通知でも消去される（二重防线）。
+            KeychainHelper.shared.clearInMemoryCaches()
         }
     }
 }

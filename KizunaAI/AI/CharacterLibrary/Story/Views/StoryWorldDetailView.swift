@@ -111,7 +111,7 @@ struct StoryWorldDetailView: View {
                         }
                         dismiss()
                     } catch {
-                        NSLog("[StoryWorldDetailView] story world deletion failed: %@", error.localizedDescription)
+                        AppLog.error("[StoryWorldDetailView] story world deletion failed: %@", error.localizedDescription)
                         deleteError = KizunaCopy.text(
                             japanese: "保存データを削除できませんでした。もう一度試してください。",
                             english: "The saved story could not be deleted. Try again."

@@ -90,7 +90,7 @@ final class CharacterLibraryViewModel: ObservableObject {
             // 既存のメモリー上の一覧は保持し、初回失敗時だけエラー画面へ
             // 分岐できるようにする。読み込み失敗を空データで上書きしない。
             loadError = .characterStorageFailure
-            NSLog("[CharacterLibraryVM] character reload failed: %@", String(describing: error))
+            AppLog.error("[CharacterLibraryVM] character reload failed: %@", String(describing: error))
             return
         }
 
@@ -107,7 +107,7 @@ final class CharacterLibraryViewModel: ObservableObject {
                 japanese: "テンプレートを読み込めませんでした。データは削除されていません。",
                 english: "Templates could not be loaded. Your data has not been deleted."
             )
-            NSLog("[CharacterLibraryVM] template reload failed: %@", String(describing: error))
+            AppLog.error("[CharacterLibraryVM] template reload failed: %@", String(describing: error))
         }
     }
 
@@ -164,7 +164,7 @@ final class CharacterLibraryViewModel: ObservableObject {
             try await characterRepo.completeCharacterDeletionCleanup(id: id)
             await reload()
         } catch {
-            NSLog("[CharacterLibraryVM] delete failed: %@", String(describing: error))
+            AppLog.error("[CharacterLibraryVM] delete failed: %@", String(describing: error))
             // 本体削除後の関連データ掃除が失敗しても、一覧には削除済み
             // キャラを残さない。pending marker は保持されるため、再試行で
             // story/memory/persona の掃除を続行できる。

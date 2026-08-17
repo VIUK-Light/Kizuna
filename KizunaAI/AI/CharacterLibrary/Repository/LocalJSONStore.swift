@@ -15,6 +15,34 @@ enum LocalJSONStoreError: Error {
     case decode(underlying: Error)
 }
 
+/// 機密性の高い会話・記憶データの保存ファイル保護（GHSA-hg44-7rmp-hg8p）。
+/// 平文JSONをバックアップやロック中の物理アクセスへ晒さないため、
+/// 書き込み時に (1) バックアップ除外 (2) File Protection を適用する。
+enum LocalJSONStoreFileProtection {
+    /// iOS ではロック中の読み書きを拒否する保護付きで原子書き込みする。
+    static var atomicWriteOptions: Data.WritingOptions {
+        #if os(iOS)
+        [.atomic, .completeFileProtection]
+        #else
+        [.atomic]
+        #endif
+    }
+
+    /// 既存ファイル（コピーや退避で作成されたものを含む）へ保護を適用する。
+    static func apply(to url: URL) {
+        #if os(iOS)
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.complete],
+            ofItemAtPath: url.path
+        )
+        #endif
+        var mutableURL = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? mutableURL.setResourceValues(values)
+    }
+}
+
 enum LocalJSONStoreCoding {
     private static func encodeDate(_ date: Date, to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
@@ -244,7 +272,7 @@ enum LocalJSONStoreTransaction {
                     validItems.append(try decoder.decode(T.self, from: itemData))
                 } catch {
                     invalidCount += 1
-                    NSLog(
+                    AppLog.note(
                         "%@ skipped invalid %@ record at index %ld: %@",
                         logPrefix,
                         fileName,
@@ -255,7 +283,7 @@ enum LocalJSONStoreTransaction {
             }
 
             guard invalidCount > 0 else { throw fallback }
-            NSLog(
+            AppLog.note(
                 "%@ recovered %@ for read: %ld valid, %ld invalid; source was not modified",
                 logPrefix,
                 fileName,
@@ -309,7 +337,8 @@ enum LocalJSONStoreTransaction {
             try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
             let encoder = LocalJSONStoreCoding.makeEncoder()
             let data = try encoder.encode(items)
-            try data.write(to: url, options: [.atomic])
+            try data.write(to: url, options: LocalJSONStoreFileProtection.atomicWriteOptions)
+            LocalJSONStoreFileProtection.apply(to: url)
         } catch let encodingError as EncodingError {
             throw LocalJSONStoreError.encode(underlying: encodingError)
         } catch {
@@ -329,6 +358,8 @@ enum LocalJSONStoreTransaction {
         let backupURL = base.appendingPathComponent(backupName)
         do {
             try FileManager.default.copyItem(at: sourceURL, to: backupURL)
+            // 退避ファイルにも同じ機密データが入るため保護を適用する。
+            LocalJSONStoreFileProtection.apply(to: backupURL)
             return backupURL
         } catch {
             throw LocalJSONStoreError.ioFailure(underlying: error)
@@ -399,7 +430,7 @@ actor LocalJSONStore<T: Codable> {
                 // 退避できなければ現行データを上書きしない。
                 let recovery = try recoverRecordsUnlocked(fallback: decodeError)
                 let backupURL = try backupCorruptFileUnlocked()
-                NSLog("[LocalJSONStore] recovered %@ for write: %ld valid, %ld invalid; backup=%@", fileName, recovery.items.count, recovery.invalidCount, backupURL.lastPathComponent)
+                AppLog.error("[LocalJSONStore] recovered %@ for write: %ld valid, %ld invalid; backup=%@", fileName, recovery.items.count, recovery.invalidCount, backupURL.lastPathComponent)
                 items = recovery.items
             }
             try mutation(&items)
@@ -439,6 +470,8 @@ actor LocalJSONStore<T: Codable> {
             .appendingPathExtension("corrupt-\(UUID().uuidString).json")
         do {
             try fm.copyItem(at: fileURL, to: backupURL)
+            // 退避ファイルにも同じ機密データが入るため保護を適用する。
+            LocalJSONStoreFileProtection.apply(to: backupURL)
             return backupURL
         } catch {
             throw LocalJSONStoreError.ioFailure(underlying: error)
@@ -452,7 +485,8 @@ actor LocalJSONStore<T: Codable> {
                 withIntermediateDirectories: true
             )
             let data = try encoder.encode(items)
-            try data.write(to: fileURL, options: [.atomic])
+            try data.write(to: fileURL, options: LocalJSONStoreFileProtection.atomicWriteOptions)
+            LocalJSONStoreFileProtection.apply(to: fileURL)
         } catch let encodeErr as EncodingError {
             throw LocalJSONStoreError.encode(underlying: encodeErr)
         } catch {

@@ -330,7 +330,7 @@ struct KizunaPersonaDataManagementView: View {
                     || nsError.code != NSFileNoSuchFileError else {
                 return true
             }
-            NSLog(
+            AppLog.note(
                 "[KizunaPersonaDataManagement] failed to remove export file: %@",
                 "\(url.path): \(error.localizedDescription)"
             )

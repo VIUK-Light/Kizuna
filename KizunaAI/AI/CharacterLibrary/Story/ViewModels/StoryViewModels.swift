@@ -19,14 +19,14 @@ enum KizunaDebugOptions {
     static func requestRestSuggestionUI() {
         let timestamp = Date().timeIntervalSince1970
         UserDefaults.standard.set(timestamp, forKey: restSuggestionRequestKey)
-        NSLog("[KizunaDebug] rest suggestion requested: %.3f", timestamp)
+        AppLog.note("[KizunaDebug] rest suggestion requested: %.3f", timestamp)
         NotificationCenter.default.post(name: restSuggestionRequestNotification, object: nil)
     }
 
     static func requestSafetyConcernUI() {
         let timestamp = Date().timeIntervalSince1970
         UserDefaults.standard.set(timestamp, forKey: safetyConcernRequestKey)
-        NSLog("[KizunaDebug] safety concern requested: %.3f", timestamp)
+        AppLog.note("[KizunaDebug] safety concern requested: %.3f", timestamp)
         NotificationCenter.default.post(name: safetyConcernRequestNotification, object: nil)
     }
 }
@@ -131,7 +131,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         } catch {
             let message = String(describing: error)
             loadError = .storageFailure
-            NSLog("[StoryLibraryVM] reload failed: %@", message)
+            AppLog.error("[StoryLibraryVM] reload failed: %@", message)
         }
     }
 
@@ -149,7 +149,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
             // 説明文が少し変わっていても同じタイトルを1件に畳む。
             let key = normalizedSystemWorldKey(world)
             guard seenSystemWorlds.insert(key).inserted else {
-                NSLog("[StoryLibraryVM] hiding duplicate system world title: %@ (%@)", world.title, world.id.uuidString)
+                AppLog.note("[StoryLibraryVM] hiding duplicate system world title: %@ (%@)", world.title, world.id.uuidString)
                 return false
             }
             return true
@@ -191,7 +191,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                         try await mergeWorldMetadata(from: duplicate.id, to: canonical.id)
                         try await migrateWorldData(from: duplicate.id, to: canonical.id)
                         try await localWorldRepo.purgeSystemWorld(id: duplicate.id)
-                        NSLog(
+                        AppLog.note(
                             "[StoryLibraryVM] migrated duplicate system world %@ (%@) -> %@",
                             duplicate.title,
                             duplicate.id.uuidString,
@@ -200,7 +200,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                     } catch {
                         // 1件の壊れた重複が、別タイトルの移行まで止めない。
                         // purgeは最後に行うため、失敗したデータは次回起動で再試行できる。
-                        NSLog(
+                        AppLog.note(
                             "[StoryLibraryVM] duplicate system world %@ (%@) migration failed: %@",
                             duplicate.title,
                             duplicate.id.uuidString,
@@ -216,7 +216,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         } catch {
             // 一覧を空にしたり、ユーザーデータを推測で削除したりせず、
             // 次回起動で再試行できるよう診断だけを残す。
-            NSLog("[StoryLibraryVM] duplicate system world migration failed: %@", String(describing: error))
+            AppLog.error("[StoryLibraryVM] duplicate system world migration failed: %@", String(describing: error))
             migrationError = KizunaCopy.text(
                 japanese: "重複ストーリーの統合に失敗しました。一覧は表示できますが、再試行してください。",
                 english: "Some duplicate stories could not be merged. The library is available, but please retry."
@@ -242,7 +242,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                 try await worldRepo.deleteWorld(id: id)
                 StoryWorldDeletionJournal.clear(id)
             } catch {
-                NSLog("[StoryLibraryVM] pending world deletion retry failed %@: %@", id.uuidString, String(describing: error))
+                AppLog.error("[StoryLibraryVM] pending world deletion retry failed %@: %@", id.uuidString, String(describing: error))
                 migrationError = KizunaCopy.text(
                     japanese: "前回のストーリー削除を完了できませんでした。再試行してください。",
                     english: "A previous story deletion could not be completed. Please retry."
@@ -354,7 +354,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
             } else {
                 // Cloud implementations should provide an equivalent migration
                 // operation. Do not rewrite timestamps through saveScene here.
-                NSLog("[StoryLibraryVM] skipped scene migration for unsupported repository")
+                AppLog.note("[StoryLibraryVM] skipped scene migration for unsupported repository")
             }
         }
 
@@ -364,7 +364,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
             } else {
                 // Cloud implementations should provide an equivalent migration
                 // operation. Do not rewrite timestamps through saveSession here.
-                NSLog("[StoryLibraryVM] skipped session migration for unsupported repository")
+                AppLog.note("[StoryLibraryVM] skipped session migration for unsupported repository")
             }
         }
 
@@ -381,7 +381,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
             // A non-local repository can define its own atomic move operation.
             // Do not copy/delete here: doing so is not safe when IDs are used as
             // the repository's replacement key.
-            NSLog("[StoryLibraryVM] skipped memory migration for unsupported repository")
+            AppLog.note("[StoryLibraryVM] skipped memory migration for unsupported repository")
         }
     }
 
@@ -518,7 +518,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 japanese: "保存データを完全に読み込めませんでした。内容を空のまま保存できないため、再読み込みしてください。",
                 english: "The saved story data could not be loaded completely. Reload before saving so existing cast and lorebook data are not erased."
             )
-            NSLog("[StoryWorldCreateVM] load failed: %@", String(describing: error))
+            AppLog.error("[StoryWorldCreateVM] load failed: %@", String(describing: error))
         }
     }
 
@@ -611,7 +611,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 maxOutputTokens: 8192
             ).text
         } catch {
-            NSLog("[StoryWorldCreateVM] template generation failed: %@", error.localizedDescription)
+            AppLog.error("[StoryWorldCreateVM] template generation failed: %@", error.localizedDescription)
             saveError = KizunaCopy.text(
                 japanese: "雛形の生成に失敗しました。API設定と入力内容を確認して、もう一度試してください。",
                 english: "The template could not be generated. Check the API settings and your idea, then try again."
@@ -637,7 +637,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 english: "The template was applied to the form."
             )
         } catch {
-            NSLog("[StoryWorldCreateVM] template decode/apply failed: %@", error.localizedDescription)
+            AppLog.error("[StoryWorldCreateVM] template decode/apply failed: %@", error.localizedDescription)
             saveError = KizunaCopy.text(
                 japanese: "雛形の読み込みに失敗しました。生成内容を確認して、もう一度試してください。",
                 english: "The template could not be loaded. Check the generated content and try again."
@@ -919,7 +919,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
             pendingGeneratedCharacters.removeAll()
             return world
         } catch {
-            NSLog("[StoryWorldCreateVM] save failed: %@", error.localizedDescription)
+            AppLog.error("[StoryWorldCreateVM] save failed: %@", error.localizedDescription)
             // Worldを書けていない場合は、この画面だけが作ったキャラを戻す。
             // Worldまで確定済みなら、関連Castを保持したまま次回保存で再開できる。
             // ここでpendingをdiscardすると、保存済みWorldのcharacterIdsだけが
@@ -1316,7 +1316,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
             castLoadFailed = false
         } catch {
             castLoadFailed = true
-            NSLog("[StoryWorldDetailVM] cast load failed: %@", error.localizedDescription)
+            AppLog.error("[StoryWorldDetailVM] cast load failed: %@", error.localizedDescription)
             return
         }
         let scenes: [StoryScene]
@@ -1335,7 +1335,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
         } catch {
             // 読込失敗を空配列へ変換すると、新規セッション作成やキャスト修復が
             // 既存データを上書きする。スナップショット全体を保持して再試行する。
-            NSLog("[StoryWorldDetailVM] snapshot load failed: %@", error.localizedDescription)
+            AppLog.error("[StoryWorldDetailVM] snapshot load failed: %@", error.localizedDescription)
             sceneLoadFailed = true
             sessionLoadFailed = true
             characterLoadFailed = true
@@ -1402,7 +1402,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
                 try await sessionRepo.saveSession(repaired)
             } catch {
                 sessionSaveFailed = true
-                NSLog("[StoryWorldDetailVM] repaired session save failed: %@", error.localizedDescription)
+                AppLog.error("[StoryWorldDetailVM] repaired session save failed: %@", error.localizedDescription)
                 return nil
             }
             await reload()
@@ -1434,7 +1434,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
             try await sessionRepo.saveSession(session)
         } catch {
             sessionSaveFailed = true
-            NSLog("[StoryWorldDetailVM] new session save failed: %@", error.localizedDescription)
+            AppLog.error("[StoryWorldDetailVM] new session save failed: %@", error.localizedDescription)
             return nil
         }
         await reload()
@@ -1631,7 +1631,7 @@ final class StorySessionViewModel: ObservableObject {
                 japanese: "物語の保存状態を確認できませんでした。再試行してください。",
                 english: "The story's saved state could not be checked. Try again."
             )
-            NSLog("[StorySessionVM] interrupted turn recovery failed: %@", error.localizedDescription)
+            AppLog.error("[StorySessionVM] interrupted turn recovery failed: %@", error.localizedDescription)
             return
         }
         await restorePendingMemoryRetries()
@@ -1650,7 +1650,7 @@ final class StorySessionViewModel: ObservableObject {
                 japanese: "キャラクター情報を読み込めませんでした。再試行してください。",
                 english: "The story characters could not be loaded. Try again."
             )
-            NSLog("[StorySessionVM] bootstrap failed: %@", error.localizedDescription)
+            AppLog.error("[StorySessionVM] bootstrap failed: %@", error.localizedDescription)
             return
         }
         consumePendingDebugRestSuggestionRequest()
@@ -1695,7 +1695,7 @@ final class StorySessionViewModel: ObservableObject {
                 japanese: "保存待ちの記憶を読み込めませんでした。保存先を確認して再試行してください。",
                 english: "Pending memory saves could not be loaded. Check storage and try again."
             )
-            NSLog("[StorySessionVM] memory retry restore failed: %@", error.localizedDescription)
+            AppLog.error("[StorySessionVM] memory retry restore failed: %@", error.localizedDescription)
         }
     }
 
@@ -1717,7 +1717,7 @@ final class StorySessionViewModel: ObservableObject {
         // Storyを開くまでの時間を制限しない。設定画面から先に予約しても失わない。
         guard requestedAt > 0, Date().timeIntervalSince1970 - requestedAt < 24 * 60 * 60 else { return }
         UserDefaults.standard.removeObject(forKey: KizunaDebugOptions.restSuggestionRequestKey)
-        NSLog("[KizunaDebug] rest suggestion request consumed")
+        AppLog.note("[KizunaDebug] rest suggestion request consumed")
         startDebugRestSuggestionTimer()
     }
 
@@ -1738,7 +1738,7 @@ final class StorySessionViewModel: ObservableObject {
                 characterID: self.characterID(for: character),
                 characterName: characterName
             )
-            NSLog("[KizunaDebug] rest suggestion card published")
+            AppLog.note("[KizunaDebug] rest suggestion card published")
         }
     }
 
@@ -1760,7 +1760,7 @@ final class StorySessionViewModel: ObservableObject {
         // Storyを開くまでの時間を制限しない。設定画面から先に予約しても失わない。
         guard requestedAt > 0, Date().timeIntervalSince1970 - requestedAt < 24 * 60 * 60 else { return }
         UserDefaults.standard.removeObject(forKey: KizunaDebugOptions.safetyConcernRequestKey)
-        NSLog("[KizunaDebug] safety concern request consumed")
+        AppLog.note("[KizunaDebug] safety concern request consumed")
         startDebugSafetyConcernTimer()
     }
 
@@ -1775,7 +1775,7 @@ final class StorySessionViewModel: ObservableObject {
             guard let self else { return }
             UserDefaults.standard.removeObject(forKey: KizunaDebugOptions.safetyConcernRequestKey)
             self.service.showDebugSafetyConcern()
-            NSLog("[KizunaDebug] safety concern card published")
+            AppLog.note("[KizunaDebug] safety concern card published")
         }
     }
 
@@ -1811,7 +1811,7 @@ final class StorySessionViewModel: ObservableObject {
                     english: "This response could not be undone. The saved conversation was left unchanged."
                 )
                 await self.refreshAfterTurn()
-                NSLog("[StorySessionVM] undo response failed: %@", error.localizedDescription)
+                AppLog.error("[StorySessionVM] undo response failed: %@", error.localizedDescription)
             }
         }
     }
@@ -1861,7 +1861,7 @@ final class StorySessionViewModel: ObservableObject {
                     english: "Regeneration could not be prepared. The saved conversation was left unchanged."
                 )
                 await self.refreshAfterTurn()
-                NSLog("[StorySessionVM] regenerate response failed: %@", error.localizedDescription)
+                AppLog.error("[StorySessionVM] regenerate response failed: %@", error.localizedDescription)
             }
         }
     }
@@ -2066,7 +2066,7 @@ final class StorySessionViewModel: ObservableObject {
                         japanese: "続行メッセージを保存できませんでした。もう一度お試しください。",
                         english: "The continue message could not be saved. Try again."
                     )
-                    NSLog("[StorySessionVM] runtime acknowledgement retry failed: %@", error.localizedDescription)
+                    AppLog.error("[StorySessionVM] runtime acknowledgement retry failed: %@", error.localizedDescription)
                 }
             }
             return true
@@ -2269,7 +2269,7 @@ final class StorySessionViewModel: ObservableObject {
                     japanese: "続行メッセージを保存できませんでした。もう一度お試しください。",
                     english: "The continue message could not be saved. Try again."
                 )
-                NSLog("[StorySessionVM] rest acknowledgement save failed: %@", error.localizedDescription)
+                AppLog.error("[StorySessionVM] rest acknowledgement save failed: %@", error.localizedDescription)
             }
         }
     }

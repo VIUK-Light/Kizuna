@@ -600,7 +600,7 @@ final class StorySessionService: ObservableObject {
             // Keep the in-memory retry visible for the current screen. The
             // notice remains actionable, while the persistence error is not
             // allowed to masquerade as a successful auxiliary save.
-            NSLog(
+            AppLog.note(
                 "[StorySession] memory retry queue save failed turn=%@: %@",
                 retry.turnID.uuidString,
                 error.localizedDescription
@@ -618,7 +618,7 @@ final class StorySessionService: ObservableObject {
         } catch {
             // The auxiliary write is already complete. Retaining the journal
             // is safe and lets the next recovery retry the idempotent cleanup.
-            NSLog(
+            AppLog.note(
                 "[StorySession] memory retry journal cleanup deferred turn=%@: %@",
                 turnID.uuidString,
                 error.localizedDescription
@@ -650,7 +650,7 @@ final class StorySessionService: ObservableObject {
                 do {
                     try await storyMemoryRetryRepo.deleteRetry(turnID: retry.turnID)
                 } catch {
-                    NSLog(
+                    AppLog.note(
                         "[StorySession] deleted memory retry cleanup deferred turn=%@: %@",
                         retry.turnID.uuidString,
                         error.localizedDescription
@@ -659,14 +659,14 @@ final class StorySessionService: ObservableObject {
                 _ = await removeStoryMemoryJournal(for: retry.turnID)
                 return false
             }
-            NSLog(
+            AppLog.note(
                 "[StorySession] memory retry completion marker failed turn=%@: %@",
                 retry.turnID.uuidString,
                 error.localizedDescription
             )
             return false
         } catch {
-            NSLog(
+            AppLog.note(
                 "[StorySession] memory retry completion marker failed turn=%@: %@",
                 retry.turnID.uuidString,
                 error.localizedDescription
@@ -685,7 +685,7 @@ final class StorySessionService: ObservableObject {
         } catch {
             // The completion marker remains durable and is filtered during
             // restore. Journal recovery can purge it once the journal is gone.
-            NSLog(
+            AppLog.note(
                 "[StorySession] completed memory retry cleanup deferred turn=%@: %@",
                 retry.turnID.uuidString,
                 error.localizedDescription
@@ -786,7 +786,7 @@ final class StorySessionService: ObservableObject {
                     pendingStoryMemoryRetries.removeValue(forKey: retry.turnID)
                     pendingStoryMemoryRetryOrder.removeAll { $0 == retry.turnID }
                 } catch {
-                    NSLog(
+                    AppLog.note(
                         "[StorySession] stale memory retry cleanup failed turn=%@: %@",
                         retry.turnID.uuidString,
                         error.localizedDescription
@@ -980,7 +980,7 @@ final class StorySessionService: ObservableObject {
         } catch {
             // The cancelled checkpoint is itself a durable fence. Bootstrap
             // will mark a stale retry completed before it can save memory.
-            NSLog(
+            AppLog.note(
                 "[StorySession] undo retry cleanup deferred turn=%@: %@",
                 checkpoint.turnID.uuidString,
                 error.localizedDescription
@@ -1032,7 +1032,7 @@ final class StorySessionService: ObservableObject {
                 backend: .persistence,
                 retryAction: .narration(text: trimmed)
             )
-            NSLog("[StorySession] narration save failed: %@", error.localizedDescription)
+            AppLog.error("[StorySession] narration save failed: %@", error.localizedDescription)
         }
     }
 
@@ -1067,7 +1067,7 @@ final class StorySessionService: ObservableObject {
                     characterName: characterName
                 )
             )
-            NSLog("[StorySession] rest acknowledgement save failed: %@", error.localizedDescription)
+            AppLog.error("[StorySession] rest acknowledgement save failed: %@", error.localizedDescription)
             // Keep the throwing contract honest so the ViewModel can retain
             // the suggestion card and expose a retryable error to the user.
             throw error
@@ -1113,7 +1113,7 @@ final class StorySessionService: ObservableObject {
     /// DEBUG用。会話を変更せず、相談サポートUIだけを表示する。
     func showDebugSafetyConcern() {
         latestSafetyConcern = SafetyConcern.debugSample
-        NSLog("[SafetyConcern] debug card published")
+        AppLog.note("[SafetyConcern] debug card published")
     }
 
     /// 利用者がサポートカードを閉じた時だけ、現在のUI表示を消す。
@@ -1256,7 +1256,7 @@ final class StorySessionService: ObservableObject {
                         failureCode: "user_cancelled"
                     )
                 } catch {
-                    NSLog("[StorySession] cancel cleanup failed: %@", error.localizedDescription)
+                    AppLog.error("[StorySession] cancel cleanup failed: %@", error.localizedDescription)
                     guard let userMessageID, let self else { return }
                     await MainActor.run {
                         // cancel() clears the active IDs immediately. Do not
@@ -1398,7 +1398,7 @@ final class StorySessionService: ObservableObject {
                 userText: userText,
                 backendName: "turn begin failed"
             )
-            NSLog("[StorySession] turn begin failed: %@", error.localizedDescription)
+            AppLog.error("[StorySession] turn begin failed: %@", error.localizedDescription)
             return
         }
         guard session.latestTurnCheckpoint?.status == .pending else {
@@ -1425,7 +1425,7 @@ final class StorySessionService: ObservableObject {
                     failureCode: "cancelled_before_pipeline"
                 )
             } catch {
-                NSLog("[StorySession] pre-pipeline cancel cleanup failed: %@", error.localizedDescription)
+                AppLog.error("[StorySession] pre-pipeline cancel cleanup failed: %@", error.localizedDescription)
             }
             return
         }
@@ -1447,7 +1447,7 @@ final class StorySessionService: ObservableObject {
                 userText: userText,
                 backendName: "character load failed"
             )
-            NSLog("[StorySession] character load failed: %@", error.localizedDescription)
+            AppLog.error("[StorySession] character load failed: %@", error.localizedDescription)
             return
         }
         let charIndex = allCharacters.reduce(into: [UUID: CharacterProfile]()) { result, character in
@@ -1469,7 +1469,7 @@ final class StorySessionService: ObservableObject {
                 userText: userText,
                 backendName: "cast load failed"
             )
-            NSLog("[StorySession] cast load failed: %@", error.localizedDescription)
+            AppLog.error("[StorySession] cast load failed: %@", error.localizedDescription)
             return
         }
         let reconciledCast = reconciledCast(cast, for: world, scene: scene)
@@ -1502,7 +1502,7 @@ final class StorySessionService: ObservableObject {
                     userText: userText,
                     backendName: "cast save failed"
                 )
-                NSLog("[StorySession] cast reconciliation save failed: %@", error.localizedDescription)
+                AppLog.error("[StorySession] cast reconciliation save failed: %@", error.localizedDescription)
                 return
             }
         } else {
@@ -1550,7 +1550,7 @@ final class StorySessionService: ObservableObject {
         // モデルが遅い／利用できない場合でも相談先を表示できるようにする。
         if let safetyConcern {
             self.latestSafetyConcern = safetyConcern
-            NSLog(
+            AppLog.note(
                 "[SafetyConcern] detected category=%@ level=%@ confidence=%.2f",
                 safetyConcern.category.rawValue,
                 safetyConcern.level.rawValue,
@@ -1598,7 +1598,7 @@ final class StorySessionService: ObservableObject {
                     userText: userText,
                     backendName: "safety notice save failed"
                 )
-                NSLog("[StorySession] safety notice save failed: %@", error.localizedDescription)
+                AppLog.error("[StorySession] safety notice save failed: %@", error.localizedDescription)
                 return
             }
             await MainActor.run {
@@ -1727,7 +1727,7 @@ final class StorySessionService: ObservableObject {
             // A failed migration must not prevent the current turn. The
             // unassigned records remain preserved and are still excluded from
             // this prompt until a later safe migration succeeds.
-            NSLog(
+            AppLog.note(
                 "[StorySession] legacy StoryMemory assignment skipped world=%@ error=%@",
                 world.id.uuidString,
                 error.localizedDescription
@@ -2071,7 +2071,7 @@ final class StorySessionService: ObservableObject {
                 generationID: generationID
             )
             if isDuplicateStoryOutput(firstMessages, in: session) {
-                NSLog(
+                AppLog.note(
                     "[StorySession] duplicate output rejected attempt=1 chars=%ld messages=%ld",
                     rawFinal.count,
                     firstMessages.count
@@ -2116,7 +2116,7 @@ final class StorySessionService: ObservableObject {
                         generationID: generationID
                     )
                     if isDuplicateStoryOutput(retriedMessages, in: session) {
-                        NSLog(
+                        AppLog.note(
                             "[StorySession] duplicate output rejected attempt=2 chars=%ld messages=%ld",
                             rawFinal.count,
                             retriedMessages.count
@@ -2182,7 +2182,7 @@ final class StorySessionService: ObservableObject {
                     .evaluateOutput(safetyText, character: representativeCharacter)
                     .action
             } else {
-                NSLog("[StorySession] STATE_UPDATE could not be serialized for safety evaluation; dropping patch")
+                AppLog.note("[StorySession] STATE_UPDATE could not be serialized for safety evaluation; dropping patch")
             }
         }
         let outSafety = await safetyPipeline.evaluateOutput(rawFinal, character: representativeCharacter)
@@ -2310,7 +2310,7 @@ final class StorySessionService: ObservableObject {
             session.messages.append(message)
         }
         let savedMessageIDs = turnMessages.map(\.id.uuidString).joined(separator: ",")
-        NSLog(
+        AppLog.note(
             "[StorySession] saved generated messages count=%ld ids=%@ backend=%@",
             newMessages.count,
             savedMessageIDs,
@@ -2528,7 +2528,7 @@ final class StorySessionService: ObservableObject {
                 memoryRetries: pendingMemoryRetry.map { [$0] } ?? []
             )
         } catch {
-            NSLog("[StorySession] turn commit failed: %@", error.localizedDescription)
+            AppLog.error("[StorySession] turn commit failed: %@", error.localizedDescription)
             let retry = StoryTurnCommitRetry(
                 session: session,
                 scene: scene,
@@ -2569,7 +2569,7 @@ final class StorySessionService: ObservableObject {
                 try await memoryRepo.saveMemory(memory)
             } catch {
                 failedCharacterMemories.append(memory)
-                NSLog("[StorySession] character memory save failed turn=%@ memory=%@: %@", turnID.uuidString, memory.id.uuidString, error.localizedDescription)
+                AppLog.error("[StorySession] character memory save failed turn=%@ memory=%@: %@", turnID.uuidString, memory.id.uuidString, error.localizedDescription)
             }
         }
         if canContinueMemorySaves {
@@ -2582,7 +2582,7 @@ final class StorySessionService: ObservableObject {
                     try await storyMemoryRepo.saveMemory(memory)
                 } catch {
                     failedStoryMemories.append(memory)
-                    NSLog("[StorySession] story memory save failed turn=%@ memory=%@: %@", turnID.uuidString, memory.id.uuidString, error.localizedDescription)
+                    AppLog.error("[StorySession] story memory save failed turn=%@ memory=%@: %@", turnID.uuidString, memory.id.uuidString, error.localizedDescription)
                 }
             }
         }
@@ -2645,7 +2645,7 @@ final class StorySessionService: ObservableObject {
                 failureCode: "memory_retry_notice_unavailable"
             )
         } catch {
-            NSLog("[StorySession] failed to close committed turn after notice loss: %@", error.localizedDescription)
+            AppLog.error("[StorySession] failed to close committed turn after notice loss: %@", error.localizedDescription)
         }
     }
 
@@ -2678,7 +2678,7 @@ final class StorySessionService: ObservableObject {
             // A failed recovery must keep the exact-snapshot retry path. Do not
             // turn an unreadable or partially recovered store into a false
             // success.
-            NSLog(
+            AppLog.note(
                 "[StorySession] commit recovery check failed turn=%@: %@",
                 retry.turnID.uuidString,
                 error.localizedDescription
@@ -2749,7 +2749,7 @@ final class StorySessionService: ObservableObject {
         }
 
         if !didPublish {
-            NSLog(
+            AppLog.note(
                 "[StorySession] recovered committed turn without active UI owner turn=%@",
                 retry.turnID.uuidString
             )
@@ -2762,7 +2762,7 @@ final class StorySessionService: ObservableObject {
         retry: StoryTurnCommitRetry
     ) async {
         if await recoveredCommittedSession(for: retry) != nil {
-            NSLog(
+            AppLog.note(
                 "[StorySession] commit failure already recovered turn=%@",
                 retry.turnID.uuidString
             )
@@ -2809,7 +2809,7 @@ final class StorySessionService: ObservableObject {
                 failureCode: "commit_retry_notice_unavailable"
             )
         } catch {
-            NSLog("[StorySession] failed to close turn after commit retry notice loss: %@", error.localizedDescription)
+            AppLog.error("[StorySession] failed to close turn after commit retry notice loss: %@", error.localizedDescription)
         }
     }
 
@@ -2871,7 +2871,7 @@ final class StorySessionService: ObservableObject {
                 }
             }
         } catch {
-            NSLog("[StorySession] auxiliary turn commit retry failed turn=%@: %@", pendingRetry.turnID.uuidString, error.localizedDescription)
+            AppLog.error("[StorySession] auxiliary turn commit retry failed turn=%@: %@", pendingRetry.turnID.uuidString, error.localizedDescription)
             latestRuntimeNotice = StoryRuntimeNotice(
                 text: localizedNotice(
                     "保存を完了できませんでした。AI本文は再生成せず、保存先を確認してからもう一度試してください。",
@@ -2922,7 +2922,7 @@ final class StorySessionService: ObservableObject {
                 // Keep the complete retry payload if the cross-file
                 // transaction could not commit. It is safer to retry an
                 // idempotent merge than to acknowledge a partial write.
-                NSLog(
+                AppLog.note(
                     "[StorySession] memory retry transaction failed turn=%@: %@",
                     retry.turnID.uuidString,
                     error.localizedDescription
@@ -2937,7 +2937,7 @@ final class StorySessionService: ObservableObject {
                 try await memoryRepo.saveMemory(memory)
             } catch {
                 remainingCharacterMemories.append(memory)
-                NSLog("[StorySession] character memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, memory.id.uuidString, error.localizedDescription)
+                AppLog.error("[StorySession] character memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, memory.id.uuidString, error.localizedDescription)
             }
         }
         var remainingStoryMemories: [StoryMemory] = []
@@ -2957,7 +2957,7 @@ final class StorySessionService: ObservableObject {
                     // payload. Retrying it forever would keep an impossible
                     // notice visible and could resurrect deleted state in a
                     // replaceable repository implementation.
-                    NSLog(
+                    AppLog.note(
                         "[StorySession] dropped story memory retry for deleted session turn=%@ memory=%@",
                         retry.turnID.uuidString,
                         ownedMemory.id.uuidString
@@ -2965,10 +2965,10 @@ final class StorySessionService: ObservableObject {
                     continue
                 }
                 remainingStoryMemories.append(ownedMemory)
-                NSLog("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, ownedMemory.id.uuidString, error.localizedDescription)
+                AppLog.error("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, ownedMemory.id.uuidString, error.localizedDescription)
             } catch {
                 remainingStoryMemories.append(ownedMemory)
-                NSLog("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, ownedMemory.id.uuidString, error.localizedDescription)
+                AppLog.error("[StorySession] story memory retry failed turn=%@ memory=%@: %@", retry.turnID.uuidString, ownedMemory.id.uuidString, error.localizedDescription)
             }
         }
 
@@ -3043,7 +3043,7 @@ final class StorySessionService: ObservableObject {
                 )
             } catch {
                 finishFailed = true
-                NSLog("[StorySession] generation failure cleanup failed: %@", error.localizedDescription)
+                AppLog.error("[StorySession] generation failure cleanup failed: %@", error.localizedDescription)
             }
         }
         let displayedNotice = finishFailed
@@ -3103,7 +3103,7 @@ final class StorySessionService: ObservableObject {
                 failureCode: "generation_cancelled"
             )
         } catch {
-            NSLog("[StorySession] cancellation cleanup failed: %@", error.localizedDescription)
+            AppLog.error("[StorySession] cancellation cleanup failed: %@", error.localizedDescription)
         }
     }
 
@@ -3212,7 +3212,7 @@ final class StorySessionService: ObservableObject {
             // APIエラーをNPC本文として整形すると、空レスポンス時に
             // 同じキャラのフォールバック発話が追加されるためsystem通知にする。
             let message = gemmaRuntimeNotice(for: error)
-            NSLog("[StoryGemma31B] generation failed: %@", error.localizedDescription)
+            AppLog.error("[StoryGemma31B] generation failed: %@", error.localizedDescription)
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = message
@@ -3225,7 +3225,7 @@ final class StorySessionService: ObservableObject {
                 "Gemma4 31B API の応答に失敗しました。もう一度試してください。",
                 "Gemma4 31B API failed to respond. Try again."
             )
-            NSLog("[StoryGemma31B] generation failed: %@", error.localizedDescription)
+            AppLog.error("[StoryGemma31B] generation failed: %@", error.localizedDescription)
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = message
@@ -3305,7 +3305,7 @@ final class StorySessionService: ObservableObject {
                             failureCode: "generation_timeout"
                         )
                     } catch {
-                        NSLog("[StorySession] timeout cleanup failed: %@", error.localizedDescription)
+                        AppLog.error("[StorySession] timeout cleanup failed: %@", error.localizedDescription)
                     }
                 }
             }

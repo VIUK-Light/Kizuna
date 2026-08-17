@@ -3,16 +3,54 @@
 - 役割: パスワードやプロダクトキーをKeychainへ保存・取得する最小ユーティリティ。
 - 主な型: `KeychainHelper`.
 - 編集ポイント: 保存キー、旧サービスからの移行、削除や読込ルールを変えるときに触る。
+- セキュリティ方針:
+  - シークレットのメモリキャッシュはロックで保護し、バックグラウンド遷移や
+    保護データ利用不可能時に速やかに消去する（GHSA-fwp3-xf4f-v466）。
+  - 端末ロック後も平文シークレットをメモリに残し続けない。
 */
 import Foundation
 import Security
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// シンプルなKeychainユーティリティ（クライアント完結・実験用途）
 final class KeychainHelper {
     static let shared = KeychainHelper()
+
+    /// cachedValues / missingKeys へのアクセスを直列化する。
+    /// getString はレガシー移行で setString を呼ぶため、公開メソッドは
+    /// ロックを取得せず、ロック内で動く private 実装に委譲する（非再帰ロックでのデッドロック回避）。
+    private let cacheLock = NSLock()
     private var cachedValues: [String: String] = [:]
     private var missingKeys: Set<String> = []
-    private init() {}
+
+    private init() {
+        #if canImport(UIKit)
+        // 端末ロックで保護データが利用不可能になったらキャッシュを消す。
+        // WhenUnlockedThisDeviceOnly の項目もこの時点では読めなくなるため、
+        // メモリだけが残存保護となる。通知はメインスレッド以外で来る場合がある。
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleProtectedDataUnavailable),
+            name: UIApplication.protectedDataWillBecomeUnavailableNotification,
+            object: nil
+        )
+        #endif
+    }
+
+    @objc private func handleProtectedDataUnavailable() {
+        clearInMemoryCaches()
+    }
+
+    /// メモリ上のシークレットキャッシュを消去する。
+    /// アプリがバックグラウンドへ遷移するタイミング等で呼ぶ。
+    func clearInMemoryCaches() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        cachedValues.removeAll()
+        missingKeys.removeAll()
+    }
 
     private var currentService: String { AppBrand.keychainService }
     private var readableServices: [String] { [AppBrand.keychainService] + AppBrand.legacyKeychainServices }
@@ -46,6 +84,33 @@ final class KeychainHelper {
 
     @discardableResult
     func setString(_ value: String, forKey key: String) -> Bool {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return setStringLocked(value, forKey: key)
+    }
+
+    func getString(forKey key: String) -> String? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return getStringLocked(forKey: key)
+    }
+
+    @discardableResult
+    func delete(key: String) -> Bool {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return deleteLocked(key: key)
+    }
+
+    func clearAllBrandValues() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        clearAllBrandValuesLocked()
+    }
+
+    // MARK: - Locked implementations
+
+    private func setStringLocked(_ value: String, forKey key: String) -> Bool {
         guard let data = value.data(using: .utf8) else { return false }
         let cacheIdentifier = cacheKey(for: key)
 
@@ -69,14 +134,14 @@ final class KeychainHelper {
         if status == errSecSuccess {
             cachedValues[cacheIdentifier] = value
             missingKeys.remove(cacheIdentifier)
-            deleteLegacyOnly(key: key)
+            deleteLegacyOnlyLocked(key: key)
             return true
         }
 
         return false
     }
 
-    func getString(forKey key: String) -> String? {
+    private func getStringLocked(forKey key: String) -> String? {
         let cacheIdentifier = cacheKey(for: key)
         if let cached = cachedValues[cacheIdentifier] {
             return cached
@@ -98,7 +163,7 @@ final class KeychainHelper {
                 cachedValues[cacheIdentifier] = string
                 missingKeys.remove(cacheIdentifier)
                 if entry.migrate {
-                    setString(string, forKey: key)
+                    _ = setStringLocked(string, forKey: key)
                 }
                 return string
             }
@@ -107,8 +172,7 @@ final class KeychainHelper {
         return nil
     }
 
-    @discardableResult
-    func delete(key: String) -> Bool {
+    private func deleteLocked(key: String) -> Bool {
         let cacheIdentifier = cacheKey(for: key)
         var succeeded = true
         for service in readableServices {
@@ -140,7 +204,7 @@ final class KeychainHelper {
         return succeeded
     }
 
-    private func deleteLegacyOnly(key: String) {
+    private func deleteLegacyOnlyLocked(key: String) {
         for service in AppBrand.legacyKeychainServices where service != currentService {
             let legacyQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
@@ -151,7 +215,7 @@ final class KeychainHelper {
         }
     }
 
-    func clearAllBrandValues() {
+    private func clearAllBrandValuesLocked() {
         for service in readableServices {
             let legacyQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,

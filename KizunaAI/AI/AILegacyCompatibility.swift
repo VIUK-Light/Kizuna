@@ -269,7 +269,7 @@ enum AILegacyCompatibility {
     ) {
         guard value.count < maxUserDefaultsDataBytes else {
             #if DEBUG
-            NSLog(
+            AppLog.note(
                 "[AILegacyCompatibility] skipped oversized UserDefaults Data write: bytes=%d primary=%@ aliases=%d",
                 value.count,
                 primaryKey ?? "(none)",

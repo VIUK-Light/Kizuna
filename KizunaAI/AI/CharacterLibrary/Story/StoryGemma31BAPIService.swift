@@ -155,7 +155,7 @@ final class StoryGemma31BAPIService {
         let blockReason = response.promptFeedback?.blockReason ?? "none"
         let promptTokens = response.usageMetadata?.promptTokenCount ?? -1
         let outputTokens = response.usageMetadata?.candidatesTokenCount ?? -1
-        NSLog(
+        AppLog.note(
             "[StoryGemma31B] empty visible text candidates=%d parts=%d textParts=%d thoughtParts=%d finish=%@ block=%@ promptTokens=%d outputTokens=%d",
             candidates.count,
             parts.count,

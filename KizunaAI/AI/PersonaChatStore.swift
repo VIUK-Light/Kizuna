@@ -153,7 +153,7 @@ final class PersonaChatStore: ObservableObject {
     @Published private(set) var activeThreadID: UUID? {
         didSet {
             guard !didFailToLoadPersistedThreads else {
-                NSLog("[PersonaChatStore] skipped active thread write while recovery is required")
+                AppLog.note("[PersonaChatStore] skipped active thread write while recovery is required")
                 return
             }
             if let id = activeThreadID {
@@ -180,7 +180,7 @@ final class PersonaChatStore: ObservableObject {
         KizunaPersonaExportFileLifecycle.cleanupOrphanedFiles()
         load()
         guard !didFailToLoadPersistedThreads else {
-            NSLog("[PersonaChatStore] thread data was not decoded; preserving the source file")
+            AppLog.note("[PersonaChatStore] thread data was not decoded; preserving the source file")
             return
         }
         // 起動時に「空メッセージのスレッド」を 1 件残して残りを掃除する。
@@ -211,7 +211,7 @@ final class PersonaChatStore: ObservableObject {
         }
         guard let data = defaults.data(forKey: Key.threads) else {
             didFailToLoadPersistedThreads = true
-            NSLog("[PersonaChatStore] saved thread value is not a Data blob")
+            AppLog.note("[PersonaChatStore] saved thread value is not a Data blob")
             return
         }
         do {
@@ -219,13 +219,13 @@ final class PersonaChatStore: ObservableObject {
             self.threads = PersonaThreadOrdering.mostRecentFirst(decoded)
         } catch {
             didFailToLoadPersistedThreads = true
-            NSLog("[PersonaChatStore] failed to decode saved threads: %@", error.localizedDescription)
+            AppLog.error("[PersonaChatStore] failed to decode saved threads: %@", error.localizedDescription)
         }
     }
 
     private func persist() {
         guard !didFailToLoadPersistedThreads else {
-            NSLog("[PersonaChatStore] skipped thread persist while recovery is required")
+            AppLog.note("[PersonaChatStore] skipped thread persist while recovery is required")
             return
         }
         if let data = try? JSONEncoder().encode(threads) {
@@ -439,7 +439,7 @@ final class PersonaChatStore: ObservableObject {
     /// 復旧操作以外の公開ミューテーションは、メモリ上の状態も変更しない。
     private func canMutatePersistedState() -> Bool {
         guard !didFailToLoadPersistedThreads else {
-            NSLog("[PersonaChatStore] skipped mutation while recovery is required")
+            AppLog.note("[PersonaChatStore] skipped mutation while recovery is required")
             return false
         }
         return true

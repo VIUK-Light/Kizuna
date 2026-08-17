@@ -7,6 +7,7 @@ struct KizunaSettingsView: View {
 
     @State private var nagiAPIKey = ""
     @State private var modelSourceURL = ""
+    @State private var modelSourceSHA256 = ""
     @State private var modelAccessToken = ""
     @State private var modelSourceSelection: LocalModelSourceSelection = .standard
     @State private var selectedStandardModelURL = LocalAssistantModelProfile.defaultDownloadURL
@@ -144,6 +145,19 @@ struct KizunaSettingsView: View {
 
                         SecureField(KizunaCopy.text(japanese: "アクセストークン（必要な場合）", english: "Access token (if required)"), text: $modelAccessToken)
                             .textContentType(.password)
+
+                        TextField(KizunaCopy.text(japanese: "SHA-256（任意・整合性検証用）", english: "SHA-256 (optional, integrity check)"), text: $modelSourceSHA256)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+
+                        Text(KizunaCopy.text(
+                            japanese: "配布元が公開しているSHA-256（64桁の16進数）を入力すると、ダウンロード後に整合性を検証します。未入力の場合は形式のみ検証します。",
+                            english: "If you enter the SHA-256 digest (64 hex digits) published by the source, Kizuna verifies the download's integrity. Without it, only the format is checked."
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
                         Text(KizunaCopy.text(
                             japanese: "リポジトリページではなく、GGUFまたはLiteRT-LMファイルの直接ダウンロードURLを指定してください。",
@@ -360,6 +374,7 @@ struct KizunaSettingsView: View {
         } else {
             modelManager.updateSourceURL(modelSourceURL)
         }
+        modelManager.customSourceSHA256 = modelSourceSHA256
 
         let accessTokenSaved = modelManager.updateAccessToken(modelAccessToken)
         saveMessageIsError = !(apiKeySaved && accessTokenSaved)

@@ -486,7 +486,7 @@ struct PersonaChatView: View {
                     || nsError.code != NSFileNoSuchFileError else {
                 return true
             }
-            NSLog(
+            AppLog.note(
                 "[PersonaChatView] failed to remove recovery export file: %@",
                 "\(url.path): \(error.localizedDescription)"
             )
@@ -981,7 +981,7 @@ struct PersonaChatView: View {
                 } catch {
                     // 1つの壊れたWorldで、正常に読めた他Worldの履歴まで消さない。
                     failedWorldIDs.insert(world.id)
-                    NSLog("[PersonaChatView] story history session load failed for %@: %@", world.id.uuidString, error.localizedDescription)
+                    AppLog.error("[PersonaChatView] story history session load failed for %@: %@", world.id.uuidString, error.localizedDescription)
                 }
             }
             // 失敗したWorldについては、画面に表示済みだった履歴を残す。
@@ -1006,7 +1006,7 @@ struct PersonaChatView: View {
                 japanese: "ストーリー履歴を読み込めませんでした。再試行してください。",
                 english: "Story history could not be loaded. Try again."
             )
-            NSLog("[PersonaChatView] story history world load failed: %@", error.localizedDescription)
+            AppLog.error("[PersonaChatView] story history world load failed: %@", error.localizedDescription)
         }
     }
 

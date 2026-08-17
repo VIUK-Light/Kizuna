@@ -121,7 +121,7 @@ enum CharacterTemplateSeed {
             return true
         } catch {
             // 起動自体は止めないが、呼び出し側が空配列と区別できるように返す。
-            NSLog("[CharacterTemplateSeed] seed failed: %@", String(describing: error))
+            AppLog.error("[CharacterTemplateSeed] seed failed: %@", String(describing: error))
             return false
         }
     }
