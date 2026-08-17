@@ -31,7 +31,9 @@ struct KizunaMyPageView: View {
             KizunaUserProfileView(store: KizunaUserProfileStore.shared)
                 .viukAdaptiveSheetSizing(minWidth: 520, minHeight: 620)
         }
-        .sheet(isPresented: $isShowingDetailedSettings) {
+        .sheet(isPresented: $isShowingDetailedSettings, onDismiss: {
+            NotificationCenter.default.post(name: KizunaDebugOptions.settingsDismissedNotification, object: nil)
+        }) {
             KizunaSettingsView()
                 .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 680)
         }

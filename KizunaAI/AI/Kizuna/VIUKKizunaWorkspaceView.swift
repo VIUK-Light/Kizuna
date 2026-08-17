@@ -18,6 +18,9 @@ struct VIUKKizunaWorkspaceView: View {
     /// sheetを開いて別Worldを表示しないよう、遷移Taskを一つに限定する。
     @State private var pendingStoryOpenTask: Task<Void, Never>?
     @State private var pendingStoryRequestID: UUID?
+    /// デバッグ要求は設定シートの dismiss 完了後に Story を開く。dismiss 完了通知が
+    /// 届くまで「開く予約」だけを保持する。
+    @State private var pendingDebugStoryOpen = false
 
     private var selectedSectionBinding: Binding<KizunaWorkspaceSection> {
         Binding(
@@ -78,6 +81,9 @@ struct VIUKKizunaWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: KizunaDebugOptions.safetyConcernRequestNotification)) { _ in
             openDebugStory()
         }
+        .onReceive(NotificationCenter.default.publisher(for: KizunaDebugOptions.settingsDismissedNotification)) { _ in
+            flushPendingDebugStoryOpen()
+        }
 #if os(iOS)
         .fullScreenCover(item: $activeStoryWorld, onDismiss: resetStoryPresentation) { world in
             StorySessionChatView(
@@ -107,17 +113,30 @@ struct VIUKKizunaWorkspaceView: View {
             pendingStoryOpenTask?.cancel()
             pendingStoryOpenTask = nil
             pendingStoryRequestID = nil
+            pendingDebugStoryOpen = false
         }
     }
 
+    /// デバッグ要求を受け取った時点では設定シートがまだ dismiss 中のため、
+    /// 「開く予約」だけを立てる。実際の遷移は設定シートの dismiss 完了通知
+    /// （KizunaMyPageView の onDismiss）で実行する。
     private func openDebugStory() {
+        guard activeStoryWorld == nil else { return }
+        pendingDebugStoryOpen = true
+    }
+
+    private func flushPendingDebugStoryOpen() {
+        guard pendingDebugStoryOpen else { return }
+        pendingDebugStoryOpen = false
+        performDebugStoryOpen()
+    }
+
+    private func performDebugStoryOpen() {
         guard activeStoryWorld == nil else { return }
         pendingStoryOpenTask?.cancel()
         let requestID = UUID()
         pendingStoryRequestID = requestID
         pendingStoryOpenTask = Task { @MainActor in
-            // 設定シートのdismiss完了を待ってからStoryを表示する。
-            try? await Task.sleep(nanoseconds: 450_000_000)
             guard !Task.isCancelled, pendingStoryRequestID == requestID else { return }
             guard activeStoryWorld == nil else { return }
             let repository = LocalJSONStoryWorldRepository()
@@ -143,7 +162,6 @@ struct VIUKKizunaWorkspaceView: View {
         let requestID = UUID()
         pendingStoryRequestID = requestID
         pendingStoryOpenTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled, pendingStoryRequestID == requestID else { return }
             activeStorySessionID = sessionID
             activeStoryStartsNewSession = startsNewSession

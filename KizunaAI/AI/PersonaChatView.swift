@@ -26,6 +26,9 @@ struct PersonaChatView: View {
     @State private var activeStoryWorld: StoryWorld?
     @State private var activeStorySessionID: UUID?
     @State private var activeStoryStartsNewSession = false
+    /// ワールドライブラリーのシートが dismiss 完了してから Story シートを開くため、
+    /// 選択内容を一時的に保持する。固定待機に頼らずシートの重なりを防ぐ。
+    @State private var pendingStoryOpen: PendingStoryOpen?
     @State private var compactShowsChat = false
     @State private var storyHistoryItems: [StoryHistoryItem] = []
     @State private var storyHistoryLoadError: String?
@@ -59,6 +62,12 @@ struct PersonaChatView: View {
         _store = StateObject(wrappedValue: PersonaChatStore.shared)
         _service = StateObject(wrappedValue: PersonaChatService.shared)
         _settings = StateObject(wrappedValue: PersonaSettings.shared)
+    }
+
+    private struct PendingStoryOpen {
+        let world: StoryWorld
+        let sessionID: UUID?
+        let startsNewSession: Bool
     }
 
     var body: some View {
@@ -162,24 +171,20 @@ struct PersonaChatView: View {
             )
             .viukAdaptiveSheetSizing(minWidth: 720, minHeight: 720)
         }
-        .sheet(isPresented: $showWorldLibrary) {
+        .sheet(isPresented: $showWorldLibrary, onDismiss: {
+            flushPendingStoryOpen()
+        }) {
             StoryWorldLibraryView(
                 onStartSession: { world in
-                    activeStorySessionID = nil
-                    activeStoryStartsNewSession = false
-                    activeStoryWorld = world
+                    pendingStoryOpen = PendingStoryOpen(world: world, sessionID: nil, startsNewSession: false)
                     showWorldLibrary = false
                 },
                 onResumeSession: { world, sessionID in
-                    activeStorySessionID = sessionID
-                    activeStoryStartsNewSession = false
-                    activeStoryWorld = world
+                    pendingStoryOpen = PendingStoryOpen(world: world, sessionID: sessionID, startsNewSession: false)
                     showWorldLibrary = false
                 },
                 onStartNewSession: { world in
-                    activeStorySessionID = nil
-                    activeStoryStartsNewSession = true
-                    activeStoryWorld = world
+                    pendingStoryOpen = PendingStoryOpen(world: world, sessionID: nil, startsNewSession: true)
                     showWorldLibrary = false
                 }
             )
@@ -296,6 +301,14 @@ struct PersonaChatView: View {
         } message: {
             Text(personaRecoveryErrorMessage ?? "")
         }
+    }
+
+    private func flushPendingStoryOpen() {
+        guard let request = pendingStoryOpen else { return }
+        pendingStoryOpen = nil
+        activeStorySessionID = request.sessionID
+        activeStoryStartsNewSession = request.startsNewSession
+        activeStoryWorld = request.world
     }
 
     private var personaRecoveryBanner: some View {
