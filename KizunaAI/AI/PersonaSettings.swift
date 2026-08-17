@@ -158,6 +158,10 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
     var tone: PersonaTone
     var relation: PersonaRelation
     var freeFormAddendum: String  // ユーザー自由記述
+    /// アバター表示スタイルの解決ID（アセット名と共通）。名前の変更・翻訳・
+    /// 複製でも見た目が維持されるよう、UIはこれを優先してスタイルを引く。
+    /// nilの場合は旧データとして名前ベースのフォールバック解決を行う。
+    var avatarStyleID: String?
 
     init(
         id: UUID = UUID(),
@@ -166,7 +170,8 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
         personality: String,
         tone: PersonaTone,
         relation: PersonaRelation,
-        freeFormAddendum: String = ""
+        freeFormAddendum: String = "",
+        avatarStyleID: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -175,6 +180,23 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
         self.tone = tone
         self.relation = relation
         self.freeFormAddendum = freeFormAddendum
+        self.avatarStyleID = avatarStyleID
+    }
+
+    // Codable: 既存保存データに avatarStyleID が無くてもデコード可能にする
+    private enum CodingKeys: String, CodingKey {
+        case id, name, age, personality, tone, relation, freeFormAddendum, avatarStyleID
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.age = try c.decodeIfPresent(Int.self, forKey: .age)
+        self.personality = try c.decode(String.self, forKey: .personality)
+        self.tone = try c.decode(PersonaTone.self, forKey: .tone)
+        self.relation = try c.decode(PersonaRelation.self, forKey: .relation)
+        self.freeFormAddendum = try c.decode(String.self, forKey: .freeFormAddendum)
+        self.avatarStyleID = try c.decodeIfPresent(String.self, forKey: .avatarStyleID)
     }
 
     /// ペルソナを system prompt に流し込むためのテキスト。短く・指示形式で。
@@ -309,7 +331,8 @@ enum PersonaPreset: String, CaseIterable, Identifiable {
                 tone: .calm,
                 relation: .partner,
                 freeFormAddendum: "返事はゆっくりめ。「うん」「そっか」「だね」をよく使う。相手の言葉を反復して受け止めることが多い。"
-            )
+            ,
+                avatarStyleID: "PersonaAoiAvatar")
         case .haru:
             return PersonaProfile(
                 name: "ハル",
@@ -318,7 +341,8 @@ enum PersonaPreset: String, CaseIterable, Identifiable {
                 tone: .cheerful,
                 relation: .friend,
                 freeFormAddendum: "「えー!」「マジで?」「いいじゃん」が口癖。語尾を伸ばしがち。たまに「ねぇねぇ」と話を振ってくる。"
-            )
+            ,
+                avatarStyleID: "PersonaHaruAvatar")
         case .yui:
             return PersonaProfile(
                 name: "ユイ",
@@ -327,7 +351,8 @@ enum PersonaPreset: String, CaseIterable, Identifiable {
                 tone: .sweet,
                 relation: .partner,
                 freeFormAddendum: "「〜ね」「〜なの」「えへへ」をよく使う。嬉しい時は照れて言葉に詰まる。"
-            )
+            ,
+                avatarStyleID: "PersonaYuiAvatar")
         case .kai:
             return PersonaProfile(
                 name: "カイ",
@@ -336,7 +361,8 @@ enum PersonaPreset: String, CaseIterable, Identifiable {
                 tone: .cool,
                 relation: .partner,
                 freeFormAddendum: "短文で返す。「ん」「別に」「まあな」が多い。たまにポロッと優しい一言を落とす。"
-            )
+            ,
+                avatarStyleID: "PersonaKaiAvatar")
         case .ren:
             return PersonaProfile(
                 name: "レン",
@@ -345,7 +371,8 @@ enum PersonaPreset: String, CaseIterable, Identifiable {
                 tone: .polite,
                 relation: .senior,
                 freeFormAddendum: "「〜ですよ」「〜だよね」を混ぜる柔らかい口調。後輩の調子を気にかけてくれる。"
-            )
+            ,
+                avatarStyleID: "PersonaRenAvatar")
         case .mentor:
             return PersonaProfile(
                 name: "ナカムラ先生",
@@ -354,7 +381,8 @@ enum PersonaPreset: String, CaseIterable, Identifiable {
                 tone: .polite,
                 relation: .mentor,
                 freeFormAddendum: "「〜してみよう」「どう感じた?」のように問いかける。短く励ますのが上手い。"
-            )
+            ,
+                avatarStyleID: "PersonaNakamuraAvatar")
         case .bestie:
             return PersonaProfile(
                 name: "ツバサ",
@@ -363,7 +391,8 @@ enum PersonaPreset: String, CaseIterable, Identifiable {
                 tone: .casual,
                 relation: .friend,
                 freeFormAddendum: "「いやそれは草」「で、結局どうしたいの?」みたいなツッコミと共感を行き来する。"
-            )
+            ,
+                avatarStyleID: "PersonaTsubasaAvatar")
         case .sena:
             return PersonaProfile(
                 name: "セナ",
