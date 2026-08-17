@@ -140,7 +140,7 @@ jobs:
               ;;
             *)
               CLASS="NORMAL"
-              MODEL="opencode-go/deepseek-v4-pro"
+              MODEL="opencode-go/gpt-5.6-luna"
               ;;
           esac
 
@@ -215,8 +215,8 @@ jobs:
             opencode-go/deepseek-v4-flash)
               MODEL_NAME="DeepSeek V4 Flash"
               ;;
-            opencode-go/deepseek-v4-pro)
-              MODEL_NAME="DeepSeek V4 Pro"
+            opencode-go/gpt-5.6-luna)
+              MODEL_NAME="GPT-5.6 Luna"
               ;;
             opencode-go/glm-5.3)
               MODEL_NAME="GLM-5.3"
@@ -234,7 +234,7 @@ jobs:
               SOURCE_NAME="手動指定"
               ;;
             fallback)
-              SOURCE_NAME="自動判定失敗のため標準モデル"
+              SOURCE_NAME="自動判定失敗のためLuna"
               ;;
             *)
               SOURCE_NAME="自動判定"
