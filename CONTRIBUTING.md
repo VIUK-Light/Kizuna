@@ -73,6 +73,17 @@ xcodebuild -project KizunaAI.xcodeproj -scheme KizunaAI -destination 'generic/pl
 
 PRは修正依頼、保留、またはクローズされる場合があります。クローズは貢献者個人への否定ではなく、スコープ、品質、保守性、方針との整合性に基づく判断です。
 
+## 文言の追加（国際化）
+
+UI文言の追加・変更は [docs/i18n.md](docs/i18n.md) の方針に従ってください。
+
+- **新規画面・新規文言で `KizunaCopy.text` を使わない。**
+  `Localizable.xcstrings`（String Catalog）にキーを追加して使う。
+- 既存画面の `KizunaCopy.text` は、その画面を変更するタイミングで
+  あわせて String Catalog へ移行する。
+- 複数形が分かれる英語文言は `KizunaCopy.pluralText`（移行後は複数形
+  エントリ）を使い、日付・時刻の固定書式（`HH:mm` 等）を書かない。
+
 ## ライセンス
 
 提出した変更は、このリポジトリのライセンス条件で配布できるものとします。第三者のコード、画像、モデル、データを追加する場合は、利用条件と出典を明示してください。

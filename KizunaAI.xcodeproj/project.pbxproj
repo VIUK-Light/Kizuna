@@ -9,12 +9,15 @@
 /* Begin PBXBuildFile section */
 		06D0D93E289A58585617D2D9 /* SceneProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CEC45D9187A7AD9E3CF9DE4 /* SceneProtocols.swift */; };
 		0AFD028991A3FFCC665B3769 /* SafetyPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE6E2DA7A0E7BF418B6A3C7 /* SafetyPipeline.swift */; };
+		0D19C25A6A30A8CC949719A1 /* StoryGenerationModelPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DECBD2BED74C7DB05529FC6 /* StoryGenerationModelPill.swift */; };
 		12A37C424D51D43FBE3E3766 /* LocalAssistantModelArtifactValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B35D4A556826633BD99FBB0 /* LocalAssistantModelArtifactValidator.swift */; };
 		1646F9BF705069B3CABED43D /* KizunaSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2337228D2EF9CFE2E9A788E9 /* KizunaSettingsView.swift */; };
 		1E8D68F6FCAF235F2B84FE19 /* MemoryRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = E675C1D433A2840AB2461CFD /* MemoryRepository.swift */; };
 		1F0627CABF8181F36724081E /* Apache-2.0.txt in Resources */ = {isa = PBXBuildFile; fileRef = C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */; };
 		242EDCC10810B6E59A09B3AF /* KizunaLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40196698BCD7CAB2D603972 /* KizunaLanguage.swift */; };
 		25BE9FBCEE85A531DDB3CD99 /* KizunaCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16FD178111137C6FE984C731 /* KizunaCopy.swift */; };
+		264C2C542BDD6314D6B98B7A /* PersonaComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EED835AF1F90B743744349C /* PersonaComposer.swift */; };
+		2B14B7F840ECEE7930BF4C9A /* PersonaMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87ECE828D4E25FFD78C28681 /* PersonaMessageBubble.swift */; };
 		2B2592AAD858D3D96862FAF3 /* AppBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26955C791E26219A2224961B /* AppBrand.swift */; };
 		2BEDC445F7013C3F2361CD4D /* AIExecutionModes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7A51DEA2BC4C5DFC7AD006C /* AIExecutionModes.swift */; };
 		36622231CDB22D277C6DF874 /* MockMemoryAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A976D1A75B17989A4E31F /* MockMemoryAdapters.swift */; };
@@ -41,6 +44,7 @@
 		664ED06CBC072C3FF092E2C6 /* NOTICE in Resources */ = {isa = PBXBuildFile; fileRef = DA3DEA98738B79C16E11AEF8 /* NOTICE */; };
 		6806C6C2F3789140A5284387 /* StorySessionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69642812D805EA2FF6BFE60E /* StorySessionService.swift */; };
 		68081B3C44658315697F78EB /* MockSceneAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = F85DE09496F7B036AD13EE3A /* MockSceneAdapters.swift */; };
+		696111079DF1769451179BAD /* StoryChatSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5575F4DA911626C06D832EB9 /* StoryChatSupport.swift */; };
 		69EDAFCFF9DFEF801BB081D4 /* StoryNaturalChangePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ECE9E1826EE8DDB85561914 /* StoryNaturalChangePolicyTests.swift */; };
 		6C287F24D9865C253FCC9A6E /* StoryWorldLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F71AFE96C6DB008859AAE96 /* StoryWorldLibraryView.swift */; };
 		6C376450C4E4F0FF98C2BC9A /* AILegacyCompatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1696AB458D899AC27BB0C79B /* AILegacyCompatibility.swift */; };
@@ -92,20 +96,24 @@
 		BD9F3B99F5EF8489E42458BA /* AppLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C88C4E14C3423BCC83B664F3 /* AppLog.swift */; };
 		BEE16F7496A6844739086860 /* PlatformRuntimeStubs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05994627B55916B0A3DFAF7B /* PlatformRuntimeStubs.swift */; };
 		C08E68332DCCE111AF532344 /* CharacterProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D6B5EE85AF59633861E76A /* CharacterProfile.swift */; };
+		CADEE74E9978D9C7CB0FE37E /* PersonaAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16B6B254AC701A94D8FB48B1 /* PersonaAvatarView.swift */; };
 		CD7F4B290DCF9E71F3BDDDA0 /* KizunaAIApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785139BD8175262981B598A1 /* KizunaAIApp.swift */; };
 		D4B283FA94AD65D552D6FB77 /* StoryInitiativeFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B849AA6CD9B4172E61EE96D /* StoryInitiativeFlags.swift */; };
 		D4D38A3ABE7E479A12ACA51D /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DFDAC715FA5ECBCDEE5C1F24 /* Localizable.xcstrings */; };
 		D7C05C6DE100F03A79A02CCC /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 1014477B6846DA3DF969C22F /* THIRD_PARTY_NOTICES.md */; };
 		D8ACCA7952AFD15E4226412B /* CharacterLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 287757A56CBE15F666DC908D /* CharacterLibraryView.swift */; };
 		DBFC9E2365F72196EF243242 /* AISecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9689ADAB0694870AC5964DFA /* AISecretStore.swift */; };
+		DD5CA5DB98D21EF53891B7F4 /* StorySessionChatBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = C999556CCF1DE2AFAAEC978C /* StorySessionChatBody.swift */; };
 		DFB421EF82EC091B54332BEA /* PersonaExportShareItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE7C112FB95E53BA641F24A8 /* PersonaExportShareItem.swift */; };
 		E0137663C598478E9EC3368D /* RelationshipGenre.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA529B4D3926130627D485BB /* RelationshipGenre.swift */; };
 		E1F764305C062BF570B0115A /* StateUpdateParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D7CA9D609E316A35BEED04 /* StateUpdateParser.swift */; };
 		E24AF7F53F9DDDC5FF2393F1 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A29C9D8E926D83E24A952F4 /* AppTheme.swift */; };
 		E94E230B59937818E8B6E544 /* PersonaChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A2E29FC9FACB4D55183726 /* PersonaChatStore.swift */; };
+		E9C5516F132E356C51D3DC9C /* StorySupportSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6C02AC17352A6B8D838F47D /* StorySupportSheets.swift */; };
 		EEC5EF2337298255BFF8AC27 /* llama.cpp-MIT.txt in Resources */ = {isa = PBXBuildFile; fileRef = C4C3DBA4298E534FF3BFA4E5 /* llama.cpp-MIT.txt */; };
 		EF37282B3F2DF884E173F223 /* KizunaConversationHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70098F3C51DA9FDED10774A0 /* KizunaConversationHomeView.swift */; };
 		EF3BB16A93B494602BC64DCF /* PersonaChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D9BB02D32A725EB2DA3DA6E /* PersonaChatView.swift */; };
+		EF42C041A3891AAF660B20FF /* StorySpotlightViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DF550EBD3553E5B8339F677 /* StorySpotlightViews.swift */; };
 		F254B500366A544EC2F7FABB /* StoryWorldDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */; };
 		F82CBE124F700EF5AF4DE95A /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 929284E0E8C0C59D87D0EE00 /* LICENSE */; };
 		F925F26148F70DDACCE720E9 /* KizunaUserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78CFFCEC0FA3CC44BDDA2C99 /* KizunaUserProfile.swift */; };
@@ -148,6 +156,7 @@
 		16690F37F0845E53F9952C23 /* SafetyProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyProtocols.swift; sourceTree = "<group>"; };
 		167DE9F165C1D06BC748A477 /* MockSafetyCheckers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSafetyCheckers.swift; sourceTree = "<group>"; };
 		1696AB458D899AC27BB0C79B /* AILegacyCompatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AILegacyCompatibility.swift; sourceTree = "<group>"; };
+		16B6B254AC701A94D8FB48B1 /* PersonaAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaAvatarView.swift; sourceTree = "<group>"; };
 		16FD178111137C6FE984C731 /* KizunaCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaCopy.swift; sourceTree = "<group>"; };
 		19449F3273FBD99643962AF5 /* CharacterTemplateSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterTemplateSeed.swift; sourceTree = "<group>"; };
 		1B849AA6CD9B4172E61EE96D /* StoryInitiativeFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryInitiativeFlags.swift; sourceTree = "<group>"; };
@@ -161,6 +170,7 @@
 		287757A56CBE15F666DC908D /* CharacterLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLibraryView.swift; sourceTree = "<group>"; };
 		29C238F095EAF47503BE3C75 /* StoryAcceptanceTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryAcceptanceTrace.swift; sourceTree = "<group>"; };
 		2A196A347E7975CA1A50C5D8 /* AIToolCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIToolCatalog.swift; sourceTree = "<group>"; };
+		2EED835AF1F90B743744349C /* PersonaComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaComposer.swift; sourceTree = "<group>"; };
 		303798654908AC5FC3B19558 /* LocalAssistantEmbeddedRuntime.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LocalAssistantEmbeddedRuntime.h; sourceTree = "<group>"; };
 		37D7CA9D609E316A35BEED04 /* StateUpdateParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StateUpdateParser.swift; sourceTree = "<group>"; };
 		3802A51489C449BBE1A57390 /* LocalAssistantLiteRTLMRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantLiteRTLMRuntime.swift; sourceTree = "<group>"; };
@@ -176,6 +186,7 @@
 		496320007DB1F65A5462A0A2 /* PromptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptBuilder.swift; sourceTree = "<group>"; };
 		4A29C9D8E926D83E24A952F4 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		524A8047A2A74A9831E5C401 /* LocalAssistantLiteRTLMContextLimit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantLiteRTLMContextLimit.swift; sourceTree = "<group>"; };
+		5575F4DA911626C06D832EB9 /* StoryChatSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryChatSupport.swift; sourceTree = "<group>"; };
 		593451968603E56D14CBBB53 /* CharacterDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterDetailViewModel.swift; sourceTree = "<group>"; };
 		5BDA5863DEC1401CCF59E6D2 /* LocalAssistantRuntimeBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantRuntimeBridge.swift; sourceTree = "<group>"; };
 		5CEAFB31DF8BD30CE8BFDBAD /* LocalAssistantModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAssistantModelManager.swift; sourceTree = "<group>"; };
@@ -186,6 +197,7 @@
 		69A2E29FC9FACB4D55183726 /* PersonaChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaChatStore.swift; sourceTree = "<group>"; };
 		6AB2D8A9E5A7D59CD8D67467 /* CharacterCreateViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterCreateViewModel.swift; sourceTree = "<group>"; };
 		6DE6E2DA7A0E7BF418B6A3C7 /* SafetyPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyPipeline.swift; sourceTree = "<group>"; };
+		6DECBD2BED74C7DB05529FC6 /* StoryGenerationModelPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryGenerationModelPill.swift; sourceTree = "<group>"; };
 		6ECE9E1826EE8DDB85561914 /* StoryNaturalChangePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryNaturalChangePolicyTests.swift; sourceTree = "<group>"; };
 		6F71AFE96C6DB008859AAE96 /* StoryWorldLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryWorldLibraryView.swift; sourceTree = "<group>"; };
 		6FDC6C52E2977CFF9CDBA98E /* nlohmann-json-MIT.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "nlohmann-json-MIT.txt"; sourceTree = "<group>"; };
@@ -199,9 +211,11 @@
 		7FEBFCD16F3DD31F376B11D6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		81BC4E7691543601430AFFFB /* StoryInitiativeAcceptanceRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryInitiativeAcceptanceRunnerTests.swift; sourceTree = "<group>"; };
 		83EDD9AD4F1FD5B92F1011FD /* KizunaAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KizunaAvatarView.swift; sourceTree = "<group>"; };
+		87ECE828D4E25FFD78C28681 /* PersonaMessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaMessageBubble.swift; sourceTree = "<group>"; };
 		87FA8C1E60CADDD358A86BE8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		886D407DDE24CAF50C0D9FD6 /* LocalAssistantEmbeddedRuntime-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "LocalAssistantEmbeddedRuntime-Bridging-Header.h"; sourceTree = "<group>"; };
 		8B4FC4F65D6C41BD6DC45E22 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		8DF550EBD3553E5B8339F677 /* StorySpotlightViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySpotlightViews.swift; sourceTree = "<group>"; };
 		8E3A976D1A75B17989A4E31F /* MockMemoryAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockMemoryAdapters.swift; sourceTree = "<group>"; };
 		90CAC8F261A72FF48E130427 /* StoryPromptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryPromptBuilder.swift; sourceTree = "<group>"; };
 		929284E0E8C0C59D87D0EE00 /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
@@ -221,10 +235,12 @@
 		C80887BEC52833CAA46E2ABE /* Apache-2.0.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Apache-2.0.txt"; sourceTree = "<group>"; };
 		C86221612DBCBA783CE5BB53 /* StoryRepositories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryRepositories.swift; sourceTree = "<group>"; };
 		C88C4E14C3423BCC83B664F3 /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
+		C999556CCF1DE2AFAAEC978C /* StorySessionChatBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySessionChatBody.swift; sourceTree = "<group>"; };
 		CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaChatService.swift; sourceTree = "<group>"; };
 		D06ABDB45B6FC442B7523E83 /* CharacterLorebook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterLorebook.swift; sourceTree = "<group>"; };
 		D59A893E2C31CA1C9C10704B /* KizunaAIUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KizunaAIUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D59D91BB02822149D5946543 /* StoryTurnPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryTurnPersistence.swift; sourceTree = "<group>"; };
+		D6C02AC17352A6B8D838F47D /* StorySupportSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySupportSheets.swift; sourceTree = "<group>"; };
 		DA3DEA98738B79C16E11AEF8 /* NOTICE */ = {isa = PBXFileReference; path = NOTICE; sourceTree = "<group>"; };
 		DA529B4D3926130627D485BB /* RelationshipGenre.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelationshipGenre.swift; sourceTree = "<group>"; };
 		DBEDCA0076A343951F227050 /* LiteRT-LM */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "LiteRT-LM"; path = "ThirdParty/LiteRT-LM"; sourceTree = SOURCE_ROOT; };
@@ -314,11 +330,14 @@
 				AA052A63C2B781411F30D716 /* LocalAssistantModelProfile.swift */,
 				FEEF1CC95F8C541FEE6641B5 /* LocalAssistantModelReplacement.swift */,
 				5BDA5863DEC1401CCF59E6D2 /* LocalAssistantRuntimeBridge.swift */,
+				16B6B254AC701A94D8FB48B1 /* PersonaAvatarView.swift */,
 				CE4E2047B98A5E9B62462D92 /* PersonaChatService.swift */,
 				69A2E29FC9FACB4D55183726 /* PersonaChatStore.swift */,
 				5D9BB02D32A725EB2DA3DA6E /* PersonaChatView.swift */,
+				2EED835AF1F90B743744349C /* PersonaComposer.swift */,
 				423041EC8E5CB59368D5AF9A /* PersonaConfigView.swift */,
 				BE7C112FB95E53BA641F24A8 /* PersonaExportShareItem.swift */,
+				87ECE828D4E25FFD78C28681 /* PersonaMessageBubble.swift */,
 				026A56F7C8E53DEB81521336 /* PersonaResponseSanitizer.swift */,
 				24DDE9C0180DDB8FD296DC8F /* PersonaSettings.swift */,
 				05994627B55916B0A3DFAF7B /* PlatformRuntimeStubs.swift */,
@@ -448,9 +467,14 @@
 		5E6EDD362DE7317D83CAE157 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				5575F4DA911626C06D832EB9 /* StoryChatSupport.swift */,
 				FF83E846745A39722C75FF61 /* StoryCoverView.swift */,
+				6DECBD2BED74C7DB05529FC6 /* StoryGenerationModelPill.swift */,
 				DDFE920681402504D9239D4F /* StorySceneImageView.swift */,
+				C999556CCF1DE2AFAAEC978C /* StorySessionChatBody.swift */,
 				7BD3421C167EB41A06E443C2 /* StorySessionChatView.swift */,
+				8DF550EBD3553E5B8339F677 /* StorySpotlightViews.swift */,
+				D6C02AC17352A6B8D838F47D /* StorySupportSheets.swift */,
 				A909A5DF58F065FA259FBE40 /* StoryWorldCreateView.swift */,
 				3BAAAD34DD6FF4530D0884F1 /* StoryWorldDetailView.swift */,
 				6F71AFE96C6DB008859AAE96 /* StoryWorldLibraryView.swift */,
@@ -885,11 +909,14 @@
 				5F81134FC766267D7083299B /* MockSafetyCheckers.swift in Sources */,
 				68081B3C44658315697F78EB /* MockSceneAdapters.swift in Sources */,
 				A8D4FCAD3F966A5528F01DAD /* MockSmallModelClassifier.swift in Sources */,
+				CADEE74E9978D9C7CB0FE37E /* PersonaAvatarView.swift in Sources */,
 				57CF512E93E56951F0E19F0F /* PersonaChatService.swift in Sources */,
 				E94E230B59937818E8B6E544 /* PersonaChatStore.swift in Sources */,
 				EF3BB16A93B494602BC64DCF /* PersonaChatView.swift in Sources */,
+				264C2C542BDD6314D6B98B7A /* PersonaComposer.swift in Sources */,
 				70AD59C0680A277276B30DE1 /* PersonaConfigView.swift in Sources */,
 				DFB421EF82EC091B54332BEA /* PersonaExportShareItem.swift in Sources */,
+				2B14B7F840ECEE7930BF4C9A /* PersonaMessageBubble.swift in Sources */,
 				9A6D16788D911D867DA01C2C /* PersonaResponseSanitizer.swift in Sources */,
 				4745C6D75CD7DB9CEB1366AF /* PersonaSettings.swift in Sources */,
 				BEE16F7496A6844739086860 /* PlatformRuntimeStubs.swift in Sources */,
@@ -902,9 +929,11 @@
 				8DAE92CB507C527A06FD5F2D /* SmallModelClassifying.swift in Sources */,
 				E1F764305C062BF570B0115A /* StateUpdateParser.swift in Sources */,
 				74B38D191478743072092452 /* StoryAcceptanceTrace.swift in Sources */,
+				696111079DF1769451179BAD /* StoryChatSupport.swift in Sources */,
 				95168A37B2B238D2C0275B1C /* StoryCoverView.swift in Sources */,
 				8AFDA9C31775F30993E618BB /* StoryGemma31BAPIService.swift in Sources */,
 				FF11771C6CB952F9E344CD34 /* StoryGemma31BResponseParser.swift in Sources */,
+				0D19C25A6A30A8CC949719A1 /* StoryGenerationModelPill.swift in Sources */,
 				D4B283FA94AD65D552D6FB77 /* StoryInitiativeFlags.swift in Sources */,
 				56BA4549A1AF6BB5C5DCF65D /* StoryLocalization.swift in Sources */,
 				869DABD7EBE6CAFDFFA95FB5 /* StoryModels.swift in Sources */,
@@ -912,8 +941,11 @@
 				ACA8C2D8482815C911AF1FEB /* StoryPromptBuilder.swift in Sources */,
 				A22144875F3A43E7235B2D25 /* StoryRepositories.swift in Sources */,
 				5488A5D108112AD7FA337C8B /* StorySceneImageView.swift in Sources */,
+				DD5CA5DB98D21EF53891B7F4 /* StorySessionChatBody.swift in Sources */,
 				AE8CAE598F9A0600A1C14121 /* StorySessionChatView.swift in Sources */,
 				6806C6C2F3789140A5284387 /* StorySessionService.swift in Sources */,
+				EF42C041A3891AAF660B20FF /* StorySpotlightViews.swift in Sources */,
+				E9C5516F132E356C51D3DC9C /* StorySupportSheets.swift in Sources */,
 				8656634A2606640E68CDBBC5 /* StoryTurnPersistence.swift in Sources */,
 				982F92EFA64D2780DE84F242 /* StoryViewModels.swift in Sources */,
 				9887C1FE76FBC8C15A077800 /* StoryWorldCreateView.swift in Sources */,

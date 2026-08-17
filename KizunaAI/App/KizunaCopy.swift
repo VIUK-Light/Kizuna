@@ -13,6 +13,18 @@ enum KizunaCopy {
         language == .english ? english : japanese
     }
 
+    /// 英語で単複形が分かれる文言のためのヘルパー (#287)。
+    /// 日本語は単複で変わらないため count を受け取るだけで表示に使わない。
+    static func pluralText(
+        japanese: String,
+        englishSingular: String,
+        englishPlural: String,
+        count: Int
+    ) -> String {
+        guard language == .english else { return japanese }
+        return count == 1 ? englishSingular : englishPlural
+    }
+
     /// アプリ名はブランド正本 `AppBrand.displayName` を参照し、言語を問わず "Kizuna" に統一する。
     static var appName: String {
         AppBrand.displayName
