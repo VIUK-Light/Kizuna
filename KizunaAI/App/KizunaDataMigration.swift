@@ -106,7 +106,7 @@ enum KizunaDataMigration {
                 case .invalid:
                     // 壊れた旧ファイルを有効な移行元として扱わない。内容を
                     // 推測して上書きせず、次回起動でも再確認できるよう失敗を返す。
-                    NSLog("[KizunaDataMigration] legacy file is invalid JSON: %@", source.path)
+                    AppLog.error("[KizunaDataMigration] legacy file is invalid JSON: %@", source.path)
                     return false
                 case .validArray:
                     break
@@ -124,16 +124,18 @@ enum KizunaDataMigration {
                     // 同じディレクトリへ退避してから原子的に復元する。
                     let backupURL = invalidBackupURL(for: destination)
                     try fileManager.copyItem(at: destination, to: backupURL)
-                    NSLog("[KizunaDataMigration] backed up invalid destination %@ to %@", fileName, backupURL.lastPathComponent)
+                    LocalJSONStoreFileProtection.apply(to: backupURL)
+                    AppLog.error("[KizunaDataMigration] backed up invalid destination %@ to %@", fileName, backupURL.lastPathComponent)
                 }
 
                 let data = try Data(contentsOf: source)
-                try data.write(to: destination, options: [.atomic])
-                NSLog("[KizunaDataMigration] restored %@ from legacy CharacterLibrary", fileName)
+                try data.write(to: destination, options: LocalJSONStoreFileProtection.atomicWriteOptions)
+                LocalJSONStoreFileProtection.apply(to: destination)
+                AppLog.note("[KizunaDataMigration] restored %@ from legacy CharacterLibrary", fileName)
             }
             return true
         } catch {
-            NSLog("[KizunaDataMigration] character library migration failed: %@", String(describing: error))
+            AppLog.error("[KizunaDataMigration] character library migration failed: %@", String(describing: error))
             return false
         }
     }
@@ -201,7 +203,7 @@ enum KizunaDataMigration {
             return containsModelArtifact(in: localModelsURL)
         } catch {
             try? fileManager.removeItem(at: stagingURL)
-            NSLog("[KizunaDataMigration] local model migration failed: %@", String(describing: error))
+            AppLog.error("[KizunaDataMigration] local model migration failed: %@", String(describing: error))
             return false
         }
     }
