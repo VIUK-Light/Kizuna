@@ -3,8 +3,24 @@ name: CodeQL Security Scan
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "KizunaAI/**"
+      - "KizunaAI.xcodeproj/**"
+      - "ThirdParty/**"
+      - "Package.swift"
+      - "Package.resolved"
+      - ".github/workflows/**"
+      - ".github/actions/**"
   push:
     branches: [main]
+    paths:
+      - "KizunaAI/**"
+      - "KizunaAI.xcodeproj/**"
+      - "ThirdParty/**"
+      - "Package.swift"
+      - "Package.resolved"
+      - ".github/workflows/**"
+      - ".github/actions/**"
   schedule:
     - cron: "23 3 * * 3"
   workflow_dispatch:
@@ -12,25 +28,91 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: codeql-${{ github.repository }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  changes:
+    name: Detect CodeQL scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      swift: ${{ steps.scope.outputs.swift }}
+      actions: ${{ steps.scope.outputs.actions }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed areas
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "schedule" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "swift=true" >> "$GITHUB_OUTPUT"
+            echo "actions=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if git rev-parse HEAD^1 >/dev/null 2>&1 && git rev-parse HEAD^2 >/dev/null 2>&1; then
+              CHANGED_FILES=$(git diff --name-only HEAD^1 HEAD^2)
+            else
+              CHANGED_FILES=$(git show --pretty='' --name-only HEAD)
+            fi
+          else
+            if [ -n "${BEFORE_SHA:-}" ] && ! printf '%s' "$BEFORE_SHA" | grep -Eq '^0+$'; then
+              git fetch --no-tags --depth=1 origin "$BEFORE_SHA" >/dev/null 2>&1 || true
+              if git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+                CHANGED_FILES=$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")
+              else
+                CHANGED_FILES=$(git show --pretty='' --name-only HEAD)
+              fi
+            else
+              CHANGED_FILES=$(git show --pretty='' --name-only HEAD)
+            fi
+          fi
+
+          printf '%s\n' "$CHANGED_FILES"
+
+          if printf '%s\n' "$CHANGED_FILES" | grep -Eq '^(KizunaAI/|KizunaAI\.xcodeproj/|ThirdParty/|Package\.swift$|Package\.resolved$)'; then
+            echo "swift=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "swift=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if printf '%s\n' "$CHANGED_FILES" | grep -Eq '^\.github/(workflows|actions)/'; then
+            echo "actions=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "actions=false" >> "$GITHUB_OUTPUT"
+          fi
+
   swift:
     name: CodeQL / Swift
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    needs: changes
+    if: |
+      needs.changes.outputs.swift == 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: macos-26
+    timeout-minutes: 30
+    concurrency:
+      group: codeql-swift-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: read
       security-events: write
       actions: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: swift
           build-mode: manual
@@ -51,29 +133,36 @@ jobs:
             build
 
       - name: Analyze Swift
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: "/language:swift"
 
   actions:
     name: CodeQL / GitHub Actions
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    needs: changes
+    if: |
+      needs.changes.outputs.actions == 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: codeql-actions-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: read
       security-events: write
       actions: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: actions
           queries: security-extended
 
       - name: Analyze GitHub Actions
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: "/language:actions"
