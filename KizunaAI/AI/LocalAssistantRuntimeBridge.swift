@@ -471,10 +471,10 @@ private final class BundledSSECollector: NSObject, URLSessionDataDelegate {
         // 診断: 最初の non-empty デルタが content / reasoning_content のどちらに乗ってきたかを必ず記録。
         // Gemma 4 の `<|channel>thought\n...<channel|>` が content 側にこぼれていないか調べるため。
         if !cc.isEmpty && accContent.count - cc.count < 200 {
-            NSLog("[BundledSSE] content delta(len=%d) prefix=%@", cc.count, String(cc.prefix(120)).replacingOccurrences(of: "\n", with: "\\n"))
+            AppLog.note("[BundledSSE] content delta(len=%d) prefix=%@", cc.count, String(cc.prefix(120)).replacingOccurrences(of: "\n", with: "\\n"))
         }
         if !rc.isEmpty && accReasoning.count - rc.count < 200 {
-            NSLog("[BundledSSE] reasoning_content delta(len=%d) prefix=%@", rc.count, String(rc.prefix(120)).replacingOccurrences(of: "\n", with: "\\n"))
+            AppLog.note("[BundledSSE] reasoning_content delta(len=%d) prefix=%@", rc.count, String(rc.prefix(120)).replacingOccurrences(of: "\n", with: "\\n"))
         }
         let now = Date()
         let hasThinkingDelta = !rc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
@@ -928,9 +928,9 @@ final class LocalAssistantRuntimeBridge {
                 settled = terminationSemaphore.wait(timeout: .now() + .seconds(1)) == .success
                     || !process.isRunning
             }
-            NSLog("[Kizuna] bundled CLI prewarm timed out")
+            AppLog.note("[Kizuna] bundled CLI prewarm timed out")
             guard settled, !process.isRunning else {
-                NSLog("[Kizuna] bundled CLI prewarm process did not settle; skipping pipe drain")
+                AppLog.note("[Kizuna] bundled CLI prewarm process did not settle; skipping pipe drain")
                 return false
             }
             _ = outputPipe.fileHandleForReading.readDataToEndOfFile()
@@ -3085,13 +3085,13 @@ final class BundledServerLogAggregator {
                     return { [weak self] accContent, accReasoning in
                         guard let self else { return }
                         // ── 診断ログ (chat path) ──
-                        NSLog("[ThinkDiag-Chat] onDelta fired: accContent.count=%d accReasoning.count=%d nativeThinking=%d isFastBypass=%d",
+                        AppLog.note("[ThinkDiag-Chat] onDelta fired: accContent.count=%d accReasoning.count=%d nativeThinking=%d isFastBypass=%d",
                               accContent.count, accReasoning.count,
                               nativeThinkingEnabled ? 1 : 0, isFastBypass ? 1 : 0)
                         if accContent.count <= 300 {
-                            NSLog("[ThinkDiag-Chat] accContent(raw): %@", accContent)
+                            AppLog.note("[ThinkDiag-Chat] accContent(raw): %@", accContent)
                         } else {
-                            NSLog("[ThinkDiag-Chat] accContent first300: %@", String(accContent.prefix(300)))
+                            AppLog.note("[ThinkDiag-Chat] accContent first300: %@", String(accContent.prefix(300)))
                         }
                         // vendored llama.cpp は Gemma 4 の `<|channel>thought\n...<channel|>` を
                         // reasoning_content に振り分けない。そのため accContent 側に来た raw を
@@ -3106,7 +3106,7 @@ final class BundledServerLogAggregator {
                         } else {
                             split = ("", accContent)
                         }
-                        NSLog("[ThinkDiag-Chat] split: thinking.count=%d visible.count=%d useChannelSplit=%d",
+                        AppLog.note("[ThinkDiag-Chat] split: thinking.count=%d visible.count=%d useChannelSplit=%d",
                               split.thinking.count, split.visible.count, useChannelSplit ? 1 : 0)
                         let visibleSource = split.thinking.isEmpty && self.containsThinkingMarkup(accContent)
                             ? self.cleanStructuredCLIOutput(accContent)
@@ -3161,10 +3161,10 @@ final class BundledServerLogAggregator {
                                 : (self.containsThinkingMarkup(accContent) ? self.partialThinkingPreview(from: accContent) : "")
                         }
                         // ── 診断ログ (chat path): t 計算結果 ──
-                        NSLog("[ThinkDiag-Chat] t.count=%d v.count=%d lastEmittedThinking.count=%d",
+                        AppLog.note("[ThinkDiag-Chat] t.count=%d v.count=%d lastEmittedThinking.count=%d",
                               t.count, v.count, lastEmittedThinking.count)
                         if !t.isEmpty, t.count <= 200 {
-                            NSLog("[ThinkDiag-Chat] t=%@", t)
+                            AppLog.note("[ThinkDiag-Chat] t=%@", t)
                         }
                         if !v.isEmpty {
                             if !streamingStatusEmitted {
@@ -3191,7 +3191,7 @@ final class BundledServerLogAggregator {
                             }
                         }
                         if !t.isEmpty, t != lastEmittedThinking {
-                            NSLog("[ThinkDiag-Chat] ✅ EMITTING .thinkingPreview t.count=%d", t.count)
+                            AppLog.note("[ThinkDiag-Chat] ✅ EMITTING .thinkingPreview t.count=%d", t.count)
                             // visiblePreview と同じ ~60fps コアレスで MainActor hop を抑える。
                             // さらに t が前回と完全に同一なら再 emit しない (visible 流入中の
                             // 「閉じた thinking を毎 16ms に再送」を防ぐ)。
@@ -3203,7 +3203,7 @@ final class BundledServerLogAggregator {
                                 Task { @MainActor in update(.thinkingPreview(t)) }
                             }
                         } else if t.isEmpty {
-                            NSLog("[ThinkDiag-Chat] ⚠️ t is EMPTY → no thinkingPreview emit")
+                            AppLog.error("[ThinkDiag-Chat] ⚠️ t is EMPTY → no thinkingPreview emit")
                         }
                     }
                 }
@@ -3254,7 +3254,7 @@ final class BundledServerLogAggregator {
                 // 「生成されているのに失敗」現象を防ぐ。
                 let cleaned: String
                 if cleanedBase.isEmpty && !response.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    NSLog("[BundledServer] ⚠️ cleanCLIOutput が全て除去。raw content を使用 (len=%d)", response.content.count)
+                    AppLog.error("[BundledServer] ⚠️ cleanCLIOutput が全て除去。raw content を使用 (len=%d)", response.content.count)
                     cleaned = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 } else {
                     cleaned = cleanedBase
@@ -3661,7 +3661,7 @@ final class BundledServerLogAggregator {
                     let coalesceInterval: TimeInterval = 0.016 // ~60fps
                     return { [weak self] accContent, accReasoning in
                         guard let self else { return }
-                        NSLog("[ThinkDiag-Struct] onDelta fired: accContent.count=%d accReasoning.count=%d nativeThinking=%d",
+                        AppLog.note("[ThinkDiag-Struct] onDelta fired: accContent.count=%d accReasoning.count=%d nativeThinking=%d",
                               accContent.count, accReasoning.count, nativeThinkingEnabledForStructured ? 1 : 0)
                         // 構造化側でも Gemma 4 channel 形式が content に来たケースを救済する。
                         let useChannelSplit = nativeThinkingEnabledForStructured
@@ -4144,7 +4144,7 @@ final class BundledServerLogAggregator {
             request.setValue("Bearer \(session.apiKey)", forHTTPHeaderField: "Authorization")
         }
 
-        NSLog("[BundledServer] 送信開始 port=%d maxTokens=%d stream=%d", session.port, maxTokens, useStreaming ? 1 : 0)
+        AppLog.note("[BundledServer] 送信開始 port=%d maxTokens=%d stream=%d", session.port, maxTokens, useStreaming ? 1 : 0)
 
         // ── ストリーミングパス ──────────────────────────────────────────────
         if useStreaming, let onStreamUpdate {
@@ -4155,7 +4155,7 @@ final class BundledServerLogAggregator {
                 if !firstTokenLogged {
                     firstTokenLogged = true
                     let elapsed = Date().timeIntervalSince(sendStartedAt)
-                    NSLog("[BundledServer] 初回トークン受信 elapsed=%.2fs", elapsed)
+                    AppLog.note("[BundledServer] 初回トークン受信 elapsed=%.2fs", elapsed)
                 }
                 onStreamUpdate(collector.accContent, collector.accReasoning)
             }
@@ -4172,13 +4172,13 @@ final class BundledServerLogAggregator {
             task.cancel()
             streamSession.invalidateAndCancel()
             let elapsed = Date().timeIntervalSince(sendStartedAt)
-            NSLog("[BundledServer] 生成完了(stream) elapsed=%.2fs finishReason=%@ contentLen=%d reasoningLen=%d status=%d waitResult=%@",
+            AppLog.note("[BundledServer] 生成完了(stream) elapsed=%.2fs finishReason=%@ contentLen=%d reasoningLen=%d status=%d waitResult=%@",
                   elapsed, collector.finishReason ?? "nil",
                   collector.accContent.count, collector.accReasoning.count,
                   collector.statusCode,
                   waitResult == .success ? "success" : "timeout")
             if collector.finishReason == "length" {
-                NSLog("[BundledServer] ⚠️ finish_reason=length: maxTokens=%d に達して打ち切られました", maxTokens)
+                AppLog.error("[BundledServer] ⚠️ finish_reason=length: maxTokens=%d に達して打ち切られました", maxTokens)
             }
             // 思考ブロックが閉じトークン未到着で終わっていないか診断ログ。
             // 「thinking 分の生成が止まる」現象の原因切り分け用。
@@ -4186,10 +4186,10 @@ final class BundledServerLogAggregator {
                 let hasOpen = collector.accContent.contains("<|channel>")
                 let hasClose = collector.accContent.contains("<channel|>")
                 if hasOpen && !hasClose {
-                    NSLog("[BundledServer] ⚠️ 思考ブロックが <channel|> 未到着で終了: maxTokens=%d finishReason=%@ contentLen=%d ─ 思考トークンが上限/EOS で打ち切られた可能性。maxTokens 増量か reasoning-budget の見直しが必要。",
+                    AppLog.error("[BundledServer] ⚠️ 思考ブロックが <channel|> 未到着で終了: maxTokens=%d finishReason=%@ contentLen=%d ─ 思考トークンが上限/EOS で打ち切られた可能性。maxTokens 増量か reasoning-budget の見直しが必要。",
                           maxTokens, collector.finishReason ?? "nil", collector.accContent.count)
                 } else if !hasOpen {
-                    NSLog("[BundledServer] ℹ️ thinking 有効だが accContent に <|channel> が無い: reasoningContent に分岐したか、テンプレートで think が無効化された可能性。reasoningLen=%d",
+                    AppLog.note("[BundledServer] ℹ️ thinking 有効だが accContent に <|channel> が無い: reasoningContent に分岐したか、テンプレートで think が無効化された可能性。reasoningLen=%d",
                           collector.accReasoning.count)
                 }
             }
@@ -4199,15 +4199,15 @@ final class BundledServerLogAggregator {
             if collector.statusCode != 200 && !hasContent {
                 let bodyPreview = collector.accContent.isEmpty ? collector.accReasoning : collector.accContent
                 if !bodyPreview.isEmpty {
-                    NSLog("[BundledServer] stream error body=%@", String(bodyPreview.prefix(240)))
+                    AppLog.error("[BundledServer] stream error body=%@", String(bodyPreview.prefix(240)))
                 }
                 return nil
             }
             if collector.statusCode != 200 && hasContent {
-                NSLog("[BundledServer] ⚠️ statusCode=%d だが content を受信済み → 成功として返却", collector.statusCode)
+                AppLog.error("[BundledServer] ⚠️ statusCode=%d だが content を受信済み → 成功として返却", collector.statusCode)
             }
             if waitResult == .timedOut && hasContent {
-                NSLog("[BundledServer] ⚠️ semaphore timeout だが content を受信済み → 成功として返却")
+                AppLog.error("[BundledServer] ⚠️ semaphore timeout だが content を受信済み → 成功として返却")
             }
             bundledServerLastUsedAt = Date()
             let streamedToolCalls = decodeServerToolCalls(
@@ -4233,7 +4233,7 @@ final class BundledServerLogAggregator {
                       !normReasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let recovered = extractFunctionCalls(from: normReasoning, enabledToolNames: enabledToolNames)
                 if !recovered.isEmpty {
-                    NSLog("[BundledServer/stream] ✅ tool_calls を reasoning channel から救出: count=%d", recovered.count)
+                    AppLog.note("[BundledServer/stream] ✅ tool_calls を reasoning channel から救出: count=%d", recovered.count)
                 }
                 finalToolCalls = recovered
             } else {
@@ -4266,12 +4266,12 @@ final class BundledServerLogAggregator {
         _ = semaphore.wait(timeout: .now() + .seconds(max(60, timeoutSeconds + 90)))
         setActiveBundledRequestTask(nil)
         let elapsed = Date().timeIntervalSince(sendStartedAt)
-        NSLog("[BundledServer] 完了(非stream) elapsed=%.2fs statusCode=%d", elapsed, statusCode)
+        AppLog.note("[BundledServer] 完了(非stream) elapsed=%.2fs statusCode=%d", elapsed, statusCode)
         if statusCode != 200,
            let responseData,
            let body = String(data: responseData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
            !body.isEmpty {
-            NSLog("[BundledServer] error body=%@", String(body.prefix(240)))
+            AppLog.error("[BundledServer] error body=%@", String(body.prefix(240)))
         }
 
         guard statusCode == 200,
@@ -4293,10 +4293,10 @@ final class BundledServerLogAggregator {
             let ct = usage["completion_tokens"] as? Int ?? -1
             capturedPromptTokens = pt >= 0 ? pt : nil
             capturedCompletionTokens = ct >= 0 ? ct : nil
-            NSLog("[BundledServer] usage: promptTokens=%d completionTokens=%d maxTokens=%d finishReason=%@",
+            AppLog.note("[BundledServer] usage: promptTokens=%d completionTokens=%d maxTokens=%d finishReason=%@",
                   pt, ct, maxTokens, finishReason ?? "nil")
             if finishReason == "length" {
-                NSLog("[BundledServer] ⚠️ finish_reason=length: maxTokens=%d に達して打ち切られました", maxTokens)
+                AppLog.error("[BundledServer] ⚠️ finish_reason=length: maxTokens=%d に達して打ち切られました", maxTokens)
             }
         }
         let openAIToolCalls = decodeServerToolCalls(
@@ -4324,7 +4324,7 @@ final class BundledServerLogAggregator {
                   !normReasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let recovered = extractFunctionCalls(from: normReasoning, enabledToolNames: enabledToolNames)
             if !recovered.isEmpty {
-                NSLog("[BundledServer] ✅ tool_calls を reasoning channel から救出: count=%d", recovered.count)
+                AppLog.note("[BundledServer] ✅ tool_calls を reasoning channel から救出: count=%d", recovered.count)
             }
             toolCalls = recovered
         } else {
@@ -4369,11 +4369,11 @@ final class BundledServerLogAggregator {
                 // tool_calls のあるターンでは content が空でも fallback を注入しない。
                 // 上位層が tool_calls を実行して次ターンへ進める。
                 if isToolCallTurn {
-                    NSLog("[BundledServer] ℹ️ content が空だが tool_calls あり → fallback 注入をスキップ (reasoningLen=%d)",
+                    AppLog.note("[BundledServer] ℹ️ content が空だが tool_calls あり → fallback 注入をスキップ (reasoningLen=%d)",
                           trimmedReasoning.count)
                     return ("", trimmedReasoning)
                 }
-                NSLog("[BundledServer] ⚠️ content が空・reasoning_content だけ存在。reasoning を回答として fallback (len=%d)",
+                AppLog.error("[BundledServer] ⚠️ content が空・reasoning_content だけ存在。reasoning を回答として fallback (len=%d)",
                       trimmedReasoning.count)
                 let fallback = (isBrokenEnglishPreambleOnly(trimmedReasoning) || trimmedReasoning.count < 80)
                     ? "（応答の生成に失敗しました。もう一度送信してください。）"
@@ -4401,7 +4401,7 @@ final class BundledServerLogAggregator {
         // → 内部推論テキストを「途中まで生成された結果」として answer 側にも回し、
         //    ユーザーが何も見えない状態を回避する。
         if split.visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            NSLog("[BundledServer] ⚠️ Gemma 4 visible が空（close マーカー未到着）。thinking を fallback 表示: thinkingLen=%d",
+            AppLog.error("[BundledServer] ⚠️ Gemma 4 visible が空（close マーカー未到着）。thinking を fallback 表示: thinkingLen=%d",
                   split.thinking.count)
             let trimmedThinking = split.thinking.trimmingCharacters(in: .whitespacesAndNewlines)
             let fallbackVisible = (isBrokenEnglishPreambleOnly(trimmedThinking) || trimmedThinking.count < 80)
@@ -4413,7 +4413,7 @@ final class BundledServerLogAggregator {
                 """
             return (fallbackVisible, trimmedThinking)
         }
-        NSLog("[BundledServer] Gemma 4 channel を content から抽出: thinkingLen=%d visibleLen=%d",
+        AppLog.note("[BundledServer] Gemma 4 channel を content から抽出: thinkingLen=%d visibleLen=%d",
               split.thinking.count, split.visible.count)
         return (split.visible, split.thinking)
     }

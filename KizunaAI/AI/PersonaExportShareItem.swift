@@ -29,14 +29,14 @@ enum KizunaPersonaExportFileLifecycle {
                 do {
                     try fileManager.removeItem(at: url)
                 } catch {
-                    NSLog(
+                    AppLog.note(
                         "[KizunaPersonaExport] failed to remove orphaned export file: %@",
                         "\(url.path): \(error.localizedDescription)"
                     )
                 }
             }
         } catch {
-            NSLog(
+            AppLog.note(
                 "[KizunaPersonaExport] failed to inspect export directory: %@",
                 "\(directoryURL.path): \(error.localizedDescription)"
             )

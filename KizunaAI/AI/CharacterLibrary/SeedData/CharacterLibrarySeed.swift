@@ -172,7 +172,7 @@ enum CharacterLibrarySeed {
                 // Story seed は続行して一覧を完全に空にしない。原因は呼び出し
                 // 側へ返し、リソース構成の不備を見逃さない。
                 bundledPackIssue = (error as? SeedError)?.issue ?? .storageFailure
-                NSLog("[CharacterLibrarySeed] bundled story pack failed: %@", String(describing: error))
+                AppLog.error("[CharacterLibrarySeed] bundled story pack failed: %@", String(describing: error))
             }
 
             let allCharacters = try await characterRepo.fetchCharacters()
@@ -255,7 +255,7 @@ enum CharacterLibrarySeed {
             return bundledPackIssue
         } catch {
             let message = String(describing: error)
-            NSLog("[CharacterLibrarySeed] seed failed: %@", message)
+            AppLog.error("[CharacterLibrarySeed] seed failed: %@", message)
             return .storageFailure
         }
     }

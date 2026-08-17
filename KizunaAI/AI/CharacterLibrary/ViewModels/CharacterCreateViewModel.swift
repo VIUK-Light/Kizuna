@@ -58,7 +58,7 @@ final class CharacterCreateViewModel: ObservableObject {
         do {
             self.availableTemplates = try await templateRepo.fetchTemplates()
         } catch {
-            NSLog("[CharacterCreateVM] template load failed: %@", String(describing: error))
+            AppLog.error("[CharacterCreateVM] template load failed: %@", String(describing: error))
         }
     }
 
@@ -154,7 +154,7 @@ final class CharacterCreateViewModel: ObservableObject {
             guard saveOperationID == operationID, self.draftRevision == draftRevision else {
                 return
             }
-            NSLog("[CharacterCreateVM] save failed: %@", String(describing: error))
+            AppLog.error("[CharacterCreateVM] save failed: %@", String(describing: error))
             state = .blocked(
                 SafetyDecision(
                     action: .requireEdit,

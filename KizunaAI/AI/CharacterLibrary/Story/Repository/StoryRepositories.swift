@@ -259,7 +259,7 @@ final class LocalJSONStoryWorldRepository: StoryWorldRepository {
     func purgeSystemWorld(id: UUID) async throws {
         guard let world = try await store.loadRecoveringCorruptRecords().first(where: { $0.id == id }),
               world.isSystemProtected == true else {
-            NSLog("[StoryWorldRepo] refused to purge non-system world: %@", id.uuidString)
+            AppLog.note("[StoryWorldRepo] refused to purge non-system world: %@", id.uuidString)
             return
         }
         try await store.delete(matching: { $0.id == id })
@@ -434,14 +434,14 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                         }
                         current[index] = repaired
                     }
-                    NSLog(
+                    AppLog.note(
                         "[StorySession] repaired duplicate generated messages session=%@ removed=%ld",
                         session.id.uuidString,
                         session.messages.count - repaired.messages.count
                     )
                 } catch {
                     // 読み込み自体は継続し、保存失敗はログで追跡できるようにする。
-                    NSLog("[StorySession] duplicate repair save failed session=%@: %@", session.id.uuidString, error.localizedDescription)
+                    AppLog.error("[StorySession] duplicate repair save failed session=%@: %@", session.id.uuidString, error.localizedDescription)
                 }
             }
             repairedSessions.append(effectiveSession)
@@ -741,7 +741,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 } catch {
                     // Session/Sceneが確定した後のjournal削除失敗は、ターン自体の
                     // 失敗ではない。次回recoveryで同じ確定snapshotを再適用する。
-                    NSLog(
+                    AppLog.note(
                         "[StoryTurnJournal] committed turn cleanup deferred turn=%@ error=%@",
                         turnID.uuidString,
                         error.localizedDescription
@@ -1028,7 +1028,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                                 baseURL: storageURL
                             )
                         } catch let compensationError {
-                            NSLog(
+                            AppLog.note(
                                 "[StorySession] undo compensation failed file=story_memories.json turn=%@ error=%@",
                                 turnID.uuidString,
                                 compensationError.localizedDescription
@@ -1043,7 +1043,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                                 baseURL: storageURL
                             )
                         } catch let compensationError {
-                            NSLog(
+                            AppLog.note(
                                 "[StorySession] undo compensation failed file=story_memory_retries.json turn=%@ error=%@",
                                 turnID.uuidString,
                                 compensationError.localizedDescription
@@ -1058,7 +1058,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                                 baseURL: storageURL
                             )
                         } catch let compensationError {
-                            NSLog(
+                            AppLog.note(
                                 "[StorySession] undo compensation failed file=story_sessions.json turn=%@ error=%@",
                                 turnID.uuidString,
                                 compensationError.localizedDescription
@@ -1075,7 +1075,7 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 do {
                     try StoryTurnJournal.removeUnlocked(turnID: turnID, baseURL: storageURL)
                 } catch {
-                    NSLog(
+                    AppLog.note(
                         "[StoryTurnJournal] undo cleanup deferred turn=%@ error=%@",
                         turnID.uuidString,
                         error.localizedDescription
@@ -1172,7 +1172,7 @@ private enum StorySessionMessageRepair {
 
             let normalized = normalize(message.text)
             if isPlaceholder(message.text) {
-                NSLog(
+                AppLog.note(
                     "[StorySession] removed placeholder generated message session=%@ message=%@",
                     session.id.uuidString,
                     message.id.uuidString
@@ -1369,7 +1369,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                     // World. Do not infer ownership from an incomplete list.
                     // The source file remains untouched and the next safe
                     // migration attempt can retry after repair/export.
-                    NSLog(
+                    AppLog.note(
                         "[StoryMemoryMigration] skipped world=%@ because story_sessions.json has %ld invalid records",
                         storyWorldId.uuidString,
                         sessionRecovery.invalidCount
@@ -1387,7 +1387,7 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
                     // records. Preserve the complete source and leave the
                     // migration unmarked until a repair/export path makes it
                     // safe to write again.
-                    NSLog(
+                    AppLog.note(
                         "[StoryMemoryMigration] skipped world=%@ because %@ has %ld invalid records",
                         storyWorldId.uuidString,
                         fileName,

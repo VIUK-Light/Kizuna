@@ -44,7 +44,7 @@ final class CharacterDetailViewModel: ObservableObject {
             self.lorebook = try await characterRepo.fetchLorebook(characterId: character.id)
             self.memories = try await memoryRepo.fetchMemories(characterId: character.id)
         } catch {
-            NSLog("[CharacterDetailVM] reload failed: %@", String(describing: error))
+            AppLog.error("[CharacterDetailVM] reload failed: %@", String(describing: error))
         }
     }
 

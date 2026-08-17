@@ -239,7 +239,7 @@ private actor LiteRTLMEngineStore {
 
     func engine(for configuration: LiteRTLMEngineConfiguration) async throws -> Engine {
         if let engine, loadedConfiguration == configuration {
-            NSLog("[KizunaLiteRTLM] reusing prepared CPU engine")
+            AppLog.note("[KizunaLiteRTLM] reusing prepared CPU engine")
             return engine
         }
 
@@ -255,9 +255,9 @@ private actor LiteRTLMEngineStore {
             cacheDir: configuration.cacheDirectory
         )
         let nextEngine = Engine(engineConfig: engineConfig)
-        NSLog("[KizunaLiteRTLM] initializing CPU engine with %ld-token context", configuration.maxNumTokens)
+        AppLog.note("[KizunaLiteRTLM] initializing CPU engine with %ld-token context", configuration.maxNumTokens)
         try await nextEngine.initialize()
-        NSLog("[KizunaLiteRTLM] CPU engine initialized")
+        AppLog.note("[KizunaLiteRTLM] CPU engine initialized")
         engine = nextEngine
         loadedConfiguration = configuration
         return nextEngine
@@ -272,7 +272,7 @@ private actor LiteRTLMEngineStore {
     func release() {
         engine = nil
         loadedConfiguration = nil
-        NSLog("[KizunaLiteRTLM] released CPU engine while app is in background")
+        AppLog.note("[KizunaLiteRTLM] released CPU engine while app is in background")
     }
 }
 #endif
@@ -596,7 +596,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                     .reportedMaximumTokenCount(from: error.localizedDescription),
                    reportedLimit >= 256,
                    reportedLimit < contextTokenLimit {
-                    NSLog(
+                    AppLog.note(
                         "[KizunaLiteRTLM] model reported context limit=%d; app requested=%d; retrying with reported limit",
                         reportedLimit,
                         contextTokenLimit
@@ -622,7 +622,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                         errorMessage: budgetError.localizedDescription
                     )
                 }
-                NSLog("[KizunaLiteRTLM] native CPU turn failed: %@", error.localizedDescription)
+                AppLog.error("[KizunaLiteRTLM] native CPU turn failed: %@", error.localizedDescription)
                 await engineStore.invalidate(configuration: configuration)
                 return VIUKEmbeddedRuntimeResult(
                     success: false,
@@ -656,7 +656,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             $0 + $1.text.lengthOfBytes(using: .utf8)
         }
         let inputBytes = promptBytes + systemBytes + historyBytes
-        NSLog(
+        AppLog.note(
             "[KizunaLiteRTLM] starting native CPU turn (model=%@, requestedContext=%ld, appliedContext=%ld, input=%ld bytes, prompt=%ld, system=%ld, history=%ld, output<=%ld)",
             modelName,
             requestedContextTokenLimit,
@@ -693,7 +693,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
                 return Message(message.text, role: .model)
             }
         }
-        NSLog(
+        AppLog.note(
             "[KizunaLiteRTLM] creating conversation (context=%ld, system=%ld bytes, historyMessages=%ld)",
             contextTokenLimit,
             systemBytes,
@@ -712,7 +712,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
             await activeConversation.clear(conversation)
             return cancelledGenerationResult()
         }
-        NSLog("[KizunaLiteRTLM] conversation ready; sending message")
+        AppLog.note("[KizunaLiteRTLM] conversation ready; sending message")
         let response: Message
         do {
             response = try await conversation.sendMessage(Message(sizedRequest.prompt))
@@ -729,7 +729,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         let hasMeaningfulText = hasMeaningfulResponseText(cleaned)
         // 本文や個人情報はログへ出さない。LiteRT-LM側で停止理由を取得できないため、
         // その事実を明示しつつ、後段の StorySession が保存IDと照合できる長さだけ記録する。
-        NSLog(
+        AppLog.note(
             "[KizunaLiteRTLM] native CPU turn finished (context=%ld, empty=%@, meaningful=%@, chars=%ld, stopReason=unavailable)",
             contextTokenLimit,
             cleaned.isEmpty ? "true" : "false",
@@ -869,7 +869,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
 
         for attempt in 0..<8 {
             let tokenCount = try await engine.tokenCount(for: tokenProbeText(for: candidate))
-            NSLog(
+            AppLog.note(
                 "[KizunaLiteRTLM] token budget probe attempt=%d input=%d target<=%d context=%d",
                 attempt + 1,
                 tokenCount,
@@ -916,7 +916,7 @@ final class LocalAssistantLiteRTLMRuntime: @unchecked Sendable {
         // これを返してしまうと、モデル側の実コンテキスト上限に対して
         // 「安全側に計算したつもり」の入力を再び送ってしまう。
         let finalCount = try await engine.tokenCount(for: tokenProbeText(for: candidate))
-        NSLog("[KizunaLiteRTLM] token budget probe reached final input=%d target<=%d", finalCount, target)
+        AppLog.note("[KizunaLiteRTLM] token budget probe reached final input=%d target<=%d", finalCount, target)
         guard finalCount <= target else {
             throw LiteRTLMTokenBudgetError.unableToFit(
                 actual: finalCount,
