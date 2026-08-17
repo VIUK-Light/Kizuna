@@ -1708,9 +1708,7 @@ struct PersonaMessageBubble: View {
     }
 
     private var timestamp: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: message.createdAt)
+        message.createdAt.formatted(.dateTime.hour().minute())
     }
 }
 
