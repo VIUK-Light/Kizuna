@@ -61,6 +61,10 @@ struct LocalAssistantDownloadState: Codable {
     var previousResolvedURL: String? = nil
     var previousExpectedBytes: Int64? = nil
     var previousETag: String? = nil
+    /// カスタムURL指定時に利用者が入力したSHA-256。標準モデルのピン留め
+    /// （trustedArtifact）とは別経路で、配布元が公開するダイジェストとの
+    /// 整合性検証に使う（GHSA-4qg2-jrp6-rvjf）。nilなら検証なし。
+    var expectedSHA256: String? = nil
 }
 
 private struct LocalAssistantDownloadPreflight {
@@ -179,6 +183,8 @@ private struct LocalAssistantPendingModelCandidate {
     let expectedBytes: Int64
     let eTag: String?
     let previousModel: LocalAssistantInstalledModelSnapshot?
+    /// カスタムURL指定時の任意SHA-256。検証ステージ間で保持する。
+    let expectedSHA256: String?
 }
 
 final class LocalAssistantModelManager: NSObject, ObservableObject {
@@ -190,6 +196,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     @Published var sourceURLString: String
     @Published var accessToken: String
+    /// カスタムURLモデルの任意SHA-256（64桁16進数）。空なら検証しない。
+    @Published var customSourceSHA256: String = ""
     @Published private(set) var statusMessage: String = "未導入"
     @Published private(set) var downloadedBytes: Int64 = 0
     @Published private(set) var expectedBytes: Int64 = 0
@@ -786,7 +794,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         automaticRuntimeCheckModelKey = nil
 
         // 手動再確認を残す呼び出し元向けの互換入口。通常はモデル検出後に自動実行する。
-        NSLog(
+        AppLog.note(
             "[ModelManager] self-check requested installed=%@ downloading=%@ status=%@",
             installedModelURL?.path ?? "nil",
             isDownloading ? "true" : "false",
@@ -985,7 +993,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     func startDownload() {
         guard !isDownloading, !isValidatingDownloadedCandidate else { return }
-        NSLog(
+        AppLog.note(
             "[ModelManager] DOWNLOAD START requested status=%@ installed=%@ callstack=%@",
             downloadStatus.rawValue,
             installedModelURL?.path ?? "nil",
@@ -996,7 +1004,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     func resumeDownloadIfPossible() {
         guard !isDownloading, !isValidatingDownloadedCandidate, canResumeDownload else { return }
-        NSLog(
+        AppLog.note(
             "[ModelManager] DOWNLOAD RESUME requested status=%@ installed=%@",
             downloadStatus.rawValue,
             installedModelURL?.path ?? "nil"
@@ -1055,7 +1063,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard self.activeTransferID == cancelledTransferID else {
-                    NSLog("[Kizuna] ignored stale cancel callback for download generation")
+                    AppLog.note("[Kizuna] ignored stale cancel callback for download generation")
                     return
                 }
                 self.persistResumeData(resumeData)
@@ -1197,6 +1205,27 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             return
         }
 
+        // カスタムURLでは任意のSHA-256を検証に使う（GHSA-4qg2-jrp6-rvjf）。
+        // 再開時は最初のダウンロードで保存したダイジェストを引き継ぐ。
+        let resolvedCustomDigest: String?
+        if resuming {
+            resolvedCustomDigest = persistedDownloadState?.expectedSHA256
+        } else if isUsingDefaultSource {
+            resolvedCustomDigest = nil
+        } else {
+            let trimmed = customSourceSHA256
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if trimmed.isEmpty {
+                resolvedCustomDigest = nil
+            } else if trimmed.count == 64, trimmed.allSatisfy(\.isHexDigit) {
+                resolvedCustomDigest = trimmed
+            } else {
+                applyFailure(message: "SHA-256は64桁の16進数で入力するか、空にしてください。")
+                return
+            }
+        }
+
         invalidateModelArtifactValidationCache()
         isDownloading = true
         downloadedBytes = 0
@@ -1216,7 +1245,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 startedAt: persistedDownloadState?.startedAt ?? Date(),
                 updatedAt: Date(),
                 lastError: nil,
-                suggestedFilename: persistedDownloadState?.suggestedFilename
+                suggestedFilename: persistedDownloadState?.suggestedFilename,
+                expectedSHA256: resolvedCustomDigest
             )
         )
         applyStatusPresentation()
@@ -1941,7 +1971,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         at url: URL,
         fileName: String,
         reportedExpectedBytes: Int64,
-        trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?
+        trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?,
+        customExpectedSHA256: String? = nil
     ) throws {
         if let trustedArtifact, fileName != trustedArtifact.fileName {
             throw LocalAssistantModelArtifactValidator.ValidationError.unexpectedFileName
@@ -1949,11 +1980,14 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
         let expectedBytes = trustedArtifact?.byteCount
             ?? (reportedExpectedBytes > 0 ? reportedExpectedBytes : nil)
+        // 標準モデルのピン留めダイジェストを優先し、カスタムURLでは
+        // 利用者が入力したダイジェストで整合性を検証する。
+        let expectedSHA256 = trustedArtifact?.sha256 ?? customExpectedSHA256
         try LocalAssistantModelArtifactValidator.validate(
             at: url,
             fileName: fileName,
             expectedByteCount: expectedBytes,
-            expectedSHA256: trustedArtifact?.sha256,
+            expectedSHA256: expectedSHA256,
             minimumByteCount: LocalAssistantModelProfile.minimumAcceptedModelSizeBytes,
             requireExactByteCount: true
         )
@@ -1977,6 +2011,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         let sourceURL = persistedDownloadState?.sourceURL ?? resolvedSourceURLString
         let trustedArtifact = LocalAssistantModelProfile.trustedArtifact(for: sourceURL)
         let recordedExpectedBytes = trustedArtifact?.byteCount ?? max(expectedBytes, 0)
+        let customDigest = trustedArtifact == nil
+            ? persistedDownloadState?.expectedSHA256?.lowercased()
+            : nil
         let pendingCandidate = LocalAssistantPendingModelCandidate(
             stagedURL: tempURL,
             fileName: fileName,
@@ -1984,7 +2021,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             resolvedURL: persistedDownloadState?.resolvedURL ?? response?.url?.absoluteString,
             expectedBytes: recordedExpectedBytes,
             eTag: persistedDownloadState?.eTag,
-            previousModel: installedModelSnapshotBeforeDownload ?? currentInstalledModelSnapshot()
+            previousModel: installedModelSnapshotBeforeDownload ?? currentInstalledModelSnapshot(),
+            expectedSHA256: customDigest
         )
         pendingModelCandidate = pendingCandidate
 
@@ -2006,7 +2044,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                     at: tempURL,
                     fileName: fileName,
                     reportedExpectedBytes: recordedExpectedBytes,
-                    trustedArtifact: trustedArtifact
+                    trustedArtifact: trustedArtifact,
+                    customExpectedSHA256: customDigest
                 )
             }
             DispatchQueue.main.async {
@@ -2036,7 +2075,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             previousSourceURL: candidate.previousModel?.sourceURL,
             previousResolvedURL: candidate.previousModel?.resolvedURL,
             previousExpectedBytes: candidate.previousModel?.expectedBytes,
-            previousETag: candidate.previousModel?.eTag
+            previousETag: candidate.previousModel?.eTag,
+            expectedSHA256: candidate.expectedSHA256
         )
     }
 
@@ -2067,7 +2107,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                     resolvedURL: candidate.resolvedURL,
                     expectedBytes: candidate.expectedBytes,
                     eTag: candidate.eTag,
-                    previousModel: candidate.previousModel
+                    previousModel: candidate.previousModel,
+                    expectedSHA256: candidate.expectedSHA256
                 )
                 pendingModelCandidate = stagedCandidate
                 persistDownloadState(pendingValidationState(for: stagedCandidate))
@@ -2207,7 +2248,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 suggestedFilename: candidate.fileName,
                 pendingValidationPath: nil,
                 replacementBackupPath: backupURL?.path,
-                replacementInProgress: false
+                replacementInProgress: false,
+                expectedSHA256: candidate.expectedSHA256
             )
             persistDownloadState(completedState)
             guard downloadStatePersistenceError == nil else {
@@ -2915,10 +2957,10 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                     resetDownloadProgressMetrics()
                     lastErrorMessage = recovered.lastError
                     applyStatusPresentation()
-                    NSLog("[KizunaModelManager] recovered resumable download state from valid resume data; backup=%@", backupURL.lastPathComponent)
+                    AppLog.note("[KizunaModelManager] recovered resumable download state from valid resume data; backup=%@", backupURL.lastPathComponent)
                     return
                 } catch {
-                    NSLog("[KizunaModelManager] could not back up corrupt download state: %@", error.localizedDescription)
+                    AppLog.error("[KizunaModelManager] could not back up corrupt download state: %@", error.localizedDescription)
                 }
             }
 
