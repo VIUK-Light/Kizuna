@@ -15,6 +15,9 @@ enum KizunaDebugOptions {
     static let restSuggestionRequestNotification = Notification.Name("kizuna.debug.restSuggestion.requested")
     static let safetyConcernRequestKey = "kizuna.debug.safetyConcern.requestedAt"
     static let safetyConcernRequestNotification = Notification.Name("kizuna.debug.safetyConcern.requested")
+    /// 設定シートの dismiss 完了をワークスペースへ伝える通知。デバッグ要求時の
+    /// Story 表示はこの通知を受けてから行うため、固定待機を必要としない。
+    static let settingsDismissedNotification = Notification.Name("kizuna.debug.settings.dismissed")
 
     static func requestRestSuggestionUI() {
         let timestamp = Date().timeIntervalSince1970
