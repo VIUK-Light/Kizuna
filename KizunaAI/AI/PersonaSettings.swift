@@ -162,6 +162,8 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
     /// 複製でも見た目が維持されるよう、UIはこれを優先してスタイルを引く。
     /// nilの場合は旧データとして名前ベースのフォールバック解決を行う。
     var avatarStyleID: String?
+    /// Character Libraryで選択した写真。既存の保存データには無い場合がある。
+    var avatarImageData: Data?
 
     init(
         id: UUID = UUID(),
@@ -171,7 +173,8 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
         tone: PersonaTone,
         relation: PersonaRelation,
         freeFormAddendum: String = "",
-        avatarStyleID: String? = nil
+        avatarStyleID: String? = nil,
+        avatarImageData: Data? = nil
     ) {
         self.id = id
         self.name = name
@@ -181,11 +184,12 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
         self.relation = relation
         self.freeFormAddendum = freeFormAddendum
         self.avatarStyleID = avatarStyleID
+        self.avatarImageData = avatarImageData
     }
 
-    // Codable: 既存保存データに avatarStyleID が無くてもデコード可能にする
+    // Codable: 既存保存データに追加フィールドが無くてもデコード可能にする
     private enum CodingKeys: String, CodingKey {
-        case id, name, age, personality, tone, relation, freeFormAddendum, avatarStyleID
+        case id, name, age, personality, tone, relation, freeFormAddendum, avatarStyleID, avatarImageData
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -197,6 +201,7 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
         self.relation = try c.decode(PersonaRelation.self, forKey: .relation)
         self.freeFormAddendum = try c.decode(String.self, forKey: .freeFormAddendum)
         self.avatarStyleID = try c.decodeIfPresent(String.self, forKey: .avatarStyleID)
+        self.avatarImageData = try c.decodeIfPresent(Data.self, forKey: .avatarImageData)
     }
 
     /// ペルソナを system prompt に流し込むためのテキスト。短く・指示形式で。

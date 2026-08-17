@@ -124,6 +124,11 @@ struct PersonaChatView: View {
                     if let existing = store.threads.first(where: {
                         $0.characterID == character.id && !$0.messages.isEmpty
                     }) {
+                        store.refreshCharacterAppearance(
+                            threadID: existing.id,
+                            avatarStyleID: character.imageKey,
+                            avatarImageData: character.avatarImageData
+                        )
                         store.selectThread(id: existing.id)
                         if horizontalSizeClass == .compact {
                             compactShowsChat = true
@@ -148,7 +153,8 @@ struct PersonaChatView: View {
                             .filter { !$0.isEmpty }
                             .joined(separator: " / "),
                         // ライブラリー側のアセット指定をアバター表示に引き継ぐ。
-                        avatarStyleID: character.imageKey
+                        avatarStyleID: character.imageKey,
+                        avatarImageData: character.avatarImageData
                     )
                     guard let thread = store.createThread(with: persona, characterID: character.id) else {
                         if store.isPersistenceRecoveryRequired {

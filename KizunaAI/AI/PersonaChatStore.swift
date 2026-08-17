@@ -488,6 +488,24 @@ final class PersonaChatStore: ObservableObject {
         activeThreadID = id
     }
 
+    /// Keep a character's current library image in existing conversations while
+    /// leaving the conversation's personality and messages unchanged.
+    func refreshCharacterAppearance(
+        threadID: UUID,
+        avatarStyleID: String?,
+        avatarImageData: Data?
+    ) {
+        guard canMutatePersistedState(),
+              let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
+        guard threads[index].personaSnapshot.avatarStyleID != avatarStyleID
+                || threads[index].personaSnapshot.avatarImageData != avatarImageData else {
+            return
+        }
+        threads[index].personaSnapshot.avatarStyleID = avatarStyleID
+        threads[index].personaSnapshot.avatarImageData = avatarImageData
+        persist()
+    }
+
     /// キャラ本体が削除されても、会話スナップショットは残して再開できるようにする。
     func detachCharacterReference(threadID: UUID) {
         guard canMutatePersistedState() else { return }
