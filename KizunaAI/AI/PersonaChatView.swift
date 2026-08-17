@@ -39,6 +39,9 @@ struct PersonaChatView: View {
     @State private var storyHistoryReloadID = UUID()
     @State private var isPersonaChatNearBottom = true
     @State private var unreadPersonaMessageCount = 0
+    @State private var previousMessageIDs: Set<UUID> = []
+    @State private var targetGenerationThreadID: UUID?
+    @State private var targetAssistantMessageID: UUID?
     @State private var pendingThreadDeletion: PersonaThread?
     @State private var pendingThreadRename: PersonaThread?
     @State private var threadRenameText = ""
@@ -257,6 +260,17 @@ struct PersonaChatView: View {
         .onChange(of: store.activeThreadID) { _, _ in
             isPersonaChatNearBottom = true
             unreadPersonaMessageCount = 0
+            if let activeThread = store.activeThread {
+                previousMessageIDs = Set(activeThread.messages.map(\.id))
+            } else {
+                previousMessageIDs = []
+            }
+        }
+        .onChange(of: service.activeGenerationThreadID) { _, newThreadID in
+            if newThreadID != nil {
+                targetGenerationThreadID = service.activeGenerationThreadID
+                targetAssistantMessageID = service.activeAssistantMessageID
+            }
         }
         .onChange(of: service.phase) { oldValue, newValue in
             handleGenerationPhaseChange(from: oldValue, to: newValue)
@@ -267,7 +281,10 @@ struct PersonaChatView: View {
         }
         .sensoryFeedback(.success, trigger: service.phase) { oldValue, newValue in
             guard case .thinking = oldValue, newValue == .idle else { return false }
-            return store.activeThread?.messages.last?.role == .assistant
+            guard targetGenerationThreadID == store.activeThreadID,
+                  let targetMessageID = targetAssistantMessageID else { return false }
+            return store.activeThread?.messages.last?.id == targetMessageID
+                && store.activeThread?.messages.last?.role == .assistant
         }
         .confirmationDialog(
             KizunaCopy.text(
@@ -1061,7 +1078,11 @@ struct PersonaChatView: View {
         guard case .thinking = oldValue, newValue == .idle else { return }
         // キャンセルではアシスタント本文が保存されないため、最後のメッセージで
         // 正常完了とキャンセルを区別する。
-        guard store.activeThread?.messages.last?.role == .assistant else { return }
+        guard let targetThreadID = targetGenerationThreadID,
+              let targetMessageID = targetAssistantMessageID else { return }
+        guard service.activeGenerationThreadID == targetThreadID
+            && service.activeAssistantMessageID == targetMessageID
+            && store.activeThread?.messages.last?.role == .assistant else { return }
         announceGenerationCompleted()
     }
 
@@ -1247,9 +1268,17 @@ struct PersonaChatView: View {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     } else {
-                        withAnimation(accessibilityReduceMotion ? nil : .snappy) {
-                            unreadPersonaMessageCount += 1
+                        let currentMessageIDs = Set(thread.messages.map(\.id))
+                        let newMessageIDs = currentMessageIDs.subtracting(previousMessageIDs)
+                        let newAssistantMessages = thread.messages.filter { msg in
+                            newMessageIDs.contains(msg.id) && msg.role == .assistant
                         }
+                        if !newAssistantMessages.isEmpty {
+                            withAnimation(accessibilityReduceMotion ? nil : .snappy) {
+                                unreadPersonaMessageCount += newAssistantMessages.count
+                            }
+                        }
+                        previousMessageIDs = currentMessageIDs
                     }
                 }
                 .onChange(of: service.streamingResponse) { _, _ in
@@ -1288,7 +1317,14 @@ struct PersonaChatView: View {
                     .buttonStyle(.plain)
                     .padding(.trailing, 16)
                     .padding(.bottom, 14)
-                    .accessibilityLabel(KizunaCopy.text(japanese: "最新のメッセージへ移動", english: "Jump to the latest message"))
+                    .accessibilityLabel(
+                        unreadPersonaMessageCount > 0
+                        ? KizunaCopy.text(
+                            japanese: "\(unreadPersonaMessageCount)件の新しいメッセージへ移動",
+                            english: "Jump to \(unreadPersonaMessageCount) new messages"
+                          )
+                        : KizunaCopy.text(japanese: "最新のメッセージへ移動", english: "Jump to the latest message")
+                    )
                 }
             }
         }
@@ -1674,7 +1710,6 @@ struct PersonaComposer: View {
     @Binding private var text: String
     @FocusState private var focused: Bool
     @Environment(\.colorScheme) private var colorScheme
-    @State private var sendSuccessCount = 0
 
     init(thread: PersonaThread, draft: Binding<String>) {
         self.thread = thread
@@ -1767,7 +1802,6 @@ struct PersonaComposer: View {
         .padding(.vertical, 10)
         .background(.thinMaterial)
         .personaKeyboardDismissToolbar($focused)
-        .sensoryFeedback(.success, trigger: sendSuccessCount)
     }
 
     private var canSubmit: Bool {
@@ -1782,7 +1816,6 @@ struct PersonaComposer: View {
         guard service.send(toSend, to: thread) else { return }
         text = ""
         focused = false
-        sendSuccessCount += 1
     }
 }
 
