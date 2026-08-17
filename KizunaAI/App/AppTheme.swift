@@ -218,10 +218,10 @@ struct SafeBrowserChip: View {
         HStack(spacing: 4) {
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
             }
             Text(text)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.caption2.weight(.semibold))
         }
         .foregroundColor(color)
         .padding(.horizontal, 8)

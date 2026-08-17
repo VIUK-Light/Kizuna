@@ -123,6 +123,7 @@ final class PersonaChatService: ObservableObject {
     /// phase はサービス全体の状態なので、スレッド切替時にそのままUIへ使うと
     /// Aの生成表示がBへ伝播してしまう。
     @Published private(set) var activeGenerationThreadID: UUID?
+    @Published private(set) var activeAssistantMessageID: UUID?
     @Published private(set) var lastErrorThreadID: UUID?
 
     private var generationTask: Task<Void, Never>?
@@ -133,7 +134,6 @@ final class PersonaChatService: ObservableObject {
     private var streamPreviewRevision = 0
     private var activeGenerationID: UUID?
     private var activeThreadID: UUID?
-    private var activeAssistantMessageID: UUID?
     private var lastRequestThreadID: UUID?
     private var lastRequestText: String?
 
