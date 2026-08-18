@@ -21,7 +21,7 @@ final class KizunaNavigationSmokeTests: XCTestCase {
 
         let conversationTab = tabBar.buttons["会話"]
         let storyTab = tabBar.buttons["ストーリー"]
-        let myPageTab = tabBar.buttons["マイページ"]
+        let myPageTab = tabBar.buttons["My"]
 
         XCTAssertTrue(conversationTab.exists)
         XCTAssertTrue(storyTab.exists)
@@ -47,7 +47,7 @@ final class KizunaNavigationSmokeTests: XCTestCase {
     }
 
     func testMyPageDataManagementIsReachable() throws {
-        let myPageTab = app.tabBars.buttons["マイページ"]
+        let myPageTab = app.tabBars.buttons["My"]
         XCTAssertTrue(myPageTab.waitForExistence(timeout: 10))
         myPageTab.tap()
 
