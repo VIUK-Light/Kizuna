@@ -6,7 +6,7 @@ import SwiftUI
 struct KizunaConversationHomeView: View {
     @StateObject private var store = PersonaChatStore.shared
     @State private var presentedThread: PersonaThread?
-    @State private var isShowingAllConversations = false
+    @State private var isShowingRecovery = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,12 +18,7 @@ struct KizunaConversationHomeView: View {
                 Divider()
             }
 
-            if let latestThread = store.threads.first {
-                latestConversation(latestThread)
-                if store.threads.count > 1 {
-                    recentConversations
-                }
-            } else {
+            if store.threads.isEmpty {
                 emptyConversationIntro
             }
 
@@ -40,7 +35,7 @@ struct KizunaConversationHomeView: View {
         .fullScreenCover(item: $presentedThread) { thread in
             PersonaChatView(initialThreadID: thread.id, showsStoryActions: false)
         }
-        .fullScreenCover(isPresented: $isShowingAllConversations) {
+        .fullScreenCover(isPresented: $isShowingRecovery) {
             PersonaChatView(showsStoryActions: false)
         }
 #else
@@ -48,7 +43,7 @@ struct KizunaConversationHomeView: View {
             PersonaChatView(initialThreadID: thread.id, showsStoryActions: false)
                 .viukAdaptiveSheetSizing(minWidth: 880, minHeight: 700)
         }
-        .sheet(isPresented: $isShowingAllConversations) {
+        .sheet(isPresented: $isShowingRecovery) {
             PersonaChatView(showsStoryActions: false)
                 .viukAdaptiveSheetSizing(minWidth: 880, minHeight: 700)
         }
@@ -74,115 +69,11 @@ struct KizunaConversationHomeView: View {
 
             Spacer(minLength: 8)
 
-            if !store.threads.isEmpty {
-                Button {
-                    isShowingAllConversations = true
-                } label: {
-                    Label(
-                        KizunaCopy.text(japanese: "すべての会話", english: "All conversations"),
-                        systemImage: "bubble.left.and.bubble.right"
-                    )
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-                .accessibilityIdentifier("conversation.all")
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(.thinMaterial)
         .accessibilityElement(children: .contain)
-    }
-
-    private func latestConversation(_ thread: PersonaThread) -> some View {
-        Button {
-            open(thread)
-        } label: {
-            HStack(spacing: 12) {
-                PersonaAvatarView(profile: thread.personaSnapshot, size: 52)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(KizunaCopy.text(japanese: "続きから", english: "Continue"))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tint)
-                    Text(thread.title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Text(thread.messages.last?.text ?? KizunaCopy.text(
-                        japanese: "新しい会話",
-                        english: "New conversation"
-                    ))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("conversation.latest")
-        .accessibilityHint(KizunaCopy.text(
-            japanese: "最新の会話を開きます",
-            english: "Opens the latest conversation"
-        ))
-    }
-
-    private var recentConversations: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(KizunaCopy.text(japanese: "最近の会話", english: "Recent conversations"))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(store.threads.dropFirst()) { thread in
-                        Button {
-                            open(thread)
-                        } label: {
-                            HStack(spacing: 8) {
-                                PersonaAvatarView(profile: thread.personaSnapshot, size: 30)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(thread.title)
-                                        .font(.subheadline.weight(.semibold))
-                                        .lineLimit(1)
-                                    Text(thread.updatedAt, style: .relative)
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                }
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .frame(minWidth: 155, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                    .fill(Color.primary.opacity(0.055))
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
-            }
-        }
-        .padding(.top, 10)
     }
 
     private var emptyConversationIntro: some View {
@@ -227,7 +118,7 @@ struct KizunaConversationHomeView: View {
             }
 
             Button(KizunaCopy.text(japanese: "復旧を開く", english: "Open recovery")) {
-                isShowingAllConversations = true
+                isShowingRecovery = true
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
@@ -276,7 +167,7 @@ struct KizunaConversationHomeView: View {
             // The recovery screen owns export/reset. Do not drop the tap
             // silently when corrupted data has intentionally blocked writes.
             if store.isPersistenceRecoveryRequired {
-                isShowingAllConversations = true
+                isShowingRecovery = true
             }
             return
         }

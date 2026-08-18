@@ -199,7 +199,7 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
         switch self {
         case .conversation: return KizunaCopy.text(japanese: "会話", english: "Conversations")
         case .stories: return KizunaCopy.text(japanese: "ストーリー", english: "Stories")
-        case .myPage: return KizunaCopy.text(japanese: "マイページ", english: "My page")
+        case .myPage: return KizunaCopy.text(japanese: "My", english: "My")
         }
     }
 

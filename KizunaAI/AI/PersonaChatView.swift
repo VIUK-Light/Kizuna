@@ -17,6 +17,7 @@ import UIKit
 struct PersonaChatView: View {
     private let initialThreadID: UUID?
     private let showsStoryActions: Bool
+    private let showsOnlyContinuations: Bool
     @StateObject private var store = PersonaChatStore.shared
     @StateObject private var service = PersonaChatService.shared
     @StateObject private var settings = PersonaSettings.shared
@@ -59,9 +60,14 @@ struct PersonaChatView: View {
     private let storyWorldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let storySessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
 
-    init(initialThreadID: UUID? = nil, showsStoryActions: Bool = true) {
+    init(
+        initialThreadID: UUID? = nil,
+        showsStoryActions: Bool = true,
+        showsOnlyContinuations: Bool = false
+    ) {
         self.initialThreadID = initialThreadID
         self.showsStoryActions = showsStoryActions
+        self.showsOnlyContinuations = showsOnlyContinuations
         _store = StateObject(wrappedValue: PersonaChatStore.shared)
         _service = StateObject(wrappedValue: PersonaChatService.shared)
         _settings = StateObject(wrappedValue: PersonaSettings.shared)
@@ -75,7 +81,9 @@ struct PersonaChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if horizontalSizeClass == .compact {
+            if showsOnlyContinuations {
+                compactStoryList
+            } else if horizontalSizeClass == .compact {
                 compactTopSwitchBar
                 Divider()
             }
