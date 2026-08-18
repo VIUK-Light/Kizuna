@@ -104,7 +104,11 @@
         }
       }
     },
+    "%@" : {
+
+    },
     "%@ ・ %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -121,6 +125,7 @@
       }
     },
     "%@ / 2" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -150,6 +155,16 @@
         }
       }
     },
+    "%@, %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@"
+          }
+        }
+      }
+    },
     "%@%%" : {
       "localizations" : {
         "en" : {
@@ -171,6 +186,7 @@
       }
     },
     "%@件のやり取り ・ %@人のキャスト ・ %@シーン" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -267,6 +283,7 @@
       }
     },
     "Custom Story Builder" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -400,6 +417,7 @@
       }
     },
     "KizunaとVIUK-Lightは、『責任あるAIアプリケーションと倫理』を掲げています。AIとの対話を創作・娯楽・気持ちの整理に役立てながら、人の生活や選択を支配するものにはしないことを安全対策の前提にしています。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -410,6 +428,7 @@
       }
     },
     "Kizunaの安全対策" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -420,6 +439,7 @@
       }
     },
     "Kizunaライブラリー" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -430,6 +450,7 @@
       }
     },
     "Kizunaライブラリーを開く" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -440,6 +461,7 @@
       }
     },
     "Kizunaを探す" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -450,6 +472,7 @@
       }
     },
     "Kizuna内の表示だけが切り替わります。端末全体の言語は変更しません。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -500,6 +523,7 @@
       }
     },
     "VIUK Kizuna" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -510,6 +534,7 @@
       }
     },
     "VIUK 絆" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -520,6 +545,7 @@
       }
     },
     "VIUK 絆 / PROFILE" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -631,6 +657,7 @@
       }
     },
     "キャラクター: %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -641,6 +668,7 @@
       }
     },
     "キャラクターを通報" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -671,6 +699,7 @@
       }
     },
     "キャラを作るか選ぶと、物語の登場人物として参加します。最初の 1 名はメインキャラとして登録されます。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -895,6 +924,7 @@
       }
     },
     "この単体キャラを編集" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1314,6 +1344,7 @@
       }
     },
     "トークを続ける" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1664,6 +1695,7 @@
       }
     },
     "ローカル" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1804,6 +1836,7 @@
       }
     },
     "世界を読み込んでいます..." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1884,6 +1917,7 @@
       }
     },
     "今回" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2276,6 +2310,7 @@
       }
     },
     "具体的な内容を書いてください" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2306,6 +2341,7 @@
       }
     },
     "再開できます" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2387,6 +2423,7 @@
       }
     },
     "初回はVIUK Oneのキャラクターとローカルモデルをコピーするため、数分かかる場合があります。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2530,6 +2567,7 @@
       }
     },
     "単体キャラなどの補助メニュー" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2540,6 +2578,7 @@
       }
     },
     "単体キャラ設定" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2550,6 +2589,7 @@
       }
     },
     "危険を避けるために、すべての親密な会話や感情表現を機械的に止めると、キャラクターAIとしての価値や、利用者が得られる居場所まで失われます。だからKizunaは、危険度と文脈を見ながら必要な場面だけ安全な方向へ導き、通常の創作や物語はできるだけ続けられる設計を目指します。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2720,6 +2760,7 @@
       }
     },
     "安全性は、拒否する回数を増やせば完成するものではありません。必要以上に冷たく突き放したり、キャラクター性を消したりすれば、別のかたちで利用者の体験を傷つけます。Kizunaは、危険を見逃さず、同時に過剰な制限も減らすことを安全設計の課題として扱います。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2833,6 +2874,7 @@
       }
     },
     "押すと設定を閉じ、最初のストーリーを開いて30秒後に画面内カードを表示します。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2843,6 +2885,7 @@
       }
     },
     "押すと設定を閉じ、最初のストーリーを開いて30秒後に相談サポートカードを表示します。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3003,6 +3046,7 @@
       }
     },
     "次" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3013,6 +3057,7 @@
       }
     },
     "次の会話を進める" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3023,6 +3068,7 @@
       }
     },
     "気になること" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3043,6 +3089,7 @@
       }
     },
     "物語が始まったところ" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3135,6 +3182,7 @@
       }
     },
     "物語内メモリー %@件" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3207,6 +3255,7 @@
       }
     },
     "理由" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3247,6 +3296,7 @@
       }
     },
     "生成中..." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3337,6 +3387,7 @@
       }
     },
     "相手に伝える..." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3508,6 +3559,7 @@
       }
     },
     "第1場面" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3528,6 +3580,7 @@
       }
     },
     "絆: %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3538,6 +3591,7 @@
       }
     },
     "絆AI" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3548,6 +3602,7 @@
       }
     },
     "絆シナリオ/単体キャラの操作" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3558,6 +3613,7 @@
       }
     },
     "絆シナリオを探す" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3578,6 +3634,7 @@
       }
     },
     "絆チャット開始" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3588,6 +3645,7 @@
       }
     },
     "絆のデータを準備しています" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3598,6 +3656,7 @@
       }
     },
     "絆メニュー" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3608,6 +3667,7 @@
       }
     },
     "絆ライブラリー" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3661,6 +3721,7 @@
       }
     },
     "絆を選ぶ" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3671,6 +3732,7 @@
       }
     },
     "継続中のKizuna" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3681,6 +3743,7 @@
       }
     },
     "継続中の物語" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3712,6 +3775,7 @@
       }
     },
     "続きから会話" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3872,6 +3936,7 @@
       }
     },
     "詳細 (任意)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3952,6 +4017,7 @@
       }
     },
     "通報" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3962,6 +4028,7 @@
       }
     },
     "通報を受け付けました。ご協力ありがとうございます。" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3972,6 +4039,7 @@
       }
     },
     "通報理由" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4002,6 +4070,7 @@
       }
     },
     "進行中" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4062,6 +4131,7 @@
       }
     },
     "開始" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4112,6 +4182,7 @@
       }
     },
     "関係性を継続できる絆シナリオを開く" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

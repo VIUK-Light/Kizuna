@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The first workspace destination: resume a relationship or choose a
 /// character. Story browsing intentionally lives in the Story tab so the
-/// user's next action is obvious when they open Kizuna.
+/// user's next action is obvious when they open Kizuna
 struct KizunaConversationHomeView: View {
     @StateObject private var store = PersonaChatStore.shared
     @State private var presentedThread: PersonaThread?
@@ -16,10 +16,6 @@ struct KizunaConversationHomeView: View {
             if store.isPersistenceRecoveryRequired {
                 recoveryPrompt
                 Divider()
-            }
-
-            if store.threads.isEmpty {
-                emptyConversationIntro
             }
 
             Divider()
@@ -59,12 +55,6 @@ struct KizunaConversationHomeView: View {
                     .font(.title2.weight(.bold))
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("workspace.conversation.heading")
-                Text(KizunaCopy.text(
-                    japanese: "キャラクターを選ぶと、すぐに会話を始められます。",
-                    english: "Choose a character to start talking right away."
-                ))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 8)
@@ -76,23 +66,7 @@ struct KizunaConversationHomeView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var emptyConversationIntro: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .foregroundStyle(.tint)
-            Text(KizunaCopy.text(
-                japanese: "まだ会話はありません。下からキャラクターを選んでください。",
-                english: "No conversations yet. Choose a character below."
-            ))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color.accentColor.opacity(0.07))
-        .accessibilityIdentifier("conversation.empty")
-    }
+   
 
     private var recoveryPrompt: some View {
         VStack(alignment: .leading, spacing: 8) {
