@@ -118,6 +118,13 @@ struct KizunaConversationHomeView: View {
         if let existing = store.threads.first(where: {
             $0.characterID == character.id && !$0.messages.isEmpty
         }) {
+            // ライブラリーで写真が更新されていても、会話スナップショットの
+            // 性格やメッセージは変えずに見た目だけ最新化する (#296)。
+            store.refreshCharacterAppearance(
+                threadID: existing.id,
+                avatarStyleID: character.imageKey,
+                avatarImageData: character.avatarImageData
+            )
             open(existing)
             return
         }
@@ -135,7 +142,10 @@ struct KizunaConversationHomeView: View {
                 character.scenario
             ]
                 .filter { !$0.isEmpty }
-                .joined(separator: " / ")
+                .joined(separator: " / "),
+            // ライブラリー側のアセット・写真指定をアバター表示に引き継ぐ (#296)。
+            avatarStyleID: character.imageKey,
+            avatarImageData: character.avatarImageData
         )
         guard let thread = store.createThread(with: persona, characterID: character.id) else {
             // The recovery screen owns export/reset. Do not drop the tap
