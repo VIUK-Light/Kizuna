@@ -439,23 +439,6 @@ struct StoryWorldDetailView: View {
                         .padding(.vertical, 5)
                         .background(Capsule().fill(Color.primary.opacity(0.08)))
                     Spacer()
-                    Button {
-                        if let session = resumableSession {
-                            onResumeSession?(world, session.id)
-                        } else {
-                            onStartSession?(world)
-                        }
-                    } label: {
-                        Label(
-                            canResume
-                                ? KizunaCopy.text(japanese: "続きから", english: "Continue")
-                                : KizunaCopy.text(japanese: "始める", english: "Start"),
-                            systemImage: "play.fill"
-                        )
-                            .font(.body.weight(.bold))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
                 }
                 if canResume {
                     Button {
