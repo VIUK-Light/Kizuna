@@ -16,7 +16,13 @@ struct PersonaAvatarView: View {
     var body: some View {
         let style = PersonaAvatarStyle(profile: profile)
         ZStack {
-            if let assetName = style.assetName {
+            if let image = KizunaAvatarImage.image(from: profile.avatarImageData) {
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size + 2, height: size + 2)
+                    .clipShape(Circle())
+            } else if let assetName = style.assetName {
                 Image(assetName)
                     .resizable()
                     .scaledToFill()
