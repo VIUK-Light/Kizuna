@@ -53,6 +53,9 @@ struct PersonaChatView: View {
     /// 下書きをスレッドIDごとに保持する。会話本文とは別の一時UI状態であり、
     /// 永続化は行わない。
     @State private var personaDrafts: [UUID: String] = [:]
+    /// Myタブ埋め込み（showsOnlyContinuations）時に開いた会話。リストは
+    /// 埋め込みのまま維持し、会話本体はフルスクリーン/シートで開く (#298)。
+    @State private var continuationPresentedThread: PersonaThread?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(\.dismiss) private var dismiss
@@ -79,23 +82,30 @@ struct PersonaChatView: View {
         let startsNewSession: Bool
     }
 
+    /// 復旧バナーと後処理バナー。通常・埋め込み両モードで同じ物を表示する。
+    @ViewBuilder
+    private var recoveryBanners: some View {
+        if store.isPersistenceRecoveryRequired {
+            personaRecoveryBanner
+            Divider()
+        } else if personaRecoveryExportItem != nil
+                    || personaRecoveryCleanupWarningMessage != nil {
+            personaRecoveryPostResetBanner
+            Divider()
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if showsOnlyContinuations {
+                // Myタブ埋め込みモード。継続一覧だけを表示し、会話本体は
+                // シートで開く。compactShowsChatの画面内遷移は使わない (#298)。
+                recoveryBanners
                 compactStoryList
             } else if horizontalSizeClass == .compact {
                 compactTopSwitchBar
                 Divider()
-            }
-            if store.isPersistenceRecoveryRequired {
-                personaRecoveryBanner
-                Divider()
-            } else if personaRecoveryExportItem != nil
-                        || personaRecoveryCleanupWarningMessage != nil {
-                personaRecoveryPostResetBanner
-                Divider()
-            }
-            if horizontalSizeClass == .compact {
+                recoveryBanners
                 if compactShowsChat, store.activeThread != nil {
                     compactChat
                 } else if showsStoryActions {
@@ -104,6 +114,7 @@ struct PersonaChatView: View {
                     compactConversationList
                 }
             } else {
+                recoveryBanners
                 HStack(spacing: 0) {
                     sidebar
                         .frame(width: 240)
@@ -123,6 +134,16 @@ struct PersonaChatView: View {
             PersonaConfigView()
                 .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 680)
         }
+        #if os(iOS)
+        .fullScreenCover(item: $continuationPresentedThread) { thread in
+            PersonaChatView(initialThreadID: thread.id, showsStoryActions: false)
+        }
+        #else
+        .sheet(item: $continuationPresentedThread) { thread in
+            PersonaChatView(initialThreadID: thread.id, showsStoryActions: false)
+                .viukAdaptiveSheetSizing(minWidth: 880, minHeight: 700)
+        }
+        #endif
         .sheet(isPresented: $showLibrary) {
             CharacterLibraryView(
                 onStartChat: { character in
@@ -968,6 +989,10 @@ struct PersonaChatView: View {
             !($0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text))
         }?.text ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation")
         return Button {
+            if showsOnlyContinuations {
+                continuationPresentedThread = thread
+                return
+            }
             store.selectThread(id: thread.id)
             if horizontalSizeClass == .compact {
                 compactShowsChat = true
