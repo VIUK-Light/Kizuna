@@ -131,13 +131,15 @@ struct PersonaAvatarStyle {
             primary = palette.primary
             highlight = palette.highlight
             shadow = palette.shadow
-            assetName = styleID.flatMap { Self.palettes[$0] != nil ? $0 : nil }
+            assetName = styleID
         } else {
             let hue = Self.nameHue(name)
             primary = Color(hue: hue, saturation: 0.58, brightness: 0.92)
             highlight = Color(hue: hue, saturation: 0.30, brightness: 1.00)
             shadow = Color(hue: hue, saturation: 0.70, brightness: 0.38)
-            assetName = nil
+            // Character Libraryの一般アセット（例: aoi_infirmary_afternoon）も
+            // Persona専用パレットと同じ画像優先順位で表示する (#296)。
+            assetName = KizunaAvatarImage.image(named: styleID) == nil ? nil : styleID
         }
     }
 

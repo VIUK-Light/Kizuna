@@ -63,6 +63,23 @@ enum KizunaAvatarImage {
         #endif
     }
 
+    /// CharacterProfile.imageKey / PersonaProfile.avatarStyleID に入る
+    /// Asset Catalog名を、ライブラリーとPersonaで同じ優先順位で解決する。
+    static func image(named name: String?) -> Image? {
+        guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else { return nil }
+
+        #if canImport(UIKit)
+        guard let image = UIImage(named: name) else { return nil }
+        return Image(uiImage: image)
+        #elseif canImport(AppKit)
+        guard let image = NSImage(named: name) else { return nil }
+        return Image(nsImage: image)
+        #else
+        return nil
+        #endif
+    }
+
     /// Store a small, normalized JPEG instead of the original camera asset.
     /// This keeps the profile in UserDefaults bounded while retaining enough
     /// resolution for the circular avatar surfaces.
