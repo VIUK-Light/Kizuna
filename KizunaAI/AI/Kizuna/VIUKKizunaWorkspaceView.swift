@@ -213,7 +213,7 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
         switch self {
         case .conversation: return KizunaCopy.text(japanese: "会話", english: "Conversations")
         case .stories: return KizunaCopy.text(japanese: "ストーリー", english: "Stories")
-        case .continuations: return KizunaCopy.text(japanese: "続きから", english: "Continue")
+        case .continuations: return KizunaCopy.text(japanese: "トーク", english: "Continue")
         case .myPage: return KizunaCopy.text(japanese: "My", english: "My")
         }
     }
@@ -222,7 +222,7 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
         switch self {
         case .conversation: return "bubble.left.and.bubble.right.fill"
         case .stories: return "sparkles.rectangle.stack.fill"
-        case .continuations: return "play.resume.fill"
+        case .continuations: return "play"
         case .myPage: return "person.crop.circle.fill"
         }
     }
