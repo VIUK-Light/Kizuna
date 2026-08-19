@@ -70,6 +70,20 @@ final class KizunaRouteAndAppearanceTests: XCTestCase {
         })
     }
 
+    func testPersonaAvatarStyleUsesArbitraryCharacterLibraryAsset() {
+        let profile = PersonaProfile(
+            name: "アオイ",
+            personality: "",
+            tone: .calm,
+            relation: .friend,
+            avatarStyleID: "aoi_infirmary_afternoon"
+        )
+
+        let style = PersonaAvatarStyle(profile: profile)
+
+        XCTAssertEqual(style.assetName, "aoi_infirmary_afternoon")
+    }
+
     func testPersonaAndStoryRoutesHaveDistinctStableIDs() {
         let threadID = UUID()
         let worldID = UUID()
