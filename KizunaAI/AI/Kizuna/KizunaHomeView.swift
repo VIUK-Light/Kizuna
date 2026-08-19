@@ -1,24 +1,72 @@
 /*
 仕様:
-- 役割: Persona / Story の開始導線を1つにまとめるホーム。
+- 役割: Persona / Story の開始導線を一覧でまとめるホーム。
 - 制約: 遷移先の PersonaChatView と StorySessionChatView は仕様が異なるため統合しない。
-- 編集ポイント: 2つの開始カード、説明文、各ライブラリーへの遷移を変えるときに触る。
+- 編集ポイント: 一覧の検索・絞り込み、行の情報量、各ライブラリーへの遷移を変えるときに触る。
 */
 
 import SwiftUI
 
 struct KizunaHomeView: View {
     @StateObject private var personaStore = PersonaChatStore.shared
+    @StateObject private var characterLibraryVM = CharacterLibraryViewModel()
+    @StateObject private var storyLibraryVM = StoryWorldLibraryViewModel()
+
+    @State private var searchText = ""
+    @State private var selectedFilter: HomeFilter = .all
     @State private var showCharacterLibrary = false
     @State private var showStoryLibrary = false
     @State private var pendingPersonaThread: PersonaThread?
     @State private var pendingPersonaRecovery = false
-    @State private var pendingStoryOpen: PendingStoryOpen?
     @State private var presentedThread: PersonaThread?
+    @State private var selectedStoryWorld: StoryWorld?
+    @State private var pendingStoryOpen: PendingStoryOpen?
     @State private var activeStoryWorld: StoryWorld?
     @State private var activeStorySessionID: UUID?
     @State private var activeStoryStartsNewSession = false
     @State private var isShowingRecovery = false
+
+    private enum HomeFilter: String, CaseIterable, Identifiable {
+        case all
+        case persona
+        case story
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all: return KizunaCopy.text(japanese: "すべて", english: "All")
+            case .persona: return "Persona"
+            case .story: return "Story"
+            }
+        }
+    }
+
+    private enum HomeCatalogItem: Identifiable {
+        case persona(CharacterProfile)
+        case story(StoryWorld)
+
+        var id: String {
+            switch self {
+            case .persona(let character): return "persona:\(character.id.uuidString)"
+            case .story(let world): return "story:\(world.id.uuidString)"
+            }
+        }
+
+        var updatedAt: Date {
+            switch self {
+            case .persona(let character): return character.updatedAt
+            case .story(let world): return world.updatedAt
+            }
+        }
+
+        var kind: KizunaConversationKind {
+            switch self {
+            case .persona: return .persona
+            case .story: return .story
+            }
+        }
+    }
 
     private struct PendingStoryOpen {
         let world: StoryWorld
@@ -26,22 +74,70 @@ struct KizunaHomeView: View {
         let startsNewSession: Bool
     }
 
+    private var catalogItems: [HomeCatalogItem] {
+        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let characters = characterLibraryVM.filtered.filter { character in
+            guard !needle.isEmpty else { return true }
+            return character.visibleName.lowercased().contains(needle)
+                || character.shortDescription.lowercased().contains(needle)
+                || character.tags.contains(where: { $0.lowercased().contains(needle) })
+        }
+        let worlds = storyLibraryVM.filtered.filter { world in
+            guard !needle.isEmpty else { return true }
+            let displayed = world.localizedForCurrentLanguage
+            return displayed.title.lowercased().contains(needle)
+                || displayed.shortDescription.lowercased().contains(needle)
+                || displayed.tags.contains(where: { $0.lowercased().contains(needle) })
+        }
+        var items = characters.map(HomeCatalogItem.persona)
+            + worlds.map(HomeCatalogItem.story)
+        if selectedFilter != .all {
+            let kind: KizunaConversationKind = selectedFilter == .persona ? .persona : .story
+            items = items.filter { $0.kind == kind }
+        }
+        return items.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 18) {
                 header
-                routeSection
-                explanation
+                //managementBar
+                //ここはUIとして邪魔なため削除
+                filterBar
+                searchField
+
+                if characterLibraryVM.isLoading || storyLibraryVM.isBootstrapping {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                } else if catalogItems.isEmpty {
+                    emptyState
+                } else {
+                    LazyVStack(spacing: 10) {
+                        ForEach(catalogItems) { item in
+                            catalogRow(item)
+                        }
+                    }
+                }
+
+                //explanation
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 28)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 24)
             .frame(maxWidth: 1_100)
             .frame(maxWidth: .infinity)
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.home")
-        .sheet(isPresented: $showCharacterLibrary, onDismiss: presentPendingPersona) {
+        .task {
+            await bootstrapCatalog()
+        }
+        .sheet(isPresented: $showCharacterLibrary, onDismiss: {
+            Task { await characterLibraryVM.reload() }
+            presentPendingPersona()
+        }) {
             CharacterLibraryView(
                 showsDismissButton: true,
                 startsChatImmediately: true,
@@ -49,32 +145,35 @@ struct KizunaHomeView: View {
             )
             .viukAdaptiveSheetSizing(minWidth: 720, minHeight: 720)
         }
-        .sheet(isPresented: $showStoryLibrary, onDismiss: presentPendingStory) {
+        .sheet(isPresented: $showStoryLibrary, onDismiss: {
+            Task { await storyLibraryVM.reload() }
+            presentPendingStory()
+        }) {
             StoryWorldLibraryView(
                 showsDismissButton: true,
                 onStartSession: { world in
-                    pendingStoryOpen = PendingStoryOpen(
-                        world: world,
-                        sessionID: nil,
-                        startsNewSession: false
-                    )
+                    pendingStoryOpen = PendingStoryOpen(world: world, sessionID: nil, startsNewSession: false)
+                    showStoryLibrary = false
                 },
                 onResumeSession: { world, sessionID in
-                    pendingStoryOpen = PendingStoryOpen(
-                        world: world,
-                        sessionID: sessionID,
-                        startsNewSession: false
-                    )
+                    pendingStoryOpen = PendingStoryOpen(world: world, sessionID: sessionID, startsNewSession: false)
+                    showStoryLibrary = false
                 },
                 onStartNewSession: { world in
-                    pendingStoryOpen = PendingStoryOpen(
-                        world: world,
-                        sessionID: nil,
-                        startsNewSession: true
-                    )
+                    pendingStoryOpen = PendingStoryOpen(world: world, sessionID: nil, startsNewSession: true)
+                    showStoryLibrary = false
                 }
             )
             .viukAdaptiveSheetSizing(minWidth: 820, minHeight: 720)
+        }
+        .sheet(item: $selectedStoryWorld, onDismiss: presentPendingStory) { world in
+            StoryWorldDetailView(
+                world: world,
+                onStartSession: { selectedStoryWorld = nil; pendingStoryOpen = PendingStoryOpen(world: $0, sessionID: nil, startsNewSession: false) },
+                onResumeSession: { selectedStoryWorld = nil; pendingStoryOpen = PendingStoryOpen(world: $0, sessionID: $1, startsNewSession: false) },
+                onStartNewSession: { selectedStoryWorld = nil; pendingStoryOpen = PendingStoryOpen(world: $0, sessionID: nil, startsNewSession: true) }
+            )
+            .viukAdaptiveSheetSizing(minWidth: 620, minHeight: 720)
         }
 #if os(iOS)
         .fullScreenCover(item: $presentedThread) { thread in
@@ -111,7 +210,7 @@ struct KizunaHomeView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(KizunaCopy.appName)
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .tracking(1.4)
@@ -120,63 +219,145 @@ struct KizunaHomeView: View {
                 .font(.largeTitle.weight(.heavy))
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("workspace.home.heading")
+        }
+    }
+
+    private var managementBar: some View {//ここはUIとして重複する可能性があり、削除する、
+        HStack(spacing: 8) {
+            Button {
+                showCharacterLibrary = true
+            } label: {
+                Label(KizunaCopy.text(japanese: "キャラクター管理", english: "Manage characters"), systemImage: "person.2")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Button {
+                showStoryLibrary = true
+            } label: {
+                Label(KizunaCopy.text(japanese: "ストーリー管理", english: "Manage stories"), systemImage: "sparkles.rectangle.stack")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            Spacer(minLength: 0)
+        }
+    }
+    
+    private var filterBar: some View {
+        HStack(spacing: 8) {
+            ForEach(HomeFilter.allCases) { filter in
+                Button {
+                    selectedFilter = filter
+                } label: {
+                    Text(filter.title)
+                        .font(.callout.weight(.semibold))
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 6)
+                        .frame(minHeight: 34)
+                        .background(
+                            Capsule().fill(
+                                selectedFilter == filter
+                                    ? Color.accentColor.opacity(0.18)
+                                    : Color.primary.opacity(0.06)
+                            )
+                        )
+                        .foregroundStyle(selectedFilter == filter ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(
+                KizunaCopy.text(japanese: "キャラクターや物語を検索", english: "Search characters or stories"),
+                text: $searchText
+            )
+            .textFieldStyle(.plain)
+            .autocorrectionDisabled()
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.appCardBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private func catalogRow(_ item: HomeCatalogItem) -> some View {
+        switch item {
+        case .persona(let character):
+            KizunaHomeCatalogRow(
+                kind: .persona,
+                title: character.visibleName,
+                subtitle: character.shortDescription.isEmpty
+                    ? KizunaCopy.text(japanese: "キャラクターと会話を始める", english: "Start a character conversation")
+                    : character.shortDescription,
+                thumbnail: { PersonaAvatarView(profile: PersonaProfile(character: character), size: 56) },
+                action: { startConversation(with: character) }
+            )
+            .accessibilityIdentifier("home.persona.\(character.id.uuidString)")
+        case .story(let world):
+            KizunaHomeCatalogRow(
+                kind: .story,
+                title: world.localizedForCurrentLanguage.title,
+                subtitle: world.localizedForCurrentLanguage.shortDescription.isEmpty
+                    ? KizunaCopy.text(japanese: "この世界で物語を始める", english: "Start a story in this world")
+                    : world.localizedForCurrentLanguage.shortDescription,
+                thumbnail: {
+                    StoryCoverView(world: world, character: storyLibraryVM.coverCharacter(for: world))
+                        .frame(width: 56, height: 56)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                },
+                action: { selectedStoryWorld = world }
+            )
+            .accessibilityIdentifier("home.story.\(world.id.uuidString)")
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "rectangle.stack")
+                .font(.system(size: 34))
+                .foregroundStyle(.tertiary)
+            Text(KizunaCopy.text(japanese: "該当する項目がありません", english: "No matching items"))
+                .font(.headline)
             Text(KizunaCopy.text(
-                japanese: "キャラクターとの会話も、物語の世界も、ここから選べます。",
-                english: "Choose a character conversation or a story world from here."
+                japanese: "検索条件を変えるか、管理ボタンから新しく追加してください。",
+                english: "Change your search or add something from the management buttons."
             ))
             .font(.subheadline)
             .foregroundStyle(.secondary)
-        }
-    }
-
-    private var routeSection: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 14) {
-                personaEntryCard
-                storyEntryCard
-            }
-            VStack(spacing: 14) {
-                personaEntryCard
-                storyEntryCard
-            }
+            .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
+        .padding(.vertical, 42)
     }
 
-    private var personaEntryCard: some View {
-        KizunaHomeRouteCard(
-            kind: .persona,
-            title: KizunaCopy.text(japanese: "キャラクターと話す", english: "Talk to a character"),
-            subtitle: KizunaCopy.text(
-                japanese: "キャラクターを選んで、自由な会話を始めます。",
-                english: "Choose a character and start a free conversation."
-            ),
-            action: { showCharacterLibrary = true }
-        )
-        .accessibilityIdentifier("home.persona.entry")
-    }
-
-    private var storyEntryCard: some View {
-        KizunaHomeRouteCard(
-            kind: .story,
-            title: KizunaCopy.text(japanese: "物語を始める", english: "Start a story"),
-            subtitle: KizunaCopy.text(
-                japanese: "世界とシーンを選んで、物語を進めます。",
-                english: "Choose a world and move the story forward."
-            ),
-            action: { showStoryLibrary = true }
-        )
-        .accessibilityIdentifier("home.story.entry")
-    }
-
-    private var explanation: some View {
+    private var explanation: some View {//ここはUIとして邪魔なので廃止
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "arrow.triangle.branch")
                 .foregroundStyle(.tint)
                 .accessibilityHidden(true)
             Text(KizunaCopy.text(
-                japanese: "PersonaとStoryは体験と生成の仕様が異なるため、チャット画面は分かれています。ホームでは入口だけをまとめ、選択後はそれぞれの専用画面へ進みます。",
-                english: "Persona and Story have different interaction and generation rules, so their chat screens remain separate. Home brings the entry points together, then opens the dedicated screen you choose."
+                japanese: "PersonaとStoryは専用チャット画面が分かれています。ホームでは一覧から選び、選択後はそれぞれの体験へ進みます。",
+                english: "Persona and Story open separate dedicated chat screens. Choose from the list here, then continue into the experience you selected."
             ))
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -186,8 +367,14 @@ struct KizunaHomeView: View {
         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    private func bootstrapCatalog() async {
+        await characterLibraryVM.bootstrap()
+        await storyLibraryVM.bootstrap()
+    }
+
     @MainActor
     private func startConversation(with character: CharacterProfile) {
+        let shouldDismissCharacterLibrary = showCharacterLibrary
         if let existing = personaStore.threads.first(where: {
             $0.characterID == character.id && !$0.messages.isEmpty
         }) {
@@ -198,16 +385,23 @@ struct KizunaHomeView: View {
             )
             personaStore.selectThread(id: existing.id)
             pendingPersonaThread = personaStore.thread(id: existing.id) ?? existing
-            showCharacterLibrary = false
+            if shouldDismissCharacterLibrary {
+                showCharacterLibrary = false
+            } else {
+                presentPendingPersona()
+            }
             return
         }
 
         let persona = PersonaProfile(character: character)
         guard let thread = personaStore.createThread(with: persona, characterID: character.id) else {
             if personaStore.isPersistenceRecoveryRequired {
-                pendingPersonaThread = nil
-                pendingPersonaRecovery = true
-                showCharacterLibrary = false
+                if shouldDismissCharacterLibrary {
+                    pendingPersonaRecovery = true
+                    showCharacterLibrary = false
+                } else {
+                    isShowingRecovery = true
+                }
             }
             return
         }
@@ -218,7 +412,11 @@ struct KizunaHomeView: View {
             )
         }
         pendingPersonaThread = personaStore.thread(id: thread.id) ?? thread
-        showCharacterLibrary = false
+        if shouldDismissCharacterLibrary {
+            showCharacterLibrary = false
+        } else {
+            presentPendingPersona()
+        }
     }
 
     private func presentPendingPersona() {
@@ -248,16 +446,17 @@ struct KizunaHomeView: View {
     }
 }
 
-private struct KizunaHomeRouteCard: View {
+private struct KizunaHomeCatalogRow<Thumbnail: View>: View {
     let kind: KizunaConversationKind
     let title: String
     let subtitle: String
+    @ViewBuilder let thumbnail: () -> Thumbnail
     let action: () -> Void
 
-    private var icon: String {
+    private var kindTitle: String {
         switch kind {
-        case .persona: return "bubble.left.and.bubble.right.fill"
-        case .story: return "sparkles.rectangle.stack.fill"
+        case .persona: return "Persona"
+        case .story: return "Story"
         }
     }
 
@@ -268,55 +467,43 @@ private struct KizunaHomeRouteCard: View {
         }
     }
 
-    private var kindLabel: String {
-        switch kind {
-        case .persona: return "Persona"
-        case .story: return "Story"
-        }
-    }
-
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: icon)
-                        .font(.system(size: 25, weight: .semibold))
-                        .foregroundStyle(accent)
-                        .frame(width: 46, height: 46)
-                        .background(accent.opacity(0.14), in: Circle())
-                    Spacer()
-                    Text(kindLabel)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(accent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(accent.opacity(0.12), in: Capsule())
+            HStack(spacing: 12) {
+                thumbnail()
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 7) {
+                        Text(kindTitle)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(accent)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(accent.opacity(0.14), in: Capsule())
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    }
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
-                Text(title)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(.primary)
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                        .font(.callout.weight(.bold))
-                        .foregroundStyle(accent)
-                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(accent)
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, minHeight: 190, alignment: .leading)
-            .background(Color.appCardBackground, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.appCardBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(accent.opacity(0.22), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(accent.opacity(0.18), lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .accessibilityHint(KizunaCopy.text(japanese: "専用の選択画面を開きます", english: "Opens the dedicated selection screen"))
+        .accessibilityLabel("\(kindTitle): \(title)")
+        .accessibilityHint(KizunaCopy.text(japanese: "専用画面を開きます", english: "Opens the dedicated screen"))
     }
 }
