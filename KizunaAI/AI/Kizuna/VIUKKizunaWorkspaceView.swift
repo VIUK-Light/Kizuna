@@ -63,6 +63,18 @@ struct VIUKKizunaWorkspaceView: View {
             .tag(KizunaWorkspaceSection.stories)
             .accessibilityIdentifier("workspace.story")
 
+            // ペルソナ・ストーリー共通の継続一覧。設定中心のMyタブとは
+            // 役割を分け、独立タブとして置く (#295 の完了条件からの改訂)。
+            PersonaChatView(showsStoryActions: true, showsOnlyContinuations: true)
+                .tabItem {
+                    Label(
+                        KizunaWorkspaceSection.continuations.title,
+                        systemImage: KizunaWorkspaceSection.continuations.icon
+                    )
+                }
+                .tag(KizunaWorkspaceSection.continuations)
+                .accessibilityIdentifier("workspace.continuations")
+
             KizunaMyPageView()
                 .tabItem {
                     Label(
@@ -182,12 +194,14 @@ struct VIUKKizunaWorkspaceView: View {
 private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
     case conversation
     case stories
+    case continuations
     case myPage
 
     init(rawValue: String) {
         switch rawValue {
         case Self.conversation.rawValue, "chat": self = .conversation
         case Self.stories.rawValue: self = .stories
+        case Self.continuations.rawValue: self = .continuations
         case Self.myPage.rawValue: self = .myPage
         default: self = .conversation
         }
@@ -199,6 +213,7 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
         switch self {
         case .conversation: return KizunaCopy.text(japanese: "会話", english: "Conversations")
         case .stories: return KizunaCopy.text(japanese: "ストーリー", english: "Stories")
+        case .continuations: return KizunaCopy.text(japanese: "続きから", english: "Continue")
         case .myPage: return KizunaCopy.text(japanese: "My", english: "My")
         }
     }
@@ -207,6 +222,7 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
         switch self {
         case .conversation: return "bubble.left.and.bubble.right.fill"
         case .stories: return "sparkles.rectangle.stack.fill"
+        case .continuations: return "play.resume.fill"
         case .myPage: return "person.crop.circle.fill"
         }
     }

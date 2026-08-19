@@ -17,7 +17,6 @@ struct KizunaMyPageView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 pageHeader
-                continuationSection
                 profileHero
                 settingsGrid
             }
@@ -116,18 +115,6 @@ struct KizunaMyPageView: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
         }
-    }
-
-    private var continuationSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(KizunaCopy.text(japanese: "続きから", english: "Continue"))
-                .font(.title3.weight(.bold))
-                .accessibilityAddTraits(.isHeader)
-            PersonaChatView(showsStoryActions: true, showsOnlyContinuations: true)
-                .frame(minHeight: 300, maxHeight: 520)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        }
-        .accessibilityIdentifier("myPage.continuations")
     }
 
     private var profileSummary: some View {
