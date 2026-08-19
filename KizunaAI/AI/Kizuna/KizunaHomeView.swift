@@ -102,7 +102,8 @@ struct KizunaHomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                managementBar
+                //managementBar
+                //ここはUIとして邪魔なため削除
                 filterBar
                 searchField
 
@@ -120,7 +121,7 @@ struct KizunaHomeView: View {
                     }
                 }
 
-                explanation
+                //explanation
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 24)
@@ -218,16 +219,10 @@ struct KizunaHomeView: View {
                 .font(.largeTitle.weight(.heavy))
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("workspace.home.heading")
-            Text(KizunaCopy.text(
-                japanese: "キャラクターと物語を一覧から選べます。",
-                english: "Choose a character or story from the list."
-            ))
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
         }
     }
 
-    private var managementBar: some View {
+    private var managementBar: some View {//ここはUIとして重複する可能性があり、削除する、
         HStack(spacing: 8) {
             Button {
                 showCharacterLibrary = true
@@ -247,7 +242,7 @@ struct KizunaHomeView: View {
             Spacer(minLength: 0)
         }
     }
-
+    
     private var filterBar: some View {
         HStack(spacing: 8) {
             ForEach(HomeFilter.allCases) { filter in
@@ -355,7 +350,7 @@ struct KizunaHomeView: View {
         .padding(.vertical, 42)
     }
 
-    private var explanation: some View {
+    private var explanation: some View {//ここはUIとして邪魔なので廃止
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "arrow.triangle.branch")
                 .foregroundStyle(.tint)
