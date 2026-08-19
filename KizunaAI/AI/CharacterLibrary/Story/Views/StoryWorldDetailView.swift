@@ -440,7 +440,7 @@ struct StoryWorldDetailView: View {
                         .background(Capsule().fill(Color.primary.opacity(0.08)))
                     Spacer()
                 }
-               
+                if canResume {
                     Button {
                         onStartNewSession?(world)
                     } label: {
@@ -450,7 +450,7 @@ struct StoryWorldDetailView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(!canStartSession)
-                
+                }
             }
         }
     }

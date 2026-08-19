@@ -108,6 +108,12 @@ struct KizunaContinuationView: View {
                 .font(.title2.weight(.bold))
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("workspace.continuations.heading")
+            Text(KizunaCopy.text(
+                japanese: "PersonaとStoryの続きを、ここから選べます。",
+                english: "Resume Persona and Story from one place."
+            ))
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
