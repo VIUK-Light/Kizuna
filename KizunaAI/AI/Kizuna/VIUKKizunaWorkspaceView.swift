@@ -1,16 +1,15 @@
 /*
 仕様:
-- 役割: Kizunaを「会話 / ストーリー / マイページ」の3つの標準タブで表示する。
+- 役割: Kizunaを「ホーム / 続きから / My」の3つの標準タブで表示する。
 - 主な型: `VIUKKizunaWorkspaceView`.
-- 方針: TabViewはiOS標準の操作として使い、会話・ストーリーの内容だけをKizuna固有の体験にする。
+- 方針: ホームはPersona/Storyの開始導線、続きからは共通ルート一覧、Myは設定を担当する。
 */
 
 import SwiftUI
 
 struct VIUKKizunaWorkspaceView: View {
     @AppStorage(KizunaStorageKeys.workspaceSection)
-    private var selectedSectionRawValue = KizunaWorkspaceSection.conversation.rawValue
-    @StateObject private var storyLibraryViewModel = StoryWorldLibraryViewModel()
+    private var selectedSectionRawValue = KizunaWorkspaceSection.home.rawValue
     @State private var activeStoryWorld: StoryWorld?
     @State private var activeStorySessionID: UUID?
     @State private var activeStoryStartsNewSession = false
@@ -31,41 +30,17 @@ struct VIUKKizunaWorkspaceView: View {
 
     var body: some View {
         TabView(selection: selectedSectionBinding) {
-            KizunaConversationHomeView()
+            KizunaHomeView()
                 .tabItem {
                     Label(
-                        KizunaWorkspaceSection.conversation.title,
-                        systemImage: KizunaWorkspaceSection.conversation.icon
+                        KizunaWorkspaceSection.home.title,
+                        systemImage: KizunaWorkspaceSection.home.icon
                     )
                 }
-                .tag(KizunaWorkspaceSection.conversation)
-                .accessibilityIdentifier("workspace.conversation")
+                .tag(KizunaWorkspaceSection.home)
+                .accessibilityIdentifier("workspace.home")
 
-            StoryWorldLibraryView(
-                viewModel: storyLibraryViewModel,
-                showsDismissButton: false,
-                onStartSession: { world in
-                    scheduleStoryOpen(world: world, sessionID: nil, startsNewSession: false)
-                },
-                onResumeSession: { world, sessionID in
-                    scheduleStoryOpen(world: world, sessionID: sessionID, startsNewSession: false)
-                },
-                onStartNewSession: { world in
-                    scheduleStoryOpen(world: world, sessionID: nil, startsNewSession: true)
-                }
-            )
-            .tabItem {
-                Label(
-                    KizunaWorkspaceSection.stories.title,
-                    systemImage: KizunaWorkspaceSection.stories.icon
-                )
-            }
-            .tag(KizunaWorkspaceSection.stories)
-            .accessibilityIdentifier("workspace.story")
-
-            // ペルソナ・ストーリー共通の継続一覧。設定中心のMyタブとは
-            // 役割を分け、独立タブとして置く (#295 の完了条件からの改訂)。
-            PersonaChatView(showsStoryActions: true, showsOnlyContinuations: true)
+            KizunaContinuationView()
                 .tabItem {
                     Label(
                         KizunaWorkspaceSection.continuations.title,
@@ -86,7 +61,7 @@ struct VIUKKizunaWorkspaceView: View {
                 .accessibilityIdentifier("workspace.myPage")
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
-        // 設定画面はStoryの外側にあるため、デバッグ要求時はStoryを自動で開く。
+        // 設定画面のデバッグ要求時はStoryを自動で開く。
         .onReceive(NotificationCenter.default.publisher(for: KizunaDebugOptions.restSuggestionRequestNotification)) { _ in
             openDebugStory()
         }
@@ -114,8 +89,8 @@ struct VIUKKizunaWorkspaceView: View {
         }
 #endif
         .onAppear {
-            // `chat` was the old persisted value. Treating it as Conversation
-            // preserves the user's last destination without leaving a dead tab.
+            // `chat` / `conversation` / `stories` were old persisted values.
+            // Normalize them to Home so no removed tab becomes a dead destination.
             let normalized = KizunaWorkspaceSection(rawValue: selectedSectionRawValue).rawValue
             if selectedSectionRawValue != normalized {
                 selectedSectionRawValue = normalized
@@ -192,18 +167,16 @@ struct VIUKKizunaWorkspaceView: View {
 }
 
 private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
-    case conversation
-    case stories
+    case home
     case continuations
     case myPage
 
     init(rawValue: String) {
         switch rawValue {
-        case Self.conversation.rawValue, "chat": self = .conversation
-        case Self.stories.rawValue: self = .stories
+        case Self.home.rawValue, "conversation", "chat", "stories": self = .home
         case Self.continuations.rawValue: self = .continuations
         case Self.myPage.rawValue: self = .myPage
-        default: self = .conversation
+        default: self = .home
         }
     }
 
@@ -211,17 +184,15 @@ private enum KizunaWorkspaceSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .conversation: return KizunaCopy.text(japanese: "会話", english: "Conversations")
-        case .stories: return KizunaCopy.text(japanese: "ストーリー", english: "Stories")
-        case .continuations: return KizunaCopy.text(japanese: "トーク", english: "Continue")
+        case .home: return KizunaCopy.text(japanese: "ホーム", english: "Home")
+        case .continuations: return KizunaCopy.text(japanese: "続きから", english: "Continue")
         case .myPage: return KizunaCopy.text(japanese: "My", english: "My")
         }
     }
 
     var icon: String {
         switch self {
-        case .conversation: return "bubble.left.and.bubble.right.fill"
-        case .stories: return "sparkles.rectangle.stack.fill"
+        case .home: return "house.fill"
         case .continuations: return "play"
         case .myPage: return "person.crop.circle.fill"
         }

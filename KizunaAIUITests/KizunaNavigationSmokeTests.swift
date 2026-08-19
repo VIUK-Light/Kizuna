@@ -19,27 +19,21 @@ final class KizunaNavigationSmokeTests: XCTestCase {
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
 
-        let conversationTab = tabBar.buttons["会話"]
-        let storyTab = tabBar.buttons["ストーリー"]
+        let homeTab = tabBar.buttons["ホーム"]
         let continuationsTab = tabBar.buttons["続きから"]
         let myPageTab = tabBar.buttons["My"]
 
-        XCTAssertTrue(conversationTab.exists)
-        XCTAssertTrue(storyTab.exists)
+        XCTAssertTrue(homeTab.exists)
         XCTAssertTrue(continuationsTab.exists)
         XCTAssertTrue(myPageTab.exists)
 
-        conversationTab.tap()
+        homeTab.tap()
         XCTAssertTrue(
-            app.descendants(matching: .any)["workspace.conversation.heading"]
+            app.descendants(matching: .any)["workspace.home.heading"]
                 .waitForExistence(timeout: 5)
         )
-
-        storyTab.tap()
-        XCTAssertTrue(
-            app.descendants(matching: .any)["workspace.story.heading"]
-                .waitForExistence(timeout: 10)
-        )
+        XCTAssertTrue(app.descendants(matching: .any)["home.persona.entry"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["home.story.entry"].exists)
 
         continuationsTab.tap()
         XCTAssertTrue(
