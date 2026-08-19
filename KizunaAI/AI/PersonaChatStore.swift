@@ -488,22 +488,55 @@ final class PersonaChatStore: ObservableObject {
         activeThreadID = id
     }
 
-    /// Keep a character's current library image in existing conversations while
+    /// Keep a character's current library image in every linked conversation while
     /// leaving the conversation's personality and messages unchanged.
+    @discardableResult
+    func refreshCharacterAppearance(
+        for characterID: UUID,
+        avatarStyleID: String?,
+        avatarImageData: Data?
+    ) -> Bool {
+        guard canMutatePersistedState() else { return false }
+        var didChange = false
+        for index in threads.indices where threads[index].characterID == characterID {
+            guard threads[index].personaSnapshot.avatarStyleID != avatarStyleID
+                    || threads[index].personaSnapshot.avatarImageData != avatarImageData else {
+                continue
+            }
+            threads[index].personaSnapshot.avatarStyleID = avatarStyleID
+            threads[index].personaSnapshot.avatarImageData = avatarImageData
+            didChange = true
+        }
+        if didChange { persist() }
+        return didChange
+    }
+
+    /// Compatibility helper for callers that only have a thread ID. New entry
+    /// points should use the character-wide method so older threads do not keep
+    /// stale images.
     func refreshCharacterAppearance(
         threadID: UUID,
         avatarStyleID: String?,
         avatarImageData: Data?
     ) {
-        guard canMutatePersistedState(),
-              let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
-        guard threads[index].personaSnapshot.avatarStyleID != avatarStyleID
-                || threads[index].personaSnapshot.avatarImageData != avatarImageData else {
+        guard let thread = threads.first(where: { $0.id == threadID }),
+              let characterID = thread.characterID else {
+            guard canMutatePersistedState(),
+                  let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
+            guard threads[index].personaSnapshot.avatarStyleID != avatarStyleID
+                    || threads[index].personaSnapshot.avatarImageData != avatarImageData else {
+                return
+            }
+            threads[index].personaSnapshot.avatarStyleID = avatarStyleID
+            threads[index].personaSnapshot.avatarImageData = avatarImageData
+            persist()
             return
         }
-        threads[index].personaSnapshot.avatarStyleID = avatarStyleID
-        threads[index].personaSnapshot.avatarImageData = avatarImageData
-        persist()
+        refreshCharacterAppearance(
+            for: characterID,
+            avatarStyleID: avatarStyleID,
+            avatarImageData: avatarImageData
+        )
     }
 
     /// キャラ本体が削除されても、会話スナップショットは残して再開できるようにする。

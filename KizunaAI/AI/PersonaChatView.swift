@@ -56,12 +56,16 @@ struct PersonaChatView: View {
     /// Myタブ埋め込み（showsOnlyContinuations）時に開いた会話。リストは
     /// 埋め込みのまま維持し、会話本体はフルスクリーン/シートで開く (#298)。
     @State private var continuationPresentedThread: PersonaThread?
+    /// characterIDを持つスレッドのアバターは、保存時のスナップショットではなく
+    /// Character Libraryの現在値を優先する。スレッドごとの古い画像を表示しない。
+    @State private var currentCharacterProfiles: [UUID: CharacterProfile] = [:]
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(\.dismiss) private var dismiss
 
     private let storyWorldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let storySessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
+    private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
 
     init(
         initialThreadID: UUID? = nil,
@@ -144,7 +148,9 @@ struct PersonaChatView: View {
                 .viukAdaptiveSheetSizing(minWidth: 880, minHeight: 700)
         }
         #endif
-        .sheet(isPresented: $showLibrary) {
+        .sheet(isPresented: $showLibrary, onDismiss: {
+            Task { await refreshCurrentCharacterProfiles() }
+        }) {
             CharacterLibraryView(
                 onStartChat: { character in
                     // A library card resumes the latest non-empty thread for
@@ -154,7 +160,7 @@ struct PersonaChatView: View {
                         $0.characterID == character.id && !$0.messages.isEmpty
                     }) {
                         store.refreshCharacterAppearance(
-                            threadID: existing.id,
+                            for: character.id,
                             avatarStyleID: character.imageKey,
                             avatarImageData: character.avatarImageData
                         )
@@ -167,24 +173,7 @@ struct PersonaChatView: View {
                     }
 
                     // CharacterProfile を Persona 用の簡易プロファイルに変換する。
-                    let persona = PersonaProfile(
-                        name: character.displayName.isEmpty ? character.name : character.displayName,
-                        age: nil,
-                        personality: character.personality,
-                        tone: .casual,
-                        relation: .friend,
-                        freeFormAddendum: [
-                            character.shortDescription,
-                            character.background,
-                            character.relationshipToUser,
-                            character.scenario
-                        ]
-                            .filter { !$0.isEmpty }
-                            .joined(separator: " / "),
-                        // ライブラリー側のアセット指定をアバター表示に引き継ぐ。
-                        avatarStyleID: character.imageKey,
-                        avatarImageData: character.avatarImageData
-                    )
+                    let persona = PersonaProfile(character: character)
                     guard let thread = store.createThread(with: persona, characterID: character.id) else {
                         if store.isPersistenceRecoveryRequired {
                             // Character Library is presented as a sheet. Close it
@@ -298,6 +287,9 @@ struct PersonaChatView: View {
             if horizontalSizeClass == .compact {
                 compactShowsChat = true
             }
+        }
+        .task(id: store.activeThreadID) {
+            await refreshCurrentCharacterProfiles()
         }
         .onChange(of: store.activeThreadID) { _, _ in
             isPersonaChatNearBottom = true
@@ -984,7 +976,8 @@ struct PersonaChatView: View {
 
     private func threadRow(_ thread: PersonaThread) -> some View {
         let isActive = store.activeThreadID == thread.id
-        let style = PersonaAvatarStyle(profile: thread.personaSnapshot)
+        let displayProfile = avatarProfile(for: thread)
+        let style = PersonaAvatarStyle(profile: displayProfile)
         let previewText = thread.messages.last {
             !($0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text))
         }?.text ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation")
@@ -999,7 +992,7 @@ struct PersonaChatView: View {
             }
         } label: {
             HStack(spacing: 11) {
-                PersonaAvatarView(profile: thread.personaSnapshot, size: 40)
+                PersonaAvatarView(profile: displayProfile, size: 40)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(thread.title)
                         .font(.subheadline.weight(.semibold))
@@ -1171,6 +1164,34 @@ struct PersonaChatView: View {
         #endif
     }
 
+    /// Character Libraryの現在値を読み込み、リンク済みPersonaスレッドの表示に使う。
+    /// 読み込みに失敗した場合は保存済みPersonaスナップショットへフォールバックする。
+    @MainActor
+    private func refreshCurrentCharacterProfiles() async {
+        do {
+            let characters = try await characterRepo.fetchCharacters()
+            currentCharacterProfiles = Dictionary(
+                uniqueKeysWithValues: characters.map { ($0.id, $0) }
+            )
+        } catch {
+            // 会話本文は継続できるため、画像だけを旧スナップショットへ戻す。
+            AppLog.error("[PersonaChatView] current character appearance load failed: %@", String(describing: error))
+        }
+    }
+
+    /// リンク済みキャラクターの現在の画像/スタイルを表示用Personaへ反映する。
+    /// personality等の会話スナップショットは変更せず、見た目だけ正本へ同期する。
+    private func avatarProfile(for thread: PersonaThread) -> PersonaProfile {
+        guard let characterID = thread.characterID,
+              let character = currentCharacterProfiles[characterID] else {
+            return thread.personaSnapshot
+        }
+        var profile = thread.personaSnapshot
+        profile.avatarStyleID = character.imageKey
+        profile.avatarImageData = character.avatarImageData
+        return profile
+    }
+
     // MARK: - Main chat area
 
     @ViewBuilder
@@ -1228,9 +1249,10 @@ struct PersonaChatView: View {
     }
 
     private func chatHeader(_ thread: PersonaThread) -> some View {
-        HStack(spacing: 10) {
-            PersonaAvatarView(profile: thread.personaSnapshot, size: 36)
-            Text(thread.personaSnapshot.name)
+        let displayProfile = avatarProfile(for: thread)
+        return HStack(spacing: 10) {
+            PersonaAvatarView(profile: displayProfile, size: 36)
+            Text(displayProfile.name)
                 .font(.headline.weight(.bold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
@@ -1278,6 +1300,7 @@ struct PersonaChatView: View {
             && service.phase == .thinking
         let isErrorThisThread = service.lastErrorThreadID == thread.id
             && isGenerationError
+        let displayProfile = avatarProfile(for: thread)
         let visibleMessages = thread.messages.filter { msg in
             return !(msg.role == .assistant && PersonaMessage.isPendingAssistantText(msg.text))
         }
@@ -1288,12 +1311,12 @@ struct PersonaChatView: View {
                         ForEach(visibleMessages) { msg in
                             PersonaMessageBubble(
                                 message: msg,
-                                personaProfile: thread.personaSnapshot
+                                personaProfile: displayProfile
                             )
                             .id(msg.id)
                         }
                         if isGeneratingThisThread {
-                            streamingPreview(personaProfile: thread.personaSnapshot)
+                            streamingPreview(personaProfile: displayProfile)
                                 .id("streaming-preview")
                         }
                         if isErrorThisThread, case let .error(message) = service.phase {
