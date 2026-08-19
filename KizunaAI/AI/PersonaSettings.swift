@@ -187,6 +187,28 @@ struct PersonaProfile: Codable, Hashable, Identifiable {
         self.avatarImageData = avatarImageData
     }
 
+    /// Character Library の正本を Persona の会話スナップショットへ変換する。
+    /// 入口ごとの手作業変換をなくし、名前・画像・スタイルIDの対応を統一する。
+    init(character: CharacterProfile) {
+        self.init(
+            id: character.id,
+            name: character.visibleName,
+            personality: character.personality,
+            tone: .casual,
+            relation: .friend,
+            freeFormAddendum: [
+                character.shortDescription,
+                character.background,
+                character.relationshipToUser,
+                character.scenario
+            ]
+                .filter { !$0.isEmpty }
+                .joined(separator: " / "),
+            avatarStyleID: character.imageKey,
+            avatarImageData: character.avatarImageData
+        )
+    }
+
     // Codable: 既存保存データに追加フィールドが無くてもデコード可能にする
     private enum CodingKeys: String, CodingKey {
         case id, name, age, personality, tone, relation, freeFormAddendum, avatarStyleID, avatarImageData
