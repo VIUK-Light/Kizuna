@@ -154,6 +154,9 @@ struct StoryWorldDetailView: View {
 
     private var detailContent: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if vm.castRepairFailed {
+                castRepairWarning
+            }
             relationshipHero
             progressCard
             overviewCard
@@ -163,6 +166,35 @@ struct StoryWorldDetailView: View {
             historyCard
         }
         .padding(18)
+    }
+
+    private var castRepairWarning: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(KizunaCopy.text(
+                    japanese: "キャストの自動修復を完了できませんでした",
+                    english: "The story cast could not be repaired"
+                ))
+                    .font(.subheadline.weight(.semibold))
+                Text(KizunaCopy.text(
+                    japanese: "元の保存内容を表示しています。データを変更せずに再試行できます。",
+                    english: "The original saved cast is shown. You can retry without changing the saved data."
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button {
+                    reloadID = UUID()
+                } label: {
+                    Label(KizunaCopy.text(japanese: "再試行", english: "Retry"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var loadFailureState: some View {

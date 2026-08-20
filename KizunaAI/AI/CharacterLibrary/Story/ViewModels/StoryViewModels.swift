@@ -1296,6 +1296,8 @@ final class StoryWorldDetailViewModel: ObservableObject {
     @Published private(set) var sessionLoadFailed = false
     @Published private(set) var sessionSaveFailed = false
     @Published private(set) var characterLoadFailed = false
+    /// Castの自動修復に失敗した場合、元の保存内容を保持したままUIへ公開する。
+    @Published private(set) var castRepairFailed = false
 
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
@@ -1310,6 +1312,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
     }
 
     func reload() async {
+        castRepairFailed = false
         // キャストの読込失敗を空配列として扱うと、reconciledCastが「全員削除」と
         // 判断し、保存済みの関係設定まで上書きしてしまう。キャストだけは失敗時に
         // 既存の表示を保持して、明示的な再試行を待つ。
@@ -1345,12 +1348,25 @@ final class StoryWorldDetailViewModel: ObservableObject {
             return
         }
         let repairedCast = reconciledCast(cast, for: world, existingScenes: scenes)
-        if Set(cast.map(\.characterId)) != Set(repairedCast.map(\.characterId)) || cast.count != repairedCast.count {
-            // 部分的に欠けたキャストや、削除済みキャラの孤児参照を一度だけ整理する。
-            try? await castRepo.deleteAllCast(storyWorldId: world.id)
-            for member in repairedCast { try? await castRepo.saveCast(member) }
+        let needsCastRepair = Set(cast.map(\.characterId)) != Set(repairedCast.map(\.characterId))
+            || cast.count != repairedCast.count
+        if needsCastRepair {
+            do {
+                // 既存Castの削除と修復後の全件保存を1回のread-modify-writeに
+                // まとめる。途中失敗で永続化データだけが空/部分状態になるのを防ぐ。
+                try await castRepo.replaceCast(repairedCast, storyWorldId: world.id)
+                self.cast = repairedCast
+            } catch {
+                // 修復に失敗した世代を成功扱いにせず、元のCastを表示して
+                // ユーザーが再試行できるようにする。元データはrepository側で
+                // replaceCastが原子的に保持する。
+                castRepairFailed = true
+                self.cast = cast
+                AppLog.error("[StoryWorldDetailVM] cast repair failed: %@", error.localizedDescription)
+            }
+        } else {
+            self.cast = cast
         }
-        self.cast = repairedCast
         self.scenes = scenes
         self.sessions = sessions
         self.storyMemories = memories
