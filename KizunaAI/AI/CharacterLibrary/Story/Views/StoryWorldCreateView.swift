@@ -46,6 +46,7 @@ struct StoryWorldCreateView: View {
     @State private var showCharacterPicker = false
     @State private var showCharacterCreator = false
     @State private var showAdvancedSettings: Bool
+    @State private var isAIBuilderExpanded = false
     @FocusState private var generationBriefFocused: Bool
 
     init(
@@ -70,30 +71,44 @@ struct StoryWorldCreateView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if existing == nil {
-                        creatorHero
-                        aiTemplateSection
-                        generatedPreviewSection
+                        DisclosureGroup(isExpanded: $isAIBuilderExpanded) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                creatorHero
+                                aiTemplateSection
+                                generatedPreviewSection
+                            }
+                            .padding(.top, 8)
+                        } label: {
+                            aiBuilderDisclosureLabel
+                        }
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.07))
+                        )
+                        .disabled(!vm.isReadyToSave || vm.isSaving)
                     }
-                    basicSection
-                    settingSection
-                    openingSceneSection
-                    castSection
-                    advancedSettingsSection
-                    if let err = vm.saveError {
-                        Text(err).font(.caption).foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 18) {
+                        basicSection
+                        settingSection
+                        openingSceneSection
+                        castSection
+                        advancedSettingsSection
                     }
+                    .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
                 }
                 .padding(18)
             }
-            // 初期スナップショットの読込が終わる前に編集すると、完了後の
-            // cast/lorebook/scene代入で入力を巻き戻すため、フォーム自体を
-            // ロックする。キャンセルと再試行はヘッダー側で引き続き可能。
-            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
             Divider()
             footer
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
         .task { await vm.load() }
+        .onChange(of: vm.generationStatus) { _, status in
+            if status != nil {
+                isAIBuilderExpanded = true
+            }
+        }
         .sheet(isPresented: $showCharacterPicker) {
             CharacterPickerForStory(
                 available: vm.availableCharacters,
@@ -114,29 +129,57 @@ struct StoryWorldCreateView: View {
         }
     }
 
-    private var header: some View {
-        HStack {
-            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) {
-                guard !vm.isSaving else { return }
-                Task {
-                    await vm.discardPendingGeneratedCharacters()
-                    dismiss()
-                }
+    private var aiBuilderDisclosureLabel: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wand.and.stars")
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(KizunaCopy.text(japanese: "AIで下書きを作る", english: "Build a draft with AI"))
+                    .font(.subheadline.weight(.bold))
+                Text(KizunaCopy.text(
+                    japanese: "任意の補助機能。手動作成は下のフォームから始められます。",
+                    english: "Optional assistance. Start with the manual form below."
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            Spacer()
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var header: some View {
+        ZStack {
             Text(existing == nil
                  ? KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story")
                  : KizunaCopy.text(japanese: "ストーリーを編集", english: "Edit story"))
                 .font(.headline.weight(.semibold))
-            Spacer()
-            if existing == nil {
-                Label(KizunaCopy.text(japanese: "31B Thinking", english: "31B Thinking"), systemImage: "sparkles")
-                    .font(.caption.weight(.bold))
+                .frame(maxWidth: .infinity)
+                .lineLimit(1)
+
+            HStack {
+                Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) {
+                    guard !vm.isSaving else { return }
+                    Task {
+                        await vm.discardPendingGeneratedCharacters()
+                        dismiss()
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                if existing == nil {
+                    Button {
+                        isAIBuilderExpanded = true
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-            } else {
-                Color.clear.frame(width: 60)
+                    .accessibilityLabel(KizunaCopy.text(japanese: "AIで下書きを作る", english: "Build a draft with AI"))
+                } else {
+                    Color.clear.frame(width: 44, height: 44)
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -145,34 +188,49 @@ struct StoryWorldCreateView: View {
     }
 
     private var footer: some View {
-        HStack {
-            if existing == nil {
-                Button {
+        VStack(alignment: .leading, spacing: 8) {
+            if let error = vm.saveError {
+                Label {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                }
+                .accessibilityIdentifier("story.create.saveError")
+            }
+
+            HStack {
+                if existing == nil {
+                    Button {
+                        Task {
+                            if let saved = await vm.save() {
+                                onSaved?(saved)
+                                onStartSession?(saved)
+                                dismiss()
+                            }
+                        }
+                    } label: {
+                        Label(KizunaCopy.text(japanese: "保存して試す", english: "Save and try"), systemImage: "play.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
+                }
+                Spacer()
+                Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
                     Task {
                         if let saved = await vm.save() {
                             onSaved?(saved)
-                            onStartSession?(saved)
                             dismiss()
                         }
                     }
-                } label: {
-                    Label(KizunaCopy.text(japanese: "保存して試す", english: "Save and try"), systemImage: "play.fill")
-            }
-            .buttonStyle(.bordered)
-            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
-            }
-            Spacer()
-            Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
-                Task {
-                    if let saved = await vm.save() {
-                        onSaved?(saved)
-                        dismiss()
-                    }
                 }
+                .buttonStyle(.borderedProminent)
+                .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
+                .keyboardShortcut(.defaultAction)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
-            .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -246,26 +304,32 @@ struct StoryWorldCreateView: View {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(Color.accentColor.opacity(0.38), lineWidth: 1)
                     }
+                    .disabled(vm.isGeneratingTemplate)
 
                 quickPromptChips
+                    .disabled(vm.isGeneratingTemplate)
 
-                if vm.isGeneratingTemplate || vm.generationStatus != nil || vm.saveError != nil {
+                if vm.isGeneratingTemplate || vm.generationStatus != nil || vm.generationError != nil {
                     generationStatusBanner
                 }
 
                 HStack(spacing: 10) {
                     Button {
-                        generationBriefFocused = false
-                        Task { await vm.generateTemplateWith31BThinking() }
+                        if vm.isGeneratingTemplate {
+                            vm.cancelTemplateGeneration()
+                        } else {
+                            generationBriefFocused = false
+                            vm.startTemplateGeneration()
+                        }
                     } label: {
                         Label(vm.isGeneratingTemplate
-                              ? KizunaCopy.text(japanese: "生成中", english: "Generating")
+                              ? KizunaCopy.text(japanese: "生成を中止", english: "Cancel generation")
                               : KizunaCopy.text(japanese: "31B Thinkingでテンプレート作成", english: "Build with 31B Thinking"), systemImage: "sparkles")
                             .font(.subheadline.weight(.bold))
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(vm.isGeneratingTemplate || vm.isSaving || vm.generationBrief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(vm.isSaving || (!vm.isGeneratingTemplate && vm.generationBrief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
 
                     Spacer()
                 }
@@ -280,12 +344,12 @@ struct StoryWorldCreateView: View {
                     .controlSize(.small)
                     .padding(.top, 1)
             } else {
-                Image(systemName: vm.saveError == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(vm.saveError == nil ? .green : .orange)
+                Image(systemName: vm.generationError == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(vm.generationError == nil ? .green : .orange)
             }
-            Text(vm.saveError ?? vm.generationStatus ?? KizunaCopy.text(japanese: "生成中…", english: "Generating…"))
+            Text(vm.generationError ?? vm.generationStatus ?? KizunaCopy.text(japanese: "生成中…", english: "Generating…"))
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(vm.saveError == nil ? Color.secondary : Color.orange)
+                .foregroundStyle(vm.generationError == nil ? Color.secondary : Color.orange)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -293,7 +357,7 @@ struct StoryWorldCreateView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill((vm.saveError == nil ? Color.accentColor : Color.orange).opacity(0.10))
+                .fill((vm.generationError == nil ? Color.accentColor : Color.orange).opacity(0.10))
         )
     }
 

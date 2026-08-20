@@ -539,6 +539,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
     @Published var generationBrief: String = ""
     @Published private(set) var isGeneratingTemplate: Bool = false
     @Published private(set) var generationStatus: String? = nil
+    @Published private(set) var generationError: String? = nil
 
     /// 雛形生成中にだけ作ったキャラ。保存ボタンが成功するまでRepositoryへ
     /// 書き込まず、再生成/キャンセルでライブラリーへ孤児を残さない。
@@ -551,6 +552,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
     private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
     private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
     private let safetyPipeline = SafetyPipeline.shared
+    private var generationTask: Task<Void, Never>? = nil
 
     init(existing: StoryWorld? = nil) {
         self.isCreatingNewWorld = existing == nil
@@ -665,9 +667,27 @@ final class StoryWorldCreateViewModel: ObservableObject {
         lorebookDrafts.removeAll { $0.id == id }
     }
 
+    func startTemplateGeneration() {
+        guard generationTask == nil, !isGeneratingTemplate else { return }
+        generationTask = Task { [weak self] in
+            await self?.generateTemplateWith31BThinking()
+        }
+    }
+
+    func cancelTemplateGeneration() {
+        guard isGeneratingTemplate else { return }
+        generationTask?.cancel()
+        generationStatus = KizunaCopy.text(
+            japanese: "雛形の生成を中止しました。",
+            english: "Template generation was canceled."
+        )
+        generationError = nil
+        isGeneratingTemplate = false
+    }
+
     func generateTemplateWith31BThinking() async {
         guard !isSaving else {
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "保存中は雛形を再生成できません。保存が終わってから試してください。",
                 english: "The template cannot be regenerated while the story is being saved. Try again afterward."
             )
@@ -675,7 +695,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         }
         let brief = generationBrief.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !brief.isEmpty else {
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "作りたいストーリーの方向性を入力してください。",
                 english: "Describe the kind of story you want to create."
             )
@@ -683,7 +703,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         }
 
         guard StoryGemma31BAPIService.shared.hasAPIKey else {
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "Gemma4 APIキーが未設定です。\(KizunaCopy.appName)の設定からNAGI APIキーを登録してください。",
                 english: "The Gemma4 API key is not set. Add the NAGI API key in \(KizunaCopy.appName)'s settings."
             )
@@ -695,8 +715,11 @@ final class StoryWorldCreateViewModel: ObservableObject {
             japanese: "Gemma4 31B APIで雛形を作成中…",
             english: "Creating a draft with the Gemma4 31B API…"
         )
-        saveError = nil
-        defer { isGeneratingTemplate = false }
+        generationError = nil
+        defer {
+            isGeneratingTemplate = false
+            generationTask = nil
+        }
 
         let systemPrompt = Self.storyTemplateSystemPrompt + "\n\n" + (KizunaCopy.language == .english
             ? "All human-readable string values in the JSON (title, descriptions, settings, scenes, character text, tags, and rules) must be written in English. Keep enum values exactly as specified. If the request asks for multiple characters, set castMode to ensemble, set characterCount to the number of generated characters, and include every requested character in characters."
@@ -709,9 +732,18 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 temperature: 0.45,
                 maxOutputTokens: 8192
             ).text
+            try Task.checkCancellation()
         } catch {
+            if Task.isCancelled {
+                generationStatus = KizunaCopy.text(
+                    japanese: "雛形の生成を中止しました。",
+                    english: "Template generation was canceled."
+                )
+                generationError = nil
+                return
+            }
             AppLog.error("[StoryWorldCreateVM] template generation failed: %@", error.localizedDescription)
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "雛形の生成に失敗しました。API設定と入力内容を確認して、もう一度試してください。",
                 english: "The template could not be generated. Check the API settings and your idea, then try again."
             )
@@ -720,7 +752,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         }
 
         guard let data = Self.extractJSONObjectData(from: reply) else {
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "雛形の生成に失敗しました。JSONとして読める出力がありません。",
                 english: "The template could not be generated because the response did not contain readable JSON."
             )
@@ -731,13 +763,14 @@ final class StoryWorldCreateViewModel: ObservableObject {
         do {
             let template = try JSONDecoder().decode(GeneratedStoryTemplate.self, from: data)
             try await applyGeneratedTemplate(template)
+            generationError = nil
             generationStatus = KizunaCopy.text(
                 japanese: "雛形をフォームへ反映しました。",
                 english: "The template was applied to the form."
             )
         } catch {
             AppLog.error("[StoryWorldCreateVM] template decode/apply failed: %@", error.localizedDescription)
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "雛形の読み込みに失敗しました。生成内容を確認して、もう一度試してください。",
                 english: "The template could not be loaded. Check the generated content and try again."
             )
