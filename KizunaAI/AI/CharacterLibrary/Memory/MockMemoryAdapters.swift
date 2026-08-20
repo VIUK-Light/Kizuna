@@ -81,3 +81,82 @@ final class MockMemorySummarizer: MemorySummarizing {
         return []
     }
 }
+
+/// Uses the configured local model for memory retrieval instead of making the
+/// rule-based selector the production default. UUIDs are returned so the
+/// selector cannot invent or rewrite persisted memory text.
+final class RuntimeMemorySelector: MemorySelecting {
+    private let fallback: MemorySelecting
+
+    init(fallback: MemorySelecting = MockMemorySelector()) {
+        self.fallback = fallback
+    }
+
+    func select(query: String, candidates: [CharacterMemory], topK: Int) async -> [CharacterMemory] {
+        guard !candidates.isEmpty else { return [] }
+        let lines = candidates.enumerated().map { index, memory in
+            "(index): (memory.id.uuidString) | (memory.text)"
+        }.joined(separator: "\n")
+        let prompt = """
+        Select up to (max(0, topK)) memory UUIDs relevant to the query.
+        Return only a comma-separated list of UUIDs, or NONE.
+        Query: (query)
+        Memories:
+        (lines)
+        """
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: max(48, topK * 40)) else {
+            return await fallback.select(query: query, candidates: candidates, topK: topK)
+        }
+        let normalized = LocalAuxiliaryAI.normalized(raw)
+        guard normalized.caseInsensitiveCompare("NONE") != .orderedSame else { return [] }
+        let ids = normalized
+            .split { $0 == "," || $0 == " " || $0 == "\n" }
+            .compactMap { UUID(uuidString: String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard !ids.isEmpty else {
+            return await fallback.select(query: query, candidates: candidates, topK: topK)
+        }
+        let allowed = Set(ids.prefix(max(0, topK)))
+        return candidates.filter { allowed.contains($0.id) }
+    }
+}
+
+/// Extracts a single structured memory candidate from the real local runtime.
+/// Invalid output is discarded through the explicit fallback rather than
+/// being coerced into a fake fact.
+final class RuntimeMemorySummarizer: MemorySummarizing {
+    private let fallback: MemorySummarizing
+
+    init(fallback: MemorySummarizing = MockMemorySummarizer()) {
+        self.fallback = fallback
+    }
+
+    func extract(userText: String, assistantText: String, character: CharacterProfile) async -> [CharacterMemory] {
+        let prompt = """
+        Extract at most one durable fact about the user from this exchange.
+        Return exactly CATEGORY|IMPORTANCE|TEXT, or NONE.
+        CATEGORY must be one of: preference, relationship, event, world, userFact, summary, safety, other.
+        User: (userText)
+        Assistant: (assistantText)
+        """
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 128) else {
+            return await fallback.extract(userText: userText, assistantText: assistantText, character: character)
+        }
+        let parts = LocalAuxiliaryAI.normalized(raw).split(separator: "|", maxSplits: 2).map(String.init)
+        guard parts.count == 3,
+              parts[0].trimmingCharacters(in: .whitespacesAndNewlines).uppercased() != "NONE",
+              let category = MemoryCategory(rawValue: parts[0].trimmingCharacters(in: .whitespacesAndNewlines)),
+              let importance = Double(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
+              importance.isFinite else {
+            return await fallback.extract(userText: userText, assistantText: assistantText, character: character)
+        }
+        let text = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return [] }
+        return [CharacterMemory(
+            characterId: character.id,
+            text: text,
+            category: category,
+            importance: min(max(importance, 0), 1),
+            source: .userInput
+        )]
+    }
+}

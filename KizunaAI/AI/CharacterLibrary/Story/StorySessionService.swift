@@ -393,7 +393,9 @@ final class StorySessionService: ObservableObject {
     /// may contain narration without a safety block.
     private(set) var acceptanceInputSafetyBlocked = false
 
-    // DI (デフォルトは Local + Mock)
+    // DI (補助タスクは実行可能なlocal runtimeを優先し、未導入時だけ
+    // 明示的なMock fallbackへ落ちる。本文生成と補助生成を同じ実体へ
+    // 直結させず、各Protocolのテスト差し替えは維持する。)
     private let characterRepo: CharacterRepository
     private let memoryRepo: MemoryRepository
     private let worldRepo: StoryWorldRepository
@@ -410,11 +412,11 @@ final class StorySessionService: ObservableObject {
     /// fallback unless they explicitly provide this capability.
     private let storyMemoryRetryMemoryTransaction: StoryMemoryRetryMemoryTransaction?
     private let safetyPipeline = SafetyPipeline.shared
-    private let sceneSelector: SceneCharacterSelecting = MockSceneCharacterSelector()
-    private let summarizer: SceneSummarizing = MockSceneSummarizer()
-    private let nextScene: NextSceneSuggesting = MockNextSceneSuggester()
-    private let memorySelector: MemorySelecting = MockMemorySelector()
-    private let memorySummarizer: MemorySummarizing = MockMemorySummarizer()
+    private let sceneSelector: SceneCharacterSelecting
+    private let summarizer: SceneSummarizing
+    private let nextScene: NextSceneSuggesting
+    private let memorySelector: MemorySelecting
+    private let memorySummarizer: MemorySummarizing
     private let promptBuilder = StoryPromptBuilder()
     /// Serviceインスタンスごとのowner。プロセス共通IDにすると、画面を
     /// 作り直したServiceが、まだ生きている別Serviceと区別できない。
@@ -547,7 +549,12 @@ final class StorySessionService: ObservableObject {
         storyMemoryRetryRepo: StoryMemoryRetryRepository = LocalJSONStoryMemoryRetryRepository(),
         storyMemoryRetryMemoryTransaction: StoryMemoryRetryMemoryTransaction? = nil,
         pendingStoryTurnCommitRetries: [StoryTurnCommitRetry] = [],
-        pendingStoryMemoryRetries: [StoryMemoryRetry] = []
+        pendingStoryMemoryRetries: [StoryMemoryRetry] = [],
+        sceneSelector: SceneCharacterSelecting? = nil,
+        summarizer: SceneSummarizing? = nil,
+        nextScene: NextSceneSuggesting? = nil,
+        memorySelector: MemorySelecting? = nil,
+        memorySummarizer: MemorySummarizing? = nil
     ) {
         self.characterRepo = characterRepo
         self.memoryRepo = memoryRepo
@@ -558,6 +565,11 @@ final class StorySessionService: ObservableObject {
         self.lorebookRepo = lorebookRepo
         self.storyMemoryRepo = storyMemoryRepo
         self.storyMemoryRetryRepo = storyMemoryRetryRepo
+        self.sceneSelector = sceneSelector ?? RuntimeSceneCharacterSelector()
+        self.summarizer = summarizer ?? RuntimeSceneSummarizer()
+        self.nextScene = nextScene ?? RuntimeNextSceneSuggester()
+        self.memorySelector = memorySelector ?? RuntimeMemorySelector()
+        self.memorySummarizer = memorySummarizer ?? RuntimeMemorySummarizer()
         if let storyMemoryRetryMemoryTransaction {
             let hasLocalStorageIdentities = memoryRepo is LocalJSONMemoryFileIdentityProviding
                 && storyMemoryRepo is LocalJSONMemoryFileIdentityProviding

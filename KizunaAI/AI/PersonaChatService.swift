@@ -372,9 +372,9 @@ final class PersonaChatService: ObservableObject {
         safetyPipeline: SafetyPipeline = SafetyPipeline.shared,
         characterRepo: CharacterRepository = LocalJSONCharacterRepository(),
         memoryRepo: MemoryRepository = LocalJSONMemoryRepository(),
-        smallClassifier: SmallModelClassifying = MockSmallModelClassifier(),
-        memorySelector: MemorySelecting = MockMemorySelector(),
-        memorySummarizer: MemorySummarizing = MockMemorySummarizer(),
+        smallClassifier: SmallModelClassifying? = nil,
+        memorySelector: MemorySelecting? = nil,
+        memorySummarizer: MemorySummarizing? = nil,
         watchdogNanoseconds: UInt64 = 75_000_000_000
     ) {
         self.generationModel = UserDefaults.standard.string(forKey: Self.generationModelKey)
@@ -384,9 +384,9 @@ final class PersonaChatService: ObservableObject {
         self.safetyPipeline = safetyPipeline
         self.characterRepo = characterRepo
         self.memoryRepo = memoryRepo
-        self.smallClassifier = smallClassifier
-        self.memorySelector = memorySelector
-        self.memorySummarizer = memorySummarizer
+        self.smallClassifier = smallClassifier ?? RuntimeSmallModelClassifier()
+        self.memorySelector = memorySelector ?? RuntimeMemorySelector()
+        self.memorySummarizer = memorySummarizer ?? RuntimeMemorySummarizer()
         self.watchdogNanoseconds = watchdogNanoseconds
     }
 
