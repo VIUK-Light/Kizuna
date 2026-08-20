@@ -64,6 +64,26 @@ struct PersonaComposer: View {
                 .frame(width: 34, height: 34)
                 .help(KizunaCopy.appName)
 
+                Menu {
+                    ForEach(PersonaGenerationModel.allCases) { model in
+                        Button {
+                            service.generationModel = model
+                        } label: {
+                            Label(
+                                "\(model.localizedDisplayName) · \(model.isAvailable ? KizunaCopy.text(japanese: "利用可能", english: "Available") : KizunaCopy.text(japanese: "未準備", english: "Not ready"))",
+                                systemImage: service.generationModel == model ? "checkmark" : "cpu"
+                            )
+                        }
+                        .disabled(!model.isAvailable || isGeneratingThisThread)
+                    }
+                } label: {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.plain)
+                .help(KizunaCopy.text(japanese: "Personaの生成モデル", english: "Persona generation model"))
+
                 TextField(KizunaCopy.text(japanese: "メッセージを送る…", english: "Message…"), text: $text, axis: .vertical)
                     .textFieldStyle(.plain)
                     .focused($focused)

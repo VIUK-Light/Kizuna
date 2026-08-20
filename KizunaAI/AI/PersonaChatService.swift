@@ -53,6 +53,40 @@ enum PersonaOutputSafetyPolicy {
     }
 }
 
+/// Persona can use the same local/API generation families as Story while
+/// keeping its persisted preference separate from Story worlds.
+enum PersonaGenerationModel: String, Codable, CaseIterable, Identifiable, Hashable {
+    case local
+    case nagi
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .local: return "iori"
+        case .nagi: return "NAGI"
+        }
+    }
+
+    var localizedDisplayName: String {
+        switch self {
+        case .local:
+            return KizunaCopy.text(japanese: "iori（端末内）", english: "iori (on device)")
+        case .nagi:
+            return KizunaCopy.text(japanese: "NAGI（Gemma API）", english: "NAGI (Gemma API)")
+        }
+    }
+
+    var isAvailable: Bool {
+        switch self {
+        case .local:
+            return LocalAssistantModelManager.shared.runtimeAvailability == .executable
+        case .nagi:
+            return StoryGemma31BAPIService.shared.hasAPIKey
+        }
+    }
+}
+
 /// The small runtime surface Persona needs. Keeping this separate from the
 /// large runtime bridge makes completion, cancellation, and watchdog paths
 /// deterministic in tests without changing the production runtime.
@@ -85,6 +119,24 @@ protocol PersonaReplyGenerating: AnyObject {
         advancedSettings: GemmaAdvancedSettings,
         overrideSystemPrompt: String?,
         generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult
+
+    /// Route one Persona request through the selected model family. The
+    /// default implementation preserves existing test doubles and provides a
+    /// real NAGI adapter plus cross-family fallback for production.
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        model: PersonaGenerationModel,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
     ) async -> LocalAssistantGenerationResult
 
@@ -121,6 +173,74 @@ extension PersonaReplyGenerating {
             ),
             modelIdentity: nil
         )
+    }
+
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        model: PersonaGenerationModel,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult {
+        func generateNAGI() async -> LocalAssistantGenerationResult? {
+            guard StoryGemma31BAPIService.shared.hasAPIKey else { return nil }
+            let userPrompt: String
+            if let contextPrompt, !contextPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                userPrompt = contextPrompt + "\n\n" + prompt
+            } else {
+                userPrompt = prompt
+            }
+            guard let generation = try? await StoryGemma31BAPIService.shared.generate(
+                systemPrompt: overrideSystemPrompt ?? "",
+                userPrompt: userPrompt,
+                temperature: 0.72,
+                maxOutputTokens: 1_024
+            ) else {
+                return nil
+            }
+            if let onUpdate {
+                await onUpdate(.visiblePreview(generation.text))
+            }
+            return LocalAssistantGenerationResult(
+                text: generation.text,
+                modelIdentity: "google.generativeLanguage/\(generation.modelName)"
+            )
+        }
+
+        func generateLocal() async -> LocalAssistantGenerationResult {
+            await generatePersonaReplyResult(
+                prompt: prompt,
+                contextPrompt: contextPrompt,
+                coachMode: coachMode,
+                reasoningMode: reasoningMode,
+                childAge: childAge,
+                pageInfo: pageInfo,
+                safetySnapshot: safetySnapshot,
+                advancedSettings: advancedSettings,
+                overrideSystemPrompt: overrideSystemPrompt,
+                generationID: generationID,
+                onUpdate: onUpdate
+            )
+        }
+
+        switch model {
+        case .local:
+            let local = await generateLocal()
+            if local.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                return local
+            }
+            return await generateNAGI() ?? local
+        case .nagi:
+            if let nagi = await generateNAGI() { return nagi }
+            return await generateLocal()
+        }
     }
 }
 
@@ -219,6 +339,13 @@ final class PersonaChatService: ObservableObject {
     @Published private(set) var lastCompletedGeneration: GenerationCompletion?
     @Published private(set) var cancelledRequests: [UUID: String] = [:]
     @Published private(set) var memorySaveError: String?
+    @Published var generationModel: PersonaGenerationModel {
+        didSet {
+            UserDefaults.standard.set(generationModel.rawValue, forKey: Self.generationModelKey)
+        }
+    }
+
+    private static let generationModelKey = "persona.generationModel"
 
     private var generationTask: Task<Void, Never>?
     private var pendingMemoryTask: Task<Void, Never>? = nil
@@ -250,6 +377,8 @@ final class PersonaChatService: ObservableObject {
         memorySummarizer: MemorySummarizing = MockMemorySummarizer(),
         watchdogNanoseconds: UInt64 = 75_000_000_000
     ) {
+        self.generationModel = UserDefaults.standard.string(forKey: Self.generationModelKey)
+            .flatMap(PersonaGenerationModel.init(rawValue:)) ?? .local
         self.runtime = runtime
         self.store = store
         self.safetyPipeline = safetyPipeline
@@ -309,6 +438,7 @@ final class PersonaChatService: ObservableObject {
         lastRequestText = trimmed
         activeRequestText = trimmed
         let generationID = UUID()
+        let selectedGenerationModel = generationModel
         activeGenerationID = generationID
         activeThreadID = thread.id
         activeAssistantMessageID = assistantMessageID
@@ -317,7 +447,13 @@ final class PersonaChatService: ObservableObject {
         if let charID = thread.characterID {
             // 新パス: キャラライブラリー由来のスレッド → 安全 + メモリーパイプライン
             generationTask = Task { [weak self] in
-                await self?.runCharacterPipeline(threadID: thread.id, characterID: charID, userText: trimmed, generationID: generationID)
+                await self?.runCharacterPipeline(
+                    threadID: thread.id,
+                    characterID: charID,
+                    userText: trimmed,
+                    generationID: generationID,
+                    generationModel: selectedGenerationModel
+                )
             }
         } else {
             // 旧パス: PersonaSettings由来のスレッド → 既存ストリーミングのまま
@@ -325,7 +461,8 @@ final class PersonaChatService: ObservableObject {
                 await self?.runLegacyPersonaGeneration(
                     threadID: threadID,
                     userText: trimmed,
-                    generationID: generationID
+                    generationID: generationID,
+                    generationModel: selectedGenerationModel
                 )
             }
         }
@@ -336,7 +473,8 @@ final class PersonaChatService: ObservableObject {
     private func runLegacyPersonaGeneration(
         threadID: UUID,
         userText: String,
-        generationID: UUID
+        generationID: UUID,
+        generationModel: PersonaGenerationModel
     ) async {
         // A cancelled legacy task can still be scheduled after the caller has
         // switched threads. Do not start another runtime generation for that
@@ -371,6 +509,7 @@ final class PersonaChatService: ObservableObject {
             advancedSettings: advanced,
             overrideSystemPrompt: personaPrompt,
             generationID: generationID,
+            model: generationModel,
             onUpdate: { @MainActor [weak self] update in
                 self?.handleStreamUpdate(update, generationID: generationID)
             }
@@ -418,7 +557,13 @@ final class PersonaChatService: ObservableObject {
     /// CharacterLibrary 由来スレッドのフルパイプライン。
     /// 1) 入力 safety → 2) メモリー候補取得 → 3) 270M 分類 + 選別 → 4) PromptBuilder → 5) E4B 生成
     /// → 6) 出力 safety → 7) async でメモリー抽出・保存。
-    private func runCharacterPipeline(threadID: UUID, characterID: UUID, userText: String, generationID: UUID) async {
+    private func runCharacterPipeline(
+        threadID: UUID,
+        characterID: UUID,
+        userText: String,
+        generationID: UUID,
+        generationModel: PersonaGenerationModel
+    ) async {
         // ── 1) CharacterProfile / Lorebook 取得 ──
         let allCharacters: [CharacterProfile]
         do {
@@ -452,7 +597,12 @@ final class PersonaChatService: ObservableObject {
                 self.isGenerationActive(generationID)
             }
             guard canFallback else { return }
-            await runLegacyPersonaGeneration(threadID: threadID, userText: userText, generationID: generationID)
+            await runLegacyPersonaGeneration(
+                threadID: threadID,
+                userText: userText,
+                generationID: generationID,
+                generationModel: generationModel
+            )
             return
         }
         let lorebook = try? await characterRepo.fetchLorebook(characterId: characterID)
@@ -547,6 +697,7 @@ final class PersonaChatService: ObservableObject {
             advancedSettings: advanced,
             overrideSystemPrompt: systemPrompt,
             generationID: generationID,
+            model: generationModel,
             onUpdate: { @MainActor [weak self] update in
                 self?.handleStreamUpdate(update, generationID: generationID)
             }
