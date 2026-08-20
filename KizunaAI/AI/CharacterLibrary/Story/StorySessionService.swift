@@ -3349,14 +3349,52 @@ final class StorySessionService: ObservableObject {
         }
 
         do {
-            let generation = try await StoryGemma31BAPIService.shared.generate(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                temperature: 0.72,
-                // 物語本文は2〜7行で十分。過剰な上限は待ち時間と候補の連続出力を増やす。
-                maxOutputTokens: 1024,
-                seed: seedOverride.map(Int.init)
-            )
+            let streamAccumulator = StoryGemma31BStreamAccumulator()
+            let generation: StoryGemma31BGenerationResult
+            do {
+                generation = try await StoryGemma31BAPIService.shared.generateStreaming(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    temperature: 0.72,
+                    // 物語本文は2〜7行で十分。過剰な上限は待ち時間と候補の連続出力を増やす。
+                    maxOutputTokens: 1024,
+                    seed: seedOverride.map(Int.init),
+                    onTextDelta: { [weak self] delta in
+                        let visible = streamAccumulator.append(delta)
+                        Task { @MainActor [weak self] in
+                            guard let self,
+                                  self.activeGenerationID == generationID else { return }
+                            self.streamingResponse = visible
+                            self.streamingStatusText = self.statusText("発話生成中", "Generating response")
+                            self.streamingSpeakerName = self.detectCurrentSpeakerName(in: visible)
+                        }
+                    }
+                )
+            } catch let streamError as StoryGemma31BAPIError {
+                guard case let .httpStatus(status, _) = streamError,
+                      [400, 404, 405].contains(status) else {
+                    throw streamError
+                }
+                // Some deployments expose generateContent but not the SSE
+                // variant. Fall back explicitly to the same model request and
+                // keep the status text honest instead of pretending deltas
+                // were received.
+                await MainActor.run {
+                    guard self.activeGenerationID == generationID else { return }
+                    self.streamingResponse = self.localizedNotice(
+                        "ナレーション: NAGIが応答を準備しています。",
+                        "Narration: NAGI is preparing the response."
+                    )
+                    self.streamingStatusText = self.statusText("発話を整形中", "Formatting response")
+                }
+                generation = try await StoryGemma31BAPIService.shared.generate(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    temperature: 0.72,
+                    maxOutputTokens: 1024,
+                    seed: seedOverride.map(Int.init)
+                )
+            }
             let text = generation.text
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
@@ -3767,8 +3805,8 @@ final class StorySessionService: ObservableObject {
             return localizedNotice("Gemma4 31B API の出力本文が空でした。もう一度試してください。", "Gemma4 31B API returned no response text. Try again.")
         case let .truncated(reason):
             return localizedNotice(
-                "Gemma4 31B APIの出力が上限((reason))で途中終了しました。本文は保存していません。続きを生成するか、出力上限を確認してください。",
-                "Gemma4 31B API stopped at its output limit ((reason)). The incomplete response was not saved. Generate a continuation or review the output limit."
+                "Gemma4 31B APIの出力が上限(" + reason + ")で途中終了しました。本文は保存していません。続きを生成するか、出力上限を確認してください。",
+                "Gemma4 31B API stopped at its output limit (" + reason + "). The incomplete response was not saved. Generate a continuation or review the output limit."
             )
         case .invalidURL, .httpStatus:
             return localizedNotice("Gemma4 31B API の応答に失敗しました。もう一度試してください。", "Gemma4 31B API failed to respond. Try again.")

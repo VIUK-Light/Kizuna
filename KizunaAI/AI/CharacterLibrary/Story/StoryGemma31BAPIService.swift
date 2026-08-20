@@ -28,7 +28,7 @@ enum StoryGemma31BAPIError: LocalizedError {
         case .emptyText:
             return "Gemma4 31B API の出力本文が空でした。"
         case let .truncated(reason):
-            return "Gemma4 31B API の出力が上限で途中終了しました ((reason))。"
+            return "Gemma4 31B API の出力が上限(" + reason + ")で途中終了しました。"
         }
     }
 
@@ -70,6 +70,18 @@ struct StoryGemma31BGenerationResult {
         self.modelName = modelName
         self.finishReason = finishReason
         self.usageMetadata = usageMetadata
+    }
+}
+
+final class StoryGemma31BStreamAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = ""
+
+    func append(_ delta: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        value += delta
+        return value
     }
 }
 
@@ -169,6 +181,54 @@ final class StoryGemma31BAPIService {
         throw StoryGemma31BAPIError.emptyText
     }
 
+    /// Streams Google `streamGenerateContent` SSE chunks. The request body is
+    /// identical to generateContent; only the endpoint and response transport
+    /// differ. Each visible text part is delivered as a delta before the final
+    /// result is returned, while thought parts stay out of the UI/history.
+    func generateStreaming(
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double = 0.72,
+        maxOutputTokens: Int = 4096,
+        seed: Int? = nil,
+        onTextDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> StoryGemma31BGenerationResult {
+        guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
+            throw StoryGemma31BAPIError.missingAPIKey
+        }
+        let body = try makeRequestBody(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            temperature: temperature,
+            maxOutputTokens: maxOutputTokens,
+            thinkingLevel: "high",
+            seed: seed
+        )
+
+        var lastFailure: StoryGemma31BAPIError?
+        for modelName in [primaryModelName] + fallbackModelNames {
+            do {
+                return try await streamSingleRequest(
+                    apiKey: apiKey,
+                    body: body,
+                    modelName: modelName,
+                    onTextDelta: onTextDelta
+                )
+            } catch let error as StoryGemma31BAPIError {
+                lastFailure = error
+                guard error.isRetryable == false || ![400, 404, 405].contains(httpStatus(from: error)) else {
+                    // A provider/model endpoint incompatibility is allowed to
+                    // move to the configured model fallback immediately.
+                    continue
+                }
+                if !error.isRetryable { break }
+            } catch {
+                lastFailure = .httpStatus(-1, error.localizedDescription)
+            }
+        }
+        throw lastFailure ?? StoryGemma31BAPIError.emptyResponse
+    }
+
     private func makeRequestBody(
         systemPrompt: String,
         userPrompt: String,
@@ -214,6 +274,86 @@ final class StoryGemma31BAPIService {
             promptTokens,
             outputTokens
         )
+    }
+
+    private func streamSingleRequest(
+        apiKey: String,
+        body: Data,
+        modelName: String,
+        onTextDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> StoryGemma31BGenerationResult {
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelName):streamGenerateContent?alt=sse") else {
+            throw StoryGemma31BAPIError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.httpBody = body
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        var streamedText = ""
+        var finishReason: String?
+        var usageMetadata: StoryGemma31BUsageMetadata?
+
+        for try await line in bytes.lines {
+            guard statusCode >= 200, statusCode <= 299 else { continue }
+            let payload = line.hasPrefix("data:")
+                ? String(line.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+                : line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !payload.isEmpty, payload != "[DONE]",
+                  let data = payload.data(using: .utf8),
+                  let chunk = try? decoder.decode(StoryGemma31BGenerateContentResponse.self, from: data) else {
+                continue
+            }
+            if let reason = chunk.candidates?.compactMap(\.finishReason).first {
+                finishReason = reason
+            }
+            if let usage = chunk.usageMetadata {
+                usageMetadata = usage
+            }
+            guard let delta = self.visibleText(from: chunk), !delta.isEmpty else { continue }
+            streamedText += delta
+            onTextDelta(delta)
+        }
+
+        guard (200...299).contains(statusCode) else {
+            throw StoryGemma31BAPIError.httpStatus(statusCode, "")
+        }
+        guard !streamedText.isEmpty else {
+            if let finishReason,
+               isTruncationReason(finishReason) {
+                throw StoryGemma31BAPIError.truncated(finishReason)
+            }
+            throw StoryGemma31BAPIError.emptyText
+        }
+        if let finishReason, isTruncationReason(finishReason) {
+            throw StoryGemma31BAPIError.truncated(finishReason)
+        }
+        return StoryGemma31BGenerationResult(
+            text: streamedText,
+            modelName: modelName,
+            finishReason: finishReason,
+            usageMetadata: usageMetadata
+        )
+    }
+
+    private func isTruncationReason(_ reason: String) -> Bool {
+        let normalized = reason
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+            .uppercased()
+        return normalized == "MAX_TOKENS"
+            || normalized == "MAX_OUTPUT_TOKENS"
+            || normalized == "LENGTH"
+    }
+
+    private func httpStatus(from error: StoryGemma31BAPIError) -> Int {
+        guard case let .httpStatus(status, _) = error else { return -1 }
+        return status
     }
 
     private func performRequestWithRetry(
