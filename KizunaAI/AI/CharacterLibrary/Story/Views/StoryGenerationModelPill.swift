@@ -27,7 +27,7 @@ struct StoryGenerationModelPill: View {
                 // 選択後に初めて失敗させると、未導入の iori や API キー未設定の
                 // NAGI が「使えるモデル」として保存されてしまう。状態表示は残しつつ、
                 // 送信可能なモデルだけを選択できるようにする。
-                .disabled(!isModelSelectable(model))
+                .disabled(!isModelSelectable(model) || vm.service.phase == .thinking)
                 .help(modelHelpText(model))
             }
             Divider()
@@ -51,6 +51,7 @@ struct StoryGenerationModelPill: View {
             .background(Capsule().fill(Color.white.opacity(0.16)))
         }
         .buttonStyle(.plain)
+        .disabled(vm.service.phase == .thinking)
         .accessibilityLabel(storyCopy("生成モデル", "Generation model"))
         .accessibilityValue(Text(
             "\(vm.generationModel.displayName), \(modelAvailabilityText(vm.generationModel))"
@@ -87,11 +88,21 @@ struct StoryGenerationModelPill: View {
     }
 
     private func selectUsableModelIfNeeded() {
+        // `.checking` and `.savedOnly` are transitional states. Do not turn a
+        // temporary readiness check into a persisted model preference.
+        if isModelSelectable(vm.preferredModel) {
+            vm.restorePreferredGenerationModel()
+            return
+        }
+        if localModelManager.runtimeAvailability == .checking
+            || localModelManager.runtimeAvailability == .savedOnly {
+            return
+        }
         guard !isModelSelectable(vm.generationModel),
               let fallback = StoryGenerationModel.allCases.first(where: { isModelSelectable($0) }) else {
             return
         }
-        vm.generationModel = fallback
+        vm.applyTemporaryGenerationModel(fallback)
     }
 
     private var modelDetailPopover: some View {

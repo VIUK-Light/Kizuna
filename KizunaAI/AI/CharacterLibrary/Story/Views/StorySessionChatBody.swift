@@ -1128,7 +1128,6 @@ struct StorySessionChatBody: View {
                     Text(preview)
                         .font(.body.weight(.medium))
                         .foregroundStyle(storyText.opacity(0.78))
-                        .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

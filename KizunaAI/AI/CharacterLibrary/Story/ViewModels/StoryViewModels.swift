@@ -1810,6 +1810,8 @@ final class StorySessionViewModel: ObservableObject {
     @Published private(set) var restAcknowledgementError: String?
     @Published var generationModel: StoryGenerationModel {
         didSet {
+            guard !isApplyingTemporaryGenerationModel else { return }
+            preferredGenerationModel = generationModel
             defaults.set(generationModel.rawValue, forKey: generationModelKey)
         }
     }
@@ -1822,6 +1824,8 @@ final class StorySessionViewModel: ObservableObject {
     private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
     private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
     private let generationModelKey: String
+    private var preferredGenerationModel: StoryGenerationModel
+    private var isApplyingTemporaryGenerationModel = false
 
     // 休憩提案の時計はアプリ側だけが管理する。モデルには判定を任せない。
     private var continuousUseStartedAt = Date()
@@ -1848,10 +1852,26 @@ final class StorySessionViewModel: ObservableObject {
         self.generationModelKey = "storySessionGenerationModel.\(world.id.uuidString)"
         let stored = UserDefaults.standard.string(forKey: generationModelKey)
         let savedModel = stored.flatMap(StoryGenerationModel.init(rawValue:)) ?? .e4b
+        self.preferredGenerationModel = savedModel
         self.generationModel = savedModel
         registerDebugRestSuggestionObserver()
         registerDebugSafetyConcernObserver()
         startDebugRequestPolling()
+    }
+
+    var preferredModel: StoryGenerationModel {
+        preferredGenerationModel
+    }
+
+    func applyTemporaryGenerationModel(_ model: StoryGenerationModel) {
+        guard generationModel != model else { return }
+        isApplyingTemporaryGenerationModel = true
+        generationModel = model
+        isApplyingTemporaryGenerationModel = false
+    }
+
+    func restorePreferredGenerationModel() {
+        applyTemporaryGenerationModel(preferredGenerationModel)
     }
 
     deinit {

@@ -839,7 +839,7 @@ struct PersonaChatView: View {
     private var compactStoryList: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text(KizunaCopy.text(japanese: "続きのある物語", english: "Stories in progress"))
+                Text(KizunaCopy.text(japanese: "続き", english: "Continue"))
                     .font(.subheadline.weight(.bold))
                     .tracking(0.4)
                     .foregroundStyle(.secondary)
@@ -1533,7 +1533,8 @@ private struct StoryHistoryItem: Identifiable, Hashable {
     var id: UUID { session.id }
 
     var previewText: String {
-        session.messages.last?.text.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "新しい物語"
+        session.messages.last?.text.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            ?? KizunaCopy.text(japanese: "新しい物語", english: "New story")
     }
 }
 
