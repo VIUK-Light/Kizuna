@@ -6,6 +6,188 @@
 */
 import Foundation
 
+/// Provider/model metadata is deliberately separate from secret material.
+/// These values are safe to persist in UserDefaults and can be exported for
+/// diagnostics without exposing API keys.
+enum AIProviderID: String, Codable, CaseIterable, Hashable, Sendable {
+    case localRuntime
+    case googleGenerativeLanguage
+    case openAICompatible
+    case anthropic
+}
+
+enum AIModelRole: String, Codable, CaseIterable, Hashable, Sendable {
+    case persona
+    case story
+    case classifier
+    case memoryExtraction
+    case memoryRetrieval
+    case sceneCharacterSelection
+    case sceneSummary
+    case nextSceneSuggestion
+    case safety
+}
+
+struct AIModelIdentity: Codable, Equatable, Hashable, Sendable {
+    let providerID: AIProviderID
+    let modelID: String
+    let displayName: String
+    /// For local artifacts this is a stable filename or digest label. It must
+    /// never contain an absolute path or secret URL.
+    let artifactID: String?
+
+    init(
+        providerID: AIProviderID,
+        modelID: String,
+        displayName: String,
+        artifactID: String? = nil
+    ) {
+        self.providerID = providerID
+        self.modelID = modelID
+        self.displayName = displayName
+        self.artifactID = artifactID
+    }
+
+    var stableID: String {
+        let artifact = artifactID.map { "/\($0)" } ?? ""
+        return "\(providerID.rawValue)/\(modelID)\(artifact)"
+    }
+}
+
+struct AIModelConfiguration: Codable, Equatable, Hashable, Identifiable, Sendable {
+    let id: UUID
+    var identity: AIModelIdentity
+    var roles: Set<AIModelRole>
+    /// Non-secret endpoint metadata. API keys remain in Keychain.
+    var endpoint: String?
+    var priority: Int
+    var isEnabled: Bool
+
+    init(
+        id: UUID = UUID(),
+        identity: AIModelIdentity,
+        roles: Set<AIModelRole>,
+        endpoint: String? = nil,
+        priority: Int = 0,
+        isEnabled: Bool = true
+    ) {
+        self.id = id
+        self.identity = identity
+        self.roles = roles
+        self.endpoint = endpoint
+        self.priority = priority
+        self.isEnabled = isEnabled
+    }
+}
+
+/// A small, provider-neutral registry. It owns configuration metadata only;
+/// execution remains in the existing runtime/API adapters until each adapter
+/// migrates to the common contract. This makes the migration additive instead
+/// of silently routing an old model through the wrong provider.
+final class AIModelRegistry: @unchecked Sendable {
+    static let shared = AIModelRegistry()
+
+    private let defaults: UserDefaults
+    private let lock = NSLock()
+    private let storageKey = "ai.modelConfigurations.v1"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if defaults.data(forKey: storageKey) == nil {
+            save(Self.legacyDefaultConfigurations)
+        }
+    }
+
+    var configurations: [AIModelConfiguration] {
+        lock.lock()
+        defer { lock.unlock() }
+        return loadUnlocked()
+    }
+
+    func configuration(id: UUID) -> AIModelConfiguration? {
+        configurations.first { $0.id == id }
+    }
+
+    func configurations(for role: AIModelRole) -> [AIModelConfiguration] {
+        configurations
+            .filter { $0.isEnabled && $0.roles.contains(role) }
+            .sorted {
+                if $0.priority != $1.priority { return $0.priority < $1.priority }
+                return $0.identity.displayName.localizedStandardCompare($1.identity.displayName) == .orderedAscending
+            }
+    }
+
+    @discardableResult
+    func register(_ configuration: AIModelConfiguration) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        var items = loadUnlocked()
+        if let index = items.firstIndex(where: { $0.id == configuration.id }) {
+            items[index] = configuration
+        } else {
+            items.append(configuration)
+        }
+        return saveUnlocked(items)
+    }
+
+    @discardableResult
+    func remove(id: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        var items = loadUnlocked()
+        let originalCount = items.count
+        items.removeAll { $0.id == id }
+        guard items.count != originalCount else { return true }
+        return saveUnlocked(items)
+    }
+
+    private func loadUnlocked() -> [AIModelConfiguration] {
+        guard let data = defaults.data(forKey: storageKey),
+              let decoded = try? JSONDecoder().decode([AIModelConfiguration].self, from: data) else {
+            return Self.legacyDefaultConfigurations
+        }
+        return decoded
+    }
+
+    private func save(_ items: [AIModelConfiguration]) {
+        lock.lock()
+        defer { lock.unlock() }
+        _ = saveUnlocked(items)
+    }
+
+    private func saveUnlocked(_ items: [AIModelConfiguration]) -> Bool {
+        guard let data = try? JSONEncoder().encode(items) else { return false }
+        defaults.set(data, forKey: storageKey)
+        return true
+    }
+
+    private static let legacyDefaultConfigurations: [AIModelConfiguration] = [
+        AIModelConfiguration(
+            id: UUID(uuidString: "9B3C7C72-8F0A-4D56-8A6D-1BCE7F05A001")!,
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "iori",
+                artifactID: nil
+            ),
+            roles: Set(AIModelRole.allCases),
+            priority: 0
+        ),
+        AIModelConfiguration(
+            id: UUID(uuidString: "9B3C7C72-8F0A-4D56-8A6D-1BCE7F05A002")!,
+            identity: AIModelIdentity(
+                providerID: .googleGenerativeLanguage,
+                modelID: "gemma-4-31b-it",
+                displayName: "NAGI",
+                artifactID: nil
+            ),
+            roles: [.persona, .story, .memoryExtraction, .sceneSummary],
+            endpoint: "https://generativelanguage.googleapis.com/v1beta",
+            priority: 10
+        )
+    ]
+}
+
 final class AISecretStore {
     static let shared = AISecretStore()
 
@@ -57,6 +239,31 @@ final class AISecretStore {
     @discardableResult
     func removeValue(for key: SecretKey) -> Bool {
         KeychainHelper.shared.delete(key: key.rawValue)
+    }
+
+    /// Provider credentials are keyed by configuration UUID, allowing more
+    /// than one API key/provider without adding a new enum case for every
+    /// vendor. The key itself never enters the model registry JSON.
+    func providerAPIKey(for configurationID: UUID) -> String? {
+        let key = "ai.secret.provider.\(configurationID.uuidString)"
+        guard let raw = KeychainHelper.shared.getString(forKey: key) else { return nil }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    @discardableResult
+    func setProviderAPIKey(_ value: String, for configurationID: UUID) -> Bool {
+        let key = "ai.secret.provider.\(configurationID.uuidString)"
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty {
+            return KeychainHelper.shared.delete(key: key)
+        }
+        return KeychainHelper.shared.setString(normalized, forKey: key)
+    }
+
+    @discardableResult
+    func removeProviderAPIKey(for configurationID: UUID) -> Bool {
+        KeychainHelper.shared.delete(key: "ai.secret.provider.\(configurationID.uuidString)")
     }
 
     func availableGeminiAPIKeys() -> [String] {

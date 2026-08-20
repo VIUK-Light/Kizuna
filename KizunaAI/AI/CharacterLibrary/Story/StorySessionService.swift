@@ -3352,7 +3352,7 @@ final class StorySessionService: ObservableObject {
                 self.streamingStatusText = self.statusText("発話を整形中", "Formatting response")
                 self.streamingSpeakerName = self.detectCurrentSpeakerName(in: text)
             }
-            return (reply: text, modelIdentity: generation.modelName)
+            return (reply: text, modelIdentity: generation.identity.stableID)
         } catch let error as StoryGemma31BAPIError {
             // APIエラーをNPC本文として整形すると、空レスポンス時に
             // 同じキャラのフォールバック発話が追加されるためsystem通知にする。

@@ -2076,7 +2076,12 @@ final class BundledServerLogAggregator {
         guard !fileName.isEmpty, fileName != ".", fileName != ".." else {
             return nil
         }
-        return fileName
+        return AIModelIdentity(
+            providerID: .localRuntime,
+            modelID: "local-artifact",
+            displayName: fileName,
+            artifactID: fileName
+        ).stableID
     }
 
     private func recordGenerationFailure(

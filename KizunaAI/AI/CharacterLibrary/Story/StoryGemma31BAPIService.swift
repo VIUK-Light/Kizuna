@@ -52,6 +52,14 @@ struct StoryGemma31BGenerationResult {
     let finishReason: String?
     let usageMetadata: StoryGemma31BUsageMetadata?
 
+    var identity: AIModelIdentity {
+        AIModelIdentity(
+            providerID: .googleGenerativeLanguage,
+            modelID: modelName,
+            displayName: modelName
+        )
+    }
+
     init(
         text: String,
         modelName: String,

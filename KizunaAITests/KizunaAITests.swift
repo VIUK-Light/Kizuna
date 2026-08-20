@@ -6457,6 +6457,33 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testAIModelRegistrySeparatesProviderMetadataFromCredentials() throws {
+        let suiteName = "KizunaAIModelRegistryTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let registry = AIModelRegistry(defaults: defaults)
+        XCTAssertEqual(
+            registry.configurations(for: .story).map(\.identity.providerID),
+            [.localRuntime, .googleGenerativeLanguage]
+        )
+
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "custom-story-model",
+                displayName: "Custom Story",
+                artifactID: "sha256:abc"
+            ),
+            roles: [.story, .memoryExtraction],
+            endpoint: "https://example.invalid/v1",
+            priority: 1
+        )
+        XCTAssertTrue(registry.register(configuration))
+        XCTAssertEqual(registry.configuration(id: configuration.id)?.identity.stableID, "openAICompatible/custom-story-model/sha256:abc")
+        XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
+    }
+
     func testPersonaUnfinishedAssistantIsNotPersistedBeforeFinalization() throws {
         let suiteName = "KizunaPersonaStoreTests.UnfinishedAssistant.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

@@ -210,7 +210,7 @@ extension PersonaReplyGenerating {
             }
             return LocalAssistantGenerationResult(
                 text: generation.text,
-                modelIdentity: "google.generativeLanguage/\(generation.modelName)"
+                modelIdentity: generation.identity.stableID
             )
         }
 
