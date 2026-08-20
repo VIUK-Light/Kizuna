@@ -647,7 +647,23 @@ final class PersonaChatService: ObservableObject {
             )
             return
         }
-        let lorebook = try? await characterRepo.fetchLorebook(characterId: characterID)
+        let lorebook: CharacterLorebook?
+        do {
+            lorebook = try await characterRepo.fetchLorebook(characterId: characterID)
+        } catch {
+            await MainActor.run {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "キャラクター設定を読み込めなかったため、古い設定で応答を生成しませんでした。再試行してください。",
+                        english: "The character settings could not be loaded, so no reply was generated from stale settings. Try again."
+                    )
+                )
+            }
+            AppLog.error("[PersonaService] lorebook load failed character=%@: %@", characterID.uuidString, error.localizedDescription)
+            return
+        }
         guard isGenerationActive(generationID) else { return }
 
         // ── 2) 入力 safety ──
@@ -683,7 +699,23 @@ final class PersonaChatService: ObservableObject {
         let effectiveUserText = inSafety.rewrittenText ?? userText
 
         // ── 3) メモリー候補と選別 ──
-        let candidates = (try? await memoryRepo.fetchMemories(characterId: characterID)) ?? []
+        let candidates: [CharacterMemory]
+        do {
+            candidates = try await memoryRepo.fetchMemories(characterId: characterID)
+        } catch {
+            await MainActor.run {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "記憶を読み込めなかったため、古い記憶で応答を生成しませんでした。再試行してください。",
+                        english: "Memories could not be loaded, so no reply was generated from stale memory context. Try again."
+                    )
+                )
+            }
+            AppLog.error("[PersonaService] memory context load failed character=%@: %@", characterID.uuidString, error.localizedDescription)
+            return
+        }
         guard isGenerationActive(generationID) else { return }
         let needsRecall: Bool
         if candidates.isEmpty {
