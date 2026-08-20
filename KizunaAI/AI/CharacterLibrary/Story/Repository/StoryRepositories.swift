@@ -164,6 +164,17 @@ protocol StorySessionRepository: AnyObject {
     func deleteSession(id: UUID) async throws
 }
 
+extension StorySessionRepository {
+    /// Test/future repositories can keep the default behavior, while the local
+    /// JSON implementation overrides this with a revision-checked restore.
+    func restoreUndoneTurn(_ snapshot: StorySession, expectedRevision: UInt64) async throws -> StorySession {
+        var restored = snapshot
+        restored.persistenceRevision = expectedRevision
+        try await saveSession(restored)
+        return restored
+    }
+}
+
 // MARK: - Lorebook repository
 
 /// Lorebookを別テーブルとして扱うことで、将来CloudKit/Supabaseへ差し替えやすくする。
@@ -488,6 +499,53 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                     sessions.append(next)
                 }
                 try LocalJSONStoreTransaction.save(sessions, fileName: "story_sessions.json", baseURL: storageURL)
+            }
+        }
+    }
+
+    func restoreUndoneTurn(_ snapshot: StorySession, expectedRevision: UInt64) async throws -> StorySession {
+        let storageURL = self.storageURL
+        try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
+        return try await LocalJSONStoreTransaction.performOnFileIO {
+            try LocalJSONStoreTransaction.withSharedLock {
+                let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
+                try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
+                    recordID: snapshot.id,
+                    recordKind: .session,
+                    tombstones: tombstones
+                )
+                var sessions = try LocalJSONStoreTransaction.load(
+                    StorySession.self,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+                guard let index = sessions.firstIndex(where: { $0.id == snapshot.id }) else {
+                    throw StoryTurnPersistenceError.sessionNotFound
+                }
+                let current = sessions[index]
+                guard current.effectivePersistenceRevision == expectedRevision else {
+                    throw StoryTurnPersistenceError.revisionConflict(
+                        expected: expectedRevision,
+                        actual: current.effectivePersistenceRevision
+                    )
+                }
+                guard let checkpoint = current.latestTurnCheckpoint,
+                      checkpoint.status == .cancelled,
+                      checkpoint.failureCode == "undone",
+                      snapshot.latestTurnCheckpoint?.turnID == checkpoint.turnID else {
+                    throw StoryTurnPersistenceError.turnNotUndoable
+                }
+
+                var restored = StorySessionMessageRepair.repaired(snapshot)
+                restored.persistenceRevision = current.effectivePersistenceRevision + 1
+                restored.updatedAt = Date()
+                sessions[index] = restored
+                try LocalJSONStoreTransaction.save(
+                    sessions,
+                    fileName: "story_sessions.json",
+                    baseURL: storageURL
+                )
+                return restored
             }
         }
     }

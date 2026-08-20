@@ -64,6 +64,7 @@ struct StorySessionChatBody: View {
                                     streamingPreview
                                 }
                                 bootstrapWarningCard
+                                sendPreparationErrorCard
                                 interruptedTurnCard
                                 // 最新のキャラクター発話の後ろに、会話の一部として表示する。
                                 restSuggestionCard
@@ -137,7 +138,7 @@ struct StorySessionChatBody: View {
                         .onChange(of: service.savedTurnRevision) { _, _ in
                             // キャラクター発話の保存後にだけ、アプリ側の60分判定を行う。
                             Task {
-                                await vm.refreshAfterTurn()
+                                guard await vm.refreshAfterTurn() else { return }
                                 await vm.evaluateRestSuggestionAfterTurn()
                             }
                         }
@@ -161,6 +162,11 @@ struct StorySessionChatBody: View {
                         }
                         .onChange(of: vm.responseActionError) { _, error in
                             isShowingResponseActionError = error != nil
+                        }
+                        .onChange(of: vm.lastStartedUserMessageID) { _, startedID in
+                            guard startedID != nil else { return }
+                            draft = ""
+                            composerFocused = false
                         }
 
                         if !isStoryChatNearLatest {
@@ -321,6 +327,41 @@ struct StorySessionChatBody: View {
             )
             .accessibilityElement(children: .contain)
             .id("story.bootstrap-warning")
+        }
+    }
+
+    @ViewBuilder
+    private var sendPreparationErrorCard: some View {
+        if let error = vm.sendPreparationError {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange.opacity(0.9))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(storyCopy("送信を開始できませんでした", "The message could not start"))
+                        .font(.subheadline.weight(.bold))
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(storyText.opacity(0.78))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(storyCopy(
+                        "入力欄の本文は保持しています。保存状態を確認して再送信してください。",
+                        "Your text was kept. Check the saved state and send it again."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(storyMuted)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.orange.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.orange.opacity(0.18), lineWidth: 1)
+            )
+            .id("story.send-preparation-error")
         }
     }
 
@@ -1210,7 +1251,6 @@ struct StorySessionChatBody: View {
         }
         // 送信準備中の二重タップでは受付されないため、受理された時だけ入力を消す。
         guard vm.send(text) else { return }
-        draft = ""
         composerFocused = false
     }
 }

@@ -1803,6 +1803,9 @@ final class StorySessionViewModel: ObservableObject {
     /// mistaken for an in-flight model request.
     @Published private(set) var isHandlingResponseAction = false
     @Published private(set) var responseActionError: String?
+    @Published private(set) var refreshError: String?
+    @Published private(set) var sendPreparationError: String?
+    @Published private(set) var lastStartedUserMessageID: UUID?
     /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
     @Published var restSuggestion: StoryRestSuggestion?
     /// 了承メッセージの保存中は通常送信を止め、保存結果を待つ。
@@ -2070,7 +2073,9 @@ final class StorySessionViewModel: ObservableObject {
 
     @discardableResult
     func send(_ userText: String) -> Bool {
-        enqueueSend(userText, existingUserMessageID: nil)
+        sendPreparationError = nil
+        lastStartedUserMessageID = nil
+        return enqueueSend(userText, existingUserMessageID: nil)
     }
 
     /// Removes the latest committed AI response while preserving the User
@@ -2136,8 +2141,10 @@ final class StorySessionViewModel: ObservableObject {
                 guard self.enqueueSend(
                     userText,
                     existingUserMessageID: userMessageID,
-                    allowDuringResponseAction: true
+                    allowDuringResponseAction: true,
+                    regenerationSnapshot: sessionSnapshot
                 ) else {
+                    await self.restoreRegenerationSnapshot(sessionSnapshot)
                     self.responseActionError = KizunaCopy.text(
                         japanese: "再生成を開始できませんでした。残っている発言からもう一度お試しください。",
                         english: "Regeneration could not start. Try again from the preserved message."
@@ -2223,7 +2230,8 @@ final class StorySessionViewModel: ObservableObject {
         _ userText: String,
         existingUserMessageID: UUID?,
         isInterruptedRecovery: Bool = false,
-        allowDuringResponseAction: Bool = false
+        allowDuringResponseAction: Bool = false,
+        regenerationSnapshot: StorySession? = nil
     ) -> Bool {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -2231,6 +2239,7 @@ final class StorySessionViewModel: ObservableObject {
               !isSavingRestAcknowledgement,
               (allowDuringResponseAction || !isHandlingResponseAction),
               sendPreparationTask == nil else { return false }
+        sendPreparationError = nil
         // 直前ターンの保存完了通知と送信タップが競合すると、古い session スナップショットで
         // 次のターンを開始して新しい発言を上書きする。送信前に最新状態を一度だけ読み直す。
         let preparationID = UUID()
@@ -2251,28 +2260,57 @@ final class StorySessionViewModel: ObservableObject {
                     self.isHandlingInterruptedTurn = false
                 }
             }
-            guard !Task.isCancelled, self.sendPreparationID == preparationID else { return }
-            await self.refreshAfterTurn()
+            guard !Task.isCancelled, self.sendPreparationID == preparationID else {
+                if let regenerationSnapshot {
+                    await self.restoreRegenerationSnapshot(regenerationSnapshot)
+                }
+                return
+            }
+            guard await self.refreshAfterTurn() else {
+                self.sendPreparationError = self.refreshError ?? KizunaCopy.text(
+                    japanese: "保存状態を確認できないため、送信を開始できませんでした。",
+                    english: "The message could not start because the saved state could not be verified."
+                )
+                if let regenerationSnapshot {
+                    await self.restoreRegenerationSnapshot(regenerationSnapshot)
+                }
+                return
+            }
             // キャンセルと再送が近接すると、古い準備タスクが最新の送信を
             // 横取りしないよう、IDとTask.isCancelledの両方を確認する。
             guard !Task.isCancelled,
                   self.sendPreparationID == preparationID,
-                  self.service.phase != .thinking else { return }
-            let startedUserMessageID = self.service.send(
+                  self.service.phase != .thinking else {
+                if let regenerationSnapshot {
+                    await self.restoreRegenerationSnapshot(regenerationSnapshot)
+                }
+                return
+            }
+            guard let startedUserMessageID = self.service.send(
                 trimmed,
                 session: self.session,
                 world: self.world,
                 scene: self.scene,
                 generationModel: self.generationModel,
                 existingUserMessageID: existingUserMessageID
-            )
-            if isInterruptedRecovery, startedUserMessageID == nil {
-                self.interruptedTurnRecoveryError = KizunaCopy.text(
-                    japanese: "再試行を開始できませんでした。保存待ちの処理が終わってから、もう一度お試しください。",
-                    english: "The retry could not start. Try again after the pending save finishes."
-                )
+            ) else {
+                if isInterruptedRecovery {
+                    self.interruptedTurnRecoveryError = KizunaCopy.text(
+                        japanese: "再試行を開始できませんでした。保存待ちの処理が終わってから、もう一度お試しください。",
+                        english: "The retry could not start. Try again after the pending save finishes."
+                    )
+                } else {
+                    self.sendPreparationError = KizunaCopy.text(
+                        japanese: "送信を開始できませんでした。入力内容は保持しています。もう一度お試しください。",
+                        english: "The message could not start. Your text was kept; try again."
+                    )
+                }
+                if let regenerationSnapshot {
+                    await self.restoreRegenerationSnapshot(regenerationSnapshot)
+                }
                 return
             }
+            self.lastStartedUserMessageID = startedUserMessageID
 
             // Service 内で session/scene が永続化されるので、こちらは UI 更新のため
             // 軽くポーリングで再取得する (将来 Combine pipeline 化)。
@@ -2408,6 +2446,24 @@ final class StorySessionViewModel: ObservableObject {
         service.cancel()
     }
 
+    private func restoreRegenerationSnapshot(_ snapshot: StorySession) async {
+        guard session.id == snapshot.id,
+              session.latestTurnCheckpoint?.status == .cancelled,
+              session.latestTurnCheckpoint?.failureCode == "undone" else { return }
+        do {
+            session = try await sessionRepo.restoreUndoneTurn(
+                snapshot,
+                expectedRevision: session.effectivePersistenceRevision
+            )
+        } catch {
+            responseActionError = KizunaCopy.text(
+                japanese: "再生成を開始できず、元の応答も復元できませんでした。保存状態を確認してください。",
+                english: "Regeneration could not start and the original reply could not be restored. Check the saved state."
+            )
+            AppLog.error("[StorySessionVM] regeneration rollback failed: %@", error.localizedDescription)
+        }
+    }
+
     func addNarration(_ text: String) {
         Task { [weak self] in
             guard let self else { return }
@@ -2416,14 +2472,28 @@ final class StorySessionViewModel: ObservableObject {
         }
     }
 
-    func refreshAfterTurn() async {
-        let sessions = (try? await sessionRepo.fetchSessions(storyWorldId: world.id)) ?? []
-        if let updated = sessions.first(where: { $0.id == session.id }) {
-            self.session = updated
-        }
-        let scenes = (try? await sceneRepo.fetchScenes(storyWorldId: world.id)) ?? []
-        if let updated = scenes.first(where: { $0.id == scene.id }) {
-            self.scene = updated
+    @discardableResult
+    func refreshAfterTurn() async -> Bool {
+        do {
+            let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
+            guard let updatedSession = sessions.first(where: { $0.id == session.id }) else {
+                throw StoryTurnPersistenceError.sessionNotFound
+            }
+            let scenes = try await sceneRepo.fetchScenes(storyWorldId: world.id)
+            guard let updatedScene = scenes.first(where: { $0.id == scene.id }) else {
+                throw StoryTurnPersistenceError.turnNotUndoable
+            }
+            self.session = updatedSession
+            self.scene = updatedScene
+            refreshError = nil
+            return true
+        } catch {
+            refreshError = KizunaCopy.text(
+                japanese: "保存状態を読み込めませんでした。送信前に再試行してください。",
+                english: "The saved state could not be loaded. Retry before sending."
+            )
+            AppLog.error("[StorySessionVM] refresh after turn failed: %@", error.localizedDescription)
+            return false
         }
     }
 
