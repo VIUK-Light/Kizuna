@@ -64,14 +64,50 @@ enum StoryCharacterReferenceCleaner {
             // characterIdは削除する。次回プロンプトが削除済みキャラを復活させない。
             let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
             for var session in sessions {
-                guard var storyState = session.storyState else { continue }
-                let filteredStates = storyState.characterStates.filter {
-                    $0.characterId != characterID
+                var sessionChanged = false
+                if let activeIDs = session.activeCharacterIds {
+                    let filteredActiveIDs = activeIDs.filter { $0 != characterID }
+                    if filteredActiveIDs != activeIDs {
+                        session.activeCharacterIds = filteredActiveIDs
+                        sessionChanged = true
+                    }
                 }
-                if filteredStates != storyState.characterStates {
-                    storyState.characterStates = filteredStates
-                    storyState.updatedAt = Date()
-                    session.storyState = storyState
+                if var storyState = session.storyState {
+                    let filteredStates = storyState.characterStates.filter {
+                        $0.characterId != characterID
+                    }
+                    if filteredStates != storyState.characterStates {
+                        storyState.characterStates = filteredStates
+                        storyState.updatedAt = Date()
+                        session.storyState = storyState
+                        sessionChanged = true
+                    }
+                }
+                if var checkpoint = session.latestTurnCheckpoint,
+                   var snapshot = checkpoint.preTurnSnapshot {
+                    if let snapshotActiveIDs = snapshot.activeCharacterIds {
+                        let filteredSnapshotActiveIDs = snapshotActiveIDs.filter { $0 != characterID }
+                        if filteredSnapshotActiveIDs != snapshotActiveIDs {
+                            snapshot.activeCharacterIds = filteredSnapshotActiveIDs
+                            sessionChanged = true
+                        }
+                    }
+                    if var snapshotState = snapshot.storyState {
+                        let filteredStates = snapshotState.characterStates.filter {
+                            $0.characterId != characterID
+                        }
+                        if filteredStates != snapshotState.characterStates {
+                            snapshotState.characterStates = filteredStates
+                            snapshot.storyState = snapshotState
+                            sessionChanged = true
+                        }
+                    }
+                    if sessionChanged {
+                        checkpoint.preTurnSnapshot = snapshot
+                        session.latestTurnCheckpoint = checkpoint
+                    }
+                }
+                if sessionChanged {
                     try await sessionRepo.saveSession(session)
                 }
             }
@@ -1534,7 +1570,15 @@ final class LocalJSONStoryMemoryRepository: StoryMemoryRepository, LocalJSONMemo
     func saveMemory(_ memory: StoryMemory) async throws {
         let storageURL = self.storageURL
         let perScopeLimit = self.perScopeLimit
+        if let characterID = memory.characterId,
+           LocalJSONCharacterRepository.isCharacterDeletionPending(characterID) {
+            throw CharacterRepositoryError.deletionInProgress(characterID)
+        }
         try await store.mutate { all in
+            if let characterID = memory.characterId,
+               LocalJSONCharacterRepository.isCharacterDeletionPending(characterID) {
+                throw CharacterRepositoryError.deletionInProgress(characterID)
+            }
             if let sessionID = memory.storySessionId {
                 let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
                 try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(

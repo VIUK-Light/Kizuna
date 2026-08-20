@@ -740,6 +740,14 @@ final class PersonaChatService: ObservableObject {
         }
     }
 
+    func cancelGeneration(forCharacterID characterID: UUID) {
+        guard let threadID = activeGenerationThreadID,
+              let thread = store.thread(id: threadID),
+              thread.characterID == characterID else { return }
+        cancel()
+        cancelledRequests.removeValue(forKey: threadID)
+    }
+
     // MARK: - Streaming
 
     private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, generationID: UUID) {

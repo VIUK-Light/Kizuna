@@ -72,6 +72,7 @@ final class CharacterLibraryViewModel: ObservableObject {
     func bootstrap() async {
         isLoading = true
         defer { isLoading = false }
+        await resumePendingCharacterDeletions()
         let templateSeedSucceeded = await CharacterTemplateSeed.seedIfNeeded(into: templateRepo)
         if !templateSeedSucceeded {
             templateLoadError = KizunaCopy.text(
@@ -122,6 +123,7 @@ final class CharacterLibraryViewModel: ObservableObject {
     }
 
     func retryLoad() async {
+        await resumePendingCharacterDeletions()
         if templates.isEmpty {
             let seedSucceeded = await CharacterTemplateSeed.seedIfNeeded(into: templateRepo)
             if !seedSucceeded {
@@ -134,11 +136,32 @@ final class CharacterLibraryViewModel: ObservableObject {
         await reload()
     }
 
+    private func resumePendingCharacterDeletions() async {
+        guard characterRepo is LocalJSONCharacterRepository else { return }
+        for id in LocalJSONCharacterRepository.pendingDeletionIDs {
+            do {
+                let result = try await characterRepo.deleteCharacter(id: id)
+                guard result == .deleted || result == .needsCleanup else { continue }
+                try await StoryCharacterReferenceCleaner.remove(characterID: id)
+                try await memoryRepo.deleteAllMemories(characterId: id)
+                PersonaChatStore.shared.detachCharacterReferences(for: id)
+                try await characterRepo.completeCharacterDeletionCleanup(id: id)
+            } catch {
+                deleteErrorMessage = KizunaCopy.text(
+                    japanese: "削除途中のキャラクター整理を完了できませんでした。再試行してください。",
+                    english: "An unfinished character deletion could not be completed. Please retry."
+                )
+                AppLog.error("[CharacterLibraryVM] pending character deletion failed %@: %@", id.uuidString, error.localizedDescription)
+            }
+        }
+    }
+
     func delete(id: UUID) async {
         guard deletingIDs.insert(id).inserted else { return }
         defer { deletingIDs.remove(id) }
         deleteErrorMessage = nil
         do {
+            PersonaChatService.shared.cancelGeneration(forCharacterID: id)
             // 保護判定と本体削除はリポジトリの同一ロック内で行う。
             // 先に一覧を読んでから削除すると、標準キャラ化や別の削除と
             // 競合した際に、保護されたキャラの関連データだけを消し得る。

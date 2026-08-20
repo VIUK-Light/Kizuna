@@ -51,6 +51,7 @@ final class CharacterDetailViewModel: ObservableObject {
     func delete() async throws -> CharacterDeletionResult {
         do {
             deletionPhase = .deletingProfile
+            PersonaChatService.shared.cancelGeneration(forCharacterID: character.id)
             let deletionResult = try await characterRepo.deleteCharacter(id: character.id)
             switch deletionResult {
             case .protected, .notFound:
