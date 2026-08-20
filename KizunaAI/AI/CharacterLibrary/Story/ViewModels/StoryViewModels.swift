@@ -1881,8 +1881,12 @@ final class StorySessionViewModel: ObservableObject {
         self.world = world
         self.session = session
         self.scene = scene
-        self.generationModelKey = "storySessionGenerationModel.\(world.id.uuidString)"
+        // Model choice belongs to this conversation branch. The old key used
+        // world.id, which made changing Session A silently change Session B.
+        self.generationModelKey = "storySessionGenerationModel.\(session.id.uuidString)"
+        let legacyWorldKey = "storySessionGenerationModel.\(world.id.uuidString)"
         let stored = UserDefaults.standard.string(forKey: generationModelKey)
+            ?? UserDefaults.standard.string(forKey: legacyWorldKey)
         let savedModel = stored.flatMap(StoryGenerationModel.init(rawValue:)) ?? .e4b
         self.preferredGenerationModel = savedModel
         self.generationModel = savedModel
