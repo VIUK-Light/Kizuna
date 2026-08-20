@@ -191,7 +191,8 @@ final class StoryGemma31BAPIService {
         temperature: Double = 0.72,
         maxOutputTokens: Int = 4096,
         seed: Int? = nil,
-        onTextDelta: @escaping @Sendable (String) -> Void
+        onTextDelta: @escaping @Sendable (String) -> Void,
+        onModelResolved: (@Sendable (String) -> Void)? = nil
     ) async throws -> StoryGemma31BGenerationResult {
         guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
             throw StoryGemma31BAPIError.missingAPIKey
@@ -212,7 +213,8 @@ final class StoryGemma31BAPIService {
                     apiKey: apiKey,
                     body: body,
                     modelName: modelName,
-                    onTextDelta: onTextDelta
+                    onTextDelta: onTextDelta,
+                    onModelResolved: onModelResolved
                 )
             } catch let error as StoryGemma31BAPIError {
                 lastFailure = error
@@ -280,7 +282,8 @@ final class StoryGemma31BAPIService {
         apiKey: String,
         body: Data,
         modelName: String,
-        onTextDelta: @escaping @Sendable (String) -> Void
+        onTextDelta: @escaping @Sendable (String) -> Void,
+        onModelResolved: (@Sendable (String) -> Void)?
     ) async throws -> StoryGemma31BGenerationResult {
         guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelName):streamGenerateContent?alt=sse") else {
             throw StoryGemma31BAPIError.invalidURL
@@ -292,6 +295,7 @@ final class StoryGemma31BAPIService {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.httpBody = body
+        onModelResolved?(modelName)
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1

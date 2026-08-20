@@ -3368,6 +3368,20 @@ final class StorySessionService: ObservableObject {
                             self.streamingStatusText = self.statusText("発話生成中", "Generating response")
                             self.streamingSpeakerName = self.detectCurrentSpeakerName(in: visible)
                         }
+                    },
+                    onModelResolved: { [weak self] modelName in
+                        Task { @MainActor [weak self] in
+                            guard let self,
+                                  self.activeGenerationID == generationID else { return }
+                            let isFallback = modelName != "gemma-4-31b-it"
+                            let japanese = isFallback
+                                ? "Gemma4 " + modelName + "（自動fallback）で発話生成中"
+                                : "Gemma4 " + modelName + "で発話生成中"
+                            let english = isFallback
+                                ? "Generating with Gemma4 " + modelName + " (automatic fallback)"
+                                : "Generating with Gemma4 " + modelName
+                            self.streamingStatusText = self.statusText(japanese, english)
+                        }
                     }
                 )
             } catch let streamError as StoryGemma31BAPIError {
@@ -3399,7 +3413,14 @@ final class StorySessionService: ObservableObject {
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = text
-                self.streamingStatusText = self.statusText("発話を整形中", "Formatting response")
+                let isFallback = generation.modelName != "gemma-4-31b-it"
+                let japanese = isFallback
+                    ? "Gemma4 " + generation.modelName + "（自動fallback）の発話を整形中"
+                    : "発話を整形中"
+                let english = isFallback
+                    ? "Formatting the response from Gemma4 " + generation.modelName + " (automatic fallback)"
+                    : "Formatting response"
+                self.streamingStatusText = self.statusText(japanese, english)
                 self.streamingSpeakerName = self.detectCurrentSpeakerName(in: text)
             }
             return (reply: text, modelIdentity: generation.identity.stableID)
