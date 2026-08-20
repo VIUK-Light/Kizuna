@@ -917,19 +917,22 @@ struct AIGenerationRequest: Sendable {
     let temperature: Double
     let maxOutputTokens: Int
     let seed: Int?
+    let onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
 
     init(
         systemPrompt: String,
         userPrompt: String,
         temperature: Double = 0.72,
         maxOutputTokens: Int = 1024,
-        seed: Int? = nil
+        seed: Int? = nil,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) {
         self.systemPrompt = systemPrompt
         self.userPrompt = userPrompt
         self.temperature = temperature
         self.maxOutputTokens = max(1, maxOutputTokens)
         self.seed = seed
+        self.onUpdate = onUpdate
     }
 }
 
@@ -1077,7 +1080,7 @@ private final class LocalAIProvider: AIProvider {
             advancedSettings: GemmaAdvancedSettings.default,
             overrideSystemPrompt: request.systemPrompt,
             seedOverride: request.seed.map(UInt32.init),
-            onUpdate: nil
+            onUpdate: request.onUpdate
         )
         guard let text = result.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             throw AIProviderError.emptyResponse
@@ -1119,12 +1122,14 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                 totalTokens: ($0.promptTokenCount ?? 0) + ($0.candidatesTokenCount ?? 0)
             )
         }
-        return AIGenerationResponse(
+        let response = AIGenerationResponse(
             text: result.text,
             identity: result.identity,
             finishReason: result.finishReason,
             usage: usage
         )
+        request.onUpdate?(.visiblePreview(response.text))
+        return response
     }
 }
 
@@ -1149,7 +1154,7 @@ private final class OpenAICompatibleProvider: AIProvider {
             "max_tokens": request.maxOutputTokens
         ]
         if let seed = request.seed { payload["seed"] = seed }
-        return try await performJSONRequest(
+        let response = try await performJSONRequest(
             endpoint: endpoint,
             headers: [
                 "Authorization": "Bearer \(apiKey)",
@@ -1159,6 +1164,8 @@ private final class OpenAICompatibleProvider: AIProvider {
             configuration: configuration,
             responseParser: Self.parseResponse
         )
+        request.onUpdate?(.visiblePreview(response.text))
+        return response
     }
 
     private static func parseResponse(
@@ -1200,7 +1207,7 @@ private final class AnthropicProvider: AIProvider {
             "temperature": request.temperature,
             "max_tokens": request.maxOutputTokens
         ]
-        return try await performJSONRequest(
+        let response = try await performJSONRequest(
             endpoint: endpoint,
             headers: [
                 "x-api-key": apiKey,
@@ -1211,6 +1218,8 @@ private final class AnthropicProvider: AIProvider {
             configuration: configuration,
             responseParser: Self.parseResponse
         )
+        request.onUpdate?(.visiblePreview(response.text))
+        return response
     }
 
     private static func parseResponse(

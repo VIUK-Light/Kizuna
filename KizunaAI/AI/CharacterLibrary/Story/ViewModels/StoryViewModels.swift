@@ -804,37 +804,27 @@ final class StoryWorldCreateViewModel: ObservableObject {
             : "JSON内のタイトル、説明、設定、シーン、キャラクター本文、タグ、ルールは日本語で書いてください。enum値はschemaの表記をそのまま使ってください。複数キャラの指定がある場合はcastModeをensembleにし、characterCountを生成キャラ数に合わせ、指定したキャラをcharactersへすべて含めてください。")
         let reply: String
         do {
-            switch generationModel {
-            case .b31:
-                reply = try await StoryGemma31BAPIService.shared.generate(
+            let providerID: AIProviderID = generationModel == .b31
+                ? .googleGenerativeLanguage
+                : .localRuntime
+            let preferred = AIModelRegistry.shared
+                .configurations(for: .story)
+                .first(where: { $0.identity.providerID == providerID })
+            let response = try await AIModelRouter.shared.generate(
+                request: AIGenerationRequest(
                     systemPrompt: systemPrompt,
                     userPrompt: brief,
                     temperature: 0.45,
-                    maxOutputTokens: 8192
-                ).text
-            case .e4b:
-                let result = await LocalAssistantRuntimeBridge.shared.generateReply(
-                    prompt: brief,
-                    contextPrompt: nil,
-                    coachMode: .studio,
-                    reasoningMode: .deepThinking,
-                    researchMode: .off,
-                    childAge: 12,
-                    pageInfo: nil,
-                    safetySnapshot: nil,
-                    advancedSettings: GemmaAdvancedSettings.default,
-                    overrideSystemPrompt: systemPrompt,
-                    onUpdate: nil
-                )
-                guard let text = result.text else {
-                    throw NSError(
-                        domain: "StoryWorldCreateViewModel",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "The selected local model returned no text."]
-                    )
-                }
-                reply = text
-            }
+                    maxOutputTokens: 8_192
+                ),
+                role: .story,
+                preferredConfigurationID: preferred?.id
+            )
+            reply = response.text
+            generationStatus = KizunaCopy.text(
+                japanese: response.identity.displayName + "で雛形を作成しました。",
+                english: "Draft created with " + response.identity.displayName + "."
+            )
             try Task.checkCancellation()
         } catch {
             if Task.isCancelled {

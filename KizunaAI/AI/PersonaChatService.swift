@@ -189,6 +189,48 @@ extension PersonaReplyGenerating {
         model: PersonaGenerationModel,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
     ) async -> LocalAssistantGenerationResult {
+        func generateThroughRegistry() async -> LocalAssistantGenerationResult? {
+            // Preserve injected test/future runtimes. The shared production
+            // bridge is the composition root that opts into the provider
+            // registry; a fake should keep its own deterministic contract.
+            guard self is LocalAssistantRuntimeBridge else { return nil }
+            let providerID: AIProviderID = model == .nagi
+                ? .googleGenerativeLanguage
+                : .localRuntime
+            let preferred = AIModelRegistry.shared
+                .configurations(for: .persona)
+                .first(where: { $0.identity.providerID == providerID })
+            let combinedPrompt: String
+            if let contextPrompt,
+               !contextPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                combinedPrompt = contextPrompt + "\n\n" + prompt
+            } else {
+                combinedPrompt = prompt
+            }
+            let request = AIGenerationRequest(
+                systemPrompt: overrideSystemPrompt ?? "",
+                userPrompt: combinedPrompt,
+                temperature: 0.72,
+                maxOutputTokens: 1_024,
+                onUpdate: onUpdate
+            )
+            guard let response = try? await AIModelRouter.shared.generate(
+                request: request,
+                role: .persona,
+                preferredConfigurationID: preferred?.id
+            ) else {
+                return nil
+            }
+            return LocalAssistantGenerationResult(
+                text: response.text,
+                modelIdentity: response.identity.stableID
+            )
+        }
+
+        if let routed = await generateThroughRegistry() {
+            return routed
+        }
+
         func generateNAGI() async -> LocalAssistantGenerationResult? {
             guard StoryGemma31BAPIService.shared.hasAPIKey else { return nil }
             let userPrompt: String
