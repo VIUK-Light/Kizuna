@@ -104,7 +104,7 @@ final class RuntimeMemorySelector: MemorySelecting {
             "Memories:",
             lines
         ].joined(separator: "\n")
-        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: max(48, topK * 40)) else {
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: max(48, topK * 40), role: .memoryRetrieval) else {
             return await fallback.select(query: query, candidates: candidates, topK: topK)
         }
         let normalized = LocalAuxiliaryAI.normalized(raw)
@@ -138,7 +138,7 @@ final class RuntimeMemorySummarizer: MemorySummarizing {
             "User: " + userText,
             "Assistant: " + assistantText
         ].joined(separator: "\n")
-        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 128) else {
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 128, role: .memoryExtraction) else {
             return await fallback.extract(userText: userText, assistantText: assistantText, character: character)
         }
         let parts = LocalAuxiliaryAI.normalized(raw).split(separator: "|", maxSplits: 2).map(String.init)

@@ -146,7 +146,7 @@ final class RuntimeSceneCharacterSelector: SceneCharacterSelecting {
             "Cast:",
             candidates
         ].joined(separator: "\n")
-        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: max(64, maxActive * 48)) else {
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: max(64, maxActive * 48), role: .sceneCharacterSelection) else {
             return await fallback.select(
                 userInput: userInput,
                 currentScene: currentScene,
@@ -202,7 +202,7 @@ final class RuntimeSceneSummarizer: SceneSummarizing {
             "Recent transcript:",
             transcript
         ].joined(separator: "\n")
-        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 96) else {
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 96, role: .sceneSummary) else {
             return await fallback.updateSummary(
                 currentSummary: currentSummary,
                 recentMessages: recentMessages,
@@ -237,7 +237,7 @@ final class RuntimeNextSceneSuggester: NextSceneSuggesting {
             "Story goal: " + world.storyGoal,
             "Completed scene: " + completedScene.title + " / " + completedScene.mood
         ].joined(separator: "\n")
-        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 256) else {
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 256, role: .nextSceneSuggestion) else {
             return await fallback.suggestNext(world: world, completedScene: completedScene, cast: cast)
         }
         let suggestions = LocalAuxiliaryAI.normalized(raw).split(separator: "\n").compactMap { line -> NextSceneSuggestion? in

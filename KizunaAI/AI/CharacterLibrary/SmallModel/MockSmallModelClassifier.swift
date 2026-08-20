@@ -34,24 +34,29 @@ final class MockSmallModelClassifier: SmallModelClassifying {
 /// executable; production composition no longer pretends that the fallback
 /// is a 270M model.
 enum LocalAuxiliaryAI {
-    static func generate(prompt: String, maxOutputTokens: Int = 192) async -> String? {
-        guard LocalAssistantModelManager.shared.runtimeAvailability == .executable else {
+    @MainActor
+    static func generate(
+        prompt: String,
+        maxOutputTokens: Int = 192,
+        role: AIModelRole = .classifier
+    ) async -> String? {
+        let preferred = AIModelRegistry.shared
+            .configurations(for: role)
+            .first(where: { $0.identity.providerID == .localRuntime })
+        let request = AIGenerationRequest(
+            systemPrompt: "Return only the requested compact result. Do not add explanations.",
+            userPrompt: prompt,
+            temperature: 0.1,
+            maxOutputTokens: maxOutputTokens
+        )
+        guard let result = try? await AIModelRouter.shared.generate(
+            request: request,
+            role: role,
+            preferredConfigurationID: preferred?.id
+        ) else {
             return nil
         }
-        let result = await LocalAssistantRuntimeBridge.shared.generateReply(
-            prompt: prompt,
-            contextPrompt: nil,
-            coachMode: .studio,
-            reasoningMode: .fast,
-            researchMode: .off,
-            childAge: 12,
-            pageInfo: nil,
-            safetySnapshot: nil,
-            advancedSettings: GemmaAdvancedSettings.default,
-            overrideSystemPrompt: "Return only the requested compact result. Do not add explanations.",
-            onUpdate: nil
-        )
-        let text = result.text?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""
+        let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         return text.isEmpty ? nil : String(text.prefix(maxOutputTokens * 4))
     }
 
@@ -79,7 +84,7 @@ final class RuntimeSmallModelClassifier: SmallModelClassifying {
             "Return exactly LABEL|CONFIDENCE where CONFIDENCE is 0 to 1.",
             "Text: " + text
         ].joined(separator: "\n")
-        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 48) else {
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 48, role: .classifier) else {
             return await fallback.classify(text: text, labels: labels)
         }
         let parts = LocalAuxiliaryAI.normalized(raw).split(separator: "|", maxSplits: 1).map(String.init)
