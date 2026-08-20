@@ -12,6 +12,7 @@ enum StoryGemma31BAPIError: LocalizedError {
     case httpStatus(Int, String)
     case emptyResponse
     case emptyText
+    case truncated(String)
 
     var errorDescription: String? {
         switch self {
@@ -26,6 +27,8 @@ enum StoryGemma31BAPIError: LocalizedError {
             return "Gemma4 31B API が空レスポンスを返しました。"
         case .emptyText:
             return "Gemma4 31B API の出力本文が空でした。"
+        case let .truncated(reason):
+            return "Gemma4 31B API の出力が上限で途中終了しました ((reason))。"
         }
     }
 
@@ -33,6 +36,8 @@ enum StoryGemma31BAPIError: LocalizedError {
         switch self {
         case .emptyResponse, .emptyText:
             return true
+        case .truncated:
+            return false
         case let .httpStatus(status, _):
             return status == -1 || [408, 409, 425, 429, 500, 502, 503, 504].contains(status)
         case .missingAPIKey, .invalidURL:
@@ -44,6 +49,20 @@ enum StoryGemma31BAPIError: LocalizedError {
 struct StoryGemma31BGenerationResult {
     let text: String
     let modelName: String
+    let finishReason: String?
+    let usageMetadata: StoryGemma31BUsageMetadata?
+
+    init(
+        text: String,
+        modelName: String,
+        finishReason: String? = nil,
+        usageMetadata: StoryGemma31BUsageMetadata? = nil
+    ) {
+        self.text = text
+        self.modelName = modelName
+        self.finishReason = finishReason
+        self.usageMetadata = usageMetadata
+    }
 }
 
 final class StoryGemma31BAPIService {
@@ -88,7 +107,16 @@ final class StoryGemma31BAPIService {
 
         let decoded = try decoder.decode(StoryGemma31BGenerateContentResponse.self, from: generation.data)
         if let text = visibleText(from: decoded), !text.isEmpty {
-            return StoryGemma31BGenerationResult(text: text, modelName: generation.modelName)
+            if let reason = StoryGemma31BResponseParser.truncationReason(from: decoded) {
+                AppLog.error("[StoryGemma31B] visible response truncated finishReason=%@", reason)
+                throw StoryGemma31BAPIError.truncated(reason)
+            }
+            return StoryGemma31BGenerationResult(
+                text: text,
+                modelName: generation.modelName,
+                finishReason: decoded.candidates?.compactMap(\.finishReason).first,
+                usageMetadata: decoded.usageMetadata
+            )
         }
 
         logEmptyResponse(decoded)
@@ -115,7 +143,19 @@ final class StoryGemma31BAPIService {
             from: fallbackGeneration.data
         )
         if let text = visibleText(from: fallbackResponse), !text.isEmpty {
-            return StoryGemma31BGenerationResult(text: text, modelName: fallbackGeneration.modelName)
+            if let reason = StoryGemma31BResponseParser.truncationReason(from: fallbackResponse) {
+                AppLog.error("[StoryGemma31B] fallback visible response truncated finishReason=%@", reason)
+                throw StoryGemma31BAPIError.truncated(reason)
+            }
+            return StoryGemma31BGenerationResult(
+                text: text,
+                modelName: fallbackGeneration.modelName,
+                finishReason: fallbackResponse.candidates?.compactMap(\.finishReason).first,
+                usageMetadata: fallbackResponse.usageMetadata
+            )
+        }
+        if let reason = StoryGemma31BResponseParser.truncationReason(from: fallbackResponse) {
+            throw StoryGemma31BAPIError.truncated(reason)
         }
         logEmptyResponse(fallbackResponse)
         throw StoryGemma31BAPIError.emptyText
