@@ -339,15 +339,62 @@ struct KizunaHomeView: View {
             Text(KizunaCopy.text(japanese: "該当する項目がありません", english: "No matching items"))
                 .font(.headline)
             Text(KizunaCopy.text(
-                japanese: "検索条件を変えるか、管理ボタンから新しく追加してください。",
-                english: "Change your search or add something from the management buttons."
+                japanese: hasActiveHomeFilter
+                    ? "検索条件を変えるか、フィルタを解除してください。"
+                    : "キャラクターかストーリーを追加すると、ここから始められます。",
+                english: hasActiveHomeFilter
+                    ? "Change your search or clear the active filter."
+                    : "Add a character or story to get started from here."
             ))
             .font(.subheadline)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
+
+            if hasActiveHomeFilter {
+                Button {
+                    searchText = ""
+                    selectedFilter = .all
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "検索条件をクリア", english: "Clear filters"),
+                        systemImage: "line.3.horizontal.decrease.circle"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("home.empty.clearFilters")
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    showCharacterLibrary = true
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "キャラクターを追加", english: "Add character"),
+                        systemImage: "person.badge.plus"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("home.empty.addCharacter")
+
+                Button {
+                    showStoryLibrary = true
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "ストーリーを追加", english: "Add story"),
+                        systemImage: "sparkles.rectangle.stack"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("home.empty.addStory")
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 42)
+    }
+
+    private var hasActiveHomeFilter: Bool {
+        selectedFilter != .all
+            || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var explanation: some View {//ここはUIとして邪魔なので廃止
