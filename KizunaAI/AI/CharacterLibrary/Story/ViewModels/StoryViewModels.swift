@@ -541,6 +541,11 @@ final class StoryWorldCreateViewModel: ObservableObject {
     @Published private(set) var generationStatus: String? = nil
     @Published private(set) var generationError: String? = nil
     @Published private(set) var hasAppliedGeneratedTemplate = false
+    @Published var generationModel: StoryGenerationModel {
+        didSet {
+            UserDefaults.standard.set(generationModel.rawValue, forKey: "storyCreateGenerationModel")
+        }
+    }
 
     /// 雛形生成中にだけ作ったキャラ。保存ボタンが成功するまでRepositoryへ
     /// 書き込まず、再生成/キャンセルでライブラリーへ孤児を残さない。
@@ -557,6 +562,8 @@ final class StoryWorldCreateViewModel: ObservableObject {
 
     init(existing: StoryWorld? = nil) {
         self.isCreatingNewWorld = existing == nil
+        self.generationModel = UserDefaults.standard.string(forKey: "storyCreateGenerationModel")
+            .flatMap(StoryGenerationModel.init(rawValue:)) ?? .b31
         if let existing {
             self.draft = existing
             self.sceneDraft = StoryScene(
@@ -614,6 +621,33 @@ final class StoryWorldCreateViewModel: ObservableObject {
             && !isGeneratingTemplate
             && !isSaving
             && validationIssues.isEmpty
+    }
+
+    var isGenerationModelAvailable: Bool {
+        switch generationModel {
+        case .e4b:
+            return LocalAssistantModelManager.shared.runtimeAvailability == .executable
+        case .b31:
+            return StoryGemma31BAPIService.shared.availability.isUsable
+        }
+    }
+
+    var generationModelStatus: String {
+        switch generationModel {
+        case .e4b:
+            return LocalAssistantModelManager.shared.runtimeStatusSummary
+        case .b31:
+            switch StoryGemma31BAPIService.shared.availability {
+            case .available: return KizunaCopy.text(japanese: "接続確認済み", english: "Connection verified")
+            case .savedNotVerified: return KizunaCopy.text(japanese: "保存済み・未確認", english: "Saved · not verified")
+            case .checking: return KizunaCopy.text(japanese: "接続確認中", english: "Checking connection")
+            case .authenticationError: return KizunaCopy.text(japanese: "認証エラー", english: "Authentication error")
+            case .modelUnavailable: return KizunaCopy.text(japanese: "モデル利用不可", english: "Model unavailable")
+            case .rateLimited: return KizunaCopy.text(japanese: "quota / rate limit", english: "Quota / rate limit")
+            case .unavailable: return KizunaCopy.text(japanese: "接続不可", english: "Unavailable")
+            case .notConfigured: return KizunaCopy.text(japanese: "未設定", english: "Not configured")
+            }
+        }
     }
 
     func load() async {
@@ -742,18 +776,22 @@ final class StoryWorldCreateViewModel: ObservableObject {
             return
         }
 
-        guard StoryGemma31BAPIService.shared.hasAPIKey else {
+        guard isGenerationModelAvailable else {
             generationError = KizunaCopy.text(
-                japanese: "Gemma4 APIキーが未設定です。\(KizunaCopy.appName)の設定からNAGI APIキーを登録してください。",
-                english: "The Gemma4 API key is not set. Add the NAGI API key in \(KizunaCopy.appName)'s settings."
+                japanese: generationModel == .b31
+                    ? "NAGIを利用できません。接続状態を確認し、設定からAPIキーを検証してください。"
+                    : "ioriを利用できません。ローカルモデルを導入して端末内の実行確認を完了してください。",
+                english: generationModel == .b31
+                    ? "NAGI is not available. Verify the connection and API key in Settings."
+                    : "iori is not available. Install a local model and complete the on-device check."
             )
             return
         }
 
         isGeneratingTemplate = true
         generationStatus = KizunaCopy.text(
-            japanese: "Gemma4 31B APIで雛形を作成中…",
-            english: "Creating a draft with the Gemma4 31B API…"
+            japanese: generationModel == .b31 ? "Gemma4 APIで雛形を作成中…" : "ioriで雛形を作成中…",
+            english: generationModel == .b31 ? "Creating a draft with the Gemma4 API…" : "Creating a draft with iori…"
         )
         generationError = nil
         defer {
@@ -766,12 +804,37 @@ final class StoryWorldCreateViewModel: ObservableObject {
             : "JSON内のタイトル、説明、設定、シーン、キャラクター本文、タグ、ルールは日本語で書いてください。enum値はschemaの表記をそのまま使ってください。複数キャラの指定がある場合はcastModeをensembleにし、characterCountを生成キャラ数に合わせ、指定したキャラをcharactersへすべて含めてください。")
         let reply: String
         do {
-            reply = try await StoryGemma31BAPIService.shared.generate(
-                systemPrompt: systemPrompt,
-                userPrompt: brief,
-                temperature: 0.45,
-                maxOutputTokens: 8192
-            ).text
+            switch generationModel {
+            case .b31:
+                reply = try await StoryGemma31BAPIService.shared.generate(
+                    systemPrompt: systemPrompt,
+                    userPrompt: brief,
+                    temperature: 0.45,
+                    maxOutputTokens: 8192
+                ).text
+            case .e4b:
+                let result = await LocalAssistantRuntimeBridge.shared.generateReply(
+                    prompt: brief,
+                    contextPrompt: nil,
+                    coachMode: .studio,
+                    reasoningMode: .deepThinking,
+                    researchMode: .off,
+                    childAge: 12,
+                    pageInfo: nil,
+                    safetySnapshot: nil,
+                    advancedSettings: GemmaAdvancedSettings.default,
+                    overrideSystemPrompt: systemPrompt,
+                    onUpdate: nil
+                )
+                guard let text = result.text else {
+                    throw NSError(
+                        domain: "StoryWorldCreateViewModel",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "The selected local model returned no text."]
+                    )
+                }
+                reply = text
+            }
             try Task.checkCancellation()
         } catch {
             if Task.isCancelled {

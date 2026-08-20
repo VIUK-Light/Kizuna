@@ -329,6 +329,27 @@ struct StoryWorldCreateView: View {
                 }
 
                 HStack(spacing: 10) {
+                    Menu {
+                        ForEach(StoryGenerationModel.allCases) { model in
+                            Button {
+                                vm.generationModel = model
+                            } label: {
+                                Label(
+                                    model.displayName + " · " + (vm.generationModel == model ? KizunaCopy.text(japanese: "選択中", english: "Selected") : KizunaCopy.text(japanese: "切替", english: "Select")),
+                                    systemImage: vm.generationModel == model ? "checkmark" : "cpu"
+                                )
+                            }
+                            .disabled(vm.isGeneratingTemplate)
+                        }
+                    } label: {
+                        Label(
+                            vm.generationModel.displayName + " · " + vm.generationModelStatus,
+                            systemImage: vm.generationModel == .e4b ? "desktopcomputer" : "cloud"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(vm.isGeneratingTemplate)
+
                     Button {
                         if vm.isGeneratingTemplate {
                             vm.cancelTemplateGeneration()
@@ -339,7 +360,7 @@ struct StoryWorldCreateView: View {
                     } label: {
                         Label(vm.isGeneratingTemplate
                               ? KizunaCopy.text(japanese: "生成を中止", english: "Cancel generation")
-                              : KizunaCopy.text(japanese: "31B Thinkingでテンプレート作成", english: "Build with 31B Thinking"), systemImage: "sparkles")
+                              : KizunaCopy.text(japanese: "選択モデルでテンプレート作成", english: "Build with selected model"), systemImage: "sparkles")
                             .font(.subheadline.weight(.bold))
                     }
                     .buttonStyle(.borderedProminent)
@@ -465,7 +486,7 @@ struct StoryWorldCreateView: View {
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.tertiary)
                     Text(KizunaCopy.text(
-                        japanese: "31B Thinkingで作ると、ここにタイトル・キャスト・初期シーンが表示されます。",
+                        japanese: "選択したモデルで作ると、ここにタイトル・キャスト・初期シーンが表示されます。",
                         english: "Your title, cast, and opening scene will appear here after generation."
                     ))
                         .font(.callout.weight(.medium))
