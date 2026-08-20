@@ -1175,6 +1175,9 @@ struct PersonaChatView: View {
             )
         } catch {
             // 会話本文は継続できるため、画像だけを旧スナップショットへ戻す。
+            // 前回の成功値を残すと、読込に失敗した世代を現在の正本として
+            // 表示し続けてしまうため、snapshot fallbackへ戻す。
+            currentCharacterProfiles = [:]
             AppLog.error("[PersonaChatView] current character appearance load failed: %@", String(describing: error))
         }
     }
