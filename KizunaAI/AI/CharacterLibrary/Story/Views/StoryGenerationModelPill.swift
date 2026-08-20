@@ -10,14 +10,25 @@ import SwiftUI
 
 struct StoryGenerationModelPill: View {
     @ObservedObject var vm: StorySessionViewModel
+    private let onOpenSettings: () -> Void
     @ObservedObject private var localModelManager = LocalAssistantModelManager.shared
     @State private var isShowingDetails = false
+    @State private var nagiAvailability = StoryGemma31BAPIService.shared.availability
+
+    init(vm: StorySessionViewModel, onOpenSettings: @escaping () -> Void = {}) {
+        self.vm = vm
+        self.onOpenSettings = onOpenSettings
+    }
 
     var body: some View {
         Menu {
             ForEach(StoryGenerationModel.allCases) { model in
                 Button {
-                    vm.generationModel = model
+                    if isModelSelectable(model) {
+                        vm.generationModel = model
+                    } else {
+                        isShowingDetails = true
+                    }
                 } label: {
                     Label(
                         "\(model.detailLabel) - \(modelAvailabilityText(model))",
@@ -27,7 +38,7 @@ struct StoryGenerationModelPill: View {
                 // 選択後に初めて失敗させると、未導入の iori や API キー未設定の
                 // NAGI が「使えるモデル」として保存されてしまう。状態表示は残しつつ、
                 // 送信可能なモデルだけを選択できるようにする。
-                .disabled(!isModelSelectable(model) || vm.service.phase == .thinking)
+                .disabled(vm.service.phase == .thinking)
                 .help(modelHelpText(model))
             }
             Divider()
@@ -73,6 +84,10 @@ struct StoryGenerationModelPill: View {
             .presentationDetents([.medium, .large])
         }
         .onAppear(perform: selectUsableModelIfNeeded)
+        .task {
+            nagiAvailability = await StoryGemma31BAPIService.shared.validateConfiguration()
+            selectUsableModelIfNeeded()
+        }
         .onChange(of: localModelManager.runtimeAvailability) { _, _ in
             selectUsableModelIfNeeded()
         }
@@ -83,7 +98,7 @@ struct StoryGenerationModelPill: View {
         case .e4b:
             return localModelManager.runtimeAvailability == .executable
         case .b31:
-            return StoryGemma31BAPIService.shared.hasAPIKey
+            return nagiAvailability.isUsable
         }
     }
 
@@ -95,7 +110,9 @@ struct StoryGenerationModelPill: View {
             return
         }
         if localModelManager.runtimeAvailability == .checking
-            || localModelManager.runtimeAvailability == .savedOnly {
+            || localModelManager.runtimeAvailability == .savedOnly
+            || nagiAvailability == .checking
+            || nagiAvailability == .savedNotVerified {
             return
         }
         guard !isModelSelectable(vm.generationModel),
@@ -118,6 +135,18 @@ struct StoryGenerationModelPill: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(modelAvailabilityColor(vm.generationModel))
                 .fixedSize(horizontal: false, vertical: true)
+            if !isModelSelectable(vm.generationModel) {
+                Button {
+                    isShowingDetails = false
+                    onOpenSettings()
+                } label: {
+                    Label(
+                        storyCopy("設定を開く", "Open settings"),
+                        systemImage: "arrow.right.circle"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+            }
             if let lastBackendStatus {
                 Text(lastBackendStatus)
                     .font(.caption.weight(.medium))
@@ -223,9 +252,24 @@ struct StoryGenerationModelPill: View {
                 return storyCopy("ローカル未導入", "Local model not installed")
             }
         case .b31:
-            return StoryGemma31BAPIService.shared.hasAPIKey
-                ? storyCopy("Gemma4 APIキー検出済み", "Gemma4 API key detected")
-                : storyCopy("Gemma4 APIキー未設定", "Gemma4 API key not set")
+            switch nagiAvailability {
+            case .available:
+                return storyCopy("接続確認済み", "Connection verified")
+            case .savedNotVerified:
+                return storyCopy("APIキー保存済み・未確認", "API key saved · not verified")
+            case .checking:
+                return storyCopy("接続確認中", "Checking connection")
+            case .authenticationError:
+                return storyCopy("認証エラー", "Authentication error")
+            case .modelUnavailable:
+                return storyCopy("モデル利用不可", "Model unavailable")
+            case .rateLimited:
+                return storyCopy("quota/rate limit", "Quota/rate limit")
+            case .unavailable:
+                return storyCopy("接続できません", "Unavailable")
+            case .notConfigured:
+                return storyCopy("Gemma4 APIキー未設定", "Gemma4 API key not set")
+            }
         }
     }
 
@@ -245,7 +289,12 @@ struct StoryGenerationModelPill: View {
                 return .secondary
             }
         case .b31:
-            return StoryGemma31BAPIService.shared.hasAPIKey ? .green : .orange
+            switch nagiAvailability {
+            case .available: return .green
+            case .authenticationError, .modelUnavailable, .unavailable: return .red
+            case .rateLimited, .checking, .savedNotVerified: return .orange
+            case .notConfigured: return .secondary
+            }
         }
     }
 }

@@ -9,6 +9,8 @@ struct KizunaSettingsView: View {
     @State private var modelSourceURL = ""
     @State private var modelSourceSHA256 = ""
     @State private var modelAccessToken = ""
+    @State private var nagiAvailability = StoryGemma31BAPIService.shared.availability
+    @State private var isCheckingNAGI = false
     @State private var modelSourceSelection: LocalModelSourceSelection = .standard
     @State private var selectedStandardModelURL = LocalAssistantModelProfile.defaultDownloadURL
     @State private var saveMessage: String?
@@ -85,6 +87,26 @@ struct KizunaSettingsView: View {
                     ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    HStack {
+                        LabeledContent(
+                            KizunaCopy.text(japanese: "接続状態", english: "Connection"),
+                            value: nagiAvailabilityLabel
+                        )
+                        Spacer(minLength: 12)
+                        Button {
+                            validateNAGI()
+                        } label: {
+                            Label(
+                                isCheckingNAGI
+                                    ? KizunaCopy.text(japanese: "確認中…", english: "Checking…")
+                                    : KizunaCopy.text(japanese: "接続を確認", english: "Verify connection"),
+                                systemImage: isCheckingNAGI ? "arrow.triangle.2.circlepath" : "checkmark.seal"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isCheckingNAGI || nagiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
                 }
 
                 Section(KizunaCopy.text(japanese: "ローカルAIモデル", english: "Local AI model")) {
@@ -309,14 +331,20 @@ struct KizunaSettingsView: View {
                         .textSelection(.enabled)
                 }
 
-                if let saveMessage {
-                    Section {
-                        Label(saveMessage, systemImage: saveMessageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                            .foregroundStyle(saveMessageIsError ? .red : .green)
-                    }
-                }
             }
             .formStyle(.grouped)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let saveMessage {
+                    Label(saveMessage, systemImage: saveMessageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(saveMessageIsError ? .red : .green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.regularMaterial)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
             .navigationTitle(KizunaCopy.text(japanese: "設定", english: "Settings"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -375,6 +403,7 @@ struct KizunaSettingsView: View {
         }
         .onAppear {
             nagiAPIKey = AISecretStore.shared.string(for: .gemmaWebReaderAPIKey) ?? ""
+            nagiAvailability = StoryGemma31BAPIService.shared.availability
             modelSourceURL = modelManager.sourceURLString
             modelAccessToken = modelManager.accessToken
             selectedStandardModelURL = standardModelOptions.first(where: {
@@ -397,6 +426,10 @@ struct KizunaSettingsView: View {
         }
         modelManager.customSourceSHA256 = modelSourceSHA256
 
+        nagiAvailability = apiKeySaved && !nagiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? .savedNotVerified
+            : .notConfigured
+
         let accessTokenSaved = modelManager.updateAccessToken(modelAccessToken)
         saveMessageIsError = !(apiKeySaved && accessTokenSaved)
         saveMessage = saveMessageIsError
@@ -405,6 +438,42 @@ struct KizunaSettingsView: View {
                 english: "A secret could not be saved to Keychain. Your input was kept; try again."
             )
             : KizunaCopy.text(japanese: "設定を保存しました", english: "Settings saved")
+    }
+
+    private var nagiAvailabilityLabel: String {
+        switch nagiAvailability {
+        case .notConfigured:
+            return KizunaCopy.text(japanese: "未設定", english: "Not configured")
+        case .savedNotVerified:
+            return KizunaCopy.text(japanese: "保存済み・未確認", english: "Saved · not verified")
+        case .checking:
+            return KizunaCopy.text(japanese: "確認中", english: "Checking")
+        case .available:
+            return KizunaCopy.text(japanese: "確認済み", english: "Verified")
+        case .authenticationError:
+            return KizunaCopy.text(japanese: "認証エラー", english: "Authentication error")
+        case .modelUnavailable:
+            return KizunaCopy.text(japanese: "モデル利用不可", english: "Model unavailable")
+        case .rateLimited:
+            return KizunaCopy.text(japanese: "quota / rate limit", english: "Quota / rate limit")
+        case .unavailable:
+            return KizunaCopy.text(japanese: "接続不可", english: "Unavailable")
+        }
+    }
+
+    private func validateNAGI() {
+        saveSecretsAndModelSource()
+        guard nagiAvailability == .savedNotVerified else { return }
+        isCheckingNAGI = true
+        Task { @MainActor in
+            let result = await StoryGemma31BAPIService.shared.validateConfiguration()
+            nagiAvailability = result
+            isCheckingNAGI = false
+            saveMessageIsError = !result.isUsable
+            saveMessage = result.isUsable
+                ? KizunaCopy.text(japanese: "NAGIの接続を確認しました", english: "NAGI connection verified")
+                : KizunaCopy.text(japanese: "NAGIの接続を確認できませんでした", english: "NAGI connection could not be verified")
+        }
     }
 
     private var standardModelOptions: [LocalAssistantModelProfile.DownloadOption] {

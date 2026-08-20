@@ -6,6 +6,21 @@
 
 import Foundation
 
+enum StoryGemma31BAPIAvailability: Equatable, Sendable {
+    case notConfigured
+    case savedNotVerified
+    case checking
+    case available
+    case authenticationError
+    case modelUnavailable
+    case rateLimited
+    case unavailable
+
+    var isUsable: Bool {
+        self == .available
+    }
+}
+
 enum StoryGemma31BAPIError: LocalizedError {
     case missingAPIKey
     case invalidURL
@@ -93,11 +108,71 @@ final class StoryGemma31BAPIService {
     private let secretStore = AISecretStore.shared
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
+    private let availabilityLock = NSLock()
+    private var storedAvailability: StoryGemma31BAPIAvailability = .notConfigured
 
     private init() {}
 
     var hasAPIKey: Bool {
         secretStore.configuredGemmaWebReaderAPIKey() != nil
+    }
+
+    var availability: StoryGemma31BAPIAvailability {
+        availabilityLock.lock()
+        defer { availabilityLock.unlock() }
+        if storedAvailability == .notConfigured, hasAPIKey {
+            return .savedNotVerified
+        }
+        return storedAvailability
+    }
+
+    /// Validate the credential and the selected primary model without
+    /// consuming a generation. Google exposes model metadata through GET, so
+    /// invalid keys/model access are surfaced before a user starts a Story.
+    func validateConfiguration() async -> StoryGemma31BAPIAvailability {
+        guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
+            updateAvailability(.notConfigured)
+            return .notConfigured
+        }
+        updateAvailability(.checking)
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(primaryModelName)") else {
+            updateAvailability(.unavailable)
+            return .unavailable
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let result: StoryGemma31BAPIAvailability
+            switch status {
+            case 200...299:
+                result = .available
+            case 401, 403:
+                result = .authenticationError
+            case 404:
+                result = .modelUnavailable
+            case 408, 409, 425, 429:
+                result = .rateLimited
+            case 500...599:
+                result = .unavailable
+            default:
+                result = .unavailable
+            }
+            updateAvailability(result)
+            return result
+        } catch {
+            updateAvailability(.unavailable)
+            return .unavailable
+        }
+    }
+
+    private func updateAvailability(_ value: StoryGemma31BAPIAvailability) {
+        availabilityLock.lock()
+        storedAvailability = value
+        availabilityLock.unlock()
     }
 
     func generate(

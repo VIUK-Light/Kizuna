@@ -82,7 +82,7 @@ enum PersonaGenerationModel: String, Codable, CaseIterable, Identifiable, Hashab
         case .local:
             return LocalAssistantModelManager.shared.runtimeAvailability == .executable
         case .nagi:
-            return StoryGemma31BAPIService.shared.hasAPIKey
+            return StoryGemma31BAPIService.shared.availability.isUsable
         }
     }
 }
