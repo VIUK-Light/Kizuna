@@ -1099,11 +1099,16 @@ private final class LocalAIProvider: AIProvider {
         guard let text = result.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             throw AIProviderError.emptyResponse
         }
+        let observedArtifactID = result.modelIdentity?
+            .split(separator: "/")
+            .last
+            .map(String.init)
+        let artifactID = observedArtifactID ?? configuration.identity.artifactID
         let identity = AIModelIdentity(
             providerID: .localRuntime,
             modelID: configuration.identity.modelID,
-            displayName: configuration.identity.displayName,
-            artifactID: result.modelIdentity ?? configuration.identity.artifactID
+            displayName: artifactID ?? configuration.identity.displayName,
+            artifactID: artifactID
         )
         request.onModelResolved?(identity)
         return AIGenerationResponse(

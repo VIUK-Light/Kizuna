@@ -1633,7 +1633,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                         id: relativePath,
                         fileName: standardized.lastPathComponent,
                         relativePath: relativePath,
-                        displayName: standardized.lastPathComponent,
+                        displayName: displayName(forFileName: standardized.lastPathComponent),
                         fileSize: fileSize,
                         sourceURL: sourceURL
                     )
@@ -1674,6 +1674,20 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             auxiliaryModelID = nil
             defaults.removeObject(forKey: auxiliaryModelIDKey)
         }
+    }
+
+    /// Imported artifacts are prefixed with a UUID to avoid collisions. Keep
+    /// that storage prefix in `fileName`/`id`, but do not expose it as the
+    /// user-facing model label in Settings or model status UI.
+    private func displayName(forFileName fileName: String) -> String {
+        let prefixLength = 36
+        guard fileName.count > prefixLength + 1,
+              let separator = fileName.index(fileName.startIndex, offsetBy: prefixLength, limitedBy: fileName.endIndex),
+              fileName[separator] == "-",
+              UUID(uuidString: String(fileName[..<separator])) != nil else {
+            return fileName
+        }
+        return String(fileName[fileName.index(after: separator)...])
     }
 
     private func discoverInstalledModelURL() -> URL? {
