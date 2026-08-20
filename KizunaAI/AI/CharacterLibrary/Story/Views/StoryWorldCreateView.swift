@@ -116,6 +116,10 @@ struct StoryWorldCreateView: View {
                 onPick: { profile in
                     vm.addCharacter(profile)
                     showCharacterPicker = false
+                },
+                onCreate: {
+                    showCharacterPicker = false
+                    showCharacterCreator = true
                 }
             )
             .viukAdaptiveSheetSizing(minWidth: 480, minHeight: 600)
@@ -200,6 +204,17 @@ struct StoryWorldCreateView: View {
                         .foregroundStyle(.red)
                 }
                 .accessibilityIdentifier("story.create.saveError")
+            } else if vm.isReadyToSave && !vm.validationIssues.isEmpty {
+                Label {
+                    Text(vm.validationIssues.joined(separator: "\n"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundStyle(.orange)
+                }
+                .accessibilityIdentifier("story.create.validationSummary")
             }
 
             HStack {
@@ -216,7 +231,7 @@ struct StoryWorldCreateView: View {
                         Label(KizunaCopy.text(japanese: "保存して試す", english: "Save and try"), systemImage: "play.fill")
                     }
                     .buttonStyle(.bordered)
-                    .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
+                    .disabled(!vm.canSave)
                 }
                 Spacer()
                 Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
@@ -228,7 +243,7 @@ struct StoryWorldCreateView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!vm.isReadyToSave || vm.isGeneratingTemplate || vm.isSaving)
+                .disabled(!vm.canSave)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -444,7 +459,7 @@ struct StoryWorldCreateView: View {
     private var generatedPreviewSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionTitle(KizunaCopy.text(japanese: "生成プレビュー", english: "Generation preview"))
-            if vm.draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if !vm.hasAppliedGeneratedTemplate {
                 HStack(spacing: 10) {
                     Image(systemName: "doc.text.magnifyingglass")
                         .font(.system(size: 18, weight: .semibold))
@@ -648,7 +663,6 @@ struct StoryWorldCreateView: View {
             card {
                 multilineField(KizunaCopy.text(japanese: "世界観", english: "World setting"), $vm.draft.worldSetting, hint: KizunaCopy.text(japanese: "例: 平凡な現代の高校に魔法が存在する世界", english: "e.g. a normal modern high school where magic exists"))
                 multilineField(KizunaCopy.text(japanese: "ユーザーの役", english: "Your role"), $vm.draft.userRole, hint: KizunaCopy.text(japanese: "例: 新しく転校してきた生徒", english: "e.g. a new transfer student"))
-                multilineField(KizunaCopy.text(japanese: "オープニングシーン", english: "Opening scene"), $vm.draft.openingScene, hint: KizunaCopy.text(japanese: "物語の幕開け。最初のナレーション。", english: "The opening narration for the story."))
                 multilineField(KizunaCopy.text(japanese: "物語の目標", english: "Story goal"), $vm.draft.storyGoal, hint: KizunaCopy.text(japanese: "例: 卒業までに気持ちを伝える", english: "e.g. share your feelings before graduation"))
                 TextField(KizunaCopy.text(japanese: "ムード (例: 切ない、爽やか、緊張感)", english: "Mood (e.g. tender, bright, tense)"), text: $vm.draft.mood).textFieldStyle(.roundedBorder)
             }
@@ -672,7 +686,7 @@ struct StoryWorldCreateView: View {
                     get: { vm.sceneDraft.conflict ?? "" },
                     set: { vm.sceneDraft.conflict = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
                 ), hint: KizunaCopy.text(japanese: "例: 端末は真実を示すが、ノアはそれを隠したがっている", english: "e.g. the device shows the truth, but Noa wants to hide it"))
-                multilineField(KizunaCopy.text(japanese: "ここまでの要約 / 初期状況", english: "Summary / starting situation"), $vm.sceneDraft.summary, hint: KizunaCopy.text(japanese: "最初の会話前に共有しておく状況", english: "Context to share before the first exchange"))
+                multilineField(KizunaCopy.text(japanese: "開始ナレーション / 初期状況", english: "Opening narration / starting situation"), $vm.sceneDraft.summary, hint: KizunaCopy.text(japanese: "物語開始時に共有する状況や最初のナレーション", english: "The context and opening narration shared when the story begins"))
             }
         }
     }
@@ -754,7 +768,9 @@ struct StoryWorldCreateView: View {
     }
 
     private func castRow(member: CastMember, profile: CharacterProfile) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let isOnlyOpeningCharacter = vm.sceneDraft.activeCharacterIds.count == 1
+            && vm.sceneDraft.activeCharacterIds.contains(member.characterId)
+        return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 characterAvatar(profile, size: 34)
                 Image(systemName: member.roleInStory.iconName).foregroundStyle(.tint)
@@ -764,6 +780,7 @@ struct StoryWorldCreateView: View {
                 Menu {
                     ForEach(CastRole.allCases, id: \.self) { r in
                         Button(r.localizedDisplayName) { vm.setRole(r, for: member.characterId) }
+                            .disabled(r != .main && vm.castDrafts.count == 1 && member.roleInStory == .main)
                     }
                 } label: {
                     Text(member.roleInStory.localizedDisplayName).font(.caption.weight(.semibold))
@@ -797,6 +814,10 @@ struct StoryWorldCreateView: View {
                     set: { vm.setActiveInOpeningScene($0, for: member.characterId) }
                 ))
                 .font(.callout.weight(.medium))
+                .disabled(isOnlyOpeningCharacter)
+                .accessibilityHint(isOnlyOpeningCharacter
+                    ? KizunaCopy.text(japanese: "初期シーンには最低1人必要です", english: "At least one character must appear in the opening scene")
+                    : "")
 
                 Menu {
                     ForEach(IntroductionTiming.allCases, id: \.self) { timing in
@@ -810,6 +831,14 @@ struct StoryWorldCreateView: View {
                         .frame(minHeight: 44)
                 }
                 .menuStyle(.borderlessButton)
+            }
+            if isOnlyOpeningCharacter {
+                Text(KizunaCopy.text(
+                    japanese: "初期シーンには最低1人必要です。",
+                    english: "At least one character must appear in the opening scene."
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             TextField(KizunaCopy.text(japanese: "この物語でのユーザーとの関係", english: "Relationship to the user in this story"), text: Binding(
                 get: { member.relationshipToUser },
@@ -849,8 +878,8 @@ struct StoryWorldCreateView: View {
 
     private var relationshipPairs: [StoryRelationshipPair] {
         var out: [StoryRelationshipPair] = []
-        for from in vm.castDrafts {
-            for to in vm.castDrafts where from.characterId != to.characterId {
+        for (fromIndex, from) in vm.castDrafts.enumerated() {
+            for to in vm.castDrafts.dropFirst(fromIndex + 1) {
                 guard let fromProfile = vm.availableCharacters.first(where: { $0.id == from.characterId }),
                       let toProfile = vm.availableCharacters.first(where: { $0.id == to.characterId }) else { continue }
                 out.append(StoryRelationshipPair(from: from, to: to, fromProfile: fromProfile, toProfile: toProfile))
@@ -860,35 +889,68 @@ struct StoryWorldCreateView: View {
     }
 
     private func relationshipRow(_ pair: StoryRelationshipPair) -> some View {
+        let reverse = StoryRelationshipPair(
+            from: pair.to,
+            to: pair.from,
+            fromProfile: pair.toProfile,
+            toProfile: pair.fromProfile
+        )
+        return DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                relationshipDirectionRow(pair)
+                relationshipDirectionRow(reverse)
+            }
+            .padding(.top, 8)
+        } label: {
+            HStack(spacing: 8) {
+                characterAvatar(pair.fromProfile, size: 28)
+                Text(pair.fromName)
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+                Image(systemName: "arrow.left.and.right")
+                    .foregroundStyle(.secondary)
+                characterAvatar(pair.toProfile, size: 28)
+                Text(pair.toName)
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text(KizunaCopy.text(japanese: "2方向", english: "Two directions"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.03)))
+    }
+
+    private func relationshipDirectionRow(_ pair: StoryRelationshipPair) -> some View {
         let rel = vm.relationship(from: pair.from.characterId, to: pair.to.characterId)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                characterAvatar(pair.fromProfile, size: 24)
-                Text(pair.fromName)
-                    .font(.subheadline.weight(.bold))
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 10, weight: .bold))
+                Text(KizunaCopy.text(
+                    japanese: "\(pair.fromName) → \(pair.toName)",
+                    english: "\(pair.fromName) → \(pair.toName)"
+                ))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                characterAvatar(pair.toProfile, size: 24)
-                Text(pair.toName)
-                    .font(.subheadline.weight(.bold))
-                Spacer()
+                Spacer(minLength: 0)
                 Picker(
                     KizunaCopy.text(
                         japanese: "\(pair.fromName)から\(pair.toName)への関係",
                         english: "Relationship from \(pair.fromName) to \(pair.toName)"
                     ),
                     selection: Binding(
-                    get: { rel.relationshipType },
-                    set: { vm.updateRelationship(from: pair.from.characterId, to: pair.to.characterId, type: $0) }
-                )) {
+                        get: { rel.relationshipType },
+                        set: { vm.updateRelationship(from: pair.from.characterId, to: pair.to.characterId, type: $0) }
+                    )
+                ) {
                     ForEach(RelationshipType.allCases, id: \.self) { type in
                         Text(type.localizedDisplayName).tag(type)
                     }
                 }
                 .pickerStyle(.menu)
             }
-            TextField(KizunaCopy.text(japanese: "関係メモ (例: 古い相棒だが、互いに秘密を持っている)", english: "Relationship note (e.g. old partners with secrets)"), text: Binding(
+            TextField(KizunaCopy.text(japanese: "関係メモ", english: "Relationship note"), text: Binding(
                 get: { rel.description },
                 set: { vm.updateRelationship(from: pair.from.characterId, to: pair.to.characterId, description: $0) }
             ))
@@ -916,8 +978,6 @@ struct StoryWorldCreateView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.03)))
     }
 
     @ViewBuilder
@@ -1040,11 +1100,22 @@ private struct CharacterPickerForStory: View {
     let available: [CharacterProfile]
     let excluded: [UUID]
     let onPick: (CharacterProfile) -> Void
+    let onCreate: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+    @State private var selectedGroup: CategoryGroup?
 
     var filtered: [CharacterProfile] {
         let set = Set(excluded)
-        return available.filter { !set.contains($0.id) }
+        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return available.filter { character in
+            guard !set.contains(character.id) else { return false }
+            guard selectedGroup == nil || character.category.group == selectedGroup else { return false }
+            guard !needle.isEmpty else { return true }
+            return character.visibleName.lowercased().contains(needle)
+                || character.shortDescription.lowercased().contains(needle)
+                || character.tags.contains(where: { $0.lowercased().contains(needle) })
+        }
     }
 
     var body: some View {
@@ -1061,11 +1132,51 @@ private struct CharacterPickerForStory: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 12).background(.thinMaterial)
             Divider()
+            HStack(spacing: 8) {
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        KizunaCopy.text(japanese: "名前・説明・タグを検索", english: "Search names, descriptions, or tags"),
+                        text: $searchText
+                    )
+                    .textFieldStyle(.plain)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.06)))
+
+                Menu {
+                    Button(KizunaCopy.text(japanese: "すべて", english: "All")) { selectedGroup = nil }
+                    Divider()
+                    ForEach(CategoryGroup.allCases) { group in
+                        Button { selectedGroup = group } label: {
+                            Label(group.localizedDisplayName, systemImage: group.iconName)
+                        }
+                    }
+                } label: {
+                    Label(
+                        selectedGroup?.localizedDisplayName ?? KizunaCopy.text(japanese: "分類", english: "Category"),
+                        systemImage: "line.3.horizontal.decrease.circle"
+                    )
+                    .font(.caption.weight(.semibold))
+                    .frame(minHeight: 44)
+                }
+                .menuStyle(.borderlessButton)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
             if filtered.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "person.crop.circle.badge.questionmark").font(.system(size: 34)).foregroundStyle(.tertiary)
                     Text(KizunaCopy.text(japanese: "追加できるキャラがいません", english: "No characters available")).font(.subheadline)
-                    Text(KizunaCopy.text(japanese: "先に「キャラライブラリー」でキャラを作ってください。", english: "Create a character in the character library first.")).font(.caption).foregroundStyle(.secondary)
+                    Text(KizunaCopy.text(japanese: "検索条件を変えるか、この画面からキャラを作れます。", english: "Change the search or create a character from this screen.")).font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        onCreate()
+                    } label: {
+                        Label(KizunaCopy.text(japanese: "キャラを作る", english: "Create character"), systemImage: "person.crop.circle.badge.plus")
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(40)
@@ -1074,14 +1185,20 @@ private struct CharacterPickerForStory: View {
                     LazyVStack(alignment: .leading, spacing: 6) {
                         ForEach(filtered) { c in
                             Button { onPick(c) } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(c.visibleName)
-                                        .font(.subheadline.weight(.semibold))
-                                    Text(c.category.localizedDisplayName + KizunaCopy.text(japanese: " ・ ", english: " · ") + c.relationshipGenre.localizedDisplayName)
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    if !c.shortDescription.isEmpty {
-                                        Text(c.shortDescription).font(.caption).foregroundStyle(.tertiary).lineLimit(2)
+                                HStack(spacing: 10) {
+                                    PersonaAvatarView(profile: PersonaProfile(character: c), size: 44)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(c.visibleName)
+                                            .font(.subheadline.weight(.semibold))
+                                        Text(c.category.localizedDisplayName + KizunaCopy.text(japanese: " ・ ", english: " · ") + c.relationshipGenre.localizedDisplayName)
+                                            .font(.caption).foregroundStyle(.secondary)
+                                        if !c.shortDescription.isEmpty {
+                                            Text(c.shortDescription).font(.caption).foregroundStyle(.tertiary).lineLimit(2)
+                                        }
                                     }
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "plus.circle.fill")
+                                        .foregroundStyle(.tint)
                                 }
                                 .padding(10).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))

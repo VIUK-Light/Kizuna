@@ -540,6 +540,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
     @Published private(set) var isGeneratingTemplate: Bool = false
     @Published private(set) var generationStatus: String? = nil
     @Published private(set) var generationError: String? = nil
+    @Published private(set) var hasAppliedGeneratedTemplate = false
 
     /// 雛形生成中にだけ作ったキャラ。保存ボタンが成功するまでRepositoryへ
     /// 書き込まず、再生成/キャンセルでライブラリーへ孤児を残さない。
@@ -574,6 +575,45 @@ final class StoryWorldCreateViewModel: ObservableObject {
             self.draft = world
             self.sceneDraft = StoryScene(storyWorldId: world.id)
         }
+    }
+
+    var validationIssues: [String] {
+        var issues: [String] = []
+        if draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append(KizunaCopy.text(japanese: "タイトルを入力してください。", english: "Enter a title."))
+        }
+        if castDrafts.isEmpty {
+            issues.append(KizunaCopy.text(japanese: "キャラクターを1人以上追加してください。", english: "Add at least one character."))
+        }
+        let castIDs = Set(castDrafts.map(\.characterId))
+        if sceneDraft.activeCharacterIds.isEmpty || !Set(sceneDraft.activeCharacterIds).isSubset(of: castIDs) {
+            issues.append(KizunaCopy.text(
+                japanese: "初期シーンに出すキャラクターを1人以上選択してください。",
+                english: "Select at least one character for the opening scene."
+            ))
+        }
+        guard let mainCharacterID = draft.mainCharacterId,
+              castDrafts.contains(where: { $0.characterId == mainCharacterID && $0.roleInStory == .main }) else {
+            issues.append(KizunaCopy.text(
+                japanese: "メインキャラクターを1人指定してください。",
+                english: "Choose one main character."
+            ))
+            return issues
+        }
+        if castDrafts.filter({ $0.roleInStory == .main }).count != 1 {
+            issues.append(KizunaCopy.text(
+                japanese: "メインキャラクターは1人だけにしてください。",
+                english: "Choose exactly one main character."
+            ))
+        }
+        return issues
+    }
+
+    var canSave: Bool {
+        isReadyToSave
+            && !isGeneratingTemplate
+            && !isSaving
+            && validationIssues.isEmpty
     }
 
     func load() async {
@@ -843,11 +883,16 @@ final class StoryWorldCreateViewModel: ObservableObject {
             let replacement = castDrafts.enumerated().first { index, member in
                 index != idx && member.characterId != characterID
             }?.element.characterId
+            guard let replacement else {
+                // 唯一のキャストを主役以外へ変更すると主役ゼロのWorldに
+                // なるため、保存可能な不変条件を維持したまま操作を無視する。
+                draft.mainCharacterId = characterID
+                castDrafts[idx].roleInStory = .main
+                return
+            }
             draft.mainCharacterId = replacement
-            if let replacement {
-                for index in castDrafts.indices where castDrafts[index].characterId == replacement {
-                    castDrafts[index].roleInStory = .main
-                }
+            for index in castDrafts.indices where castDrafts[index].characterId == replacement {
+                castDrafts[index].roleInStory = .main
             }
         }
         castDrafts[idx].roleInStory = role == .main ? .main : role
@@ -1015,25 +1060,9 @@ final class StoryWorldCreateViewModel: ObservableObject {
             )
             return nil
         }
-        guard !draft.title.trimmingCharacters(in: .whitespaces).isEmpty else {
-            saveError = KizunaCopy.text(
-                japanese: "タイトルを入力してください。",
-                english: "Enter a title before saving."
-            )
-            return nil
-        }
-        guard !castDrafts.isEmpty else {
-            saveError = KizunaCopy.text(
-                japanese: "少なくとも1人のキャラクターを追加してください。",
-                english: "Add at least one character before saving this story."
-            )
-            return nil
-        }
-        guard !sceneDraft.activeCharacterIds.isEmpty else {
-            saveError = KizunaCopy.text(
-                japanese: "初期シーンに出すキャラクターを1人以上選択してください。",
-                english: "Select at least one character for the opening scene."
-            )
+        let issues = validationIssues
+        guard issues.isEmpty else {
+            saveError = issues.joined(separator: "\n")
             return nil
         }
 
@@ -1068,6 +1097,10 @@ final class StoryWorldCreateViewModel: ObservableObject {
 
             // World 保存
             var world = draftSnapshot.normalizedForPersistence
+            let openingSummary = sceneSnapshot.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !openingSummary.isEmpty {
+                world.openingScene = openingSummary
+            }
             // Keep the editor in sync with the persisted invariant so a
             // duplicate does not reappear when the same draft is shown again.
             draft.tags = world.tags
@@ -1281,6 +1314,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 trust: relationship.trust
             )
         }
+        hasAppliedGeneratedTemplate = true
     }
 
     private static let storyTemplateSystemPrompt = """
