@@ -12,6 +12,14 @@ struct KizunaSettingsView: View {
     @State private var modelAccessToken = ""
     @State private var nagiAvailability = StoryGemma31BAPIService.shared.availability
     @State private var isCheckingNAGI = false
+    @State private var registryConfigurations: [AIModelConfiguration] = []
+    @State private var registryProvider: AIProviderID = .openAICompatible
+    @State private var registryModelID = ""
+    @State private var registryDisplayName = ""
+    @State private var registryEndpoint = "https://api.openai.com/v1"
+    @State private var registryAPIKey = ""
+    @State private var registryRole: AIModelRole = .persona
+    @State private var registryMessage: String?
     @State private var modelSourceSelection: LocalModelSourceSelection = .standard
     @State private var selectedStandardModelURL = LocalAssistantModelProfile.defaultDownloadURL
     @State private var saveMessage: String?
@@ -109,6 +117,93 @@ struct KizunaSettingsView: View {
                         .buttonStyle(.bordered)
                         .disabled(isCheckingNAGI || nagiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
+                }
+
+                Section(KizunaCopy.text(japanese: "AIモデルRegistry", english: "AI model registry")) {
+                    ForEach(registryConfigurations) { configuration in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(configuration.identity.displayName)
+                                    .font(.headline)
+                                Spacer()
+                                Button(role: .destructive) {
+                                    removeRegistryConfiguration(configuration)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            Text(configuration.identity.stableID)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            Text(
+                                registryRoleNames(configuration.roles)
+                                    + (configuration.endpoint.map { " · " + $0 } ?? "")
+                            )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+
+                    Picker(
+                        KizunaCopy.text(japanese: "Provider", english: "Provider"),
+                        selection: $registryProvider
+                    ) {
+                        ForEach(AIProviderID.allCases, id: \.self) { provider in
+                            Text(providerDisplayName(provider)).tag(provider)
+                        }
+                    }
+                    TextField(
+                        KizunaCopy.text(japanese: "Model ID", english: "Model ID"),
+                        text: $registryModelID
+                    )
+                    .autocorrectionDisabled()
+                    TextField(
+                        KizunaCopy.text(japanese: "表示名", english: "Display name"),
+                        text: $registryDisplayName
+                    )
+                    TextField(
+                        KizunaCopy.text(japanese: "Base URL（必要なProviderのみ）", english: "Base URL (when required)"),
+                        text: $registryEndpoint
+                    )
+                    .textContentType(.URL)
+                    .autocorrectionDisabled()
+                    if registryProvider != .localRuntime {
+                        SecureField(
+                            KizunaCopy.text(japanese: "APIキー（任意）", english: "API key (optional)"),
+                            text: $registryAPIKey
+                        )
+                        .textContentType(.password)
+                    }
+                    Picker(
+                        KizunaCopy.text(japanese: "用途", english: "Role"),
+                        selection: $registryRole
+                    ) {
+                        ForEach(AIModelRole.allCases, id: \.self) { role in
+                            Text(roleDisplayName(role)).tag(role)
+                        }
+                    }
+                    Button {
+                        addRegistryConfiguration()
+                    } label: {
+                        Label(
+                            KizunaCopy.text(japanese: "モデル構成を追加", english: "Add model configuration"),
+                            systemImage: "plus.circle"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    if let registryMessage {
+                        Text(registryMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(KizunaCopy.text(
+                        japanese: "Provider metadataはUserDefaults、APIキーはconfiguration UUIDごとにKeychainへ保存します。",
+                        english: "Provider metadata is stored in UserDefaults; API keys are stored in Keychain per configuration UUID."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section(KizunaCopy.text(japanese: "ローカルAIモデル", english: "Local AI model")) {
@@ -448,6 +543,7 @@ struct KizunaSettingsView: View {
         .onAppear {
             nagiAPIKey = AISecretStore.shared.string(for: .gemmaWebReaderAPIKey) ?? ""
             nagiAvailability = StoryGemma31BAPIService.shared.availability
+            registryConfigurations = AIModelRegistry.shared.configurations
             modelSourceURL = modelManager.sourceURLString
             modelAccessToken = modelManager.accessToken
             selectedStandardModelURL = standardModelOptions.first(where: {
@@ -538,6 +634,75 @@ struct KizunaSettingsView: View {
                 ? KizunaCopy.text(japanese: "NAGIの接続を確認しました", english: "NAGI connection verified")
                 : KizunaCopy.text(japanese: "NAGIの接続を確認できませんでした", english: "NAGI connection could not be verified")
         }
+    }
+
+    private func addRegistryConfiguration() {
+        let modelID = registryModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = registryDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !modelID.isEmpty else {
+            registryMessage = KizunaCopy.text(japanese: "Model IDを入力してください。", english: "Enter a model ID.")
+            return
+        }
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: registryProvider,
+                modelID: modelID,
+                displayName: displayName.isEmpty ? modelID : displayName
+            ),
+            roles: [registryRole],
+            endpoint: registryProvider == .localRuntime
+                ? nil
+                : registryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? nil
+                    : registryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+            priority: 20
+        )
+        guard AIModelRegistry.shared.register(configuration) else {
+            registryMessage = KizunaCopy.text(japanese: "モデル構成を保存できませんでした。", english: "The model configuration could not be saved.")
+            return
+        }
+        if !registryAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            _ = AISecretStore.shared.setProviderAPIKey(registryAPIKey, for: configuration.id)
+        }
+        registryConfigurations = AIModelRegistry.shared.configurations
+        registryModelID = ""
+        registryDisplayName = ""
+        registryAPIKey = ""
+        registryMessage = KizunaCopy.text(japanese: "モデル構成を追加しました。", english: "Model configuration added.")
+    }
+
+    private func removeRegistryConfiguration(_ configuration: AIModelConfiguration) {
+        _ = AIModelRegistry.shared.remove(id: configuration.id)
+        _ = AISecretStore.shared.removeProviderAPIKey(for: configuration.id)
+        registryConfigurations = AIModelRegistry.shared.configurations
+        registryMessage = KizunaCopy.text(japanese: "モデル構成を削除しました。", english: "Model configuration removed.")
+    }
+
+    private func providerDisplayName(_ provider: AIProviderID) -> String {
+        switch provider {
+        case .localRuntime: return "Local runtime"
+        case .googleGenerativeLanguage: return "Google Generative Language"
+        case .openAICompatible: return "OpenAI-compatible"
+        case .anthropic: return "Anthropic"
+        }
+    }
+
+    private func roleDisplayName(_ role: AIModelRole) -> String {
+        switch role {
+        case .persona: return "Persona"
+        case .story: return "Story"
+        case .classifier: return "Classifier"
+        case .memoryExtraction: return "Memory extraction"
+        case .memoryRetrieval: return "Memory retrieval"
+        case .sceneCharacterSelection: return "Scene character selection"
+        case .sceneSummary: return "Scene summary"
+        case .nextSceneSuggestion: return "Next scene suggestion"
+        case .safety: return "Safety"
+        }
+    }
+
+    private func registryRoleNames(_ roles: Set<AIModelRole>) -> String {
+        roles.sorted { $0.rawValue < $1.rawValue }.map(roleDisplayName).joined(separator: ", ")
     }
 
     private var standardModelOptions: [LocalAssistantModelProfile.DownloadOption] {
