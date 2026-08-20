@@ -67,6 +67,64 @@ enum StoryWorldDeletionJournal {
     }
 }
 
+/// 新規StoryはWorld/Cast/Lorebook/Sceneを複数のJSONへ保存するため、
+/// 保存途中でプロセスが終了すると「作成中」の状態を推測できなくなる。
+/// 作成開始を先に記録し、全保存成功後だけcommittedへ進めることで、
+/// 次回ライブラリー起動時に未完了の新規データを確実に掃除する。
+enum StoryWorldCreationJournal {
+    enum State: String, Codable {
+        case staging
+        case committed
+    }
+
+    struct Entry: Codable, Equatable {
+        let worldID: UUID
+        let generatedCharacterIDs: [UUID]
+        var state: State
+    }
+
+    private static let key = "kizuna.story.pendingWorldCreations"
+
+    static var entries: [Entry] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let decoded = try? JSONDecoder().decode([Entry].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    static func markStaging(worldID: UUID, generatedCharacterIDs: [UUID]) {
+        var values = entries
+        let entry = Entry(
+            worldID: worldID,
+            generatedCharacterIDs: generatedCharacterIDs,
+            state: .staging
+        )
+        if let index = values.firstIndex(where: { $0.worldID == worldID }) {
+            values[index] = entry
+        } else {
+            values.append(entry)
+        }
+        persist(values)
+    }
+
+    static func markCommitted(worldID: UUID) {
+        var values = entries
+        guard let index = values.firstIndex(where: { $0.worldID == worldID }) else { return }
+        values[index].state = .committed
+        persist(values)
+    }
+
+    static func clear(worldID: UUID) {
+        persist(entries.filter { $0.worldID != worldID })
+    }
+
+    private static func persist(_ values: [Entry]) {
+        guard let data = try? JSONEncoder().encode(values) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
 @MainActor
 final class StoryWorldLibraryViewModel: ObservableObject {
     @Published private(set) var worlds: [StoryWorld] = []
@@ -100,6 +158,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         // 一覧を表示する前に同じ削除を再試行する。各操作は対象IDに対して
         // 冪等なので、途中まで消えていても安全に続きから実行できる。
         await resumePendingWorldDeletions()
+        await resumePendingWorldCreations()
 
         // 既存データは初期シードを待たずに表示する。大きなJSONを持つMacでも
         // 一覧が空のまま固まったように見えないようにする。
@@ -249,6 +308,41 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                 migrationError = KizunaCopy.text(
                     japanese: "前回のストーリー削除を完了できませんでした。再試行してください。",
                     english: "A previous story deletion could not be completed. Please retry."
+                )
+            }
+        }
+    }
+
+    private func resumePendingWorldCreations() async {
+        for entry in StoryWorldCreationJournal.entries {
+            guard entry.state == .staging else {
+                // 全関連データの保存が成功した後にプロセスが終了した場合は、
+                // 作成済みWorldを削除せず、残ったjournalだけを片付ける。
+                StoryWorldCreationJournal.clear(worldID: entry.worldID)
+                continue
+            }
+
+            do {
+                // 作成画面はSession/Memoryをまだ作らないが、関連データの掃除は
+                // 既存の削除経路と同じ順序・冪等性を使う。
+                try await deleteRelatedWorldData(id: entry.worldID)
+                try await worldRepo.deleteWorld(id: entry.worldID)
+                for characterID in entry.generatedCharacterIDs {
+                    let result = try await characterRepo.deleteCharacter(id: characterID)
+                    if result == .deleted || result == .needsCleanup {
+                        try await characterRepo.completeCharacterDeletionCleanup(id: characterID)
+                    }
+                }
+                StoryWorldCreationJournal.clear(worldID: entry.worldID)
+            } catch {
+                AppLog.error(
+                    "[StoryLibraryVM] pending story creation cleanup failed %@: %@",
+                    entry.worldID.uuidString,
+                    String(describing: error)
+                )
+                migrationError = KizunaCopy.text(
+                    japanese: "未完了のストーリー作成を整理できませんでした。再試行してください。",
+                    english: "An unfinished story creation could not be cleaned up. Please retry."
                 )
             }
         }
@@ -449,6 +543,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
     /// 雛形生成中にだけ作ったキャラ。保存ボタンが成功するまでRepositoryへ
     /// 書き込まず、再生成/キャンセルでライブラリーへ孤児を残さない。
     private var pendingGeneratedCharacters: [UUID: CharacterProfile] = [:]
+    private let isCreatingNewWorld: Bool
 
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
@@ -458,6 +553,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
     private let safetyPipeline = SafetyPipeline.shared
 
     init(existing: StoryWorld? = nil) {
+        self.isCreatingNewWorld = existing == nil
         if let existing {
             self.draft = existing
             self.sceneDraft = StoryScene(
@@ -787,6 +883,64 @@ final class StoryWorldCreateViewModel: ObservableObject {
         ?? CharacterRelationship(fromCharacterId: fromID, toCharacterId: toID)
     }
 
+    /// 新規作成だけを対象に、途中まで保存された関連データを可能な限り
+    /// 掃除する。各JSONは独立しているため、1つの失敗で残りの掃除を止めず、
+    /// 失敗が残った場合はjournalを次回起動へ引き継ぐ。
+    private func rollbackNewWorldCreation(
+        worldID: UUID,
+        generatedCharacterIDs: [UUID]
+    ) async -> Bool {
+        var didFail = false
+
+        do {
+            for entry in try await lorebookRepo.fetchAllEntries(storyWorldId: worldID) {
+                try await lorebookRepo.deleteEntry(id: entry.id)
+            }
+        } catch {
+            didFail = true
+            AppLog.error("[StoryWorldCreateVM] rollback lorebook cleanup failed: %@", error.localizedDescription)
+        }
+
+        do {
+            try await castRepo.deleteAllCast(storyWorldId: worldID)
+        } catch {
+            didFail = true
+            AppLog.error("[StoryWorldCreateVM] rollback cast cleanup failed: %@", error.localizedDescription)
+        }
+
+        do {
+            try await sceneRepo.deleteAllScenes(storyWorldId: worldID)
+        } catch {
+            didFail = true
+            AppLog.error("[StoryWorldCreateVM] rollback scene cleanup failed: %@", error.localizedDescription)
+        }
+
+        do {
+            try await worldRepo.deleteWorld(id: worldID)
+        } catch {
+            didFail = true
+            AppLog.error("[StoryWorldCreateVM] rollback world cleanup failed: %@", error.localizedDescription)
+        }
+
+        for characterID in generatedCharacterIDs {
+            do {
+                let result = try await characterRepo.deleteCharacter(id: characterID)
+                if result == .deleted || result == .needsCleanup {
+                    try await characterRepo.completeCharacterDeletionCleanup(id: characterID)
+                }
+            } catch {
+                didFail = true
+                AppLog.error(
+                    "[StoryWorldCreateVM] rollback generated character cleanup failed %@: %@",
+                    characterID.uuidString,
+                    error.localizedDescription
+                )
+            }
+        }
+
+        return !didFail
+    }
+
     func updateRelationship(
         from fromID: UUID,
         to toID: UUID,
@@ -859,7 +1013,12 @@ final class StoryWorldCreateViewModel: ObservableObject {
         let castSnapshot = castDrafts
         let lorebookSnapshot = lorebookDrafts
         let pendingCharactersSnapshot = pendingGeneratedCharacters
-        var didSaveWorld = false
+        if isCreatingNewWorld {
+            StoryWorldCreationJournal.markStaging(
+                worldID: draftSnapshot.id,
+                generatedCharacterIDs: Array(pendingCharactersSnapshot.keys)
+            )
+        }
         do {
             // 破壊的な置換の前に、すべての既存関連データを読み取っておく。
             // ここで読み取りに失敗した場合はWorld/Cast/Lorebook/Sceneのいずれも
@@ -882,7 +1041,6 @@ final class StoryWorldCreateViewModel: ObservableObject {
             draft.safetyRules = world.safetyRules
             world.updatedAt = Date()
             try await worldRepo.saveWorld(world)
-            didSaveWorld = true
             // Cast 保存。Repository側の一括置換を使い、deleteAllCastの後に
             // 1件ずつ保存して途中で失敗する部分更新を避ける。
             try await castRepo.replaceCast(castSnapshot, storyWorldId: world.id)
@@ -919,23 +1077,48 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 opening.updatedAt = Date()
                 try await sceneRepo.saveScene(opening)
             }
+            if isCreatingNewWorld {
+                StoryWorldCreationJournal.markCommitted(worldID: world.id)
+            }
             pendingGeneratedCharacters.removeAll()
+            if isCreatingNewWorld {
+                StoryWorldCreationJournal.clear(worldID: world.id)
+            }
             return world
         } catch {
             AppLog.error("[StoryWorldCreateVM] save failed: %@", error.localizedDescription)
-            // Worldを書けていない場合は、この画面だけが作ったキャラを戻す。
-            // Worldまで確定済みなら、関連Castを保持したまま次回保存で再開できる。
-            // ここでpendingをdiscardすると、保存済みWorldのcharacterIdsだけが
-            // 残る参照切れになる。部分保存後は生成Profileを保全し、次回保存で
-            // Cast/Lorebook/Sceneを再試行できる状態にする。
-            if !didSaveWorld {
-                await discardPendingGeneratedCharacters()
+            let rollbackSucceeded: Bool?
+            if isCreatingNewWorld {
+                let didRollback = await rollbackNewWorldCreation(
+                    worldID: draftSnapshot.id,
+                    generatedCharacterIDs: Array(pendingCharactersSnapshot.keys)
+                )
+                rollbackSucceeded = didRollback
+                if didRollback {
+                    StoryWorldCreationJournal.clear(worldID: draftSnapshot.id)
+                } else {
+                    StoryWorldCreationJournal.markStaging(
+                        worldID: draftSnapshot.id,
+                        generatedCharacterIDs: Array(pendingCharactersSnapshot.keys)
+                    )
+                }
             } else {
+                rollbackSucceeded = nil
+                // 編集失敗では既存Worldを推測で削除しない。入力を残したまま
+                // 再試行できるよう、既存の作成画面を維持する。
                 pendingGeneratedCharacters.removeAll()
             }
             saveError = KizunaCopy.text(
-                japanese: "保存に失敗しました。入力内容と保存先を確認して、もう一度試してください。",
-                english: "The story could not be saved. Check the content and storage, then try again."
+                japanese: rollbackSucceeded == true
+                    ? "保存に失敗したため、新規ストーリーを取り消しました。入力を確認して、もう一度試してください。"
+                    : rollbackSucceeded == false
+                        ? "保存に失敗し、作成途中のデータを一部整理できませんでした。次回起動時に整理を再試行します。"
+                        : "保存に失敗しました。入力内容と保存先を確認して、もう一度試してください。",
+                english: rollbackSucceeded == true
+                    ? "The new story was rolled back after saving failed. Check the input and try again."
+                    : rollbackSucceeded == false
+                        ? "Saving failed and some unfinished data could not be cleaned up. Cleanup will retry next time."
+                        : "The story could not be saved. Check the content and storage, then try again."
             )
             return nil
         }

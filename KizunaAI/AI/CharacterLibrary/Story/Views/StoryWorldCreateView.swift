@@ -117,6 +117,7 @@ struct StoryWorldCreateView: View {
     private var header: some View {
         HStack {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) {
+                guard !vm.isSaving else { return }
                 Task {
                     await vm.discardPendingGeneratedCharacters()
                     dismiss()
