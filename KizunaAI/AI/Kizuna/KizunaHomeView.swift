@@ -20,6 +20,7 @@ struct KizunaHomeView: View {
     @State private var pendingPersonaRecovery = false
     @State private var presentedThread: PersonaThread?
     @State private var selectedStoryWorld: StoryWorld?
+    @State private var editingStoryWorld: StoryWorld?
     @State private var pendingStoryOpen: PendingStoryOpen?
     @State private var activeStoryWorld: StoryWorld?
     @State private var activeStorySessionID: UUID?
@@ -166,14 +167,39 @@ struct KizunaHomeView: View {
             )
             .viukAdaptiveSheetSizing(minWidth: 820, minHeight: 720)
         }
-        .sheet(item: $selectedStoryWorld, onDismiss: presentPendingStory) { world in
+        .sheet(item: $selectedStoryWorld, onDismiss: {
+            Task { await storyLibraryVM.reload() }
+            presentPendingStory()
+        }) { world in
             StoryWorldDetailView(
                 world: world,
                 onStartSession: { selectedStoryWorld = nil; pendingStoryOpen = PendingStoryOpen(world: $0, sessionID: nil, startsNewSession: false) },
                 onResumeSession: { selectedStoryWorld = nil; pendingStoryOpen = PendingStoryOpen(world: $0, sessionID: $1, startsNewSession: false) },
-                onStartNewSession: { selectedStoryWorld = nil; pendingStoryOpen = PendingStoryOpen(world: $0, sessionID: nil, startsNewSession: true) }
+                onStartNewSession: { selectedStoryWorld = nil; pendingStoryOpen = PendingStoryOpen(world: $0, sessionID: nil, startsNewSession: true) },
+                onEdit: { world in
+                    selectedStoryWorld = nil
+                    editingStoryWorld = world
+                },
+                onDelete: {
+                    try await storyLibraryVM.delete(id: world.id)
+                    selectedStoryWorld = nil
+                }
             )
             .viukAdaptiveSheetSizing(minWidth: 620, minHeight: 720)
+        }
+        .sheet(item: $editingStoryWorld, onDismiss: {
+            Task { await storyLibraryVM.reload() }
+        }) { world in
+            StoryWorldCreateView(
+                existing: world,
+                onSaved: { _ in
+                    Task {
+                        await storyLibraryVM.reload()
+                        editingStoryWorld = nil
+                    }
+                }
+            )
+            .viukAdaptiveSheetSizing(minWidth: 680, minHeight: 720)
         }
 #if os(iOS)
         .fullScreenCover(item: $presentedThread) { thread in
