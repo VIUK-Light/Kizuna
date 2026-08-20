@@ -13,6 +13,7 @@ struct StoryGenerationModelPill: View {
     private let onOpenSettings: () -> Void
     @ObservedObject private var localModelManager = LocalAssistantModelManager.shared
     @State private var isShowingDetails = false
+    @State private var detailsModel: StoryGenerationModel?
     @State private var nagiAvailability = StoryGemma31BAPIService.shared.availability
 
     init(vm: StorySessionViewModel, onOpenSettings: @escaping () -> Void = {}) {
@@ -27,6 +28,7 @@ struct StoryGenerationModelPill: View {
                     if isModelSelectable(model) {
                         vm.generationModel = model
                     } else {
+                        detailsModel = model
                         isShowingDetails = true
                     }
                 } label: {
@@ -43,6 +45,7 @@ struct StoryGenerationModelPill: View {
             }
             Divider()
                 Button {
+                    detailsModel = vm.generationModel
                     isShowingDetails = true
                 } label: {
                     Label(storyCopy("モデル詳細", "Model details"), systemImage: "info.circle")
@@ -122,20 +125,24 @@ struct StoryGenerationModelPill: View {
         vm.applyTemporaryGenerationModel(fallback)
     }
 
+    private var modelForDetails: StoryGenerationModel {
+        detailsModel ?? vm.generationModel
+    }
+
     private var modelDetailPopover: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(vm.generationModel.detailLabel)
+            Text(modelForDetails.detailLabel)
                 .font(.headline.weight(.bold))
                 .foregroundStyle(.primary)
-            Text(modelShortDescription(vm.generationModel))
+            Text(modelShortDescription(modelForDetails))
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(modelAvailabilityText(vm.generationModel))
+            Text(modelAvailabilityText(modelForDetails))
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(modelAvailabilityColor(vm.generationModel))
+                .foregroundStyle(modelAvailabilityColor(modelForDetails))
                 .fixedSize(horizontal: false, vertical: true)
-            if !isModelSelectable(vm.generationModel) {
+            if !isModelSelectable(modelForDetails) {
                 Button {
                     isShowingDetails = false
                     onOpenSettings()
@@ -153,7 +160,7 @@ struct StoryGenerationModelPill: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if vm.generationModel == .e4b {
+            if modelForDetails == .e4b {
                 Divider().opacity(0.35)
                 Label(
                     ioriRuntimeStatusLabel,
