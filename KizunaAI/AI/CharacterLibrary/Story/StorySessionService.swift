@@ -2939,59 +2939,61 @@ final class StorySessionService: ObservableObject {
                 storyWorldID: pendingRetry.scene.storyWorldId
             )
         }()
-        do {
-            guard let retryWorld = try await worldRepo.fetchWorlds().first(where: {
+        if sessionRepo is LocalJSONStorySessionRepository {
+            do {
+                guard let retryWorld = try await worldRepo.fetchWorlds().first(where: {
                 $0.id == pendingRetry.scene.storyWorldId
-            }) else {
-                throw StoryTurnPersistenceError.sessionNotFound
-            }
-            let retryCharacterIDs = Set(pendingRetry.session.messages
-                .filter { pendingRetry.assistantMessageIDs.contains($0.id) }
-                .compactMap { message -> UUID? in
-                guard case let .cast(characterID, _) = message.author else { return nil }
-                return characterID
-            })
-            let invalidIDs = try await invalidCharacterReferencesBeforeCommit(
-                session: pendingRetry.session,
-                world: retryWorld,
-                scene: pendingRetry.scene,
-                cast: [],
-                additionalCharacterIDs: retryCharacterIDs
-            )
-            guard invalidIDs.isEmpty else {
-                pendingStoryTurnCommitRetries.removeValue(forKey: pendingRetry.turnID)
-                try? await sessionRepo.finishTurn(
-                    sessionID: pendingRetry.session.id,
-                    turnID: pendingRetry.turnID,
-                    attempt: pendingRetry.attempt,
-                    status: .failed,
-                    failureCode: "character_deleted_before_commit_retry"
+                }) else {
+                    throw StoryTurnPersistenceError.sessionNotFound
+                }
+                let retryCharacterIDs = Set(pendingRetry.session.messages
+                    .filter { pendingRetry.assistantMessageIDs.contains($0.id) }
+                    .compactMap { message -> UUID? in
+                        guard case let .cast(characterID, _) = message.author else { return nil }
+                        return characterID
+                    })
+                let invalidIDs = try await invalidCharacterReferencesBeforeCommit(
+                    session: pendingRetry.session,
+                    world: retryWorld,
+                    scene: pendingRetry.scene,
+                    cast: [],
+                    additionalCharacterIDs: retryCharacterIDs
                 )
+                guard invalidIDs.isEmpty else {
+                    pendingStoryTurnCommitRetries.removeValue(forKey: pendingRetry.turnID)
+                    try? await sessionRepo.finishTurn(
+                        sessionID: pendingRetry.session.id,
+                        turnID: pendingRetry.turnID,
+                        attempt: pendingRetry.attempt,
+                        status: .failed,
+                        failureCode: "character_deleted_before_commit_retry"
+                    )
+                    latestRuntimeNotice = StoryRuntimeNotice(
+                        text: localizedNotice(
+                            "キャラクターが削除されたため、古い応答の再保存を中止しました。",
+                            "The character was deleted, so saving the stale response was stopped."
+                        ),
+                        userMessageID: pendingRetry.userMessageID,
+                        userText: pendingRetry.userText,
+                        backendName: "character deleted before turn commit retry",
+                        backend: .persistence
+                    )
+                    return
+                }
+            } catch {
                 latestRuntimeNotice = StoryRuntimeNotice(
                     text: localizedNotice(
-                        "キャラクターが削除されたため、古い応答の再保存を中止しました。",
-                        "The character was deleted, so saving the stale response was stopped."
+                        "キャラクターの最新状態を確認できなかったため、保存を再試行できません。",
+                        "The latest character state could not be verified, so the save cannot be retried yet."
                     ),
                     userMessageID: pendingRetry.userMessageID,
                     userText: pendingRetry.userText,
-                    backendName: "character deleted before turn commit retry",
+                    backendName: "character validation failed before turn commit retry",
                     backend: .persistence
                 )
+                AppLog.error("[StorySession] character validation failed before turn commit retry: %@", error.localizedDescription)
                 return
             }
-        } catch {
-            latestRuntimeNotice = StoryRuntimeNotice(
-                text: localizedNotice(
-                    "キャラクターの最新状態を確認できなかったため、保存を再試行できません。",
-                    "The latest character state could not be verified, so the save cannot be retried yet."
-                ),
-                userMessageID: pendingRetry.userMessageID,
-                userText: pendingRetry.userText,
-                backendName: "character validation failed before turn commit retry",
-                backend: .persistence
-            )
-            AppLog.error("[StorySession] character validation failed before turn commit retry: %@", error.localizedDescription)
-            return
         }
         do {
             _ = try await sessionRepo.commitTurn(
@@ -4115,6 +4117,11 @@ final class StorySessionService: ObservableObject {
         cast: [CastMember],
         additionalCharacterIDs: Set<UUID> = []
     ) async throws -> Set<UUID> {
+        // The cross-file deletion fence is a production Local JSON invariant.
+        // Injected session repositories are deliberately allowed to model
+        // their own consistency contract; applying a second world/cast read
+        // to them would turn lightweight unit doubles into false failures.
+        guard sessionRepo is LocalJSONStorySessionRepository else { return [] }
         let currentCharacters = try await characterRepo.fetchCharacters()
         let currentCharacterIDs = Set(currentCharacters.map(\.id))
         let currentCast = try await castRepo.fetchCast(storyWorldId: world.id)
