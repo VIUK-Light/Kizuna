@@ -29,10 +29,9 @@ final class MockSmallModelClassifier: SmallModelClassifying {
     }
 }
 
-/// Runs auxiliary prompts through the currently selected local runtime. The
-/// existing Mock remains an explicit fallback when no validated local model is
-/// executable; production composition no longer pretends that the fallback
-/// is a 270M model.
+/// Runs auxiliary prompts through the currently selected local runtime. When
+/// no validated artifact is executable this returns nil; production callers do
+/// not convert that absence into a fabricated 270M result.
 enum LocalAuxiliaryAI {
     @MainActor
     static func generate(
