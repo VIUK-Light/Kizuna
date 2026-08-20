@@ -1938,9 +1938,17 @@ final class StorySessionViewModel: ObservableObject {
         // world.id, which made changing Session A silently change Session B.
         self.generationModelKey = "storySessionGenerationModel.\(session.id.uuidString)"
         let legacyWorldKey = "storySessionGenerationModel.\(world.id.uuidString)"
-        let stored = UserDefaults.standard.string(forKey: generationModelKey)
-            ?? UserDefaults.standard.string(forKey: legacyWorldKey)
+        let sessionStored = UserDefaults.standard.string(forKey: generationModelKey)
+        let legacyStored = UserDefaults.standard.string(forKey: legacyWorldKey)
+        let stored = sessionStored ?? legacyStored
         let savedModel = stored.flatMap(StoryGenerationModel.init(rawValue:)) ?? .e4b
+        // Migrate the legacy World-scoped preference into this Session's key
+        // immediately. Keeping the old key available lets other existing
+        // sessions migrate independently, while this session no longer
+        // depends on a setting shared by future branches.
+        if sessionStored == nil, legacyStored != nil {
+            UserDefaults.standard.set(savedModel.rawValue, forKey: generationModelKey)
+        }
         self.preferredGenerationModel = savedModel
         self.generationModel = savedModel
         registerDebugRestSuggestionObserver()
