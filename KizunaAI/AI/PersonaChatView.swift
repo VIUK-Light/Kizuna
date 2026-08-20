@@ -244,6 +244,7 @@ struct PersonaChatView: View {
         ) {
             Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
                 if let thread = pendingThreadDeletion {
+                    service.removeGenerationState(for: thread.id)
                     store.deleteThread(id: thread.id)
                 }
                 pendingThreadDeletion = nil
@@ -253,8 +254,8 @@ struct PersonaChatView: View {
             }
         } message: {
             Text(KizunaCopy.text(
-                japanese: "会話本文もこの端末から削除されます。",
-                english: "The conversation text will also be deleted from this device."
+                japanese: "会話本文もこの端末から削除されます。生成中の場合は生成も停止します。",
+                english: "The conversation text will also be deleted from this device. Any active generation will be stopped."
             ))
         }
         .alert(
@@ -1317,8 +1318,7 @@ struct PersonaChatView: View {
         // IDだけが一瞬残る遷移でも、別スレッドへプレビューを漏らさない。
         let isGeneratingThisThread = service.activeGenerationThreadID == thread.id
             && service.phase == .thinking
-        let isErrorThisThread = service.lastErrorThreadID == thread.id
-            && isGenerationError
+        let generationFailure = service.generationFailure(for: thread.id)
         let displayProfile = avatarProfile(for: thread)
         let visibleMessages = thread.messages.filter { msg in
             return !(msg.role == .assistant && PersonaMessage.isPendingAssistantText(msg.text))
@@ -1338,8 +1338,8 @@ struct PersonaChatView: View {
                             streamingPreview(personaProfile: displayProfile)
                                 .id("streaming-preview")
                         }
-                        if isErrorThisThread, case let .error(message) = service.phase {
-                            generationError(message)
+                        if let generationFailure {
+                            generationError(generationFailure.message, threadID: thread.id)
                                 .id("generation-error")
                         }
                         Color.clear.frame(height: 4).id("bottom")
@@ -1436,11 +1436,6 @@ struct PersonaChatView: View {
         }
     }
 
-    private var isGenerationError: Bool {
-        if case .error = service.phase { return true }
-        return false
-    }
-
     private func streamingPreview(personaProfile: PersonaProfile) -> some View {
         let preview = service.streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines)
         return HStack(alignment: .bottom, spacing: 6) {
@@ -1486,7 +1481,7 @@ struct PersonaChatView: View {
         .accessibilityValue(Text(preview))
     }
 
-    private func generationError(_ message: String) -> some View {
+    private func generationError(_ message: String, threadID: UUID) -> some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
@@ -1505,13 +1500,14 @@ struct PersonaChatView: View {
                     .foregroundStyle(.tertiary)
                 HStack(spacing: 8) {
                     Button(KizunaCopy.text(japanese: "同じ内容を再送信", english: "Try again")) {
-                        service.retryLastMessage()
+                        service.retryLastMessage(for: threadID)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .frame(minHeight: 44)
+                    .disabled(service.phase == .thinking)
                     Button(KizunaCopy.text(japanese: "閉じる", english: "Dismiss")) {
-                        service.dismissError()
+                        service.dismissError(for: threadID)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
