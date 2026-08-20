@@ -31,10 +31,9 @@ struct LocalAssistantInstalledModel: Codable, Equatable, Hashable, Identifiable,
     let id: String
     let fileName: String
     let relativePath: String
+    let displayName: String
     let fileSize: Int64
     let sourceURL: String?
-
-    var displayName: String { fileName }
 
     var url: URL {
         KizunaDataMigration.localModelsURL.appendingPathComponent(relativePath)
@@ -372,6 +371,11 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             .appendingPathComponent(LocalAssistantModelProfile.storageFolderName, isDirectory: true)
     }
 
+    var additionalModelDirectoryURL: URL {
+        KizunaDataMigration.localModelsURL
+            .appendingPathComponent("AdditionalModels", isDirectory: true)
+    }
+
     private var downloadStateURL: URL {
         installationDirectoryURL.appendingPathComponent(Self.downloadStateFileName)
     }
@@ -396,7 +400,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private var currentModelCandidateDirectories: [URL] {
-        var directories = [installationDirectoryURL]
+        var directories = [installationDirectoryURL, additionalModelDirectoryURL]
         directories.append(contentsOf: buildCandidateDirectories(folderNames: [LocalAssistantModelProfile.storageFolderName]))
         var seen = Set<String>()
         return directories.filter { seen.insert($0.standardizedFileURL.path).inserted }
@@ -433,6 +437,69 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         runtimeAvailabilitySnapshot = .checking
         refreshEnvironment()
         return true
+    }
+
+    /// Import a local artifact as a separate validated model. The source is
+    /// copied into a managed directory with a unique filename; the currently
+    /// active model and its download transaction are never replaced.
+    @discardableResult
+    func importAdditionalModel(from sourceURL: URL) async -> Bool {
+        let fileManager = FileManager.default
+        let accessGranted = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessGranted { sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        guard sourceURL.isFileURL,
+              fileManager.fileExists(atPath: sourceURL.path),
+              let sourceFileName = safeModelFileName(sourceURL.lastPathComponent) else {
+            lastErrorMessage = "モデルファイルを読み込めませんでした。"
+            return false
+        }
+
+        let importedFileName = UUID().uuidString + "-" + sourceFileName
+        let destinationURL = additionalModelDirectoryURL.appendingPathComponent(importedFileName)
+        do {
+            try fileManager.createDirectory(
+                at: additionalModelDirectoryURL,
+                withIntermediateDirectories: true
+            )
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            let size = (try destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+                .map(Int64.init) ?? 0
+            try Self.validateDownloadedCandidate(
+                at: destinationURL,
+                fileName: importedFileName,
+                reportedExpectedBytes: size,
+                trustedArtifact: nil
+            )
+            let availability = await LocalAssistantRuntimeBridge.shared.performSelfCheck(
+                installedModelURL: destinationURL
+            )
+            guard availability == .executable || availability == .savedOnly else {
+                try? fileManager.removeItem(at: destinationURL)
+                lastErrorMessage = "追加したモデルをこの端末で実行できませんでした。"
+                return false
+            }
+            refreshInstalledState()
+            if installedModelURL == nil,
+               let imported = installedModels.first(where: { $0.fileName == importedFileName }) {
+                _ = selectInstalledModel(id: imported.id)
+            }
+            lastErrorMessage = nil
+            setStatus(.modelSaved, japaneseMessage: "追加モデルを検証して保存しました")
+            return true
+        } catch {
+            try? fileManager.removeItem(at: destinationURL)
+            lastErrorMessage = "追加モデルを検証できませんでした: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func modelURL(forArtifactID artifactID: String?) -> URL? {
+        guard let artifactID, !artifactID.isEmpty else { return installedModelURL }
+        return installedModels.first(where: {
+            $0.id == artifactID || $0.relativePath == artifactID || $0.fileName == artifactID
+        })?.url
     }
 
     var legacyInstalledModelURL: URL? {
@@ -1154,6 +1221,17 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             }
         }
 
+        if let removedURL = installedModelURL,
+           removedURL.deletingLastPathComponent().standardizedFileURL == additionalModelDirectoryURL.standardizedFileURL {
+            installedModels.removeAll { $0.url.standardizedFileURL == removedURL.standardizedFileURL }
+            activeModelID = nil
+            defaults.removeObject(forKey: activeModelIDKey)
+            resolvedInstalledModelURL = nil
+            refreshInstalledState()
+            setStatus(.modelDeleted, japaneseMessage: "追加ローカルモデルを削除しました")
+            return true
+        }
+
         clearPersistedDownloadState(removeResumeData: true)
         AILegacyCompatibility.removeValue(
             primaryKey: installedFileNameKey,
@@ -1528,6 +1606,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                         id: relativePath,
                         fileName: standardized.lastPathComponent,
                         relativePath: relativePath,
+                        displayName: standardized.lastPathComponent,
                         fileSize: fileSize,
                         sourceURL: sourceURL
                     )
@@ -1572,7 +1651,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             for directory in currentModelCandidateDirectories {
                 let candidate = directory.appendingPathComponent(storedFileName)
                 if isAvailableInstalledModel(at: candidate) {
-                    return relocateIfNeeded(candidate)
+                    return directory.standardizedFileURL == additionalModelDirectoryURL.standardizedFileURL
+                        ? candidate
+                        : relocateIfNeeded(candidate)
                 }
             }
         }
@@ -1594,7 +1675,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             }
 
             if let found = sortedModels.first {
-                return relocateIfNeeded(found)
+                return found.deletingLastPathComponent().standardizedFileURL == additionalModelDirectoryURL.standardizedFileURL
+                    ? found
+                    : relocateIfNeeded(found)
             }
         }
 
@@ -1683,7 +1766,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func relocateIfNeeded(_ sourceURL: URL) -> URL {
-        guard sourceURL.deletingLastPathComponent().standardizedFileURL != installationDirectoryURL.standardizedFileURL else {
+        guard sourceURL.deletingLastPathComponent().standardizedFileURL != installationDirectoryURL.standardizedFileURL,
+              sourceURL.deletingLastPathComponent().standardizedFileURL != additionalModelDirectoryURL.standardizedFileURL else {
             return sourceURL
         }
 
@@ -1704,8 +1788,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     }
 
     private func isAvailableInstalledModel(at url: URL) -> Bool {
-        guard !hasInvalidPersistedDownloadState else { return false }
-        guard !isBlockedByIncompleteDownloadState(url) else { return false }
+        let isPrimaryDownloadArtifact = url.deletingLastPathComponent().standardizedFileURL == installationDirectoryURL.standardizedFileURL
+        guard !isPrimaryDownloadArtifact || !hasInvalidPersistedDownloadState else { return false }
+        guard !isPrimaryDownloadArtifact || !isBlockedByIncompleteDownloadState(url) else { return false }
         return isValidModelFile(at: url, expectedBytes: expectedBytesForCompletedModel(at: url))
     }
 

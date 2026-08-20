@@ -1068,6 +1068,9 @@ private final class LocalAIProvider: AIProvider {
         request: AIGenerationRequest,
         configuration: AIModelConfiguration
     ) async throws -> AIGenerationResponse {
+        let selectedModelURL = LocalAssistantModelManager.shared.modelURL(
+            forArtifactID: configuration.identity.artifactID
+        )
         let result = await LocalAssistantRuntimeBridge.shared.generateReply(
             prompt: request.userPrompt,
             contextPrompt: nil,
@@ -1079,6 +1082,7 @@ private final class LocalAIProvider: AIProvider {
             safetySnapshot: nil,
             advancedSettings: GemmaAdvancedSettings.default,
             overrideSystemPrompt: request.systemPrompt,
+            overrideModelURL: selectedModelURL,
             seedOverride: request.seed.map(UInt32.init),
             onUpdate: request.onUpdate
         )

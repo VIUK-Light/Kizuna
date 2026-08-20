@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct KizunaSettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -19,6 +20,7 @@ struct KizunaSettingsView: View {
     @State private var showClearProfileAlert = false
     @State private var showResetLaunchAlert = false
     @State private var isShowingProfile = false
+    @State private var isImportingLocalModel = false
     @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
     @AppStorage("kizuna.debug.restSuggestion.enabled") private var debugRestSuggestionEnabled = false
 
@@ -136,6 +138,22 @@ struct KizunaSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+
+                    Button {
+                        isImportingLocalModel = true
+                    } label: {
+                        Label(
+                            KizunaCopy.text(japanese: "モデルファイルを追加", english: "Add a model file"),
+                            systemImage: "plus.circle"
+                        )
+                    }
+                    .disabled(modelManager.isDownloading)
+                    Text(KizunaCopy.text(
+                        japanese: "既存モデルを置き換えず、GGUF・LiteRT-LM・対応binを検証して追加します。",
+                        english: "Add a validated GGUF, LiteRT-LM, or supported bin without replacing existing models."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     Picker(KizunaCopy.text(japanese: "モデルの入手先", english: "Model source"), selection: $modelSourceSelection) {
                         ForEach(LocalModelSourceSelection.allCases) { source in
@@ -413,6 +431,26 @@ struct KizunaSettingsView: View {
                 $0.url == modelManager.resolvedSourceURLString
             }) ? .standard : .huggingFace
             modelManager.refreshEnvironment()
+        }
+        .fileImporter(
+            isPresented: $isImportingLocalModel,
+            allowedContentTypes: [.data],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                Task { @MainActor in
+                    let imported = await modelManager.importAdditionalModel(from: url)
+                    saveMessageIsError = !imported
+                    saveMessage = imported
+                        ? KizunaCopy.text(japanese: "追加モデルを検証して保存しました", english: "The additional model was validated and saved")
+                        : KizunaCopy.text(japanese: "追加モデルを保存できませんでした", english: "The additional model could not be saved")
+                }
+            case .failure(let error):
+                saveMessageIsError = true
+                saveMessage = error.localizedDescription
+            }
         }
     }
 
