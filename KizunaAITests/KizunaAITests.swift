@@ -33,6 +33,23 @@ private final class FileIOTestProbe: @unchecked Sendable {
 }
 
 @MainActor
+private final class RegistryTestProvider: AIProvider {
+    let providerID: AIProviderID = .openAICompatible
+
+    func generate(
+        request: AIGenerationRequest,
+        configuration: AIModelConfiguration
+    ) async throws -> AIGenerationResponse {
+        AIGenerationResponse(
+            text: "stub response",
+            identity: configuration.identity,
+            finishReason: "STOP",
+            usage: nil
+        )
+    }
+}
+
+@MainActor
 final class KizunaAITests: XCTestCase {
     private enum LocalJSONStoreTestError: Error {
         case mutationFailed
@@ -6482,6 +6499,40 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(registry.register(configuration))
         XCTAssertEqual(registry.configuration(id: configuration.id)?.identity.stableID, "openAICompatible/custom-story-model/sha256:abc")
         XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
+    }
+
+    func testAIModelRouterUsesPreferredConfigurationAndProvider() async throws {
+        let suiteName = "KizunaAIModelRouterTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let registry = AIModelRegistry(defaults: defaults)
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "stub-model",
+                displayName: "Stub model"
+            ),
+            roles: [.persona],
+            endpoint: "https://example.invalid/v1",
+            priority: 50
+        )
+        XCTAssertTrue(registry.register(configuration))
+
+        let router = AIModelRouter(registry: registry)
+        router.register(RegistryTestProvider())
+        let response = try await router.generate(
+            request: AIGenerationRequest(
+                systemPrompt: "system",
+                userPrompt: "hello"
+            ),
+            role: .persona,
+            preferredConfigurationID: configuration.id
+        )
+
+        XCTAssertEqual(response.text, "stub response")
+        XCTAssertEqual(response.identity, configuration.identity)
+        XCTAssertEqual(response.finishReason, "STOP")
     }
 
     func testPersonaUnfinishedAssistantIsNotPersistedBeforeFinalization() throws {
