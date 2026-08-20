@@ -376,6 +376,7 @@ final class StorySessionService: ObservableObject {
     @Published private(set) var streamingSpeakerName: String?
     @Published private(set) var streamingStatusText: String = ""
     @Published private(set) var savedTurnRevision: Int = 0
+    @Published private(set) var lastCommittedSession: StorySession?
     /// 危険な相談の可能性を検知した時だけ、会話とは別にUIへ渡す。
     @Published private(set) var latestSafetyConcern: SafetyConcern?
     /// エラー本文をStorySessionへ保存せず、現在の画面だけに表示する。
@@ -900,6 +901,7 @@ final class StorySessionService: ObservableObject {
         ensureTurnOwnerRegistered()
         phase = .thinking
         streamingResponse = ""
+        lastCommittedSession = nil
         streamingSpeakerName = nil
         streamingStatusText = statusText("準備中", "Preparing")
         latestSafetyConcern = nil
@@ -1583,6 +1585,7 @@ final class StorySessionService: ObservableObject {
                     assistantMessageIDs: [narration.id],
                     memoryRetries: []
                 )
+                lastCommittedSession = session
             } catch {
                 // 入力自体は先の保存で確定しているが、安全ブロックの案内を
                 // 保存できなかった場合は成功ターンとして扱わない。本文を
@@ -2519,6 +2522,7 @@ final class StorySessionService: ObservableObject {
                 assistantMessageIDs: turnMessages.map(\.id),
                 memoryRetries: pendingMemoryRetry.map { [$0] } ?? []
             )
+            lastCommittedSession = session
         } catch {
             AppLog.error("[StorySession] turn commit failed: %@", error.localizedDescription)
             let retry = StoryTurnCommitRetry(

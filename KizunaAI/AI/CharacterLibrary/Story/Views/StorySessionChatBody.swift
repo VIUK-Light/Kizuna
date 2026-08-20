@@ -64,6 +64,7 @@ struct StorySessionChatBody: View {
                                     streamingPreview
                                 }
                                 bootstrapWarningCard
+                                refreshErrorCard
                                 sendPreparationErrorCard
                                 interruptedTurnCard
                                 // 最新のキャラクター発話の後ろに、会話の一部として表示する。
@@ -326,6 +327,33 @@ struct StorySessionChatBody: View {
             )
             .accessibilityElement(children: .contain)
             .id("story.bootstrap-warning")
+        }
+    }
+
+    @ViewBuilder
+    private var refreshErrorCard: some View {
+        if let error = vm.refreshError {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(storyCopy("保存済みの返信を表示中です", "Showing the saved reply"))
+                        .font(.subheadline.weight(.bold))
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(storyText.opacity(0.78))
+                    Button(storyCopy("再読み込み", "Reload")) {
+                        Task { await vm.refreshAfterTurn() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(minHeight: 44)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .id("story.refresh-error")
         }
     }
 

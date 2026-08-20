@@ -2530,6 +2530,13 @@ final class StorySessionViewModel: ObservableObject {
             refreshError = nil
             return true
         } catch {
+            if let committed = service.lastCommittedSession,
+               committed.id == session.id {
+                // Read-after-write may fail even though commitTurn already
+                // returned the durable snapshot. Keep that snapshot visible
+                // instead of making a saved reply disappear from the chat.
+                self.session = committed
+            }
             refreshError = KizunaCopy.text(
                 japanese: "保存状態を読み込めませんでした。送信前に再試行してください。",
                 english: "The saved state could not be loaded. Retry before sending."
