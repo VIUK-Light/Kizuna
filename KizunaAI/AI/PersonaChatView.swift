@@ -107,15 +107,18 @@ struct PersonaChatView: View {
                 recoveryBanners
                 compactStoryList
             } else if horizontalSizeClass == .compact {
-                compactTopSwitchBar
-                Divider()
-                recoveryBanners
                 if compactShowsChat, store.activeThread != nil {
+                    recoveryBanners
                     compactChat
-                } else if showsStoryActions {
-                    compactStoryList
                 } else {
-                    compactConversationList
+                    compactTopSwitchBar
+                    Divider()
+                    recoveryBanners
+                    if showsStoryActions {
+                        compactStoryList
+                    } else {
+                        compactConversationList
+                    }
                 }
             } else {
                 recoveryBanners
@@ -615,10 +618,18 @@ struct PersonaChatView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
-                Text(showsStoryActions
-                     ? KizunaCopy.text(japanese: "あなたの物語", english: "Your story")
-                     : KizunaCopy.text(japanese: "会話", english: "Conversations"))
-                    .font(.headline.weight(.bold))
+                if let active = store.activeThread {
+                    let displayProfile = avatarProfile(for: active)
+                    HStack(spacing: 7) {
+                        PersonaAvatarView(profile: displayProfile, size: 28)
+                        Text(displayProfile.name)
+                            .font(.headline.weight(.bold))
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text(KizunaCopy.text(japanese: "会話", english: "Conversations"))
+                        .font(.headline.weight(.bold))
+                }
                 Spacer()
                 if !showsStoryActions {
                     Button {
@@ -1204,8 +1215,10 @@ struct PersonaChatView: View {
     private var mainArea: some View {
         if let active = store.activeThread {
             VStack(spacing: 0) {
-                chatHeader(active)
-                Divider()
+                if horizontalSizeClass != .compact {
+                    chatHeader(active)
+                    Divider()
+                }
                 messageList(for: active)
                 Divider()
                 // Composerの入力状態はスレッド単位。Viewを再利用すると
@@ -1346,12 +1359,12 @@ struct PersonaChatView: View {
                     }
                 }
                 .onChange(of: thread.messages.count) { _, _ in
+                    let currentMessageIDs = Set(thread.messages.map(\.id))
                     if isPersonaChatNearBottom {
                         withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     } else {
-                        let currentMessageIDs = Set(thread.messages.map(\.id))
                         let newMessageIDs = currentMessageIDs.subtracting(previousMessageIDs)
                         let newAssistantMessages = thread.messages.filter { msg in
                             newMessageIDs.contains(msg.id) && msg.role == .assistant
@@ -1361,8 +1374,11 @@ struct PersonaChatView: View {
                                 unreadPersonaMessageCount += newAssistantMessages.count
                             }
                         }
-                        previousMessageIDs = currentMessageIDs
                     }
+                    // Replies received while the user was at the latest position
+                    // are already seen. Keep the baseline current in both paths
+                    // so a later off-bottom reply cannot recount them.
+                    previousMessageIDs = currentMessageIDs
                 }
                 .onChange(of: service.streamingResponse) { _, _ in
                     guard isGeneratingThisThread, isPersonaChatNearBottom else { return }

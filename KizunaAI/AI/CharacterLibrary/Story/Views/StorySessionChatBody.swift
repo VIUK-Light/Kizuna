@@ -33,6 +33,7 @@ struct StorySessionChatBody: View {
     @State private var isShowingUnavailableModelAlert = false
     @State private var isStoryChatNearLatest = true
     @State private var unreadStoryMessageCount = 0
+    @State private var previousStoryMessageIDs: Set<UUID> = []
     @FocusState private var composerFocused: Bool
 
     init(vm: StorySessionViewModel, isShowingRestHelp: Binding<Bool>) {
@@ -72,6 +73,9 @@ struct StorySessionChatBody: View {
                             .padding(18)
                         }
                         .background(storyCanvas)
+                        .onAppear {
+                            previousStoryMessageIDs = Set(vm.session.messages.map(\.id))
+                        }
                         .onScrollGeometryChange(for: Bool.self) { geometry in
                             let distanceFromBottom = geometry.contentSize.height
                                 - geometry.contentOffset.y
@@ -84,6 +88,7 @@ struct StorySessionChatBody: View {
                             }
                         }
                         .onChange(of: vm.session.messages.count) { _, _ in
+                            let currentMessageIDs = Set(vm.session.messages.map(\.id))
                             if isStoryChatNearLatest {
                                 if let last = vm.session.messages.last?.id {
                                     withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
@@ -91,8 +96,15 @@ struct StorySessionChatBody: View {
                                     }
                                 }
                             } else {
-                                unreadStoryMessageCount += 1
+                                let newMessageIDs = currentMessageIDs.subtracting(previousStoryMessageIDs)
+                                let newCastMessages = vm.session.messages.filter { message in
+                                    newMessageIDs.contains(message.id) && isUnreadStoryMessage(message)
+                                }
+                                if !newCastMessages.isEmpty {
+                                    unreadStoryMessageCount += newCastMessages.count
+                                }
                             }
+                            previousStoryMessageIDs = currentMessageIDs
                         }
                         .onChange(of: vm.bootstrapWarning) { _, warning in
                             guard warning != nil, isStoryChatNearLatest else { return }
@@ -982,7 +994,6 @@ struct StorySessionChatBody: View {
                     Text(message.text)
                         .font(.body.weight(.medium))
                         .foregroundStyle(storyText.opacity(0.82))
-                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 16)
                         .background(
@@ -993,10 +1004,17 @@ struct StorySessionChatBody: View {
                         .font(.caption2)
                         .foregroundStyle(storyMuted)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: 620, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: 680, alignment: .leading)
         }
+    }
+
+    private func isUnreadStoryMessage(_ message: StoryMessage) -> Bool {
+        if case .cast = message.author {
+            return true
+        }
+        return false
     }
 
     private func storyAccessibilityLabel(for message: StoryMessage) -> String {

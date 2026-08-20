@@ -160,19 +160,6 @@ struct StorySessionChatView: View {
                 StoryGenerationModelPill(vm: sessionVM)
             }
 
-            Menu {
-                Button(storyCopy("セッションを閉じる", "Close session")) {
-                    sessionVM?.cancelGeneration()
-                    dismiss()
-                }
-            } label: {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: horizontalSizeClass == .compact ? 21 : 23, weight: .semibold))
-                    .foregroundStyle(storyText)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(storyCopy("セッションメニュー", "Session menu"))
         }
         .padding(.horizontal, horizontalSizeClass == .compact ? 14 : 18)
         .padding(.vertical, horizontalSizeClass == .compact ? 7 : 13)
