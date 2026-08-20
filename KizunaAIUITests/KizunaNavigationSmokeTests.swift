@@ -32,8 +32,14 @@ final class KizunaNavigationSmokeTests: XCTestCase {
             app.descendants(matching: .any)["workspace.home.heading"]
                 .waitForExistence(timeout: 5)
         )
-        XCTAssertTrue(app.descendants(matching: .any)["home.persona.entry"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["home.story.entry"].exists)
+        let personaEntry = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "home.persona."))
+            .firstMatch
+        let storyEntry = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "home.story."))
+            .firstMatch
+        XCTAssertTrue(personaEntry.waitForExistence(timeout: 5))
+        XCTAssertTrue(storyEntry.waitForExistence(timeout: 5))
 
         continuationsTab.tap()
         XCTAssertTrue(
