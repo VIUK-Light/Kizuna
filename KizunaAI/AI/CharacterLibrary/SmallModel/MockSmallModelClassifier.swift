@@ -74,11 +74,11 @@ final class RuntimeSmallModelClassifier: SmallModelClassifying {
 
     func classify(text: String, labels: [String]) async -> SmallModelClassification {
         guard !labels.isEmpty else { return SmallModelClassification(label: "", confidence: 0) }
-        let prompt = """
-        Choose exactly one label from: (labels.joined(separator: ", "))
-        Return exactly LABEL|CONFIDENCE where CONFIDENCE is 0 to 1.
-        Text: (text)
-        """
+        let prompt = [
+            "Choose exactly one label from: " + labels.joined(separator: ", "),
+            "Return exactly LABEL|CONFIDENCE where CONFIDENCE is 0 to 1.",
+            "Text: " + text
+        ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 48) else {
             return await fallback.classify(text: text, labels: labels)
         }

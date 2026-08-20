@@ -136,16 +136,16 @@ final class RuntimeSceneCharacterSelector: SceneCharacterSelecting {
         guard !cast.isEmpty else { return [] }
         let candidates = cast.compactMap { member -> String? in
             guard let profile = characterIndex[member.characterId] else { return nil }
-            return "(member.characterId.uuidString)|(profile.visibleName)|(member.roleInStory.rawValue)"
+            return member.characterId.uuidString + "|" + profile.visibleName + "|" + member.roleInStory.rawValue
         }.joined(separator: "\n")
-        let prompt = """
-        Choose up to (max(1, maxActive)) character UUIDs who should be active in this scene.
-        Return only comma-separated UUIDs.
-        User input: (userInput)
-        Scene: (currentScene.title) / (currentScene.mood)
-        Cast:
-        (candidates)
-        """
+        let prompt = [
+            "Choose up to " + String(max(1, maxActive)) + " character UUIDs who should be active in this scene.",
+            "Return only comma-separated UUIDs.",
+            "User input: " + userInput,
+            "Scene: " + currentScene.title + " / " + currentScene.mood,
+            "Cast:",
+            candidates
+        ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: max(64, maxActive * 48)) else {
             return await fallback.select(
                 userInput: userInput,
@@ -193,15 +193,15 @@ final class RuntimeSceneSummarizer: SceneSummarizing {
             case .system: author = "System"
             case .cast(_, let name): author = name
             }
-            return "(author): (message.text)"
+            return author + ": " + message.text
         }.joined(separator: "\n")
-        let prompt = """
-        Write one concise factual summary of the current story state.
-        Return only the summary, no label or explanation. Keep under 280 characters.
-        Existing summary: (currentSummary)
-        Recent transcript:
-        (transcript)
-        """
+        let prompt = [
+            "Write one concise factual summary of the current story state.",
+            "Return only the summary, no label or explanation. Keep under 280 characters.",
+            "Existing summary: " + currentSummary,
+            "Recent transcript:",
+            transcript
+        ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 96) else {
             return await fallback.updateSummary(
                 currentSummary: currentSummary,
@@ -230,13 +230,13 @@ final class RuntimeNextSceneSuggester: NextSceneSuggesting {
         completedScene: StoryScene,
         cast: [CastMember]
     ) async -> [NextSceneSuggestion] {
-        let prompt = """
-        Suggest up to three next story scenes.
-        Return one per line as TITLE|LOCATION|MOOD|GOAL, with no extra text.
-        World: (world.title) / (world.genre.displayName)
-        Story goal: (world.storyGoal)
-        Completed scene: (completedScene.title) / (completedScene.mood)
-        """
+        let prompt = [
+            "Suggest up to three next story scenes.",
+            "Return one per line as TITLE|LOCATION|MOOD|GOAL, with no extra text.",
+            "World: " + world.title + " / " + world.genre.displayName,
+            "Story goal: " + world.storyGoal,
+            "Completed scene: " + completedScene.title + " / " + completedScene.mood
+        ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 256) else {
             return await fallback.suggestNext(world: world, completedScene: completedScene, cast: cast)
         }

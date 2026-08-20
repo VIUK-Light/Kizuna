@@ -95,15 +95,15 @@ final class RuntimeMemorySelector: MemorySelecting {
     func select(query: String, candidates: [CharacterMemory], topK: Int) async -> [CharacterMemory] {
         guard !candidates.isEmpty else { return [] }
         let lines = candidates.enumerated().map { index, memory in
-            "(index): (memory.id.uuidString) | (memory.text)"
+            String(index) + ": " + memory.id.uuidString + " | " + memory.text
         }.joined(separator: "\n")
-        let prompt = """
-        Select up to (max(0, topK)) memory UUIDs relevant to the query.
-        Return only a comma-separated list of UUIDs, or NONE.
-        Query: (query)
-        Memories:
-        (lines)
-        """
+        let prompt = [
+            "Select up to " + String(max(0, topK)) + " memory UUIDs relevant to the query.",
+            "Return only a comma-separated list of UUIDs, or NONE.",
+            "Query: " + query,
+            "Memories:",
+            lines
+        ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: max(48, topK * 40)) else {
             return await fallback.select(query: query, candidates: candidates, topK: topK)
         }
@@ -131,13 +131,13 @@ final class RuntimeMemorySummarizer: MemorySummarizing {
     }
 
     func extract(userText: String, assistantText: String, character: CharacterProfile) async -> [CharacterMemory] {
-        let prompt = """
-        Extract at most one durable fact about the user from this exchange.
-        Return exactly CATEGORY|IMPORTANCE|TEXT, or NONE.
-        CATEGORY must be one of: preference, relationship, event, world, userFact, summary, safety, other.
-        User: (userText)
-        Assistant: (assistantText)
-        """
+        let prompt = [
+            "Extract at most one durable fact about the user from this exchange.",
+            "Return exactly CATEGORY|IMPORTANCE|TEXT, or NONE.",
+            "CATEGORY must be one of: preference, relationship, event, world, userFact, summary, safety, other.",
+            "User: " + userText,
+            "Assistant: " + assistantText
+        ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 128) else {
             return await fallback.extract(userText: userText, assistantText: assistantText, character: character)
         }
