@@ -86,9 +86,11 @@ final class MockMemorySummarizer: MemorySummarizing {
 /// rule-based selector the production default. UUIDs are returned so the
 /// selector cannot invent or rewrite persisted memory text.
 final class RuntimeMemorySelector: MemorySelecting {
-    private let fallback: MemorySelecting
+    /// Production returns no selection when the configured auxiliary model is
+    /// unavailable. A Mock fallback remains available through explicit DI.
+    private let fallback: MemorySelecting?
 
-    init(fallback: MemorySelecting = MockMemorySelector()) {
+    init(fallback: MemorySelecting? = nil) {
         self.fallback = fallback
     }
 
@@ -105,7 +107,7 @@ final class RuntimeMemorySelector: MemorySelecting {
             lines
         ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: max(48, topK * 40), role: .memoryRetrieval) else {
-            return await fallback.select(query: query, candidates: candidates, topK: topK)
+            return await fallback?.select(query: query, candidates: candidates, topK: topK) ?? []
         }
         let normalized = LocalAuxiliaryAI.normalized(raw)
         guard normalized.caseInsensitiveCompare("NONE") != .orderedSame else { return [] }
@@ -113,7 +115,7 @@ final class RuntimeMemorySelector: MemorySelecting {
             .split { $0 == "," || $0 == " " || $0 == "\n" }
             .compactMap { UUID(uuidString: String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
         guard !ids.isEmpty else {
-            return await fallback.select(query: query, candidates: candidates, topK: topK)
+            return await fallback?.select(query: query, candidates: candidates, topK: topK) ?? []
         }
         let allowed = Set(ids.prefix(max(0, topK)))
         return candidates.filter { allowed.contains($0.id) }
@@ -124,9 +126,11 @@ final class RuntimeMemorySelector: MemorySelecting {
 /// Invalid output is discarded through the explicit fallback rather than
 /// being coerced into a fake fact.
 final class RuntimeMemorySummarizer: MemorySummarizing {
-    private let fallback: MemorySummarizing
+    /// Production does not invent a memory when the auxiliary model is
+    /// unavailable. Tests/previews can inject the historical Mock explicitly.
+    private let fallback: MemorySummarizing?
 
-    init(fallback: MemorySummarizing = MockMemorySummarizer()) {
+    init(fallback: MemorySummarizing? = nil) {
         self.fallback = fallback
     }
 
@@ -139,7 +143,7 @@ final class RuntimeMemorySummarizer: MemorySummarizing {
             "Assistant: " + assistantText
         ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 128, role: .memoryExtraction) else {
-            return await fallback.extract(userText: userText, assistantText: assistantText, character: character)
+            return await fallback?.extract(userText: userText, assistantText: assistantText, character: character) ?? []
         }
         let parts = LocalAuxiliaryAI.normalized(raw).split(separator: "|", maxSplits: 2).map(String.init)
         guard parts.count == 3,
@@ -147,7 +151,7 @@ final class RuntimeMemorySummarizer: MemorySummarizing {
               let category = MemoryCategory(rawValue: parts[0].trimmingCharacters(in: .whitespacesAndNewlines)),
               let importance = Double(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
               importance.isFinite else {
-            return await fallback.extract(userText: userText, assistantText: assistantText, character: character)
+            return await fallback?.extract(userText: userText, assistantText: assistantText, character: character) ?? []
         }
         let text = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }

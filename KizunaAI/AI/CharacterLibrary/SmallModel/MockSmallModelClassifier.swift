@@ -82,9 +82,11 @@ enum LocalAuxiliaryAI {
 /// local runtime for a label and confidence, then falls back explicitly when
 /// the runtime is unavailable or returns an invalid contract.
 final class RuntimeSmallModelClassifier: SmallModelClassifying {
-    private let fallback: SmallModelClassifying
+    /// A fallback is injectable for previews/tests, but production defaults to
+    /// nil so an unavailable 270M artifact never masquerades as a model result.
+    private let fallback: SmallModelClassifying?
 
-    init(fallback: SmallModelClassifying = MockSmallModelClassifier()) {
+    init(fallback: SmallModelClassifying? = nil) {
         self.fallback = fallback
     }
 
@@ -96,14 +98,16 @@ final class RuntimeSmallModelClassifier: SmallModelClassifying {
             "Text: " + text
         ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 48, role: .classifier) else {
-            return await fallback.classify(text: text, labels: labels)
+            return await fallback?.classify(text: text, labels: labels)
+                ?? SmallModelClassification(label: "", confidence: 0)
         }
         let parts = LocalAuxiliaryAI.normalized(raw).split(separator: "|", maxSplits: 1).map(String.init)
         guard parts.count == 2,
               let label = labels.first(where: { $0.caseInsensitiveCompare(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame }),
               let confidence = Double(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
               confidence.isFinite else {
-            return await fallback.classify(text: text, labels: labels)
+            return await fallback?.classify(text: text, labels: labels)
+                ?? SmallModelClassification(label: "", confidence: 0)
         }
         return SmallModelClassification(label: label, confidence: min(max(confidence, 0), 1))
     }
