@@ -750,10 +750,7 @@ struct StorySessionChatBody: View {
     private func regularSceneStrip(availableHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .center, spacing: 12) {
-                Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(storyText)
-                    .lineLimit(1)
+                currentSceneLabel
                 Spacer()
                 activeCharacterChips
             }
@@ -764,12 +761,7 @@ struct StorySessionChatBody: View {
     private func compactSceneStrip(availableHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 10) {
-                Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(storyText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-                    .layoutPriority(1)
+                currentSceneLabel
                 Spacer(minLength: 4)
                 activeCharacterChips
                     .frame(maxWidth: 210, alignment: .trailing)
@@ -801,6 +793,39 @@ struct StorySessionChatBody: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+    }
+
+    private var currentSceneLabel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(currentSceneTitle)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(storyText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .layoutPriority(1)
+            if !currentSceneContext.isEmpty {
+                Text(currentSceneContext)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(storyMuted)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var currentSceneTitle: String {
+        let location = vm.session.storyState?.location.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !location.isEmpty {
+            return location
+        }
+        return vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title
+    }
+
+    private var currentSceneContext: String {
+        guard let state = vm.session.storyState else { return "" }
+        return [state.timeOfDay, state.mood, state.weather]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
     }
 
     private func sceneVisualHeight(availableHeight: CGFloat) -> CGFloat {
@@ -922,7 +947,6 @@ struct StorySessionChatBody: View {
         } label: {
             Label(storyCopy("このターンを取り消す", "Undo this turn"), systemImage: "arrow.uturn.backward")
         }
-        .keyboardShortcut("z", modifiers: [.command])
     }
 
     @ViewBuilder

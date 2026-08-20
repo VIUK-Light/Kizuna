@@ -139,8 +139,12 @@ final class PersonaChatService: ObservableObject {
     @Published private(set) var generationFailures: [UUID: GenerationFailure] = [:]
     @Published private(set) var lastCompletedGeneration: GenerationCompletion?
     @Published private(set) var cancelledRequests: [UUID: String] = [:]
+    @Published private(set) var memorySaveError: String?
 
     private var generationTask: Task<Void, Never>?
+    private var pendingMemoryTask: Task<Void, Never>? = nil
+    private var pendingMemoryTaskID: UUID? = nil
+    private var pendingMemorySaves: [UUID: [CharacterMemory]] = [:]
     private var streamSanitizationTask: Task<Void, Never>?
     /// A later runtime preview always supersedes a prior cumulative preview.
     /// This prevents a slow background sanitizer result from overwriting the
@@ -356,6 +360,9 @@ final class PersonaChatService: ObservableObject {
             return
         }
         guard isGenerationActive(generationID) else { return }
+        await waitForPendingMemoryTask()
+        await retryPendingMemorySaves()
+        guard isGenerationActive(generationID) else { return }
         guard let character = allCharacters.first(where: { $0.id == characterID }) else {
             // キャラ本体が削除されてもスレッドのスナップショットで会話を続ける。
             // 参照だけを残して永久にエラーにするのではなく、旧Personaパスへ移行する。
@@ -428,10 +435,6 @@ final class PersonaChatService: ObservableObject {
         }
         guard isGenerationActive(generationID) else { return }
 
-        // 想起したメモリーは lastUsedAt 更新
-        if !selected.isEmpty {
-            try? await memoryRepo.markUsed(ids: selected.map(\.id))
-        }
         guard isGenerationActive(generationID) else { return }
         // ── 4) PromptBuilder ──
         let recent = await MainActor.run { () -> [PersonaMessage] in
@@ -529,6 +532,16 @@ final class PersonaChatService: ObservableObject {
             if let messageID = self.activeAssistantMessageID {
                 self.lastCompletedGeneration = GenerationCompletion(threadID: threadID, messageID: messageID)
             }
+            let memoryTaskID = UUID()
+            self.pendingMemoryTaskID = memoryTaskID
+            self.pendingMemoryTask = Task { [weak self] in
+                guard let self else { return }
+                await self.persistExtractedMemories(
+                    userText: userText,
+                    assistantText: finalText,
+                    character: character
+                )
+            }
             self.phase = .idle
             self.invalidatePendingStreamSanitization()
             self.activeGenerationID = nil
@@ -542,14 +555,95 @@ final class PersonaChatService: ObservableObject {
         }
         guard didPersistAssistant else { return }
 
-        // ── 7) メモリー抽出 (UI を idle にした後に await。中断されても致命的ではない) ──
+        // Memory usage is durable only after the assistant turn is committed.
+        // A stopped or failed generation must not reorder future recall.
+        if !selected.isEmpty {
+            do {
+                try await memoryRepo.markUsed(ids: selected.map(\.id))
+            } catch {
+                AppLog.error("[PersonaService] memory usage update failed thread=%@: %@", threadID.uuidString, error.localizedDescription)
+            }
+        }
+
+        // The UI may become idle before this auxiliary task finishes, but the
+        // next character turn joins it before fetching prompt memories.
+        await waitForPendingMemoryTask()
+    }
+
+    private func waitForPendingMemoryTask() async {
+        guard let task = pendingMemoryTask else { return }
+        let taskID = pendingMemoryTaskID
+        await task.value
+        if pendingMemoryTaskID == taskID {
+            pendingMemoryTask = nil
+            pendingMemoryTaskID = nil
+        }
+    }
+
+    func retryPendingMemorySaves() async {
+        guard !pendingMemorySaves.isEmpty else {
+            memorySaveError = nil
+            return
+        }
+        for characterID in Array(pendingMemorySaves.keys) {
+            guard let pending = pendingMemorySaves[characterID] else { continue }
+            var remaining: [CharacterMemory] = []
+            for memory in pending {
+                do {
+                    try await memoryRepo.saveMemory(memory)
+                } catch {
+                    remaining.append(memory)
+                    AppLog.error(
+                        "[PersonaService] pending memory retry failed character=%@: %@",
+                        characterID.uuidString,
+                        error.localizedDescription
+                    )
+                }
+            }
+            if remaining.isEmpty {
+                pendingMemorySaves.removeValue(forKey: characterID)
+            } else {
+                pendingMemorySaves[characterID] = remaining
+            }
+        }
+        memorySaveError = pendingMemorySaves.isEmpty
+            ? nil
+            : KizunaCopy.text(
+                japanese: "一部の記憶を保存できませんでした。次の会話で再試行します。",
+                english: "Some memories could not be saved. They will be retried before the next conversation."
+            )
+    }
+
+    private func persistExtractedMemories(
+        userText: String,
+        assistantText: String,
+        character: CharacterProfile
+    ) async {
         let newMemories = await memorySummarizer.extract(
             userText: userText,
-            assistantText: finalText,
+            assistantText: assistantText,
             character: character
         )
-        for m in newMemories {
-            try? await memoryRepo.saveMemory(m)
+        var failed: [CharacterMemory] = []
+        for memory in newMemories {
+            do {
+                try await memoryRepo.saveMemory(memory)
+            } catch {
+                failed.append(memory)
+                AppLog.error(
+                    "[PersonaService] memory save failed character=%@ memory=%@: %@",
+                    character.id.uuidString,
+                    memory.id.uuidString,
+                    error.localizedDescription
+                )
+            }
+        }
+        if !failed.isEmpty {
+            pendingMemorySaves[character.id, default: []].append(contentsOf: failed)
+            memorySaveError = KizunaCopy.text(
+                japanese: "一部の記憶を保存できませんでした。次の会話で再試行します。",
+                english: "Some memories could not be saved. They will be retried before the next conversation."
+            )
         }
     }
 

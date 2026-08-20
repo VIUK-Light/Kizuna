@@ -89,6 +89,10 @@ struct PersonaChatView: View {
     /// 復旧バナーと後処理バナー。通常・埋め込み両モードで同じ物を表示する。
     @ViewBuilder
     private var recoveryBanners: some View {
+        if let memorySaveError = service.memorySaveError {
+            memorySaveBanner(memorySaveError)
+            Divider()
+        }
         if store.isPersistenceRecoveryRequired {
             personaRecoveryBanner
             Divider()
@@ -97,6 +101,27 @@ struct PersonaChatView: View {
             personaRecoveryPostResetBanner
             Divider()
         }
+    }
+
+    private func memorySaveBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "memorychip.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+                Task { await service.retryPendingMemorySaves() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .frame(minHeight: 44)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.10))
     }
 
     var body: some View {

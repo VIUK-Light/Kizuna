@@ -12,6 +12,7 @@ import SwiftUI
 
 struct StorySessionChatView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
     let world: StoryWorld
     let initialSessionID: UUID?
     let startsNewSession: Bool
@@ -68,6 +69,19 @@ struct StorySessionChatView: View {
             }
         }
         .background(storyCanvas.ignoresSafeArea())
+        .onAppear {
+            ContinuousUsageTracker.shared.enterActive()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                ContinuousUsageTracker.shared.enterActive()
+            case .inactive, .background:
+                ContinuousUsageTracker.shared.enterInactive()
+            @unknown default:
+                ContinuousUsageTracker.shared.enterInactive()
+            }
+        }
         // 戻る操作だけでなく、親のNavigationStack/sheetから実際に画面が
         // 消えた場合も、旧セッションへの遅延保存を止める最後の安全網にする。
         .onDisappear {

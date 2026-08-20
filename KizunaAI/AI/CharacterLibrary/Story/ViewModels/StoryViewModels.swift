@@ -1780,6 +1780,36 @@ struct StoryRestSuggestion: Identifiable, Equatable {
     let characterName: String
 }
 
+/// App-level active usage clock shared by Story screens. It pauses while the
+/// app is inactive/backgrounded and survives Story ViewModel recreation.
+@MainActor
+final class ContinuousUsageTracker {
+    static let shared = ContinuousUsageTracker()
+
+    private var accumulatedActiveTime: TimeInterval = 0
+    private var activeStartedAt: Date?
+
+    var activeDuration: TimeInterval {
+        accumulatedActiveTime + (activeStartedAt.map { Date().timeIntervalSince($0) } ?? 0)
+    }
+
+    func enterActive() {
+        guard activeStartedAt == nil else { return }
+        activeStartedAt = Date()
+    }
+
+    func enterInactive() {
+        guard let activeStartedAt else { return }
+        accumulatedActiveTime += Date().timeIntervalSince(activeStartedAt)
+        self.activeStartedAt = nil
+    }
+
+    func reset() {
+        accumulatedActiveTime = 0
+        activeStartedAt = Date()
+    }
+}
+
 @MainActor
 final class StorySessionViewModel: ObservableObject {
     @Published private(set) var session: StorySession
@@ -1831,8 +1861,6 @@ final class StorySessionViewModel: ObservableObject {
     private var preferredGenerationModel: StoryGenerationModel
     private var isApplyingTemporaryGenerationModel = false
 
-    // 休憩提案の時計はアプリ側だけが管理する。モデルには判定を任せない。
-    private var continuousUseStartedAt = Date()
     private var restSuggestionSuppressedUntil: Date?
     private var isGeneratingRestSuggestion = false
     // 同じ60分窓で専用生成を繰り返さないためのアプリ側フラグ。
@@ -2521,7 +2549,7 @@ final class StorySessionViewModel: ObservableObject {
               case .cast = lastMessage.author else { return }
 
         let now = Date()
-        guard now.timeIntervalSince(continuousUseStartedAt) >= 60 * 60 else { return }
+        guard ContinuousUsageTracker.shared.activeDuration >= 60 * 60 else { return }
         if let suppressedUntil = restSuggestionSuppressedUntil, now < suppressedUntil { return }
         if restSuggestionSuppressedUntil != nil {
             // 120分の抑制が終わったら、次の提案窓を開始できる。
@@ -2544,7 +2572,7 @@ final class StorySessionViewModel: ObservableObject {
         ) else {
             // モデルが生成できない場合は固定文を出さず、休憩提案を表示しない。
             // 時計を再スタートし、次の60分窓までは再生成しない。
-            continuousUseStartedAt = now
+            ContinuousUsageTracker.shared.reset()
             restSuggestionAttempted = false
             return
         }
@@ -2561,7 +2589,7 @@ final class StorySessionViewModel: ObservableObject {
     func chooseRestSuggestionBreak() {
         restAcknowledgementError = nil
         restSuggestion = nil
-        continuousUseStartedAt = Date()
+        ContinuousUsageTracker.shared.reset()
         restSuggestionSuppressedUntil = nil
         restSuggestionAttempted = false
     }
