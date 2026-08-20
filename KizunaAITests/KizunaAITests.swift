@@ -42,7 +42,7 @@ private final class RegistryTestProvider: AIProvider {
     ) async throws -> AIGenerationResponse {
         request.onModelResolved?(configuration.identity)
         request.onUpdate?(.visiblePreview("stub response"))
-        AIGenerationResponse(
+        return AIGenerationResponse(
             text: "stub response",
             identity: configuration.identity,
             finishReason: "STOP",
