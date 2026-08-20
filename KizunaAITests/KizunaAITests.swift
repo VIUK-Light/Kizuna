@@ -6549,6 +6549,44 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(preview, "stub response")
     }
 
+    func testStorySessionModelPreferenceMigratesFromWorldKey() {
+        let defaults = UserDefaults.standard
+        let world = StoryWorld(
+            title: "Model migration test",
+            genre: .originalFreeform,
+            relationshipGenre: .none
+        )
+        let session = StorySession(storyWorldId: world.id)
+        let sessionKey = "storySessionGenerationModel.\(session.id.uuidString)"
+        let worldKey = "storySessionGenerationModel.\(world.id.uuidString)"
+        let previousSessionValue = defaults.object(forKey: sessionKey)
+        let previousWorldValue = defaults.object(forKey: worldKey)
+        defer {
+            if let previousSessionValue {
+                defaults.set(previousSessionValue, forKey: sessionKey)
+            } else {
+                defaults.removeObject(forKey: sessionKey)
+            }
+            if let previousWorldValue {
+                defaults.set(previousWorldValue, forKey: worldKey)
+            } else {
+                defaults.removeObject(forKey: worldKey)
+            }
+        }
+
+        defaults.removeObject(forKey: sessionKey)
+        defaults.set(StoryGenerationModel.b31.rawValue, forKey: worldKey)
+
+        let viewModel = StorySessionViewModel(
+            world: world,
+            session: session,
+            scene: StoryScene(storyWorldId: world.id)
+        )
+
+        XCTAssertEqual(viewModel.generationModel, .b31)
+        XCTAssertEqual(defaults.string(forKey: sessionKey), StoryGenerationModel.b31.rawValue)
+    }
+
     func testPersonaUnfinishedAssistantIsNotPersistedBeforeFinalization() throws {
         let suiteName = "KizunaPersonaStoreTests.UnfinishedAssistant.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
