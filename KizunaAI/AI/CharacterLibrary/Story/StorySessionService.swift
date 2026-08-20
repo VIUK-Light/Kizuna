@@ -1578,6 +1578,42 @@ final class StorySessionService: ObservableObject {
             )
             session.messages.append(narration)
             do {
+                let invalidIDs = try await invalidCharacterReferencesBeforeCommit(
+                    session: session,
+                    world: world,
+                    scene: scene,
+                    cast: cast
+                )
+                guard invalidIDs.isEmpty else {
+                    await finishGenerationWithoutSaving(
+                        generationID: generationID,
+                        notice: localizedNotice(
+                            "キャラクターが削除されたため、古い安全案内を保存しませんでした。もう一度試してください。",
+                            "A character was deleted, so the stale safety response was not saved. Try again."
+                        ),
+                        backend: .persistence,
+                        userMessageID: userMessageID,
+                        userText: userText,
+                        backendName: "character deleted before safety commit"
+                    )
+                    return
+                }
+            } catch {
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: localizedNotice(
+                        "キャラクターの最新状態を確認できなかったため、安全案内を保存しませんでした。もう一度試してください。",
+                        "The latest character state could not be verified, so the safety response was not saved. Try again."
+                    ),
+                    backend: .persistence,
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: "character validation failed before safety commit"
+                )
+                AppLog.error("[StorySession] character validation failed before safety commit: %@", error.localizedDescription)
+                return
+            }
+            do {
                 session = try await sessionRepo.commitTurn(
                     session: session,
                     scene: scene,
@@ -2514,6 +2550,47 @@ final class StorySessionService: ObservableObject {
                 storyWorldID: world.id
             )
         }()
+        let turnCharacterIDs = Set(turnMessages.compactMap { message -> UUID? in
+            guard case let .cast(characterID, _) = message.author else { return nil }
+            return characterID
+        })
+        do {
+            let invalidIDs = try await invalidCharacterReferencesBeforeCommit(
+                session: session,
+                world: world,
+                scene: scene,
+                cast: cast,
+                additionalCharacterIDs: turnCharacterIDs
+            )
+            guard invalidIDs.isEmpty else {
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: localizedNotice(
+                        "キャラクターが削除されたため、古い応答とメモリーを保存しませんでした。もう一度試してください。",
+                        "A character was deleted, so the stale response and memories were not saved. Try again."
+                    ),
+                    backend: .persistence,
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: "character deleted before turn commit"
+                )
+                return
+            }
+        } catch {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "キャラクターの最新状態を確認できなかったため、応答を保存しませんでした。もう一度試してください。",
+                    "The latest character state could not be verified, so the response was not saved. Try again."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "character validation failed before turn commit"
+            )
+            AppLog.error("[StorySession] character validation failed before turn commit: %@", error.localizedDescription)
+            return
+        }
         do {
             session = try await sessionRepo.commitTurn(
                 session: session,
@@ -2848,6 +2925,60 @@ final class StorySessionService: ObservableObject {
                 storyWorldID: pendingRetry.scene.storyWorldId
             )
         }()
+        do {
+            guard let retryWorld = try await worldRepo.fetchWorlds().first(where: {
+                $0.id == pendingRetry.scene.storyWorldId
+            }) else {
+                throw StoryTurnPersistenceError.sessionNotFound
+            }
+            let retryCharacterIDs = Set(pendingRetry.session.messages
+                .filter { pendingRetry.assistantMessageIDs.contains($0.id) }
+                .compactMap { message -> UUID? in
+                guard case let .cast(characterID, _) = message.author else { return nil }
+                return characterID
+            })
+            let invalidIDs = try await invalidCharacterReferencesBeforeCommit(
+                session: pendingRetry.session,
+                world: retryWorld,
+                scene: pendingRetry.scene,
+                cast: [],
+                additionalCharacterIDs: retryCharacterIDs
+            )
+            guard invalidIDs.isEmpty else {
+                pendingStoryTurnCommitRetries.removeValue(forKey: pendingRetry.turnID)
+                try? await sessionRepo.finishTurn(
+                    sessionID: pendingRetry.session.id,
+                    turnID: pendingRetry.turnID,
+                    attempt: pendingRetry.attempt,
+                    status: .failed,
+                    failureCode: "character_deleted_before_commit_retry"
+                )
+                latestRuntimeNotice = StoryRuntimeNotice(
+                    text: localizedNotice(
+                        "キャラクターが削除されたため、古い応答の再保存を中止しました。",
+                        "The character was deleted, so saving the stale response was stopped."
+                    ),
+                    userMessageID: pendingRetry.userMessageID,
+                    userText: pendingRetry.userText,
+                    backendName: "character deleted before turn commit retry",
+                    backend: .persistence
+                )
+                return
+            }
+        } catch {
+            latestRuntimeNotice = StoryRuntimeNotice(
+                text: localizedNotice(
+                    "キャラクターの最新状態を確認できなかったため、保存を再試行できません。",
+                    "The latest character state could not be verified, so the save cannot be retried yet."
+                ),
+                userMessageID: pendingRetry.userMessageID,
+                userText: pendingRetry.userText,
+                backendName: "character validation failed before turn commit retry",
+                backend: .persistence
+            )
+            AppLog.error("[StorySession] character validation failed before turn commit retry: %@", error.localizedDescription)
+            return
+        }
         do {
             _ = try await sessionRepo.commitTurn(
                 session: pendingRetry.session,
@@ -3608,6 +3739,8 @@ final class StorySessionService: ObservableObject {
             || text.contains("Gemma4 31B API の出力本文が空")
             || text.contains("Gemma4 31B API returned no response text")
             || text.contains("Gemma4 31B API returned no usable story text")
+            || text.contains("Gemma4 31B API の出力が上限で途中終了")
+            || text.contains("Gemma4 31B API output was truncated")
     }
 
     private func gemmaRuntimeNotice(for error: StoryGemma31BAPIError) -> String {
@@ -3618,6 +3751,11 @@ final class StorySessionService: ObservableObject {
             return localizedNotice("Gemma4 31B API が空レスポンスを返しました。もう一度試してください。", "Gemma4 31B API returned an empty response. Try again.")
         case .emptyText:
             return localizedNotice("Gemma4 31B API の出力本文が空でした。もう一度試してください。", "Gemma4 31B API returned no response text. Try again.")
+        case let .truncated(reason):
+            return localizedNotice(
+                "Gemma4 31B APIの出力が上限((reason))で途中終了しました。本文は保存していません。続きを生成するか、出力上限を確認してください。",
+                "Gemma4 31B API stopped at its output limit ((reason)). The incomplete response was not saved. Generate a continuation or review the output limit."
+            )
         case .invalidURL, .httpStatus:
             return localizedNotice("Gemma4 31B API の応答に失敗しました。もう一度試してください。", "Gemma4 31B API failed to respond. Try again.")
         }
@@ -3886,6 +4024,55 @@ final class StorySessionService: ObservableObject {
         text.unicodeScalars.contains { scalar in
             scalar.properties.isAlphabetic || scalar.properties.numericType != nil
         }
+    }
+
+    /// Return references that became invalid while a Story turn was running.
+    ///
+    /// The generation task owns an in-memory snapshot. Character deletion is
+    /// intentionally multi-file and can complete while that task is awaiting
+    /// the model, so checking only the snapshot is not enough. Re-read both
+    /// the Character Library and this world's cast immediately before the
+    /// commit boundary. The deletion marker is checked as well, closing the
+    /// short interval between recording deletion intent and removing the
+    /// profile JSON.
+    private func invalidCharacterReferencesBeforeCommit(
+        session: StorySession,
+        world: StoryWorld,
+        scene: StoryScene,
+        cast: [CastMember],
+        additionalCharacterIDs: Set<UUID> = []
+    ) async throws -> Set<UUID> {
+        let currentCharacters = try await characterRepo.fetchCharacters()
+        let currentCharacterIDs = Set(currentCharacters.map(\.id))
+        let currentCast = try await castRepo.fetchCast(storyWorldId: world.id)
+        let currentCastIDs = Set(currentCast.map(\.characterId))
+
+        var profileReferences = Set(world.characterIds)
+        if let mainCharacterID = world.mainCharacterId {
+            profileReferences.insert(mainCharacterID)
+        }
+        profileReferences.formUnion(scene.activeCharacterIds)
+        profileReferences.formUnion(session.activeCharacterIds ?? [])
+        profileReferences.formUnion(session.storyState?.characterStates.compactMap(\.characterId) ?? [])
+        profileReferences.formUnion(cast.map(\.characterId))
+        profileReferences.formUnion(additionalCharacterIDs)
+
+        var invalid = Set(profileReferences.filter {
+            !currentCharacterIDs.contains($0)
+                || CharacterDeletionCleanupMarker.shared.contains($0)
+        })
+
+        // References that participate in this turn must still belong to the
+        // current world's cast. World.characterIds is intentionally excluded
+        // from this check because old worlds may contain a profile that has
+        // not yet been added to the cast table.
+        var castReferences = Set(scene.activeCharacterIds)
+        castReferences.formUnion(session.activeCharacterIds ?? [])
+        castReferences.formUnion(session.storyState?.characterStates.compactMap(\.characterId) ?? [])
+        castReferences.formUnion(cast.map(\.characterId))
+        castReferences.formUnion(additionalCharacterIDs)
+        invalid.formUnion(castReferences.filter { !currentCastIDs.contains($0) })
+        return invalid
     }
 
     // CharacterProfile は既存データ互換のため専用フラグを持たない。

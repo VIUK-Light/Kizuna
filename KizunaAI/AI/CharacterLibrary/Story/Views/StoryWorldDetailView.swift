@@ -123,7 +123,7 @@ struct StoryWorldDetailView: View {
         } message: {
             Text(KizunaCopy.text(
                 japanese: "キャスト、シーン、保存済みセッションも削除対象になります。",
-                english: "Characters, scenes, and saved sessions will also be deleted."
+                english: "This story's cast links, scenes, memories, and saved sessions will be deleted. Character Library profiles will be kept."
             ))
         }
         .alert(KizunaCopy.text(japanese: "削除できませんでした", english: "Could not delete"), isPresented: Binding(
