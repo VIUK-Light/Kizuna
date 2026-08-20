@@ -582,6 +582,9 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
                 if checkpoint.status == .pending && checkpoint.turnID != turnID {
                     throw StoryTurnPersistenceError.turnInProgress
                 }
+                if checkpoint.status == .interrupted && checkpoint.turnID != turnID {
+                    throw StoryTurnPersistenceError.turnInProgress
+                }
                 if checkpoint.turnID == turnID {
                     switch checkpoint.status {
                     case .committed:

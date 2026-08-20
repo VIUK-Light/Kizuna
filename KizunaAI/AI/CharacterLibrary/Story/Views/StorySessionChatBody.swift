@@ -70,6 +70,9 @@ struct StorySessionChatBody: View {
                                 restSuggestionCard
                                 safetySupportCard
                                 runtimeNoticeCard
+                                Color.clear
+                                    .frame(height: 1)
+                                    .id("story-chat-bottom")
                             }
                             .padding(18)
                         }
@@ -172,11 +175,7 @@ struct StorySessionChatBody: View {
                         if !isStoryChatNearLatest {
                             Button {
                                 withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
-                                    if let last = vm.session.messages.last?.id {
-                                        proxy.scrollTo(last, anchor: .bottom)
-                                    } else {
-                                        proxy.scrollTo("streaming-preview", anchor: .bottom)
-                                    }
+                                    proxy.scrollTo("story-chat-bottom", anchor: .bottom)
                                 }
                                 isStoryChatNearLatest = true
                                 unreadStoryMessageCount = 0
@@ -847,13 +846,13 @@ struct StorySessionChatBody: View {
                 .contextMenu {
                     responseActionButtons(for: message)
                 }
-                .accessibilityAction(named: Text(storyCopy("コピー", "Copy"))) {
+                .accessibilityAction(named: Text(storyCopy("この発言をコピー", "Copy this message"))) {
                     StorySessionClipboard.copy(message.text)
                 }
-                .accessibilityAction(named: Text(storyCopy("もう一度生成", "Regenerate"))) {
+                .accessibilityAction(named: Text(storyCopy("このターンを再生成", "Regenerate this turn"))) {
                     vm.regenerateLatestResponse()
                 }
-                .accessibilityAction(named: Text(storyCopy("この応答を取り消す", "Undo this response"))) {
+                .accessibilityAction(named: Text(storyCopy("このターンを取り消す", "Undo this turn"))) {
                     vm.undoLatestResponse()
                 }
         } else {
@@ -901,8 +900,8 @@ struct StorySessionChatBody: View {
                 .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(storyCopy("この応答の操作", "Actions for this response"))
-        .accessibilityHint(storyCopy("コピー、再生成、取り消し", "Copy, regenerate, or undo"))
+        .accessibilityLabel(storyCopy("このターンの操作", "Actions for this turn"))
+        .accessibilityHint(storyCopy("この発言をコピー、ターンを再生成または取り消し", "Copy this message, regenerate or undo the turn"))
         .disabled(vm.isHandlingResponseAction)
     }
 
@@ -911,17 +910,17 @@ struct StorySessionChatBody: View {
         Button {
             StorySessionClipboard.copy(message.text)
         } label: {
-            Label(storyCopy("コピー", "Copy"), systemImage: "doc.on.doc")
+            Label(storyCopy("この発言をコピー", "Copy this message"), systemImage: "doc.on.doc")
         }
         Button {
             vm.regenerateLatestResponse()
         } label: {
-            Label(storyCopy("もう一度生成", "Regenerate"), systemImage: "arrow.clockwise")
+            Label(storyCopy("このターンを再生成", "Regenerate this turn"), systemImage: "arrow.clockwise")
         }
         Button(role: .destructive) {
             vm.undoLatestResponse()
         } label: {
-            Label(storyCopy("この応答を取り消す", "Undo this response"), systemImage: "arrow.uturn.backward")
+            Label(storyCopy("このターンを取り消す", "Undo this turn"), systemImage: "arrow.uturn.backward")
         }
         .keyboardShortcut("z", modifiers: [.command])
     }
@@ -1191,7 +1190,10 @@ struct StorySessionChatBody: View {
     }
 
     private var composer: some View {
-        HStack(spacing: 10) {
+        let isPreparing = vm.isPreparingSend
+        let isGenerating = service.phase == .thinking
+        let hasInterruptedTurn = vm.interruptedTurn != nil
+        return HStack(spacing: 10) {
             TextField(
                 "",
                 text: $draft,
@@ -1211,20 +1213,20 @@ struct StorySessionChatBody: View {
                         .fill(Color.white.opacity(0.08))
                 )
                 .onSubmit(submit)
-                .disabled(service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
+                .disabled(isPreparing || isGenerating || hasInterruptedTurn || service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
             Button {
-                if service.phase == .thinking {
+                if isPreparing || isGenerating {
                     vm.cancelGeneration()
                 } else {
                     submit()
                 }
             } label: {
-                Image(systemName: service.phase == .thinking ? "stop.fill" : "paperplane.fill")
+                Image(systemName: isPreparing ? "hourglass" : (isGenerating ? "stop.fill" : "paperplane.fill"))
                     .font(.system(size: 14, weight: .bold))
                     .frame(width: 44, height: 44)
                     .background(
                         Circle().fill(
-                            service.phase == .thinking || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            isPreparing || isGenerating || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 ? Color.accentColor
                                 : Color.white.opacity(0.24)
                         )
@@ -1233,9 +1235,14 @@ struct StorySessionChatBody: View {
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-            .disabled(service.phase != .thinking && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityLabel(service.phase == .thinking ? storyCopy("生成を停止", "Stop generating") : storyCopy("送信", "Send"))
-            .disabled(service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
+            .disabled((!isPreparing && !isGenerating && (hasInterruptedTurn || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                || service.hasPendingStoryCommitRetry
+                || service.isRetryingAuxiliarySave)
+            .accessibilityLabel(
+                isPreparing
+                    ? storyCopy("送信準備を停止", "Stop preparing to send")
+                    : (isGenerating ? storyCopy("生成を停止", "Stop generating") : storyCopy("送信", "Send"))
+            )
         }
         .padding(14)
         .background(storyPanel)
@@ -1244,7 +1251,10 @@ struct StorySessionChatBody: View {
 
     private func submit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, service.phase != .thinking else { return }
+        guard !text.isEmpty,
+              service.phase != .thinking,
+              !vm.isPreparingSend,
+              vm.interruptedTurn == nil else { return }
         guard selectedModelIsReady else {
             handleUnavailableModelBeforeSubmission()
             return

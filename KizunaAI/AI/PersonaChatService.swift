@@ -121,6 +121,11 @@ final class PersonaChatService: ObservableObject {
         let requestText: String
     }
 
+    struct GenerationCompletion: Equatable {
+        let threadID: UUID
+        let messageID: UUID
+    }
+
     @Published private(set) var phase: Phase = .idle
     /// ストリーミング中の最新応答テキスト。完了時に PersonaChatStore に永続化される。
     @Published private(set) var streamingResponse: String = ""
@@ -132,6 +137,8 @@ final class PersonaChatService: ObservableObject {
     @Published private(set) var lastErrorThreadID: UUID?
     /// 失敗と再試行本文はサービス全体で1件だけにせず、スレッドごとに保持する。
     @Published private(set) var generationFailures: [UUID: GenerationFailure] = [:]
+    @Published private(set) var lastCompletedGeneration: GenerationCompletion?
+    @Published private(set) var cancelledRequests: [UUID: String] = [:]
 
     private var generationTask: Task<Void, Never>?
     private var streamSanitizationTask: Task<Void, Never>?
@@ -196,6 +203,12 @@ final class PersonaChatService: ObservableObject {
         // 新しい生成ではユーザー発話だけを先に保存し、assistant本文はSafety評価を通過した
         // 完成時にだけ追加し、アプリ終了やキャンセルで未確定の空枠を残さない。
         store.removePendingAssistantMessage(in: thread.id)
+        if cancelledRequests[thread.id] == trimmed,
+           let storedThread = store.thread(id: thread.id),
+           storedThread.messages.last?.role == .user,
+           storedThread.messages.last?.text == trimmed {
+            store.removeLastUserMessage(in: thread.id, matching: trimmed)
+        }
         guard store.appendMessage(
             PersonaMessage(role: .user, text: trimmed),
             toThread: thread.id
@@ -204,7 +217,9 @@ final class PersonaChatService: ObservableObject {
 
         phase = .thinking
         streamingResponse = ""
+        lastCompletedGeneration = nil
         generationFailures.removeValue(forKey: thread.id)
+        cancelledRequests.removeValue(forKey: thread.id)
         lastErrorThreadID = nil
         invalidatePendingStreamSanitization()
         lastRequestThreadID = thread.id
@@ -511,6 +526,9 @@ final class PersonaChatService: ObservableObject {
                 return false
             }
             self.streamingResponse = ""
+            if let messageID = self.activeAssistantMessageID {
+                self.lastCompletedGeneration = GenerationCompletion(threadID: threadID, messageID: messageID)
+            }
             self.phase = .idle
             self.invalidatePendingStreamSanitization()
             self.activeGenerationID = nil
@@ -519,6 +537,7 @@ final class PersonaChatService: ObservableObject {
             self.activeGenerationThreadID = nil
             self.activeRequestText = nil
             self.generationFailures.removeValue(forKey: threadID)
+            self.cancelledRequests.removeValue(forKey: threadID)
             return true
         }
         guard didPersistAssistant else { return }
@@ -535,6 +554,11 @@ final class PersonaChatService: ObservableObject {
     }
 
     func cancel() {
+        if let threadID = activeGenerationThreadID,
+           let requestText = activeRequestText,
+           !requestText.isEmpty {
+            cancelledRequests[threadID] = requestText
+        }
         generationTask?.cancel()
         generationTask = nil
         invalidatePendingStreamSanitization()
@@ -588,6 +612,27 @@ final class PersonaChatService: ObservableObject {
         generationFailures[threadID]
     }
 
+    func cancelledRequest(for threadID: UUID) -> String? {
+        cancelledRequests[threadID]
+    }
+
+    func retryCancelledMessage(for threadID: UUID) {
+        guard phase != .thinking,
+              let requestText = cancelledRequests[threadID],
+              let thread = store.thread(id: threadID),
+              thread.messages.last?.role == .user,
+              thread.messages.last?.text == requestText else { return }
+        store.removeLastUserMessage(in: threadID, matching: requestText)
+        cancelledRequests.removeValue(forKey: threadID)
+        send(requestText, to: thread)
+    }
+
+    func discardCancelledMessage(for threadID: UUID) {
+        guard let requestText = cancelledRequests[threadID] else { return }
+        store.removeLastUserMessage(in: threadID, matching: requestText)
+        cancelledRequests.removeValue(forKey: threadID)
+    }
+
     /// Remove a thread's failure and stop its generation before the store row
     /// disappears. A different thread's active generation is left untouched.
     func removeGenerationState(for threadID: UUID) {
@@ -595,6 +640,7 @@ final class PersonaChatService: ObservableObject {
             cancel()
         }
         generationFailures.removeValue(forKey: threadID)
+        cancelledRequests.removeValue(forKey: threadID)
         if lastErrorThreadID == threadID {
             lastErrorThreadID = nil
         }
@@ -701,6 +747,9 @@ final class PersonaChatService: ObservableObject {
             return
         }
         streamingResponse = ""
+        if let messageID = activeAssistantMessageID {
+            lastCompletedGeneration = GenerationCompletion(threadID: threadID, messageID: messageID)
+        }
         phase = .idle
         invalidatePendingStreamSanitization()
         activeGenerationID = nil
@@ -709,6 +758,7 @@ final class PersonaChatService: ObservableObject {
         activeGenerationThreadID = nil
         activeRequestText = nil
         generationFailures.removeValue(forKey: threadID)
+        cancelledRequests.removeValue(forKey: threadID)
         lastErrorThreadID = nil
     }
 

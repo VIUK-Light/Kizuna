@@ -1141,10 +1141,11 @@ struct PersonaChatView: View {
         // キャンセルではアシスタント本文が保存されないため、最後のメッセージで
         // 正常完了とキャンセルを区別する。
         guard let targetThreadID = targetGenerationThreadID,
-              let targetMessageID = targetAssistantMessageID else { return }
-        guard service.activeGenerationThreadID == targetThreadID
-            && service.activeAssistantMessageID == targetMessageID
-            && store.activeThread?.messages.last?.role == .assistant else { return }
+              let targetMessageID = targetAssistantMessageID,
+              let completion = service.lastCompletedGeneration,
+              completion.threadID == targetThreadID,
+              completion.messageID == targetMessageID else { return }
+        guard store.activeThread?.messages.last?.role == .assistant else { return }
         announceGenerationCompleted()
     }
 
@@ -1319,6 +1320,7 @@ struct PersonaChatView: View {
         let isGeneratingThisThread = service.activeGenerationThreadID == thread.id
             && service.phase == .thinking
         let generationFailure = service.generationFailure(for: thread.id)
+        let cancelledRequest = service.cancelledRequest(for: thread.id)
         let displayProfile = avatarProfile(for: thread)
         let visibleMessages = thread.messages.filter { msg in
             return !(msg.role == .assistant && PersonaMessage.isPendingAssistantText(msg.text))
@@ -1341,6 +1343,10 @@ struct PersonaChatView: View {
                         if let generationFailure {
                             generationError(generationFailure.message, threadID: thread.id)
                                 .id("generation-error")
+                        }
+                        if let cancelledRequest {
+                            cancelledGenerationNotice(threadID: thread.id, requestText: cancelledRequest)
+                                .id("cancelled-generation")
                         }
                         Color.clear.frame(height: 4).id("bottom")
                     }
@@ -1508,6 +1514,49 @@ struct PersonaChatView: View {
                     .disabled(service.phase == .thinking)
                     Button(KizunaCopy.text(japanese: "閉じる", english: "Dismiss")) {
                         service.dismissError(for: threadID)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(minHeight: 44)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.orange.opacity(0.22), lineWidth: 1)
+        }
+    }
+
+    private func cancelledGenerationNotice(threadID: UUID, requestText: String) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "pause.circle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(KizunaCopy.text(
+                    japanese: "生成を停止しました",
+                    english: "Generation was stopped"
+                ))
+                    .font(.headline.weight(.bold))
+                Text(KizunaCopy.text(
+                    japanese: "「\(requestText)」への返信はまだありません。",
+                    english: "There is no reply yet for “\(requestText)”."
+                ))
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button(KizunaCopy.text(japanese: "同じ発言から再試行", english: "Retry this message")) {
+                        service.retryCancelledMessage(for: threadID)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .frame(minHeight: 44)
+                    .disabled(service.phase == .thinking)
+                    Button(KizunaCopy.text(japanese: "発言を取り消す", english: "Remove message")) {
+                        service.discardCancelledMessage(for: threadID)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)

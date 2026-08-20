@@ -1806,6 +1806,7 @@ final class StorySessionViewModel: ObservableObject {
     @Published private(set) var refreshError: String?
     @Published private(set) var sendPreparationError: String?
     @Published private(set) var lastStartedUserMessageID: UUID?
+    @Published private(set) var isPreparingSend = false
     /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
     @Published var restSuggestion: StoryRestSuggestion?
     /// 了承メッセージの保存中は通常送信を止め、保存結果を待つ。
@@ -2231,7 +2232,8 @@ final class StorySessionViewModel: ObservableObject {
         existingUserMessageID: UUID?,
         isInterruptedRecovery: Bool = false,
         allowDuringResponseAction: Bool = false,
-        regenerationSnapshot: StorySession? = nil
+        regenerationSnapshot: StorySession? = nil,
+        runtimeNoticeID: UUID? = nil
     ) -> Bool {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -2239,7 +2241,15 @@ final class StorySessionViewModel: ObservableObject {
               !isSavingRestAcknowledgement,
               (allowDuringResponseAction || !isHandlingResponseAction),
               sendPreparationTask == nil else { return false }
+        guard existingUserMessageID != nil || interruptedTurn == nil else {
+            sendPreparationError = KizunaCopy.text(
+                japanese: "前回の中断した発言を再試行または破棄してから、新しい発言を送信してください。",
+                english: "Retry or discard the interrupted message before sending a new one."
+            )
+            return false
+        }
         sendPreparationError = nil
+        isPreparingSend = true
         // 直前ターンの保存完了通知と送信タップが競合すると、古い session スナップショットで
         // 次のターンを開始して新しい発言を上書きする。送信前に最新状態を一度だけ読み直す。
         let preparationID = UUID()
@@ -2253,6 +2263,7 @@ final class StorySessionViewModel: ObservableObject {
                 if self.sendPreparationID == preparationID {
                     self.sendPreparationTask = nil
                     self.sendPreparationID = nil
+                    self.isPreparingSend = false
                 }
                 if isInterruptedRecovery,
                    self.interruptedRecoveryPreparationID == preparationID {
@@ -2311,6 +2322,10 @@ final class StorySessionViewModel: ObservableObject {
                 return
             }
             self.lastStartedUserMessageID = startedUserMessageID
+            if let runtimeNoticeID,
+               self.service.latestRuntimeNotice?.id == runtimeNoticeID {
+                self.service.dismissRuntimeNotice()
+            }
 
             // Service 内で session/scene が永続化されるので、こちらは UI 更新のため
             // 軽くポーリングで再取得する (将来 Combine pipeline 化)。
@@ -2405,11 +2420,9 @@ final class StorySessionViewModel: ObservableObject {
             // already persisted or needs to be appended.
             let accepted = enqueueSend(
                 notice.userText,
-                existingUserMessageID: notice.persistedUserMessageIDForRetry
+                existingUserMessageID: notice.persistedUserMessageIDForRetry,
+                runtimeNoticeID: notice.id
             )
-            if accepted {
-                service.dismissRuntimeNotice()
-            }
             return accepted
         }
     }
@@ -2435,6 +2448,7 @@ final class StorySessionViewModel: ObservableObject {
         sendPreparationID = nil
         sendPreparationTask?.cancel()
         sendPreparationTask = nil
+        isPreparingSend = false
         if interruptedRecoveryPreparationID != nil {
             interruptedRecoveryPreparationID = nil
             isHandlingInterruptedTurn = false
