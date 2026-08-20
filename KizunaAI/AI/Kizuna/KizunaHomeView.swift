@@ -135,6 +135,9 @@ struct KizunaHomeView: View {
         .task {
             await bootstrapCatalog()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .characterLibraryDidChange)) { _ in
+            Task { await characterLibraryVM.reload() }
+        }
         .sheet(isPresented: $showCharacterLibrary, onDismiss: {
             Task { await characterLibraryVM.reload() }
             presentPendingPersona()

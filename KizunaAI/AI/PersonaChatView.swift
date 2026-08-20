@@ -291,6 +291,9 @@ struct PersonaChatView: View {
         .task(id: store.activeThreadID) {
             await refreshCurrentCharacterProfiles()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .characterLibraryDidChange)) { _ in
+            Task { await refreshCurrentCharacterProfiles() }
+        }
         .onChange(of: store.activeThreadID) { _, _ in
             isPersonaChatNearBottom = true
             unreadPersonaMessageCount = 0

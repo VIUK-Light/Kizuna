@@ -66,6 +66,10 @@ final class CharacterDetailViewModel: ObservableObject {
                 break
             }
 
+            // The profile is no longer readable even if a later related-data
+            // cleanup step needs a retry. Invalidate every read-side cache now.
+            CharacterLibraryChangeCenter.post()
+
             deletionPhase = .removingReferences
             try await StoryCharacterReferenceCleaner.remove(characterID: character.id)
             deletionPhase = .deletingMemories
