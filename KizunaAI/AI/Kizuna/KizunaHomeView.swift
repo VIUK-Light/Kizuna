@@ -103,8 +103,6 @@ struct KizunaHomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                //managementBar
-                //ここはUIとして邪魔なため削除
                 filterBar
                 searchField
 
@@ -122,7 +120,6 @@ struct KizunaHomeView: View {
                     }
                 }
 
-                //explanation
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 24)
@@ -251,27 +248,6 @@ struct KizunaHomeView: View {
         }
     }
 
-    private var managementBar: some View {//ここはUIとして重複する可能性があり、削除する、
-        HStack(spacing: 8) {
-            Button {
-                showCharacterLibrary = true
-            } label: {
-                Label(KizunaCopy.text(japanese: "キャラクター管理", english: "Manage characters"), systemImage: "person.2")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Button {
-                showStoryLibrary = true
-            } label: {
-                Label(KizunaCopy.text(japanese: "ストーリー管理", english: "Manage stories"), systemImage: "sparkles.rectangle.stack")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            Spacer(minLength: 0)
-        }
-    }
-    
     private var filterBar: some View {
         HStack(spacing: 8) {
             ForEach(HomeFilter.allCases) { filter in
@@ -424,23 +400,6 @@ struct KizunaHomeView: View {
     private var hasActiveHomeFilter: Bool {
         selectedFilter != .all
             || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var explanation: some View {//ここはUIとして邪魔なので廃止
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "arrow.triangle.branch")
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
-            Text(KizunaCopy.text(
-                japanese: "PersonaとStoryは専用チャット画面が分かれています。ホームでは一覧から選び、選択後はそれぞれの体験へ進みます。",
-                english: "Persona and Story open separate dedicated chat screens. Choose from the list here, then continue into the experience you selected."
-            ))
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14)
-        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func bootstrapCatalog() async {
