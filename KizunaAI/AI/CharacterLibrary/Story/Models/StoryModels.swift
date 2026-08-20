@@ -1301,6 +1301,10 @@ struct StoryTurnUndoSnapshot: Codable, Equatable, Hashable {
     var unresolvedHooks: [String]?
     var storyState: StoryState?
     var lastSelectedModelName: String?
+    /// The stable runtime-reported identity used by the turn. This is
+    /// separate from the legacy logical label so a custom local artifact or
+    /// provider model is not later presented as iori/NAGI by assumption.
+    var lastUsedModelIdentity: String?
     var lastUsedBackendName: String?
 
     init(
@@ -1314,6 +1318,7 @@ struct StoryTurnUndoSnapshot: Codable, Equatable, Hashable {
         unresolvedHooks: [String]? = nil,
         storyState: StoryState? = nil,
         lastSelectedModelName: String? = nil,
+        lastUsedModelIdentity: String? = nil,
         lastUsedBackendName: String? = nil
     ) {
         self.currentSceneId = currentSceneId
@@ -1326,6 +1331,7 @@ struct StoryTurnUndoSnapshot: Codable, Equatable, Hashable {
         self.unresolvedHooks = unresolvedHooks
         self.storyState = storyState
         self.lastSelectedModelName = lastSelectedModelName
+        self.lastUsedModelIdentity = lastUsedModelIdentity
         self.lastUsedBackendName = lastUsedBackendName
     }
 }
@@ -1429,6 +1435,9 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
     var storyState: StoryState?
     /// 直近ターンでユーザーが選んだモデル名。実行結果の透明性表示に使う。
     var lastSelectedModelName: String?
+    /// 実際にランタイムが応答したモデル/成果物の安定識別子。
+    /// 旧データではnilで、論理選択名はlastSelectedModelNameに残る。
+    var lastUsedModelIdentity: String?
     /// 直近ターンで実際に使ったバックエンド、または未起動/失敗理由の短い状態。
     var lastUsedBackendName: String?
     /// 保存成功ごとに単調増加する世代。旧データはnilを0として扱う。
@@ -1453,6 +1462,7 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         unresolvedHooks: [String]? = nil,
         storyState: StoryState? = nil,
         lastSelectedModelName: String? = nil,
+        lastUsedModelIdentity: String? = nil,
         lastUsedBackendName: String? = nil,
         persistenceRevision: UInt64? = nil,
         latestTurnCheckpoint: StoryTurnCheckpoint? = nil,
@@ -1474,6 +1484,7 @@ struct StorySession: Codable, Identifiable, Equatable, Hashable {
         self.unresolvedHooks = unresolvedHooks
         self.storyState = storyState
         self.lastSelectedModelName = lastSelectedModelName
+        self.lastUsedModelIdentity = lastUsedModelIdentity
         self.lastUsedBackendName = lastUsedBackendName
         self.persistenceRevision = persistenceRevision
         self.latestTurnCheckpoint = latestTurnCheckpoint
@@ -1528,6 +1539,7 @@ extension StoryTurnUndoSnapshot {
             unresolvedHooks: session.unresolvedHooks,
             storyState: session.storyState,
             lastSelectedModelName: session.lastSelectedModelName,
+            lastUsedModelIdentity: session.lastUsedModelIdentity,
             lastUsedBackendName: session.lastUsedBackendName
         )
     }
@@ -1544,6 +1556,7 @@ extension StoryTurnUndoSnapshot {
         restored.unresolvedHooks = unresolvedHooks
         restored.storyState = storyState
         restored.lastSelectedModelName = lastSelectedModelName
+        restored.lastUsedModelIdentity = lastUsedModelIdentity
         restored.lastUsedBackendName = lastUsedBackendName
         return restored
     }

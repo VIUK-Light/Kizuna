@@ -148,8 +148,9 @@ struct StoryGenerationModelPill: View {
 
     private var lastBackendStatus: String? {
         let selected = vm.session.lastSelectedModelName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identity = vm.session.lastUsedModelIdentity?.trimmingCharacters(in: .whitespacesAndNewlines)
         let backend = vm.session.lastUsedBackendName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parts = [selected, backend].compactMap { value -> String? in
+        let parts = [selected, identity, backend].compactMap { value -> String? in
             guard let value, !value.isEmpty else { return nil }
             return value
         }

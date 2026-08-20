@@ -71,10 +71,89 @@ protocol PersonaReplyGenerating: AnyObject {
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
     ) async -> String?
 
+    /// Same generation boundary with runtime provenance. The default keeps
+    /// existing test doubles source-compatible while production runtimes can
+    /// report the actual local artifact/provider model.
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult
+
     func cancelActiveGeneration(generationID: UUID?)
 }
 
+extension PersonaReplyGenerating {
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult {
+        LocalAssistantGenerationResult(
+            text: await generatePersonaReply(
+                prompt: prompt,
+                contextPrompt: contextPrompt,
+                coachMode: coachMode,
+                reasoningMode: reasoningMode,
+                childAge: childAge,
+                pageInfo: pageInfo,
+                safetySnapshot: safetySnapshot,
+                advancedSettings: advancedSettings,
+                overrideSystemPrompt: overrideSystemPrompt,
+                generationID: generationID,
+                onUpdate: onUpdate
+            ),
+            modelIdentity: nil
+        )
+    }
+}
+
 extension LocalAssistantRuntimeBridge: PersonaReplyGenerating {
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult {
+        await generateReply(
+            prompt: prompt,
+            contextPrompt: contextPrompt,
+            coachMode: coachMode,
+            reasoningMode: reasoningMode,
+            researchMode: .off,
+            childAge: childAge,
+            pageInfo: pageInfo,
+            safetySnapshot: safetySnapshot,
+            advancedSettings: advancedSettings,
+            overrideSystemPrompt: overrideSystemPrompt,
+            generationID: generationID,
+            onUpdate: onUpdate
+        )
+    }
+
     func generatePersonaReply(
         prompt: String,
         contextPrompt: String?,
@@ -281,7 +360,7 @@ final class PersonaChatService: ObservableObject {
         let composedPrompt = buildPrompt(forThread: thread, latestUser: userText)
         let personaPrompt = legacyPersonaSystemPrompt(for: thread.personaSnapshot)
         let advanced = voiceOptimizedAdvancedSettings
-        let reply = await runtime.generatePersonaReply(
+        let generation = await runtime.generatePersonaReplyResult(
             prompt: composedPrompt,
             contextPrompt: nil,
             coachMode: .studio,
@@ -296,6 +375,7 @@ final class PersonaChatService: ObservableObject {
                 self?.handleStreamUpdate(update, generationID: generationID)
             }
         )
+        let reply = generation.text
         guard let rawFinalText = PersonaOutputSafetyPolicy.completedText(from: reply) else {
             await MainActor.run {
                 self.failGeneration(
@@ -319,7 +399,8 @@ final class PersonaChatService: ObservableObject {
                 reply: reply,
                 threadID: threadID,
                 generationID: generationID,
-                outputSafety: outputSafety
+                outputSafety: outputSafety,
+                modelIdentity: generation.modelIdentity
             )
         }
     }
@@ -455,7 +536,7 @@ final class PersonaChatService: ObservableObject {
 
         // ── 5) E4B 生成 (overrideSystemPrompt 経路) ──
         let advanced = voiceOptimizedAdvancedSettings
-        let reply = await runtime.generatePersonaReply(
+        let generation = await runtime.generatePersonaReplyResult(
             prompt: effectiveUserText,
             contextPrompt: nil,
             coachMode: .studio,
@@ -470,6 +551,7 @@ final class PersonaChatService: ObservableObject {
                 self?.handleStreamUpdate(update, generationID: generationID)
             }
         )
+        let reply = generation.text
         guard isGenerationActive(generationID) else { return }
 
         // ── 6) 出力 safety ──
@@ -527,6 +609,10 @@ final class PersonaChatService: ObservableObject {
                     message: self.persistenceFailureMessage
                 )
                 return false
+            }
+            if let modelIdentity = generation.modelIdentity,
+               !self.store.setLastUsedModelIdentity(modelIdentity, forThread: threadID) {
+                AppLog.error("[PersonaChatService] failed to persist model identity thread=%@", threadID.uuidString)
             }
             self.streamingResponse = ""
             if let messageID = self.activeAssistantMessageID {
@@ -795,7 +881,8 @@ final class PersonaChatService: ObservableObject {
         reply: String?,
         threadID: UUID,
         generationID: UUID,
-        outputSafety: SafetyDecision
+        outputSafety: SafetyDecision,
+        modelIdentity: String? = nil
     ) {
         guard activeGenerationID == generationID else { return }
         guard let cleaned = PersonaOutputSafetyPolicy.completedText(from: reply) else {
@@ -847,6 +934,10 @@ final class PersonaChatService: ObservableObject {
                 message: persistenceFailureMessage
             )
             return
+        }
+        if let modelIdentity,
+           !store.setLastUsedModelIdentity(modelIdentity, forThread: threadID) {
+            AppLog.error("[PersonaChatService] failed to persist model identity thread=%@", threadID.uuidString)
         }
         streamingResponse = ""
         if let messageID = activeAssistantMessageID {

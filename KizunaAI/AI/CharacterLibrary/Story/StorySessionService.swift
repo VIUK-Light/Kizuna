@@ -144,6 +144,7 @@ enum StoryTurnCommitRecovery {
               expected.unresolvedHooks == persisted.unresolvedHooks,
               storyStatesMatch(expected.storyState, persisted.storyState),
               expected.lastSelectedModelName == persisted.lastSelectedModelName,
+              expected.lastUsedModelIdentity == persisted.lastUsedModelIdentity,
               expected.lastUsedBackendName == persisted.lastUsedBackendName else {
             return false
         }
@@ -2348,6 +2349,7 @@ final class StorySessionService: ObservableObject {
             usedBackendName
         )
         session.lastSelectedModelName = generationModel.displayName
+        session.lastUsedModelIdentity = generated.modelIdentity ?? generationModel.displayName
         session.lastUsedBackendName = usedBackendName
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)

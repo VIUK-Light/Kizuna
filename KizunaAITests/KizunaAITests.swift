@@ -6433,6 +6433,30 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testPersonaThreadPersistsRuntimeModelIdentity() throws {
+        let suiteName = "KizunaPersonaStoreTests.ModelIdentity.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Identity test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let store = PersonaChatStore(defaults: defaults)
+        let thread = try XCTUnwrap(store.createThread(with: profile))
+
+        XCTAssertTrue(
+            store.setLastUsedModelIdentity("local:custom-story-Q4.gguf", forThread: thread.id)
+        )
+        let reloaded = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(
+            reloaded.thread(id: thread.id)?.lastUsedModelIdentity,
+            "local:custom-story-Q4.gguf"
+        )
+    }
+
     func testPersonaUnfinishedAssistantIsNotPersistedBeforeFinalization() throws {
         let suiteName = "KizunaPersonaStoreTests.UnfinishedAssistant.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

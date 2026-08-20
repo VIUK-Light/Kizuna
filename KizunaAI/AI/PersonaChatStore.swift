@@ -63,6 +63,9 @@ struct PersonaThread: Codable, Hashable, Identifiable {
     var characterID: UUID?
     var title: String
     var messages: [PersonaMessage]
+    /// Stable identity reported by the runtime that produced the latest
+    /// assistant response. Optional for backward-compatible thread JSON.
+    var lastUsedModelIdentity: String?
     var createdAt: Date
     var updatedAt: Date
 
@@ -72,6 +75,7 @@ struct PersonaThread: Codable, Hashable, Identifiable {
         characterID: UUID? = nil,
         title: String,
         messages: [PersonaMessage] = [],
+        lastUsedModelIdentity: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -80,13 +84,14 @@ struct PersonaThread: Codable, Hashable, Identifiable {
         self.characterID = characterID
         self.title = title
         self.messages = messages
+        self.lastUsedModelIdentity = lastUsedModelIdentity
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     // Codable: 既存保存データに characterID が無くてもデコード可能にする
     private enum CodingKeys: String, CodingKey {
-        case id, personaSnapshot, characterID, title, messages, createdAt, updatedAt
+        case id, personaSnapshot, characterID, title, messages, lastUsedModelIdentity, createdAt, updatedAt
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -95,6 +100,7 @@ struct PersonaThread: Codable, Hashable, Identifiable {
         self.characterID = try c.decodeIfPresent(UUID.self, forKey: .characterID)
         self.title = try c.decode(String.self, forKey: .title)
         self.messages = try c.decode([PersonaMessage].self, forKey: .messages)
+        self.lastUsedModelIdentity = try c.decodeIfPresent(String.self, forKey: .lastUsedModelIdentity)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
         self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }
@@ -594,6 +600,22 @@ final class PersonaChatStore: ObservableObject {
         threads[idx].updatedAt = Date()
         // ソートし直し
         persistAfterActivityUpdate()
+    }
+
+    /// Persist runtime identity metadata without changing conversation order.
+    /// The value is diagnostic provenance, not a new user activity event.
+    @discardableResult
+    func setLastUsedModelIdentity(_ identity: String?, forThread threadID: UUID) -> Bool {
+        guard canMutatePersistedState(),
+              let index = threads.firstIndex(where: { $0.id == threadID }) else {
+            return false
+        }
+        let normalized = identity?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = normalized?.isEmpty == true ? nil : normalized
+        guard threads[index].lastUsedModelIdentity != value else { return true }
+        threads[index].lastUsedModelIdentity = value
+        persist()
+        return true
     }
 
     // MARK: - Messages
