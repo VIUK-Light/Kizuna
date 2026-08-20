@@ -33,6 +33,25 @@ private final class FileIOTestProbe: @unchecked Sendable {
 }
 
 @MainActor
+private final class RegistryTestProvider: AIProvider {
+    let providerID: AIProviderID = .openAICompatible
+
+    func generate(
+        request: AIGenerationRequest,
+        configuration: AIModelConfiguration
+    ) async throws -> AIGenerationResponse {
+        request.onModelResolved?(configuration.identity)
+        request.onUpdate?(.visiblePreview("stub response"))
+        return AIGenerationResponse(
+            text: "stub response",
+            identity: configuration.identity,
+            finishReason: "STOP",
+            usage: nil
+        )
+    }
+}
+
+@MainActor
 final class KizunaAITests: XCTestCase {
     private enum LocalJSONStoreTestError: Error {
         case mutationFailed
@@ -6431,6 +6450,141 @@ final class KizunaAITests: XCTestCase {
             PersonaThreadOrdering.mostRecentFirst([second, first]).map(\.id),
             [firstID, secondID]
         )
+    }
+
+    func testPersonaThreadPersistsRuntimeModelIdentity() throws {
+        let suiteName = "KizunaPersonaStoreTests.ModelIdentity.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let profile = PersonaProfile(
+            name: "Identity test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let store = PersonaChatStore(defaults: defaults)
+        let thread = try XCTUnwrap(store.createThread(with: profile))
+
+        XCTAssertTrue(
+            store.setLastUsedModelIdentity("local:custom-story-Q4.gguf", forThread: thread.id)
+        )
+        let reloaded = PersonaChatStore(defaults: defaults)
+        XCTAssertEqual(
+            reloaded.thread(id: thread.id)?.lastUsedModelIdentity,
+            "local:custom-story-Q4.gguf"
+        )
+    }
+
+    func testAIModelRegistrySeparatesProviderMetadataFromCredentials() throws {
+        let suiteName = "KizunaAIModelRegistryTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let registry = AIModelRegistry(defaults: defaults)
+        XCTAssertEqual(
+            registry.configurations(for: .story).map(\.identity.providerID),
+            [.localRuntime, .googleGenerativeLanguage]
+        )
+
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "custom-story-model",
+                displayName: "Custom Story",
+                artifactID: "sha256:abc"
+            ),
+            roles: [.story, .memoryExtraction],
+            endpoint: "https://example.invalid/v1",
+            priority: 1
+        )
+        XCTAssertTrue(registry.register(configuration))
+        XCTAssertEqual(registry.configuration(id: configuration.id)?.identity.stableID, "openAICompatible/custom-story-model/sha256:abc")
+        XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
+    }
+
+    func testAIModelRouterUsesPreferredConfigurationAndProvider() async throws {
+        let suiteName = "KizunaAIModelRouterTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let registry = AIModelRegistry(defaults: defaults)
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "stub-model",
+                displayName: "Stub model"
+            ),
+            roles: [.persona],
+            endpoint: "https://example.invalid/v1",
+            priority: 50
+        )
+        XCTAssertTrue(registry.register(configuration))
+
+        let router = AIModelRouter(registry: registry)
+        router.register(RegistryTestProvider())
+        var resolvedIdentity: AIModelIdentity?
+        var preview = ""
+        let response = try await router.generate(
+            request: AIGenerationRequest(
+                systemPrompt: "system",
+                userPrompt: "hello",
+                onUpdate: { update in
+                    if case let .visiblePreview(text) = update {
+                        preview = text
+                    }
+                },
+                onModelResolved: { identity in
+                    resolvedIdentity = identity
+                }
+            ),
+            role: .persona,
+            preferredConfigurationID: configuration.id
+        )
+
+        XCTAssertEqual(response.text, "stub response")
+        XCTAssertEqual(response.identity, configuration.identity)
+        XCTAssertEqual(response.finishReason, "STOP")
+        XCTAssertEqual(resolvedIdentity, configuration.identity)
+        XCTAssertEqual(preview, "stub response")
+    }
+
+    func testStorySessionModelPreferenceMigratesFromWorldKey() {
+        let defaults = UserDefaults.standard
+        let world = StoryWorld(
+            title: "Model migration test",
+            genre: .originalFreeform,
+            relationshipGenre: .none
+        )
+        let session = StorySession(storyWorldId: world.id)
+        let sessionKey = "storySessionGenerationModel.\(session.id.uuidString)"
+        let worldKey = "storySessionGenerationModel.\(world.id.uuidString)"
+        let previousSessionValue = defaults.object(forKey: sessionKey)
+        let previousWorldValue = defaults.object(forKey: worldKey)
+        defer {
+            if let previousSessionValue {
+                defaults.set(previousSessionValue, forKey: sessionKey)
+            } else {
+                defaults.removeObject(forKey: sessionKey)
+            }
+            if let previousWorldValue {
+                defaults.set(previousWorldValue, forKey: worldKey)
+            } else {
+                defaults.removeObject(forKey: worldKey)
+            }
+        }
+
+        defaults.removeObject(forKey: sessionKey)
+        defaults.set(StoryGenerationModel.b31.rawValue, forKey: worldKey)
+
+        let viewModel = StorySessionViewModel(
+            world: world,
+            session: session,
+            scene: StoryScene(storyWorldId: world.id)
+        )
+
+        XCTAssertEqual(viewModel.generationModel, .b31)
+        XCTAssertEqual(defaults.string(forKey: sessionKey), StoryGenerationModel.b31.rawValue)
     }
 
     func testPersonaUnfinishedAssistantIsNotPersistedBeforeFinalization() throws {

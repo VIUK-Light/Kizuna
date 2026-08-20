@@ -38,6 +38,26 @@ struct PersonaComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: service.generationModel == .local ? "desktopcomputer" : "cloud")
+                Text(service.generationModel.localizedDisplayName)
+                    .font(.caption.weight(.semibold))
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text(modelAvailabilityText)
+                    .font(.caption)
+                if let identity = store.thread(id: thread.id)?.lastUsedModelIdentity,
+                   !identity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("· " + identity)
+                        .font(.caption2.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.secondary)
+            .accessibilityElement(children: .combine)
+
             if isGeneratingAnotherThread {
                 HStack(spacing: 7) {
                     ProgressView()
@@ -63,6 +83,26 @@ struct PersonaComposer: View {
                 }
                 .frame(width: 34, height: 34)
                 .help(KizunaCopy.appName)
+
+                Menu {
+                    ForEach(PersonaGenerationModel.allCases) { model in
+                        Button {
+                            service.generationModel = model
+                        } label: {
+                            Label(
+                                "\(model.localizedDisplayName) · \(model.isAvailable ? KizunaCopy.text(japanese: "利用可能", english: "Available") : KizunaCopy.text(japanese: "未準備", english: "Not ready"))",
+                                systemImage: service.generationModel == model ? "checkmark" : "cpu"
+                            )
+                        }
+                        .disabled(!model.isAvailable || isGeneratingThisThread)
+                    }
+                } label: {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.plain)
+                .help(KizunaCopy.text(japanese: "Personaの生成モデル", english: "Persona generation model"))
 
                 TextField(KizunaCopy.text(japanese: "メッセージを送る…", english: "Message…"), text: $text, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -118,6 +158,30 @@ struct PersonaComposer: View {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !store.isPersistenceRecoveryRequired
             && !isGeneratingAnotherThread
+    }
+
+    private var modelAvailabilityText: String {
+        switch service.generationModel {
+        case .local:
+            switch LocalAssistantModelManager.shared.runtimeAvailability {
+            case .executable: return KizunaCopy.text(japanese: "利用可能", english: "Ready")
+            case .checking: return KizunaCopy.text(japanese: "確認中", english: "Checking")
+            case .savedOnly: return KizunaCopy.text(japanese: "保存済み・未確認", english: "Saved · not verified")
+            case .recentFailure: return KizunaCopy.text(japanese: "実行エラー", english: "Runtime error")
+            case .modelMissing: return KizunaCopy.text(japanese: "未導入", english: "Not installed")
+            }
+        case .nagi:
+            switch StoryGemma31BAPIService.shared.availability {
+            case .available: return KizunaCopy.text(japanese: "接続確認済み", english: "Verified")
+            case .checking: return KizunaCopy.text(japanese: "接続確認中", english: "Checking")
+            case .savedNotVerified: return KizunaCopy.text(japanese: "保存済み・未確認", english: "Saved · not verified")
+            case .authenticationError: return KizunaCopy.text(japanese: "認証エラー", english: "Auth error")
+            case .modelUnavailable: return KizunaCopy.text(japanese: "モデル利用不可", english: "Model unavailable")
+            case .rateLimited: return KizunaCopy.text(japanese: "quota / rate limit", english: "Quota / rate limit")
+            case .unavailable: return KizunaCopy.text(japanese: "接続不可", english: "Unavailable")
+            case .notConfigured: return KizunaCopy.text(japanese: "未設定", english: "Not configured")
+            }
+        }
     }
 
     private func submit() {

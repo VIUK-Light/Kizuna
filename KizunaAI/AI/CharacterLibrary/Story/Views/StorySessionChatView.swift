@@ -27,6 +27,7 @@ struct StorySessionChatView: View {
     @State private var resolvedSessionID: UUID?
     // 右上の「?」から開く、休憩提案設定の UI フレーム。
     @State private var isShowingRestHelp = false
+    @State private var isShowingSettings = false
 
     init(world: StoryWorld, initialSessionID: UUID? = nil, startsNewSession: Bool = false) {
         // Keep the raw persisted world at the session boundary.  Localized
@@ -90,6 +91,9 @@ struct StorySessionChatView: View {
         .sheet(isPresented: $isShowingRestHelp) {
             // UIフレーム: 詳細な説明・設定画面はここを差し替えて実装する。
             RestBreakHelpSheetFrame()
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            KizunaSettingsView()
         }
         .task(id: world.id) { await startSession() }
     }
@@ -171,7 +175,9 @@ struct StorySessionChatView: View {
             // 以前は StoryGenerationModelPill が定義されているだけで画面に挿入されておらず、
             // NAGIを選ぶ導線が見えない状態になっていた。
             if let sessionVM {
-                StoryGenerationModelPill(vm: sessionVM)
+                StoryGenerationModelPill(vm: sessionVM) {
+                    isShowingSettings = true
+                }
             }
 
         }

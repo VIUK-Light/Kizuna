@@ -6,12 +6,28 @@
 
 import Foundation
 
+enum StoryGemma31BAPIAvailability: Equatable, Sendable {
+    case notConfigured
+    case savedNotVerified
+    case checking
+    case available
+    case authenticationError
+    case modelUnavailable
+    case rateLimited
+    case unavailable
+
+    var isUsable: Bool {
+        self == .available
+    }
+}
+
 enum StoryGemma31BAPIError: LocalizedError {
     case missingAPIKey
     case invalidURL
     case httpStatus(Int, String)
     case emptyResponse
     case emptyText
+    case truncated(String)
 
     var errorDescription: String? {
         switch self {
@@ -26,6 +42,8 @@ enum StoryGemma31BAPIError: LocalizedError {
             return "Gemma4 31B API が空レスポンスを返しました。"
         case .emptyText:
             return "Gemma4 31B API の出力本文が空でした。"
+        case let .truncated(reason):
+            return "Gemma4 31B API の出力が上限(" + reason + ")で途中終了しました。"
         }
     }
 
@@ -33,6 +51,8 @@ enum StoryGemma31BAPIError: LocalizedError {
         switch self {
         case .emptyResponse, .emptyText:
             return true
+        case .truncated:
+            return false
         case let .httpStatus(status, _):
             return status == -1 || [408, 409, 425, 429, 500, 502, 503, 504].contains(status)
         case .missingAPIKey, .invalidURL:
@@ -44,6 +64,40 @@ enum StoryGemma31BAPIError: LocalizedError {
 struct StoryGemma31BGenerationResult {
     let text: String
     let modelName: String
+    let finishReason: String?
+    let usageMetadata: StoryGemma31BUsageMetadata?
+
+    var identity: AIModelIdentity {
+        AIModelIdentity(
+            providerID: .googleGenerativeLanguage,
+            modelID: modelName,
+            displayName: modelName
+        )
+    }
+
+    init(
+        text: String,
+        modelName: String,
+        finishReason: String? = nil,
+        usageMetadata: StoryGemma31BUsageMetadata? = nil
+    ) {
+        self.text = text
+        self.modelName = modelName
+        self.finishReason = finishReason
+        self.usageMetadata = usageMetadata
+    }
+}
+
+final class StoryGemma31BStreamAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = ""
+
+    func append(_ delta: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        value += delta
+        return value
+    }
 }
 
 final class StoryGemma31BAPIService {
@@ -54,11 +108,77 @@ final class StoryGemma31BAPIService {
     private let secretStore = AISecretStore.shared
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
+    private let availabilityLock = NSLock()
+    private var storedAvailability: StoryGemma31BAPIAvailability = .notConfigured
 
     private init() {}
 
     var hasAPIKey: Bool {
-        secretStore.configuredGemmaWebReaderAPIKey() != nil
+        if secretStore.configuredGemmaWebReaderAPIKey() != nil {
+            return true
+        }
+        return AIModelRegistry.shared.configurations(for: .story).contains { configuration in
+            configuration.identity.providerID != .localRuntime
+                && secretStore.providerAPIKey(for: configuration.id) != nil
+        }
+    }
+
+    var availability: StoryGemma31BAPIAvailability {
+        availabilityLock.lock()
+        defer { availabilityLock.unlock() }
+        if storedAvailability == .notConfigured, hasAPIKey {
+            return .savedNotVerified
+        }
+        return storedAvailability
+    }
+
+    /// Validate the credential and the selected primary model without
+    /// consuming a generation. Google exposes model metadata through GET, so
+    /// invalid keys/model access are surfaced before a user starts a Story.
+    func validateConfiguration() async -> StoryGemma31BAPIAvailability {
+        guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
+            updateAvailability(.notConfigured)
+            return .notConfigured
+        }
+        updateAvailability(.checking)
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(primaryModelName)") else {
+            updateAvailability(.unavailable)
+            return .unavailable
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let result: StoryGemma31BAPIAvailability
+            switch status {
+            case 200...299:
+                result = .available
+            case 401, 403:
+                result = .authenticationError
+            case 404:
+                result = .modelUnavailable
+            case 408, 409, 425, 429:
+                result = .rateLimited
+            case 500...599:
+                result = .unavailable
+            default:
+                result = .unavailable
+            }
+            updateAvailability(result)
+            return result
+        } catch {
+            updateAvailability(.unavailable)
+            return .unavailable
+        }
+    }
+
+    private func updateAvailability(_ value: StoryGemma31BAPIAvailability) {
+        availabilityLock.lock()
+        storedAvailability = value
+        availabilityLock.unlock()
     }
 
     func generate(
@@ -66,9 +186,10 @@ final class StoryGemma31BAPIService {
         userPrompt: String,
         temperature: Double = 0.72,
         maxOutputTokens: Int = 4096,
-        seed: Int? = nil
+        seed: Int? = nil,
+        apiKey overrideAPIKey: String? = nil
     ) async throws -> StoryGemma31BGenerationResult {
-        guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
+        guard let apiKey = resolvedAPIKey(overrideAPIKey) else {
             throw StoryGemma31BAPIError.missingAPIKey
         }
         let body = try makeRequestBody(
@@ -88,7 +209,16 @@ final class StoryGemma31BAPIService {
 
         let decoded = try decoder.decode(StoryGemma31BGenerateContentResponse.self, from: generation.data)
         if let text = visibleText(from: decoded), !text.isEmpty {
-            return StoryGemma31BGenerationResult(text: text, modelName: generation.modelName)
+            if let reason = StoryGemma31BResponseParser.truncationReason(from: decoded) {
+                AppLog.error("[StoryGemma31B] visible response truncated finishReason=%@", reason)
+                throw StoryGemma31BAPIError.truncated(reason)
+            }
+            return StoryGemma31BGenerationResult(
+                text: text,
+                modelName: generation.modelName,
+                finishReason: decoded.candidates?.compactMap(\.finishReason).first,
+                usageMetadata: decoded.usageMetadata
+            )
         }
 
         logEmptyResponse(decoded)
@@ -115,10 +245,85 @@ final class StoryGemma31BAPIService {
             from: fallbackGeneration.data
         )
         if let text = visibleText(from: fallbackResponse), !text.isEmpty {
-            return StoryGemma31BGenerationResult(text: text, modelName: fallbackGeneration.modelName)
+            if let reason = StoryGemma31BResponseParser.truncationReason(from: fallbackResponse) {
+                AppLog.error("[StoryGemma31B] fallback visible response truncated finishReason=%@", reason)
+                throw StoryGemma31BAPIError.truncated(reason)
+            }
+            return StoryGemma31BGenerationResult(
+                text: text,
+                modelName: fallbackGeneration.modelName,
+                finishReason: fallbackResponse.candidates?.compactMap(\.finishReason).first,
+                usageMetadata: fallbackResponse.usageMetadata
+            )
+        }
+        if let reason = StoryGemma31BResponseParser.truncationReason(from: fallbackResponse) {
+            throw StoryGemma31BAPIError.truncated(reason)
         }
         logEmptyResponse(fallbackResponse)
         throw StoryGemma31BAPIError.emptyText
+    }
+
+    /// Streams Google `streamGenerateContent` SSE chunks. The request body is
+    /// identical to generateContent; only the endpoint and response transport
+    /// differ. Each visible text part is delivered as a delta before the final
+    /// result is returned, while thought parts stay out of the UI/history.
+    func generateStreaming(
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double = 0.72,
+        maxOutputTokens: Int = 4096,
+        seed: Int? = nil,
+        apiKey overrideAPIKey: String? = nil,
+        onTextDelta: @escaping @Sendable (String) -> Void,
+        onModelResolved: (@Sendable (String) -> Void)? = nil
+    ) async throws -> StoryGemma31BGenerationResult {
+        guard let apiKey = resolvedAPIKey(overrideAPIKey) else {
+            throw StoryGemma31BAPIError.missingAPIKey
+        }
+        let body = try makeRequestBody(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            temperature: temperature,
+            maxOutputTokens: maxOutputTokens,
+            thinkingLevel: "high",
+            seed: seed
+        )
+
+        var lastFailure: StoryGemma31BAPIError?
+        for modelName in [primaryModelName] + fallbackModelNames {
+            do {
+                return try await streamSingleRequest(
+                    apiKey: apiKey,
+                    body: body,
+                    modelName: modelName,
+                    onTextDelta: onTextDelta,
+                    onModelResolved: onModelResolved
+                )
+            } catch let error as StoryGemma31BAPIError {
+                lastFailure = error
+                guard error.isRetryable == false || ![400, 404, 405].contains(httpStatus(from: error)) else {
+                    // A provider/model endpoint incompatibility is allowed to
+                    // move to the configured model fallback immediately.
+                    continue
+                }
+                if !error.isRetryable { break }
+            } catch {
+                lastFailure = .httpStatus(-1, error.localizedDescription)
+            }
+        }
+        throw lastFailure ?? StoryGemma31BAPIError.emptyResponse
+    }
+
+    /// Registry configurations keep provider credentials under their own UUID.
+    /// The legacy NAGI field remains a fallback so existing installations keep
+    /// working during migration, while a newly added Google configuration can
+    /// use its own Keychain entry without copying the key into the legacy slot.
+    private func resolvedAPIKey(_ overrideAPIKey: String?) -> String? {
+        let override = overrideAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !override.isEmpty {
+            return override
+        }
+        return secretStore.configuredGemmaWebReaderAPIKey()
     }
 
     private func makeRequestBody(
@@ -166,6 +371,88 @@ final class StoryGemma31BAPIService {
             promptTokens,
             outputTokens
         )
+    }
+
+    private func streamSingleRequest(
+        apiKey: String,
+        body: Data,
+        modelName: String,
+        onTextDelta: @escaping @Sendable (String) -> Void,
+        onModelResolved: (@Sendable (String) -> Void)?
+    ) async throws -> StoryGemma31BGenerationResult {
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelName):streamGenerateContent?alt=sse") else {
+            throw StoryGemma31BAPIError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.httpBody = body
+        onModelResolved?(modelName)
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        var streamedText = ""
+        var finishReason: String?
+        var usageMetadata: StoryGemma31BUsageMetadata?
+
+        for try await line in bytes.lines {
+            guard statusCode >= 200, statusCode <= 299 else { continue }
+            let payload = line.hasPrefix("data:")
+                ? String(line.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+                : line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !payload.isEmpty, payload != "[DONE]",
+                  let data = payload.data(using: .utf8),
+                  let chunk = try? decoder.decode(StoryGemma31BGenerateContentResponse.self, from: data) else {
+                continue
+            }
+            if let reason = chunk.candidates?.compactMap(\.finishReason).first {
+                finishReason = reason
+            }
+            if let usage = chunk.usageMetadata {
+                usageMetadata = usage
+            }
+            guard let delta = self.visibleText(from: chunk), !delta.isEmpty else { continue }
+            streamedText += delta
+            onTextDelta(delta)
+        }
+
+        guard (200...299).contains(statusCode) else {
+            throw StoryGemma31BAPIError.httpStatus(statusCode, "")
+        }
+        guard !streamedText.isEmpty else {
+            if let finishReason,
+               isTruncationReason(finishReason) {
+                throw StoryGemma31BAPIError.truncated(finishReason)
+            }
+            throw StoryGemma31BAPIError.emptyText
+        }
+        if let finishReason, isTruncationReason(finishReason) {
+            throw StoryGemma31BAPIError.truncated(finishReason)
+        }
+        return StoryGemma31BGenerationResult(
+            text: streamedText,
+            modelName: modelName,
+            finishReason: finishReason,
+            usageMetadata: usageMetadata
+        )
+    }
+
+    private func isTruncationReason(_ reason: String) -> Bool {
+        let normalized = reason
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+            .uppercased()
+        return normalized == "MAX_TOKENS"
+            || normalized == "MAX_OUTPUT_TOKENS"
+            || normalized == "LENGTH"
+    }
+
+    private func httpStatus(from error: StoryGemma31BAPIError) -> Int {
+        guard case let .httpStatus(status, _) = error else { return -1 }
+        return status
     }
 
     private func performRequestWithRetry(

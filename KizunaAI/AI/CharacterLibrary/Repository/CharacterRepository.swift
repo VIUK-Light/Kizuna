@@ -22,11 +22,22 @@ enum CharacterDeletionResult: Equatable {
     case notFound
 }
 
+enum CharacterRepositoryError: LocalizedError, Equatable {
+    case deletionInProgress(UUID)
+
+    var errorDescription: String? {
+        switch self {
+        case .deletionInProgress(let id):
+            return "Character deletion is in progress for \(id.uuidString)."
+        }
+    }
+}
+
 /// Persists the small amount of state needed to resume a multi-file deletion
 /// after the profile JSON has already been changed. UserDefaults is used only
 /// as a marker store; story, memory, and persona data remain in their existing
 /// repositories and are removed by the view models after the marker is seen.
-private final class CharacterDeletionCleanupMarker: @unchecked Sendable {
+final class CharacterDeletionCleanupMarker: @unchecked Sendable {
     nonisolated static let shared = CharacterDeletionCleanupMarker()
 
     private let lock = NSLock()
@@ -42,6 +53,15 @@ private final class CharacterDeletionCleanupMarker: @unchecked Sendable {
 
     nonisolated func remove(_ id: UUID) {
         withLock { UserDefaults.standard.removeObject(forKey: key(for: id)) }
+    }
+
+    nonisolated func pendingIDs() -> [UUID] {
+        withLock {
+            UserDefaults.standard.dictionaryRepresentation().keys.compactMap { key in
+                guard key.hasPrefix(keyPrefix) else { return nil }
+                return UUID(uuidString: String(key.dropFirst(keyPrefix.count)))
+            }
+        }
     }
 
     nonisolated private func key(for id: UUID) -> String {
@@ -91,8 +111,25 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
         return deduplicatedCharacters(all).sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    static var pendingDeletionIDs: [UUID] {
+        CharacterDeletionCleanupMarker.shared.pendingIDs()
+    }
+
+    static func isCharacterDeletionPending(_ id: UUID) -> Bool {
+        CharacterDeletionCleanupMarker.shared.contains(id)
+    }
+
     func saveCharacter(_ character: CharacterProfile) async throws {
+        guard !CharacterDeletionCleanupMarker.shared.contains(character.id) else {
+            throw CharacterRepositoryError.deletionInProgress(character.id)
+        }
         try await charStore.mutate { items in
+            // Re-check while holding the character-file lock. A deletion may
+            // have recorded its intent after the caller's fast-path check but
+            // before this read-modify-write reached the lock.
+            guard !CharacterDeletionCleanupMarker.shared.contains(character.id) else {
+                throw CharacterRepositoryError.deletionInProgress(character.id)
+            }
             var updated = character.normalizedForPersistence
             let existing = items.filter { $0.id == character.id }
             if let protected = existing.first(where: { $0.isSystemProtected == true }) {
@@ -112,10 +149,18 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
 
     func saveCharacters(_ characters: [CharacterProfile]) async throws {
         guard !characters.isEmpty else { return }
+        if let pendingID = characters.map(\.id).first(where: { CharacterDeletionCleanupMarker.shared.contains($0) }) {
+            throw CharacterRepositoryError.deletionInProgress(pendingID)
+        }
 
         // charStore.mutate はファイルの読み込み・変更・保存を同じロック内で
         // 完了させる。初期シードで数百回発生していた全量I/Oを1回にまとめる。
         try await charStore.mutate { items in
+            if let pendingID = characters.map(\.id).first(where: {
+                CharacterDeletionCleanupMarker.shared.contains($0)
+            }) {
+                throw CharacterRepositoryError.deletionInProgress(pendingID)
+            }
             let timestamp = Date()
 
             // 先に既存ファイル全体をUUID単位へ正規化し、バッチ入力にも同じ
@@ -168,10 +213,12 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
         // A previous attempt already removed the profile. Do not turn that
         // state into `.notFound`, because callers still need to remove orphaned
         // story/memory/persona references.
-        if CharacterDeletionCleanupMarker.shared.contains(id) {
-            return .needsCleanup
+        let markerWasPending = CharacterDeletionCleanupMarker.shared.contains(id)
+        if !markerWasPending {
+            // Record deletion intent before changing characters.json. A crash
+            // after this point leaves a discoverable recovery marker.
+            CharacterDeletionCleanupMarker.shared.insert(id)
         }
-
         var result: CharacterDeletionResult = .notFound
         // Protection and removal share the charStore read-modify-write lock.
         // A concurrent seed/save can therefore not turn a protected character
@@ -189,11 +236,17 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
             result = .deleted
         }
 
+        if result == .protected {
+            // A stale marker must not make a now-protected record impossible
+            // to recover on every launch.
+            CharacterDeletionCleanupMarker.shared.remove(id)
+            return result
+        }
+        if result == .notFound {
+            if !markerWasPending { CharacterDeletionCleanupMarker.shared.remove(id) }
+            return markerWasPending ? .needsCleanup : result
+        }
         guard result == .deleted else { return result }
-        // Persist the marker before touching the other repositories. If the
-        // process stops during lorebook/story/memory cleanup, the next attempt
-        // resumes instead of reporting a misleading `.notFound` result.
-        CharacterDeletionCleanupMarker.shared.insert(id)
         // Lorebook cleanup belongs to the character repository, but story and
         // memory cleanup is intentionally left to callers after `.deleted`.
         try await loreStore.delete(matching: { $0.characterId == id })

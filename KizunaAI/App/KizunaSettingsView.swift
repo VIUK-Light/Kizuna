@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct KizunaSettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -9,6 +10,16 @@ struct KizunaSettingsView: View {
     @State private var modelSourceURL = ""
     @State private var modelSourceSHA256 = ""
     @State private var modelAccessToken = ""
+    @State private var nagiAvailability = StoryGemma31BAPIService.shared.availability
+    @State private var isCheckingNAGI = false
+    @State private var registryConfigurations: [AIModelConfiguration] = []
+    @State private var registryProvider: AIProviderID = .openAICompatible
+    @State private var registryModelID = ""
+    @State private var registryDisplayName = ""
+    @State private var registryEndpoint = "https://api.openai.com/v1"
+    @State private var registryAPIKey = ""
+    @State private var registryRole: AIModelRole = .persona
+    @State private var registryMessage: String?
     @State private var modelSourceSelection: LocalModelSourceSelection = .standard
     @State private var selectedStandardModelURL = LocalAssistantModelProfile.defaultDownloadURL
     @State private var saveMessage: String?
@@ -17,6 +28,7 @@ struct KizunaSettingsView: View {
     @State private var showClearProfileAlert = false
     @State private var showResetLaunchAlert = false
     @State private var isShowingProfile = false
+    @State private var isImportingLocalModel = false
     @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
     @AppStorage("kizuna.debug.restSuggestion.enabled") private var debugRestSuggestionEnabled = false
 
@@ -85,6 +97,113 @@ struct KizunaSettingsView: View {
                     ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    HStack {
+                        LabeledContent(
+                            KizunaCopy.text(japanese: "接続状態", english: "Connection"),
+                            value: nagiAvailabilityLabel
+                        )
+                        Spacer(minLength: 12)
+                        Button {
+                            validateNAGI()
+                        } label: {
+                            Label(
+                                isCheckingNAGI
+                                    ? KizunaCopy.text(japanese: "確認中…", english: "Checking…")
+                                    : KizunaCopy.text(japanese: "接続を確認", english: "Verify connection"),
+                                systemImage: isCheckingNAGI ? "arrow.triangle.2.circlepath" : "checkmark.seal"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isCheckingNAGI || nagiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+
+                Section(KizunaCopy.text(japanese: "AIモデルRegistry", english: "AI model registry")) {
+                    ForEach(registryConfigurations) { configuration in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(configuration.identity.displayName)
+                                    .font(.headline)
+                                Spacer()
+                                Button(role: .destructive) {
+                                    removeRegistryConfiguration(configuration)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            Text(configuration.identity.stableID)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            Text(
+                                registryRoleNames(configuration.roles)
+                                    + (configuration.endpoint.map { " · " + $0 } ?? "")
+                            )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+
+                    Picker(
+                        KizunaCopy.text(japanese: "Provider", english: "Provider"),
+                        selection: $registryProvider
+                    ) {
+                        ForEach(AIProviderID.allCases, id: \.self) { provider in
+                            Text(providerDisplayName(provider)).tag(provider)
+                        }
+                    }
+                    TextField(
+                        KizunaCopy.text(japanese: "Model ID", english: "Model ID"),
+                        text: $registryModelID
+                    )
+                    .autocorrectionDisabled()
+                    TextField(
+                        KizunaCopy.text(japanese: "表示名", english: "Display name"),
+                        text: $registryDisplayName
+                    )
+                    TextField(
+                        KizunaCopy.text(japanese: "Base URL（必要なProviderのみ）", english: "Base URL (when required)"),
+                        text: $registryEndpoint
+                    )
+                    .textContentType(.URL)
+                    .autocorrectionDisabled()
+                    if registryProvider != .localRuntime {
+                        SecureField(
+                            KizunaCopy.text(japanese: "APIキー（任意）", english: "API key (optional)"),
+                            text: $registryAPIKey
+                        )
+                        .textContentType(.password)
+                    }
+                    Picker(
+                        KizunaCopy.text(japanese: "用途", english: "Role"),
+                        selection: $registryRole
+                    ) {
+                        ForEach(AIModelRole.allCases, id: \.self) { role in
+                            Text(roleDisplayName(role)).tag(role)
+                        }
+                    }
+                    Button {
+                        addRegistryConfiguration()
+                    } label: {
+                        Label(
+                            KizunaCopy.text(japanese: "モデル構成を追加", english: "Add model configuration"),
+                            systemImage: "plus.circle"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    if let registryMessage {
+                        Text(registryMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(KizunaCopy.text(
+                        japanese: "Provider metadataはUserDefaults、APIキーはconfiguration UUIDごとにKeychainへ保存します。",
+                        english: "Provider metadata is stored in UserDefaults; API keys are stored in Keychain per configuration UUID."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section(KizunaCopy.text(japanese: "ローカルAIモデル", english: "Local AI model")) {
@@ -93,6 +212,69 @@ struct KizunaSettingsView: View {
                     if let name = modelManager.installedFileName {
                         LabeledContent(KizunaCopy.text(japanese: "モデル", english: "Model"), value: name)
                     }
+
+                    if modelManager.installedModels.count > 1 {
+                        Picker(
+                            KizunaCopy.text(japanese: "使用するローカルモデル", english: "Active local model"),
+                            selection: Binding(
+                                get: { modelManager.activeModelID ?? "" },
+                                set: { _ = modelManager.selectInstalledModel(id: $0) }
+                            )
+                        ) {
+                            ForEach(modelManager.installedModels) { model in
+                                Text("\(model.displayName) (\(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file)))")
+                                    .tag(model.id)
+                            }
+                        }
+                        Text(KizunaCopy.text(
+                            japanese: "複数の検証済みモデルを保持したまま、使用する1つを切り替えられます。",
+                            english: "Keep multiple validated models installed and switch the active one without replacing the others."
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if !modelManager.installedModels.isEmpty {
+                        Picker(
+                            KizunaCopy.text(japanese: "補助AIモデル", english: "Auxiliary AI model"),
+                            selection: Binding(
+                                get: { modelManager.auxiliaryModelID ?? "__automatic__" },
+                                set: { value in
+                                    _ = modelManager.selectAuxiliaryModel(
+                                        id: value == "__automatic__" ? nil : value
+                                    )
+                                }
+                            )
+                        ) {
+                            Text(KizunaCopy.text(japanese: "本文モデルに合わせる", english: "Use active model"))
+                                .tag("__automatic__")
+                            ForEach(modelManager.installedModels) { model in
+                                Text(model.displayName).tag(model.id)
+                            }
+                        }
+                        Text(KizunaCopy.text(
+                            japanese: "classifier・Memory・Scene補助処理だけに使うlocal artifactを選べます。Gemma 3 270Mを導入した場合はここで指定してください。",
+                            english: "Choose a local artifact for classifier, memory, and scene helpers. Select a Gemma 3 270M artifact here when installed."
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        isImportingLocalModel = true
+                    } label: {
+                        Label(
+                            KizunaCopy.text(japanese: "モデルファイルを追加", english: "Add a model file"),
+                            systemImage: "plus.circle"
+                        )
+                    }
+                    .disabled(modelManager.isDownloading)
+                    Text(KizunaCopy.text(
+                        japanese: "既存モデルを置き換えず、GGUF・LiteRT-LM・対応binを検証して追加します。",
+                        english: "Add a validated GGUF, LiteRT-LM, or supported bin without replacing existing models."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     Picker(KizunaCopy.text(japanese: "モデルの入手先", english: "Model source"), selection: $modelSourceSelection) {
                         ForEach(LocalModelSourceSelection.allCases) { source in
@@ -288,14 +470,20 @@ struct KizunaSettingsView: View {
                         .textSelection(.enabled)
                 }
 
-                if let saveMessage {
-                    Section {
-                        Label(saveMessage, systemImage: saveMessageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                            .foregroundStyle(saveMessageIsError ? .red : .green)
-                    }
-                }
             }
             .formStyle(.grouped)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let saveMessage {
+                    Label(saveMessage, systemImage: saveMessageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(saveMessageIsError ? .red : .green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.regularMaterial)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
             .navigationTitle(KizunaCopy.text(japanese: "設定", english: "Settings"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -354,6 +542,8 @@ struct KizunaSettingsView: View {
         }
         .onAppear {
             nagiAPIKey = AISecretStore.shared.string(for: .gemmaWebReaderAPIKey) ?? ""
+            nagiAvailability = StoryGemma31BAPIService.shared.availability
+            registryConfigurations = AIModelRegistry.shared.configurations
             modelSourceURL = modelManager.sourceURLString
             modelAccessToken = modelManager.accessToken
             selectedStandardModelURL = standardModelOptions.first(where: {
@@ -363,6 +553,26 @@ struct KizunaSettingsView: View {
                 $0.url == modelManager.resolvedSourceURLString
             }) ? .standard : .huggingFace
             modelManager.refreshEnvironment()
+        }
+        .fileImporter(
+            isPresented: $isImportingLocalModel,
+            allowedContentTypes: [.data],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                Task { @MainActor in
+                    let imported = await modelManager.importAdditionalModel(from: url)
+                    saveMessageIsError = !imported
+                    saveMessage = imported
+                        ? KizunaCopy.text(japanese: "追加モデルを検証して保存しました", english: "The additional model was validated and saved")
+                        : KizunaCopy.text(japanese: "追加モデルを保存できませんでした", english: "The additional model could not be saved")
+                }
+            case .failure(let error):
+                saveMessageIsError = true
+                saveMessage = error.localizedDescription
+            }
         }
     }
 
@@ -376,6 +586,10 @@ struct KizunaSettingsView: View {
         }
         modelManager.customSourceSHA256 = modelSourceSHA256
 
+        nagiAvailability = apiKeySaved && !nagiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? .savedNotVerified
+            : .notConfigured
+
         let accessTokenSaved = modelManager.updateAccessToken(modelAccessToken)
         saveMessageIsError = !(apiKeySaved && accessTokenSaved)
         saveMessage = saveMessageIsError
@@ -384,6 +598,111 @@ struct KizunaSettingsView: View {
                 english: "A secret could not be saved to Keychain. Your input was kept; try again."
             )
             : KizunaCopy.text(japanese: "設定を保存しました", english: "Settings saved")
+    }
+
+    private var nagiAvailabilityLabel: String {
+        switch nagiAvailability {
+        case .notConfigured:
+            return KizunaCopy.text(japanese: "未設定", english: "Not configured")
+        case .savedNotVerified:
+            return KizunaCopy.text(japanese: "保存済み・未確認", english: "Saved · not verified")
+        case .checking:
+            return KizunaCopy.text(japanese: "確認中", english: "Checking")
+        case .available:
+            return KizunaCopy.text(japanese: "確認済み", english: "Verified")
+        case .authenticationError:
+            return KizunaCopy.text(japanese: "認証エラー", english: "Authentication error")
+        case .modelUnavailable:
+            return KizunaCopy.text(japanese: "モデル利用不可", english: "Model unavailable")
+        case .rateLimited:
+            return KizunaCopy.text(japanese: "quota / rate limit", english: "Quota / rate limit")
+        case .unavailable:
+            return KizunaCopy.text(japanese: "接続不可", english: "Unavailable")
+        }
+    }
+
+    private func validateNAGI() {
+        saveSecretsAndModelSource()
+        guard nagiAvailability == .savedNotVerified else { return }
+        isCheckingNAGI = true
+        Task { @MainActor in
+            let result = await StoryGemma31BAPIService.shared.validateConfiguration()
+            nagiAvailability = result
+            isCheckingNAGI = false
+            saveMessageIsError = !result.isUsable
+            saveMessage = result.isUsable
+                ? KizunaCopy.text(japanese: "NAGIの接続を確認しました", english: "NAGI connection verified")
+                : KizunaCopy.text(japanese: "NAGIの接続を確認できませんでした", english: "NAGI connection could not be verified")
+        }
+    }
+
+    private func addRegistryConfiguration() {
+        let modelID = registryModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = registryDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !modelID.isEmpty else {
+            registryMessage = KizunaCopy.text(japanese: "Model IDを入力してください。", english: "Enter a model ID.")
+            return
+        }
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: registryProvider,
+                modelID: modelID,
+                displayName: displayName.isEmpty ? modelID : displayName
+            ),
+            roles: [registryRole],
+            endpoint: registryProvider == .localRuntime
+                ? nil
+                : registryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? nil
+                    : registryEndpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+            priority: 20
+        )
+        guard AIModelRegistry.shared.register(configuration) else {
+            registryMessage = KizunaCopy.text(japanese: "モデル構成を保存できませんでした。", english: "The model configuration could not be saved.")
+            return
+        }
+        if !registryAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            _ = AISecretStore.shared.setProviderAPIKey(registryAPIKey, for: configuration.id)
+        }
+        registryConfigurations = AIModelRegistry.shared.configurations
+        registryModelID = ""
+        registryDisplayName = ""
+        registryAPIKey = ""
+        registryMessage = KizunaCopy.text(japanese: "モデル構成を追加しました。", english: "Model configuration added.")
+    }
+
+    private func removeRegistryConfiguration(_ configuration: AIModelConfiguration) {
+        _ = AIModelRegistry.shared.remove(id: configuration.id)
+        _ = AISecretStore.shared.removeProviderAPIKey(for: configuration.id)
+        registryConfigurations = AIModelRegistry.shared.configurations
+        registryMessage = KizunaCopy.text(japanese: "モデル構成を削除しました。", english: "Model configuration removed.")
+    }
+
+    private func providerDisplayName(_ provider: AIProviderID) -> String {
+        switch provider {
+        case .localRuntime: return "Local runtime"
+        case .googleGenerativeLanguage: return "Google Generative Language"
+        case .openAICompatible: return "OpenAI-compatible"
+        case .anthropic: return "Anthropic"
+        }
+    }
+
+    private func roleDisplayName(_ role: AIModelRole) -> String {
+        switch role {
+        case .persona: return "Persona"
+        case .story: return "Story"
+        case .classifier: return "Classifier"
+        case .memoryExtraction: return "Memory extraction"
+        case .memoryRetrieval: return "Memory retrieval"
+        case .sceneCharacterSelection: return "Scene character selection"
+        case .sceneSummary: return "Scene summary"
+        case .nextSceneSuggestion: return "Next scene suggestion"
+        case .safety: return "Safety"
+        }
+    }
+
+    private func registryRoleNames(_ roles: Set<AIModelRole>) -> String {
+        roles.sorted { $0.rawValue < $1.rawValue }.map(roleDisplayName).joined(separator: ", ")
     }
 
     private var standardModelOptions: [LocalAssistantModelProfile.DownloadOption] {

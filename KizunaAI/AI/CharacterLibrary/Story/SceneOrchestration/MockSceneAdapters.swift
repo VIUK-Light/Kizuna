@@ -118,3 +118,160 @@ final class MockNextSceneSuggester: NextSceneSuggesting {
         }
     }
 }
+
+final class RuntimeSceneCharacterSelector: SceneCharacterSelecting {
+    /// Keep the current cast when no auxiliary model is available. A Mock
+    /// fallback is still injectable for previews/tests, but is not a
+    /// production substitute for the 270M model.
+    private let fallback: SceneCharacterSelecting?
+
+    init(fallback: SceneCharacterSelecting? = nil) {
+        self.fallback = fallback
+    }
+
+    func select(
+        userInput: String,
+        currentScene: StoryScene,
+        cast: [CastMember],
+        characterIndex: [UUID: CharacterProfile],
+        maxActive: Int
+    ) async -> [UUID] {
+        guard !cast.isEmpty else { return [] }
+        let candidates = cast.compactMap { member -> String? in
+            guard let profile = characterIndex[member.characterId] else { return nil }
+            return member.characterId.uuidString + "|" + profile.visibleName + "|" + member.roleInStory.rawValue
+        }.joined(separator: "\n")
+        let prompt = [
+            "Choose up to " + String(max(1, maxActive)) + " character UUIDs who should be active in this scene.",
+            "Return only comma-separated UUIDs.",
+            "User input: " + userInput,
+            "Scene: " + currentScene.title + " / " + currentScene.mood,
+            "Cast:",
+            candidates
+        ].joined(separator: "\n")
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: max(64, maxActive * 48), role: .sceneCharacterSelection) else {
+            return await fallback?.select(
+                userInput: userInput,
+                currentScene: currentScene,
+                cast: cast,
+                characterIndex: characterIndex,
+                maxActive: maxActive
+            ) ?? deterministicSelection(currentScene: currentScene, cast: cast, maxActive: maxActive)
+        }
+        let ids = LocalAuxiliaryAI.normalized(raw)
+            .split { $0 == "," || $0 == " " || $0 == "\n" }
+            .compactMap { UUID(uuidString: String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
+        let allowed = Set(cast.map(\.characterId))
+        let selected = ids.filter { allowed.contains($0) }
+        guard !selected.isEmpty else {
+            return await fallback?.select(
+                userInput: userInput,
+                currentScene: currentScene,
+                cast: cast,
+                characterIndex: characterIndex,
+                maxActive: maxActive
+            ) ?? deterministicSelection(currentScene: currentScene, cast: cast, maxActive: maxActive)
+        }
+        return Array(selected.prefix(max(1, min(maxActive, StoryConstants.maxActiveCharacters))))
+    }
+
+    private func deterministicSelection(
+        currentScene: StoryScene,
+        cast: [CastMember],
+        maxActive: Int
+    ) -> [UUID] {
+        let limit = max(1, min(maxActive, StoryConstants.maxActiveCharacters))
+        let allowed = Set(cast.map(\.characterId))
+        let existing = currentScene.activeCharacterIds.filter { allowed.contains($0) }
+        if !existing.isEmpty {
+            return Array(existing.prefix(limit))
+        }
+        return cast.first.map { [$0.characterId] } ?? []
+    }
+}
+
+final class RuntimeSceneSummarizer: SceneSummarizing {
+    /// Keep the previous summary when no auxiliary model is available.
+    private let fallback: SceneSummarizing?
+
+    init(fallback: SceneSummarizing? = nil) {
+        self.fallback = fallback
+    }
+
+    func updateSummary(
+        currentSummary: String,
+        recentMessages: [StoryMessage],
+        characterIndex: [UUID: CharacterProfile]
+    ) async -> String {
+        let transcript = recentMessages.suffix(8).map { message in
+            let author: String
+            switch message.author {
+            case .user: author = "User"
+            case .narrator: author = "Narration"
+            case .system: author = "System"
+            case .cast(_, let name): author = name
+            }
+            return author + ": " + message.text
+        }.joined(separator: "\n")
+        let prompt = [
+            "Write one concise factual summary of the current story state.",
+            "Return only the summary, no label or explanation. Keep under 280 characters.",
+            "Existing summary: " + currentSummary,
+            "Recent transcript:",
+            transcript
+        ].joined(separator: "\n")
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 96, role: .sceneSummary) else {
+            return await fallback?.updateSummary(
+                currentSummary: currentSummary,
+                recentMessages: recentMessages,
+                characterIndex: characterIndex
+            ) ?? currentSummary
+        }
+        let summary = LocalAuxiliaryAI.normalized(raw)
+        if summary.isEmpty {
+            return await fallback?.updateSummary(
+                currentSummary: currentSummary,
+                recentMessages: recentMessages,
+                characterIndex: characterIndex
+            ) ?? currentSummary
+        }
+        return String(summary.prefix(280))
+    }
+}
+
+final class RuntimeNextSceneSuggester: NextSceneSuggesting {
+    /// An unavailable auxiliary model means no generated suggestion. The
+    /// caller can still expose manual scene creation and an explicit retry.
+    private let fallback: NextSceneSuggesting?
+
+    init(fallback: NextSceneSuggesting? = nil) {
+        self.fallback = fallback
+    }
+
+    func suggestNext(
+        world: StoryWorld,
+        completedScene: StoryScene,
+        cast: [CastMember]
+    ) async -> [NextSceneSuggestion] {
+        let prompt = [
+            "Suggest up to three next story scenes.",
+            "Return one per line as TITLE|LOCATION|MOOD|GOAL, with no extra text.",
+            "World: " + world.title + " / " + world.genre.displayName,
+            "Story goal: " + world.storyGoal,
+            "Completed scene: " + completedScene.title + " / " + completedScene.mood
+        ].joined(separator: "\n")
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 256, role: .nextSceneSuggestion) else {
+            return await fallback?.suggestNext(world: world, completedScene: completedScene, cast: cast) ?? []
+        }
+        let suggestions = LocalAuxiliaryAI.normalized(raw).split(separator: "\n").compactMap { line -> NextSceneSuggestion? in
+            let parts = line.split(separator: "|", maxSplits: 3).map {
+                String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard parts.count == 4, parts.allSatisfy({ !$0.isEmpty }) else { return nil }
+            return NextSceneSuggestion(title: parts[0], location: parts[1], mood: parts[2], sceneGoal: parts[3])
+        }
+        return suggestions.isEmpty
+            ? await fallback?.suggestNext(world: world, completedScene: completedScene, cast: cast) ?? []
+            : Array(suggestions.prefix(3))
+    }
+}

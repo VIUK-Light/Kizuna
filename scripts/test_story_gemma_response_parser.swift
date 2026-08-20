@@ -51,6 +51,19 @@ struct StoryGemma31BResponseParserTests {
             StoryGemma31BResponseParser.visibleText(from: missingPartsResponse) == nil,
             "A candidate without parts must remain decodable and empty"
         )
+        precondition(
+            StoryGemma31BResponseParser.truncationReason(from: missingPartsResponse) == "MAX_TOKENS",
+            "MAX_TOKENS must be surfaced as a truncation reason"
+        )
+
+        let completedResponse = try JSONDecoder().decode(
+            StoryGemma31BGenerateContentResponse.self,
+            from: Data("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"complete\"}]},\"finishReason\":\"STOP\"}]}".utf8)
+        )
+        precondition(
+            StoryGemma31BResponseParser.truncationReason(from: completedResponse) == nil,
+            "STOP must not be treated as truncation"
+        )
 
         let request = StoryGemma31BGenerateContentRequest(
             systemPrompt: "You are a story narrator.",

@@ -58,8 +58,18 @@ final class LocalJSONMemoryRepository: MemoryRepository, LocalJSONMemoryFileIden
     }
 
     func saveMemory(_ memory: CharacterMemory) async throws {
+        guard !LocalJSONCharacterRepository.isCharacterDeletionPending(memory.characterId) else {
+            throw CharacterRepositoryError.deletionInProgress(memory.characterId)
+        }
         let perCharacterLimit = self.perCharacterLimit
         try await store.mutate { all in
+            // The deletion marker can be written while this save is waiting
+            // for the memory-file lock. Re-check inside the transaction so a
+            // late in-flight Persona/Story extraction cannot recreate a
+            // character-owned memory after deletion starts.
+            guard !LocalJSONCharacterRepository.isCharacterDeletionPending(memory.characterId) else {
+                throw CharacterRepositoryError.deletionInProgress(memory.characterId)
+            }
             Self.mergeMemory(
                 memory,
                 into: &all,

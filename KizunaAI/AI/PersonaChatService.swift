@@ -53,6 +53,40 @@ enum PersonaOutputSafetyPolicy {
     }
 }
 
+/// Persona can use the same local/API generation families as Story while
+/// keeping its persisted preference separate from Story worlds.
+enum PersonaGenerationModel: String, Codable, CaseIterable, Identifiable, Hashable {
+    case local
+    case nagi
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .local: return "iori"
+        case .nagi: return "NAGI"
+        }
+    }
+
+    var localizedDisplayName: String {
+        switch self {
+        case .local:
+            return KizunaCopy.text(japanese: "iori（端末内）", english: "iori (on device)")
+        case .nagi:
+            return KizunaCopy.text(japanese: "NAGI（Gemma API）", english: "NAGI (Gemma API)")
+        }
+    }
+
+    var isAvailable: Bool {
+        switch self {
+        case .local:
+            return LocalAssistantModelManager.shared.runtimeAvailability == .executable
+        case .nagi:
+            return StoryGemma31BAPIService.shared.availability.isUsable
+        }
+    }
+}
+
 /// The small runtime surface Persona needs. Keeping this separate from the
 /// large runtime bridge makes completion, cancellation, and watchdog paths
 /// deterministic in tests without changing the production runtime.
@@ -71,10 +105,217 @@ protocol PersonaReplyGenerating: AnyObject {
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
     ) async -> String?
 
+    /// Same generation boundary with runtime provenance. The default keeps
+    /// existing test doubles source-compatible while production runtimes can
+    /// report the actual local artifact/provider model.
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult
+
+    /// Route one Persona request through the selected model family. The
+    /// default implementation preserves existing test doubles and provides a
+    /// real NAGI adapter plus cross-family fallback for production.
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        model: PersonaGenerationModel,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult
+
     func cancelActiveGeneration(generationID: UUID?)
 }
 
+extension PersonaReplyGenerating {
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult {
+        LocalAssistantGenerationResult(
+            text: await generatePersonaReply(
+                prompt: prompt,
+                contextPrompt: contextPrompt,
+                coachMode: coachMode,
+                reasoningMode: reasoningMode,
+                childAge: childAge,
+                pageInfo: pageInfo,
+                safetySnapshot: safetySnapshot,
+                advancedSettings: advancedSettings,
+                overrideSystemPrompt: overrideSystemPrompt,
+                generationID: generationID,
+                onUpdate: onUpdate
+            ),
+            modelIdentity: nil
+        )
+    }
+
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        model: PersonaGenerationModel,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult {
+        func generateThroughRegistry() async -> LocalAssistantGenerationResult? {
+            // Preserve injected test/future runtimes. The shared production
+            // bridge is the composition root that opts into the provider
+            // registry; a fake should keep its own deterministic contract.
+            guard self is LocalAssistantRuntimeBridge else { return nil }
+            let providerID: AIProviderID = model == .nagi
+                ? .googleGenerativeLanguage
+                : .localRuntime
+            let preferred = AIModelRegistry.shared
+                .configurations(for: .persona)
+                .first(where: { $0.identity.providerID == providerID })
+            let combinedPrompt: String
+            if let contextPrompt,
+               !contextPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                combinedPrompt = contextPrompt + "\n\n" + prompt
+            } else {
+                combinedPrompt = prompt
+            }
+            let request = AIGenerationRequest(
+                systemPrompt: overrideSystemPrompt ?? "",
+                userPrompt: combinedPrompt,
+                temperature: 0.72,
+                maxOutputTokens: 1_024,
+                onUpdate: onUpdate
+            )
+            guard let response = try? await AIModelRouter.shared.generate(
+                request: request,
+                role: .persona,
+                preferredConfigurationID: preferred?.id
+            ) else {
+                return nil
+            }
+            return LocalAssistantGenerationResult(
+                text: response.text,
+                modelIdentity: response.identity.stableID
+            )
+        }
+
+        if let routed = await generateThroughRegistry() {
+            return routed
+        }
+
+        func generateNAGI() async -> LocalAssistantGenerationResult? {
+            guard StoryGemma31BAPIService.shared.hasAPIKey else { return nil }
+            let userPrompt: String
+            if let contextPrompt, !contextPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                userPrompt = contextPrompt + "\n\n" + prompt
+            } else {
+                userPrompt = prompt
+            }
+            guard let generation = try? await StoryGemma31BAPIService.shared.generate(
+                systemPrompt: overrideSystemPrompt ?? "",
+                userPrompt: userPrompt,
+                temperature: 0.72,
+                maxOutputTokens: 1_024
+            ) else {
+                return nil
+            }
+            if let onUpdate {
+                await onUpdate(.visiblePreview(generation.text))
+            }
+            return LocalAssistantGenerationResult(
+                text: generation.text,
+                modelIdentity: generation.identity.stableID
+            )
+        }
+
+        func generateLocal() async -> LocalAssistantGenerationResult {
+            await generatePersonaReplyResult(
+                prompt: prompt,
+                contextPrompt: contextPrompt,
+                coachMode: coachMode,
+                reasoningMode: reasoningMode,
+                childAge: childAge,
+                pageInfo: pageInfo,
+                safetySnapshot: safetySnapshot,
+                advancedSettings: advancedSettings,
+                overrideSystemPrompt: overrideSystemPrompt,
+                generationID: generationID,
+                onUpdate: onUpdate
+            )
+        }
+
+        switch model {
+        case .local:
+            let local = await generateLocal()
+            if local.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                return local
+            }
+            return await generateNAGI() ?? local
+        case .nagi:
+            if let nagi = await generateNAGI() { return nagi }
+            return await generateLocal()
+        }
+    }
+}
+
 extension LocalAssistantRuntimeBridge: PersonaReplyGenerating {
+    func generatePersonaReplyResult(
+        prompt: String,
+        contextPrompt: String?,
+        coachMode: AICoachService.CoachMode,
+        reasoningMode: ReasoningMode,
+        childAge: Int,
+        pageInfo: AICoachService.PageInfo?,
+        safetySnapshot: AICoachService.SafetySnapshot?,
+        advancedSettings: GemmaAdvancedSettings,
+        overrideSystemPrompt: String?,
+        generationID: UUID?,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    ) async -> LocalAssistantGenerationResult {
+        await generateReply(
+            prompt: prompt,
+            contextPrompt: contextPrompt,
+            coachMode: coachMode,
+            reasoningMode: reasoningMode,
+            researchMode: .off,
+            childAge: childAge,
+            pageInfo: pageInfo,
+            safetySnapshot: safetySnapshot,
+            advancedSettings: advancedSettings,
+            overrideSystemPrompt: overrideSystemPrompt,
+            generationID: generationID,
+            onUpdate: onUpdate
+        )
+    }
+
     func generatePersonaReply(
         prompt: String,
         contextPrompt: String?,
@@ -140,6 +381,13 @@ final class PersonaChatService: ObservableObject {
     @Published private(set) var lastCompletedGeneration: GenerationCompletion?
     @Published private(set) var cancelledRequests: [UUID: String] = [:]
     @Published private(set) var memorySaveError: String?
+    @Published var generationModel: PersonaGenerationModel {
+        didSet {
+            UserDefaults.standard.set(generationModel.rawValue, forKey: Self.generationModelKey)
+        }
+    }
+
+    private static let generationModelKey = "persona.generationModel"
 
     private var generationTask: Task<Void, Never>?
     private var pendingMemoryTask: Task<Void, Never>? = nil
@@ -166,19 +414,21 @@ final class PersonaChatService: ObservableObject {
         safetyPipeline: SafetyPipeline = SafetyPipeline.shared,
         characterRepo: CharacterRepository = LocalJSONCharacterRepository(),
         memoryRepo: MemoryRepository = LocalJSONMemoryRepository(),
-        smallClassifier: SmallModelClassifying = MockSmallModelClassifier(),
-        memorySelector: MemorySelecting = MockMemorySelector(),
-        memorySummarizer: MemorySummarizing = MockMemorySummarizer(),
+        smallClassifier: SmallModelClassifying? = nil,
+        memorySelector: MemorySelecting? = nil,
+        memorySummarizer: MemorySummarizing? = nil,
         watchdogNanoseconds: UInt64 = 75_000_000_000
     ) {
+        self.generationModel = UserDefaults.standard.string(forKey: Self.generationModelKey)
+            .flatMap(PersonaGenerationModel.init(rawValue:)) ?? .local
         self.runtime = runtime
         self.store = store
         self.safetyPipeline = safetyPipeline
         self.characterRepo = characterRepo
         self.memoryRepo = memoryRepo
-        self.smallClassifier = smallClassifier
-        self.memorySelector = memorySelector
-        self.memorySummarizer = memorySummarizer
+        self.smallClassifier = smallClassifier ?? RuntimeSmallModelClassifier()
+        self.memorySelector = memorySelector ?? RuntimeMemorySelector()
+        self.memorySummarizer = memorySummarizer ?? RuntimeMemorySummarizer()
         self.watchdogNanoseconds = watchdogNanoseconds
     }
 
@@ -230,6 +480,7 @@ final class PersonaChatService: ObservableObject {
         lastRequestText = trimmed
         activeRequestText = trimmed
         let generationID = UUID()
+        let selectedGenerationModel = generationModel
         activeGenerationID = generationID
         activeThreadID = thread.id
         activeAssistantMessageID = assistantMessageID
@@ -238,7 +489,13 @@ final class PersonaChatService: ObservableObject {
         if let charID = thread.characterID {
             // 新パス: キャラライブラリー由来のスレッド → 安全 + メモリーパイプライン
             generationTask = Task { [weak self] in
-                await self?.runCharacterPipeline(threadID: thread.id, characterID: charID, userText: trimmed, generationID: generationID)
+                await self?.runCharacterPipeline(
+                    threadID: thread.id,
+                    characterID: charID,
+                    userText: trimmed,
+                    generationID: generationID,
+                    generationModel: selectedGenerationModel
+                )
             }
         } else {
             // 旧パス: PersonaSettings由来のスレッド → 既存ストリーミングのまま
@@ -246,7 +503,8 @@ final class PersonaChatService: ObservableObject {
                 await self?.runLegacyPersonaGeneration(
                     threadID: threadID,
                     userText: trimmed,
-                    generationID: generationID
+                    generationID: generationID,
+                    generationModel: selectedGenerationModel
                 )
             }
         }
@@ -257,7 +515,8 @@ final class PersonaChatService: ObservableObject {
     private func runLegacyPersonaGeneration(
         threadID: UUID,
         userText: String,
-        generationID: UUID
+        generationID: UUID,
+        generationModel: PersonaGenerationModel
     ) async {
         // A cancelled legacy task can still be scheduled after the caller has
         // switched threads. Do not start another runtime generation for that
@@ -281,7 +540,7 @@ final class PersonaChatService: ObservableObject {
         let composedPrompt = buildPrompt(forThread: thread, latestUser: userText)
         let personaPrompt = legacyPersonaSystemPrompt(for: thread.personaSnapshot)
         let advanced = voiceOptimizedAdvancedSettings
-        let reply = await runtime.generatePersonaReply(
+        let generation = await runtime.generatePersonaReplyResult(
             prompt: composedPrompt,
             contextPrompt: nil,
             coachMode: .studio,
@@ -292,10 +551,12 @@ final class PersonaChatService: ObservableObject {
             advancedSettings: advanced,
             overrideSystemPrompt: personaPrompt,
             generationID: generationID,
+            model: generationModel,
             onUpdate: { @MainActor [weak self] update in
                 self?.handleStreamUpdate(update, generationID: generationID)
             }
         )
+        let reply = generation.text
         guard let rawFinalText = PersonaOutputSafetyPolicy.completedText(from: reply) else {
             await MainActor.run {
                 self.failGeneration(
@@ -319,7 +580,8 @@ final class PersonaChatService: ObservableObject {
                 reply: reply,
                 threadID: threadID,
                 generationID: generationID,
-                outputSafety: outputSafety
+                outputSafety: outputSafety,
+                modelIdentity: generation.modelIdentity
             )
         }
     }
@@ -337,7 +599,13 @@ final class PersonaChatService: ObservableObject {
     /// CharacterLibrary 由来スレッドのフルパイプライン。
     /// 1) 入力 safety → 2) メモリー候補取得 → 3) 270M 分類 + 選別 → 4) PromptBuilder → 5) E4B 生成
     /// → 6) 出力 safety → 7) async でメモリー抽出・保存。
-    private func runCharacterPipeline(threadID: UUID, characterID: UUID, userText: String, generationID: UUID) async {
+    private func runCharacterPipeline(
+        threadID: UUID,
+        characterID: UUID,
+        userText: String,
+        generationID: UUID,
+        generationModel: PersonaGenerationModel
+    ) async {
         // ── 1) CharacterProfile / Lorebook 取得 ──
         let allCharacters: [CharacterProfile]
         do {
@@ -371,10 +639,31 @@ final class PersonaChatService: ObservableObject {
                 self.isGenerationActive(generationID)
             }
             guard canFallback else { return }
-            await runLegacyPersonaGeneration(threadID: threadID, userText: userText, generationID: generationID)
+            await runLegacyPersonaGeneration(
+                threadID: threadID,
+                userText: userText,
+                generationID: generationID,
+                generationModel: generationModel
+            )
             return
         }
-        let lorebook = try? await characterRepo.fetchLorebook(characterId: characterID)
+        let lorebook: CharacterLorebook?
+        do {
+            lorebook = try await characterRepo.fetchLorebook(characterId: characterID)
+        } catch {
+            await MainActor.run {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "キャラクター設定を読み込めなかったため、古い設定で応答を生成しませんでした。再試行してください。",
+                        english: "The character settings could not be loaded, so no reply was generated from stale settings. Try again."
+                    )
+                )
+            }
+            AppLog.error("[PersonaService] lorebook load failed character=%@: %@", characterID.uuidString, error.localizedDescription)
+            return
+        }
         guard isGenerationActive(generationID) else { return }
 
         // ── 2) 入力 safety ──
@@ -410,7 +699,23 @@ final class PersonaChatService: ObservableObject {
         let effectiveUserText = inSafety.rewrittenText ?? userText
 
         // ── 3) メモリー候補と選別 ──
-        let candidates = (try? await memoryRepo.fetchMemories(characterId: characterID)) ?? []
+        let candidates: [CharacterMemory]
+        do {
+            candidates = try await memoryRepo.fetchMemories(characterId: characterID)
+        } catch {
+            await MainActor.run {
+                self.failGeneration(
+                    threadID: threadID,
+                    generationID: generationID,
+                    message: KizunaCopy.text(
+                        japanese: "記憶を読み込めなかったため、古い記憶で応答を生成しませんでした。再試行してください。",
+                        english: "Memories could not be loaded, so no reply was generated from stale memory context. Try again."
+                    )
+                )
+            }
+            AppLog.error("[PersonaService] memory context load failed character=%@: %@", characterID.uuidString, error.localizedDescription)
+            return
+        }
         guard isGenerationActive(generationID) else { return }
         let needsRecall: Bool
         if candidates.isEmpty {
@@ -455,7 +760,7 @@ final class PersonaChatService: ObservableObject {
 
         // ── 5) E4B 生成 (overrideSystemPrompt 経路) ──
         let advanced = voiceOptimizedAdvancedSettings
-        let reply = await runtime.generatePersonaReply(
+        let generation = await runtime.generatePersonaReplyResult(
             prompt: effectiveUserText,
             contextPrompt: nil,
             coachMode: .studio,
@@ -466,10 +771,12 @@ final class PersonaChatService: ObservableObject {
             advancedSettings: advanced,
             overrideSystemPrompt: systemPrompt,
             generationID: generationID,
+            model: generationModel,
             onUpdate: { @MainActor [weak self] update in
                 self?.handleStreamUpdate(update, generationID: generationID)
             }
         )
+        let reply = generation.text
         guard isGenerationActive(generationID) else { return }
 
         // ── 6) 出力 safety ──
@@ -527,6 +834,10 @@ final class PersonaChatService: ObservableObject {
                     message: self.persistenceFailureMessage
                 )
                 return false
+            }
+            if let modelIdentity = generation.modelIdentity,
+               !self.store.setLastUsedModelIdentity(modelIdentity, forThread: threadID) {
+                AppLog.error("[PersonaChatService] failed to persist model identity thread=%@", threadID.uuidString)
             }
             self.streamingResponse = ""
             if let messageID = self.activeAssistantMessageID {
@@ -740,6 +1051,14 @@ final class PersonaChatService: ObservableObject {
         }
     }
 
+    func cancelGeneration(forCharacterID characterID: UUID) {
+        guard let threadID = activeGenerationThreadID,
+              let thread = store.thread(id: threadID),
+              thread.characterID == characterID else { return }
+        cancel()
+        cancelledRequests.removeValue(forKey: threadID)
+    }
+
     // MARK: - Streaming
 
     private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, generationID: UUID) {
@@ -787,7 +1106,8 @@ final class PersonaChatService: ObservableObject {
         reply: String?,
         threadID: UUID,
         generationID: UUID,
-        outputSafety: SafetyDecision
+        outputSafety: SafetyDecision,
+        modelIdentity: String? = nil
     ) {
         guard activeGenerationID == generationID else { return }
         guard let cleaned = PersonaOutputSafetyPolicy.completedText(from: reply) else {
@@ -839,6 +1159,10 @@ final class PersonaChatService: ObservableObject {
                 message: persistenceFailureMessage
             )
             return
+        }
+        if let modelIdentity,
+           !store.setLastUsedModelIdentity(modelIdentity, forThread: threadID) {
+            AppLog.error("[PersonaChatService] failed to persist model identity thread=%@", threadID.uuidString)
         }
         streamingResponse = ""
         if let messageID = activeAssistantMessageID {

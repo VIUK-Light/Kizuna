@@ -109,6 +109,23 @@ struct StoryGemma31BUsageMetadata: Decodable {
 }
 
 enum StoryGemma31BResponseParser {
+    /// Google returns MAX_TOKENS when the candidate reached the configured
+    /// output budget. A non-empty prefix is still incomplete and must not be
+    /// committed as a normal Story turn.
+    static func truncationReason(from response: StoryGemma31BGenerateContentResponse) -> String? {
+        response.candidates?
+            .compactMap(\.finishReason)
+            .first { reason in
+                let normalized = reason
+                    .replacingOccurrences(of: "-", with: "_")
+                    .replacingOccurrences(of: " ", with: "_")
+                    .uppercased()
+                return normalized == "MAX_TOKENS"
+                    || normalized == "MAX_OUTPUT_TOKENS"
+                    || normalized == "LENGTH"
+            }
+    }
+
     /// Returns only candidate parts intended for the user-visible answer.
     /// Gemma 4 can return reasoning parts with `thought: true`; those parts
     /// must not be persisted as story text or used as the next-turn history.

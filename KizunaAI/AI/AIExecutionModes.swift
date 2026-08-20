@@ -905,3 +905,481 @@ struct ThoughtStep: Identifiable, Codable, Hashable {
         self.type = type
     }
 }
+
+// MARK: - Provider-neutral generation contract
+
+/// A provider-neutral request used by the model router. Feature-specific
+/// prompt builders remain outside this type; providers only receive the
+/// final system/user boundary and generation controls.
+struct AIGenerationRequest: Sendable {
+    let systemPrompt: String
+    let userPrompt: String
+    let temperature: Double
+    let maxOutputTokens: Int
+    let seed: Int?
+    let onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    let onModelResolved: (@MainActor @Sendable (AIModelIdentity) -> Void)?
+
+    init(
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double = 0.72,
+        maxOutputTokens: Int = 1024,
+        seed: Int? = nil,
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil,
+        onModelResolved: (@MainActor @Sendable (AIModelIdentity) -> Void)? = nil
+    ) {
+        self.systemPrompt = systemPrompt
+        self.userPrompt = userPrompt
+        self.temperature = temperature
+        self.maxOutputTokens = max(1, maxOutputTokens)
+        self.seed = seed
+        self.onUpdate = onUpdate
+        self.onModelResolved = onModelResolved
+    }
+}
+
+struct AIGenerationUsage: Codable, Equatable, Hashable, Sendable {
+    let promptTokens: Int?
+    let completionTokens: Int?
+    let totalTokens: Int?
+}
+
+struct AIGenerationResponse: Sendable {
+    let text: String
+    let identity: AIModelIdentity
+    let finishReason: String?
+    let usage: AIGenerationUsage?
+}
+
+enum AIProviderError: LocalizedError, Equatable {
+    case configurationDisabled
+    case missingCredential
+    case invalidEndpoint
+    case httpStatus(Int, String)
+    case invalidResponse
+    case emptyResponse
+    case generationTruncated(String)
+    case noProviderForRole(AIModelRole)
+
+    var errorDescription: String? {
+        switch self {
+        case .configurationDisabled:
+            return "The selected AI model configuration is disabled."
+        case .missingCredential:
+            return "The selected AI provider credential is not configured."
+        case .invalidEndpoint:
+            return "The selected AI provider endpoint is invalid."
+        case let .httpStatus(status, body):
+            let preview = String(body.prefix(180))
+            return preview.isEmpty ? "AI provider request failed with HTTP \(status)." : "AI provider request failed with HTTP \(status): \(preview)"
+        case .invalidResponse:
+            return "The AI provider returned an unreadable response."
+        case .emptyResponse:
+            return "The AI provider returned no response text."
+        case let .generationTruncated(reason):
+            return "The AI provider stopped before completing the response (\(reason))."
+        case let .noProviderForRole(role):
+            return "No enabled AI model is configured for role \(role.rawValue)."
+        }
+    }
+}
+
+protocol AIProvider: AnyObject {
+    var providerID: AIProviderID { get }
+    func generate(
+        request: AIGenerationRequest,
+        configuration: AIModelConfiguration
+    ) async throws -> AIGenerationResponse
+}
+
+/// Routes a role to enabled configurations in priority order. The registry
+/// and credential store are independent from provider implementations, so a
+/// new provider can be registered without adding another feature-specific
+/// switch to Persona or Story.
+@MainActor
+final class AIModelRouter {
+    static let shared = AIModelRouter()
+
+    private let registry: AIModelRegistry
+    private var providers: [AIProviderID: AIProvider]
+
+    init(registry: AIModelRegistry = .shared) {
+        self.registry = registry
+        self.providers = [:]
+        register(LocalAIProvider())
+        register(GoogleGenerativeLanguageProvider())
+        register(OpenAICompatibleProvider())
+        register(AnthropicProvider())
+    }
+
+    func register(_ provider: AIProvider) {
+        providers[provider.providerID] = provider
+    }
+
+    func generate(
+        request: AIGenerationRequest,
+        configurationID: UUID
+    ) async throws -> AIGenerationResponse {
+        guard let configuration = registry.configuration(id: configurationID) else {
+            throw AIProviderError.invalidResponse
+        }
+        guard configuration.isEnabled else {
+            throw AIProviderError.configurationDisabled
+        }
+        guard let provider = providers[configuration.identity.providerID] else {
+            throw AIProviderError.invalidResponse
+        }
+        return try await provider.generate(request: request, configuration: configuration)
+    }
+
+    func generate(
+        request: AIGenerationRequest,
+        role: AIModelRole,
+        preferredConfigurationID: UUID? = nil
+    ) async throws -> AIGenerationResponse {
+        var configurations = registry.configurations(for: role)
+        if let preferredConfigurationID,
+           let index = configurations.firstIndex(where: { $0.id == preferredConfigurationID }) {
+            let preferred = configurations.remove(at: index)
+            configurations.insert(preferred, at: 0)
+        }
+        guard !configurations.isEmpty else {
+            throw AIProviderError.noProviderForRole(role)
+        }
+
+        var lastError: Error?
+        for configuration in configurations {
+            do {
+                return try await generate(request: request, configurationID: configuration.id)
+            } catch {
+                lastError = error
+                AppLog.note(
+                    "[AIModelRouter] provider failed role=%@ config=%@ error=%@",
+                    role.rawValue,
+                    configuration.identity.stableID,
+                    error.localizedDescription
+                )
+                if let providerError = error as? AIProviderError,
+                   case .generationTruncated = providerError {
+                    throw error
+                }
+            }
+        }
+        throw lastError ?? AIProviderError.noProviderForRole(role)
+    }
+}
+
+@MainActor
+private final class LocalAIProvider: AIProvider {
+    let providerID: AIProviderID = .localRuntime
+
+    func generate(
+        request: AIGenerationRequest,
+        configuration: AIModelConfiguration
+    ) async throws -> AIGenerationResponse {
+        let selectedModelURL = LocalAssistantModelManager.shared.modelURL(
+            forArtifactID: configuration.identity.artifactID
+        )
+        let result = await LocalAssistantRuntimeBridge.shared.generateReply(
+            prompt: request.userPrompt,
+            contextPrompt: nil,
+            coachMode: .studio,
+            reasoningMode: .thinking,
+            researchMode: .off,
+            childAge: 12,
+            pageInfo: nil,
+            safetySnapshot: nil,
+            advancedSettings: GemmaAdvancedSettings.default,
+            overrideSystemPrompt: request.systemPrompt,
+            overrideModelURL: selectedModelURL,
+            seedOverride: request.seed.map(UInt32.init),
+            onUpdate: request.onUpdate
+        )
+        guard let text = result.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            throw AIProviderError.emptyResponse
+        }
+        let observedArtifactID = result.modelIdentity?
+            .split(separator: "/")
+            .last
+            .map(String.init)
+        let artifactID = observedArtifactID ?? configuration.identity.artifactID
+        let identity = AIModelIdentity(
+            providerID: .localRuntime,
+            modelID: configuration.identity.modelID,
+            displayName: artifactID ?? configuration.identity.displayName,
+            artifactID: artifactID
+        )
+        request.onModelResolved?(identity)
+        return AIGenerationResponse(
+            text: text,
+            identity: identity,
+            finishReason: nil,
+            usage: nil
+        )
+    }
+}
+
+@MainActor
+private final class GoogleGenerativeLanguageProvider: AIProvider {
+    let providerID: AIProviderID = .googleGenerativeLanguage
+
+    func generate(
+        request: AIGenerationRequest,
+        configuration: AIModelConfiguration
+    ) async throws -> AIGenerationResponse {
+        guard let apiKey = AISecretStore.shared.providerAPIKey(for: configuration.id)
+                ?? AISecretStore.shared.configuredGemmaWebReaderAPIKey() else {
+            throw AIProviderError.missingCredential
+        }
+
+        var result: StoryGemma31BGenerationResult
+        if request.onUpdate != nil {
+            let accumulator = StoryGemma31BStreamAccumulator()
+            do {
+                result = try await StoryGemma31BAPIService.shared.generateStreaming(
+                    systemPrompt: request.systemPrompt,
+                    userPrompt: request.userPrompt,
+                    temperature: request.temperature,
+                    maxOutputTokens: request.maxOutputTokens,
+                    seed: request.seed,
+                    apiKey: apiKey,
+                    onTextDelta: { delta in
+                        let visible = accumulator.append(delta)
+                        Task { @MainActor in
+                            request.onUpdate?(.visiblePreview(visible))
+                        }
+                    },
+                    onModelResolved: { modelName in
+                        let identity = AIModelIdentity(
+                            providerID: .googleGenerativeLanguage,
+                            modelID: modelName,
+                            displayName: modelName
+                        )
+                        Task { @MainActor in
+                            request.onModelResolved?(identity)
+                        }
+                    }
+                )
+            } catch let error as StoryGemma31BAPIError {
+                if case let .truncated(reason) = error {
+                    throw AIProviderError.generationTruncated(reason)
+                }
+                guard case let .httpStatus(status, _) = error,
+                      [400, 404, 405].contains(status) else {
+                    throw error
+                }
+                // Some deployments expose generateContent but not the SSE
+                // variant. Fall back to the same provider/model request and
+                // keep the lack of deltas explicit rather than faking a stream.
+                result = try await StoryGemma31BAPIService.shared.generate(
+                    systemPrompt: request.systemPrompt,
+                    userPrompt: request.userPrompt,
+                    temperature: request.temperature,
+                    maxOutputTokens: request.maxOutputTokens,
+                    seed: request.seed,
+                    apiKey: apiKey
+                )
+            }
+        } else {
+            do {
+                result = try await StoryGemma31BAPIService.shared.generate(
+                    systemPrompt: request.systemPrompt,
+                    userPrompt: request.userPrompt,
+                    temperature: request.temperature,
+                    maxOutputTokens: request.maxOutputTokens,
+                    seed: request.seed,
+                    apiKey: apiKey
+                )
+            } catch let error as StoryGemma31BAPIError {
+                if case let .truncated(reason) = error {
+                    throw AIProviderError.generationTruncated(reason)
+                }
+                throw error
+            }
+        }
+        let usage = result.usageMetadata.map {
+            AIGenerationUsage(
+                promptTokens: $0.promptTokenCount,
+                completionTokens: $0.candidatesTokenCount,
+                totalTokens: ($0.promptTokenCount ?? 0) + ($0.candidatesTokenCount ?? 0)
+            )
+        }
+        let response = AIGenerationResponse(
+            text: result.text,
+            identity: result.identity,
+            finishReason: result.finishReason,
+            usage: usage
+        )
+        request.onModelResolved?(response.identity)
+        request.onUpdate?(.visiblePreview(response.text))
+        return response
+    }
+}
+
+private final class OpenAICompatibleProvider: AIProvider {
+    let providerID: AIProviderID = .openAICompatible
+
+    func generate(
+        request: AIGenerationRequest,
+        configuration: AIModelConfiguration
+    ) async throws -> AIGenerationResponse {
+        guard let apiKey = AISecretStore.shared.providerAPIKey(for: configuration.id) else {
+            throw AIProviderError.missingCredential
+        }
+        let endpoint = try chatCompletionsURL(configuration.endpoint)
+        var payload: [String: Any] = [
+            "model": configuration.identity.modelID,
+            "messages": [
+                ["role": "system", "content": request.systemPrompt],
+                ["role": "user", "content": request.userPrompt]
+            ],
+            "temperature": request.temperature,
+            "max_tokens": request.maxOutputTokens
+        ]
+        if let seed = request.seed { payload["seed"] = seed }
+        let response = try await performJSONRequest(
+            endpoint: endpoint,
+            headers: [
+                "Authorization": "Bearer \(apiKey)",
+                "Content-Type": "application/json"
+            ],
+            payload: payload,
+            configuration: configuration,
+            responseParser: Self.parseResponse
+        )
+        request.onModelResolved?(response.identity)
+        request.onUpdate?(.visiblePreview(response.text))
+        return response
+    }
+
+    private static func parseResponse(
+        object: Any,
+        configuration: AIModelConfiguration
+    ) throws -> AIGenerationResponse {
+        guard let dictionary = object as? [String: Any],
+              let choices = dictionary["choices"] as? [[String: Any]],
+              let first = choices.first,
+              let message = first["message"] as? [String: Any],
+              let text = message["content"] as? String,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AIProviderError.invalidResponse
+        }
+        return AIGenerationResponse(
+            text: text,
+            identity: configuration.identity,
+            finishReason: first["finish_reason"] as? String,
+            usage: parseUsage(dictionary["usage"])
+        )
+    }
+}
+
+private final class AnthropicProvider: AIProvider {
+    let providerID: AIProviderID = .anthropic
+
+    func generate(
+        request: AIGenerationRequest,
+        configuration: AIModelConfiguration
+    ) async throws -> AIGenerationResponse {
+        guard let apiKey = AISecretStore.shared.providerAPIKey(for: configuration.id) else {
+            throw AIProviderError.missingCredential
+        }
+        let endpoint = try endpointURL(configuration.endpoint, defaultValue: "https://api.anthropic.com/v1/messages")
+        let payload: [String: Any] = [
+            "model": configuration.identity.modelID,
+            "system": request.systemPrompt,
+            "messages": [["role": "user", "content": request.userPrompt]],
+            "temperature": request.temperature,
+            "max_tokens": request.maxOutputTokens
+        ]
+        let response = try await performJSONRequest(
+            endpoint: endpoint,
+            headers: [
+                "x-api-key": apiKey,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"
+            ],
+            payload: payload,
+            configuration: configuration,
+            responseParser: Self.parseResponse
+        )
+        request.onModelResolved?(response.identity)
+        request.onUpdate?(.visiblePreview(response.text))
+        return response
+    }
+
+    private static func parseResponse(
+        object: Any,
+        configuration: AIModelConfiguration
+    ) throws -> AIGenerationResponse {
+        guard let dictionary = object as? [String: Any],
+              let content = dictionary["content"] as? [[String: Any]] else {
+            throw AIProviderError.invalidResponse
+        }
+        let text = content.compactMap { $0["text"] as? String }.joined()
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AIProviderError.emptyResponse
+        }
+        return AIGenerationResponse(
+            text: text,
+            identity: configuration.identity,
+            finishReason: dictionary["stop_reason"] as? String,
+            usage: parseUsage(dictionary["usage"])
+        )
+    }
+}
+
+private func chatCompletionsURL(_ rawEndpoint: String?) throws -> URL {
+    let base = try endpointURL(rawEndpoint, defaultValue: "")
+    if base.path.hasSuffix("/chat/completions") { return base }
+    return base.appendingPathComponent("chat/completions")
+}
+
+private func endpointURL(_ rawEndpoint: String?, defaultValue: String) throws -> URL {
+    let raw = (rawEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+        ? rawEndpoint!
+        : defaultValue
+    guard let url = URL(string: raw), url.scheme == "https", url.host != nil else {
+        throw AIProviderError.invalidEndpoint
+    }
+    return url
+}
+
+private func performJSONRequest(
+    endpoint: URL,
+    headers: [String: String],
+    payload: [String: Any],
+    configuration: AIModelConfiguration,
+    responseParser: (Any, AIModelConfiguration) throws -> AIGenerationResponse
+) async throws -> AIGenerationResponse {
+    var request = URLRequest(url: endpoint)
+    request.httpMethod = "POST"
+    request.timeoutInterval = 90
+    for (field, value) in headers {
+        request.setValue(value, forHTTPHeaderField: field)
+    }
+    request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+    do {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard (200...299).contains(status) else {
+            throw AIProviderError.httpStatus(status, String(data: data, encoding: .utf8) ?? "")
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data) else {
+            throw AIProviderError.invalidResponse
+        }
+        return try responseParser(object, configuration)
+    } catch let error as AIProviderError {
+        throw error
+    } catch {
+        throw AIProviderError.httpStatus(-1, error.localizedDescription)
+    }
+}
+
+private func parseUsage(_ value: Any?) -> AIGenerationUsage? {
+    guard let dictionary = value as? [String: Any] else { return nil }
+    let prompt = (dictionary["prompt_tokens"] as? Int) ?? (dictionary["input_tokens"] as? Int)
+    let completion = (dictionary["completion_tokens"] as? Int) ?? (dictionary["output_tokens"] as? Int)
+    let total = (dictionary["total_tokens"] as? Int) ?? ((prompt ?? 0) + (completion ?? 0))
+    return AIGenerationUsage(promptTokens: prompt, completionTokens: completion, totalTokens: total)
+}

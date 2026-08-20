@@ -28,3 +28,86 @@ final class MockSmallModelClassifier: SmallModelClassifying {
         )
     }
 }
+
+/// Runs auxiliary prompts through the currently selected local runtime. When
+/// no validated artifact is executable this returns nil; production callers do
+/// not convert that absence into a fabricated 270M result.
+enum LocalAuxiliaryAI {
+    @MainActor
+    static func generate(
+        prompt: String,
+        maxOutputTokens: Int = 192,
+        role: AIModelRole = .classifier
+    ) async -> String? {
+        let modelManager = LocalAssistantModelManager.shared
+        let preferred: AIModelConfiguration? = {
+            guard let auxiliaryID = modelManager.auxiliaryModelID,
+                  let model = modelManager.installedModels.first(where: { $0.id == auxiliaryID }) else {
+                return AIModelRegistry.shared
+                    .configurations(for: role)
+                    .first(where: { $0.identity.providerID == .localRuntime })
+            }
+            return AIModelRegistry.shared.localArtifactConfiguration(
+                artifactID: model.id,
+                displayName: model.displayName,
+                roles: [role]
+            )
+        }()
+        let request = AIGenerationRequest(
+            systemPrompt: "Return only the requested compact result. Do not add explanations.",
+            userPrompt: prompt,
+            temperature: 0.1,
+            maxOutputTokens: maxOutputTokens
+        )
+        guard let result = try? await AIModelRouter.shared.generate(
+            request: request,
+            role: role,
+            preferredConfigurationID: preferred?.id
+        ) else {
+            return nil
+        }
+        let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        return text.isEmpty ? nil : String(text.prefix(maxOutputTokens * 4))
+    }
+
+    static func normalized(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Production composition for lightweight classification. It asks the real
+/// local runtime for a label and confidence, then falls back explicitly when
+/// the runtime is unavailable or returns an invalid contract.
+final class RuntimeSmallModelClassifier: SmallModelClassifying {
+    /// A fallback is injectable for previews/tests, but production defaults to
+    /// nil so an unavailable 270M artifact never masquerades as a model result.
+    private let fallback: SmallModelClassifying?
+
+    init(fallback: SmallModelClassifying? = nil) {
+        self.fallback = fallback
+    }
+
+    func classify(text: String, labels: [String]) async -> SmallModelClassification {
+        guard !labels.isEmpty else { return SmallModelClassification(label: "", confidence: 0) }
+        let prompt = [
+            "Choose exactly one label from: " + labels.joined(separator: ", "),
+            "Return exactly LABEL|CONFIDENCE where CONFIDENCE is 0 to 1.",
+            "Text: " + text
+        ].joined(separator: "\n")
+        guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 48, role: .classifier) else {
+            return await fallback?.classify(text: text, labels: labels)
+                ?? SmallModelClassification(label: "", confidence: 0)
+        }
+        let parts = LocalAuxiliaryAI.normalized(raw).split(separator: "|", maxSplits: 1).map(String.init)
+        guard parts.count == 2,
+              let label = labels.first(where: { $0.caseInsensitiveCompare(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame }),
+              let confidence = Double(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
+              confidence.isFinite else {
+            return await fallback?.classify(text: text, labels: labels)
+                ?? SmallModelClassification(label: "", confidence: 0)
+        }
+        return SmallModelClassification(label: label, confidence: min(max(confidence, 0), 1))
+    }
+}

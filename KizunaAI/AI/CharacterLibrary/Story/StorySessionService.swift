@@ -144,6 +144,7 @@ enum StoryTurnCommitRecovery {
               expected.unresolvedHooks == persisted.unresolvedHooks,
               storyStatesMatch(expected.storyState, persisted.storyState),
               expected.lastSelectedModelName == persisted.lastSelectedModelName,
+              expected.lastUsedModelIdentity == persisted.lastUsedModelIdentity,
               expected.lastUsedBackendName == persisted.lastUsedBackendName else {
             return false
         }
@@ -392,7 +393,9 @@ final class StorySessionService: ObservableObject {
     /// may contain narration without a safety block.
     private(set) var acceptanceInputSafetyBlocked = false
 
-    // DI (デフォルトは Local + Mock)
+    // DI (補助タスクは実行可能なlocal runtimeを優先し、未導入時は
+    // 偽の270M結果を作らず、各adapterの中立的な未利用結果を使う。
+    // MockはProtocolへ明示注入するPreview/Test経路だけに残す。)
     private let characterRepo: CharacterRepository
     private let memoryRepo: MemoryRepository
     private let worldRepo: StoryWorldRepository
@@ -409,11 +412,11 @@ final class StorySessionService: ObservableObject {
     /// fallback unless they explicitly provide this capability.
     private let storyMemoryRetryMemoryTransaction: StoryMemoryRetryMemoryTransaction?
     private let safetyPipeline = SafetyPipeline.shared
-    private let sceneSelector: SceneCharacterSelecting = MockSceneCharacterSelector()
-    private let summarizer: SceneSummarizing = MockSceneSummarizer()
-    private let nextScene: NextSceneSuggesting = MockNextSceneSuggester()
-    private let memorySelector: MemorySelecting = MockMemorySelector()
-    private let memorySummarizer: MemorySummarizing = MockMemorySummarizer()
+    private let sceneSelector: SceneCharacterSelecting
+    private let summarizer: SceneSummarizing
+    private let nextScene: NextSceneSuggesting
+    private let memorySelector: MemorySelecting
+    private let memorySummarizer: MemorySummarizing
     private let promptBuilder = StoryPromptBuilder()
     /// Serviceインスタンスごとのowner。プロセス共通IDにすると、画面を
     /// 作り直したServiceが、まだ生きている別Serviceと区別できない。
@@ -546,7 +549,12 @@ final class StorySessionService: ObservableObject {
         storyMemoryRetryRepo: StoryMemoryRetryRepository = LocalJSONStoryMemoryRetryRepository(),
         storyMemoryRetryMemoryTransaction: StoryMemoryRetryMemoryTransaction? = nil,
         pendingStoryTurnCommitRetries: [StoryTurnCommitRetry] = [],
-        pendingStoryMemoryRetries: [StoryMemoryRetry] = []
+        pendingStoryMemoryRetries: [StoryMemoryRetry] = [],
+        sceneSelector: SceneCharacterSelecting? = nil,
+        summarizer: SceneSummarizing? = nil,
+        nextScene: NextSceneSuggesting? = nil,
+        memorySelector: MemorySelecting? = nil,
+        memorySummarizer: MemorySummarizing? = nil
     ) {
         self.characterRepo = characterRepo
         self.memoryRepo = memoryRepo
@@ -557,6 +565,11 @@ final class StorySessionService: ObservableObject {
         self.lorebookRepo = lorebookRepo
         self.storyMemoryRepo = storyMemoryRepo
         self.storyMemoryRetryRepo = storyMemoryRetryRepo
+        self.sceneSelector = sceneSelector ?? RuntimeSceneCharacterSelector()
+        self.summarizer = summarizer ?? RuntimeSceneSummarizer()
+        self.nextScene = nextScene ?? RuntimeNextSceneSuggester()
+        self.memorySelector = memorySelector ?? RuntimeMemorySelector()
+        self.memorySummarizer = memorySummarizer ?? RuntimeMemorySummarizer()
         if let storyMemoryRetryMemoryTransaction {
             let hasLocalStorageIdentities = memoryRepo is LocalJSONMemoryFileIdentityProviding
                 && storyMemoryRepo is LocalJSONMemoryFileIdentityProviding
@@ -1526,8 +1539,8 @@ final class StorySessionService: ObservableObject {
             return
         }
 
-        // 2) Mock 安全用に CharacterProfile を 1 つ採用 (main または最 importance)。
-        //    SafetyPipeline は単一 character を要求するシグネチャなので、世界の代表者として渡す。
+        // 2) SafetyPipeline は単一 CharacterProfile を要求するため、
+        //    main または importance 最大のキャラクターを世界の代表者として渡す。
         streamingStatusText = statusText("入力を確認中", "Checking input")
         let representativeCharacter: CharacterProfile = {
             if let mainID = world.mainCharacterId, let p = charIndex[mainID] { return p }
@@ -1578,6 +1591,42 @@ final class StorySessionService: ObservableObject {
             )
             session.messages.append(narration)
             do {
+                let invalidIDs = try await invalidCharacterReferencesBeforeCommit(
+                    session: session,
+                    world: world,
+                    scene: scene,
+                    cast: cast
+                )
+                guard invalidIDs.isEmpty else {
+                    await finishGenerationWithoutSaving(
+                        generationID: generationID,
+                        notice: localizedNotice(
+                            "キャラクターが削除されたため、古い安全案内を保存しませんでした。もう一度試してください。",
+                            "A character was deleted, so the stale safety response was not saved. Try again."
+                        ),
+                        backend: .persistence,
+                        userMessageID: userMessageID,
+                        userText: userText,
+                        backendName: "character deleted before safety commit"
+                    )
+                    return
+                }
+            } catch {
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: localizedNotice(
+                        "キャラクターの最新状態を確認できなかったため、安全案内を保存しませんでした。もう一度試してください。",
+                        "The latest character state could not be verified, so the safety response was not saved. Try again."
+                    ),
+                    backend: .persistence,
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: "character validation failed before safety commit"
+                )
+                AppLog.error("[StorySession] character validation failed before safety commit: %@", error.localizedDescription)
+                return
+            }
+            do {
                 session = try await sessionRepo.commitTurn(
                     session: session,
                     scene: scene,
@@ -1621,7 +1670,8 @@ final class StorySessionService: ObservableObject {
         }
         let effectiveUserText = inSafety.rewrittenText ?? userText
 
-        // 4) シーンに居るキャラを 270M (Mock) で選定。
+        // 4) 補助モデルが設定されている場合は、シーンに居るキャラを
+        //    auxiliary roleへ渡して選定する。
         streamingStatusText = statusText("場面のキャラを選定中", "Selecting scene characters")
         // 単体物語は毎ターン「ユーザー + 主役NPC1人」。群像劇だけ最大3人を許可する。
         let activeCharacterLimit = world.isSoloStory
@@ -1690,14 +1740,30 @@ final class StorySessionService: ObservableObject {
         // 5) 全体メモリー候補 + 選別。active を優先しつつ、世界全体の関係継続に必要な inactive の高重要度メモリーも少し入れる。
         streamingStatusText = statusText("記憶を読み込み中", "Loading memories")
         var candidates: [CharacterMemory] = []
-        for member in activeCast {
-            let mems = (try? await memoryRepo.fetchMemories(characterId: member.characterId)) ?? []
-            candidates.append(contentsOf: mems)
-        }
-        for member in inactiveCast {
-            let mems = ((try? await memoryRepo.fetchMemories(characterId: member.characterId)) ?? [])
-                .filter { $0.importance >= 0.65 }
-            candidates.append(contentsOf: mems)
+        do {
+            for member in activeCast {
+                let mems = try await memoryRepo.fetchMemories(characterId: member.characterId)
+                candidates.append(contentsOf: mems)
+            }
+            for member in inactiveCast {
+                let mems = try await memoryRepo.fetchMemories(characterId: member.characterId)
+                    .filter { $0.importance >= 0.65 }
+                candidates.append(contentsOf: mems)
+            }
+        } catch {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "キャラクターの記憶を読み込めなかったため、古い状態で応答を生成しませんでした。もう一度試してください。",
+                    "Character memories could not be loaded, so a reply was not generated from stale context. Try again."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "character memory load failed"
+            )
+            AppLog.error("[StorySession] character memory context load failed: %@", error.localizedDescription)
+            return
         }
         let selectedMemories: [CharacterMemory]
         if candidates.count > 12 {
@@ -1732,17 +1798,33 @@ final class StorySessionService: ObservableObject {
                 error.localizedDescription
             )
         }
-        let scopedStoryMemoryCandidates = ((try? await storyMemoryRepo.fetchMemories(
-            storyWorldId: world.id,
-            storySessionId: session.id
-        )) ?? [])
-            .filter { memory in
+        let scopedStoryMemoryCandidates: [StoryMemory]
+        do {
+            scopedStoryMemoryCandidates = try await storyMemoryRepo.fetchMemories(
+                storyWorldId: world.id,
+                storySessionId: session.id
+            ).filter { memory in
                 // キャラ削除後に古いメモリーJSONが残っていても、次のターンへ
                 // そのキャラを再注入しない。世界イベント(nil)は保持する。
                 guard let characterID = memory.characterId else { return true }
                 return validCastCharacterIDs.contains(characterID)
                     && contextualCharacterIDs.contains(characterID)
             }
+        } catch {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "物語内メモリーを読み込めなかったため、古い状態で応答を生成しませんでした。もう一度試してください。",
+                    "Story memories could not be loaded, so a reply was not generated from stale context. Try again."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "story memory load failed"
+            )
+            AppLog.error("[StorySession] story memory context load failed: %@", error.localizedDescription)
+            return
+        }
         // Memory provenance uses the durable turn identity. generationID is an
         // execution-attempt ID and must not decide whether a saved memory still
         // belongs to the visible session history.
@@ -1772,15 +1854,49 @@ final class StorySessionService: ObservableObject {
 
         // 6) Lorebook: キーワード一致した設定だけを選択する。
         streamingStatusText = statusText("Lorebookを選択中", "Selecting lorebook entries")
-        var lorebookEntries = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
+        var lorebookEntries: [StoryLorebookEntry]
+        do {
+            lorebookEntries = try await lorebookRepo.fetchEntries(storyWorldId: world.id)
+        } catch {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "Lorebookを読み込めなかったため、設定が欠けた状態で応答を生成しませんでした。もう一度試してください。",
+                    "The lorebook could not be loaded, so a reply was not generated with incomplete story rules. Try again."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "lorebook load failed"
+            )
+            AppLog.error("[StorySession] lorebook context load failed: %@", error.localizedDescription)
+            return
+        }
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
         }
         // 既存のCharacterLorebookも移行期間は同じ選択器に流し込む。
         for member in cast {
-            guard let legacy = try? await characterRepo.fetchLorebook(characterId: member.characterId),
-                  !legacy.isEmpty else { continue }
+            let legacy: CharacterLorebook?
+            do {
+                legacy = try await characterRepo.fetchLorebook(characterId: member.characterId)
+            } catch {
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: localizedNotice(
+                        "キャラクター設定を読み込めなかったため、設定が欠けた状態で応答を生成しませんでした。もう一度試してください。",
+                        "A character lorebook could not be loaded, so a reply was not generated with incomplete settings. Try again."
+                    ),
+                    backend: .persistence,
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: "character lorebook load failed"
+                )
+                AppLog.error("[StorySession] character lorebook context load failed character=%@: %@", member.characterId.uuidString, error.localizedDescription)
+                return
+            }
+            guard let legacy, !legacy.isEmpty else { continue }
             let keywords = (legacy.importantPeople + legacy.importantPlaces + legacy.importantEvents)
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             var contentParts: [String] = [legacy.worldSetting]
@@ -2312,6 +2428,7 @@ final class StorySessionService: ObservableObject {
             usedBackendName
         )
         session.lastSelectedModelName = generationModel.displayName
+        session.lastUsedModelIdentity = generated.modelIdentity ?? generationModel.displayName
         session.lastUsedBackendName = usedBackendName
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
@@ -2514,6 +2631,47 @@ final class StorySessionService: ObservableObject {
                 storyWorldID: world.id
             )
         }()
+        let turnCharacterIDs = Set(turnMessages.compactMap { message -> UUID? in
+            guard case let .cast(characterID, _) = message.author else { return nil }
+            return characterID
+        })
+        do {
+            let invalidIDs = try await invalidCharacterReferencesBeforeCommit(
+                session: session,
+                world: world,
+                scene: scene,
+                cast: cast,
+                additionalCharacterIDs: turnCharacterIDs
+            )
+            guard invalidIDs.isEmpty else {
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: localizedNotice(
+                        "キャラクターが削除されたため、古い応答とメモリーを保存しませんでした。もう一度試してください。",
+                        "A character was deleted, so the stale response and memories were not saved. Try again."
+                    ),
+                    backend: .persistence,
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: "character deleted before turn commit"
+                )
+                return
+            }
+        } catch {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "キャラクターの最新状態を確認できなかったため、応答を保存しませんでした。もう一度試してください。",
+                    "The latest character state could not be verified, so the response was not saved. Try again."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "character validation failed before turn commit"
+            )
+            AppLog.error("[StorySession] character validation failed before turn commit: %@", error.localizedDescription)
+            return
+        }
         do {
             session = try await sessionRepo.commitTurn(
                 session: session,
@@ -2848,6 +3006,62 @@ final class StorySessionService: ObservableObject {
                 storyWorldID: pendingRetry.scene.storyWorldId
             )
         }()
+        if sessionRepo is LocalJSONStorySessionRepository {
+            do {
+                guard let retryWorld = try await worldRepo.fetchWorlds().first(where: {
+                $0.id == pendingRetry.scene.storyWorldId
+                }) else {
+                    throw StoryTurnPersistenceError.sessionNotFound
+                }
+                let retryCharacterIDs = Set(pendingRetry.session.messages
+                    .filter { pendingRetry.assistantMessageIDs.contains($0.id) }
+                    .compactMap { message -> UUID? in
+                        guard case let .cast(characterID, _) = message.author else { return nil }
+                        return characterID
+                    })
+                let invalidIDs = try await invalidCharacterReferencesBeforeCommit(
+                    session: pendingRetry.session,
+                    world: retryWorld,
+                    scene: pendingRetry.scene,
+                    cast: [],
+                    additionalCharacterIDs: retryCharacterIDs
+                )
+                guard invalidIDs.isEmpty else {
+                    pendingStoryTurnCommitRetries.removeValue(forKey: pendingRetry.turnID)
+                    try? await sessionRepo.finishTurn(
+                        sessionID: pendingRetry.session.id,
+                        turnID: pendingRetry.turnID,
+                        attempt: pendingRetry.attempt,
+                        status: .failed,
+                        failureCode: "character_deleted_before_commit_retry"
+                    )
+                    latestRuntimeNotice = StoryRuntimeNotice(
+                        text: localizedNotice(
+                            "キャラクターが削除されたため、古い応答の再保存を中止しました。",
+                            "The character was deleted, so saving the stale response was stopped."
+                        ),
+                        userMessageID: pendingRetry.userMessageID,
+                        userText: pendingRetry.userText,
+                        backendName: "character deleted before turn commit retry",
+                        backend: .persistence
+                    )
+                    return
+                }
+            } catch {
+                latestRuntimeNotice = StoryRuntimeNotice(
+                    text: localizedNotice(
+                        "キャラクターの最新状態を確認できなかったため、保存を再試行できません。",
+                        "The latest character state could not be verified, so the save cannot be retried yet."
+                    ),
+                    userMessageID: pendingRetry.userMessageID,
+                    userText: pendingRetry.userText,
+                    backendName: "character validation failed before turn commit retry",
+                    backend: .persistence
+                )
+                AppLog.error("[StorySession] character validation failed before turn commit retry: %@", error.localizedDescription)
+                return
+            }
+        }
         do {
             _ = try await sessionRepo.commitTurn(
                 session: pendingRetry.session,
@@ -3204,40 +3418,61 @@ final class StorySessionService: ObservableObject {
         }
 
         do {
-            let generation = try await StoryGemma31BAPIService.shared.generate(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                temperature: 0.72,
-                // 物語本文は2〜7行で十分。過剰な上限は待ち時間と候補の連続出力を増やす。
-                maxOutputTokens: 1024,
-                seed: seedOverride.map(Int.init)
+            let preferred = AIModelRegistry.shared
+                .configurations(for: .story)
+                .first(where: { $0.identity.providerID == .googleGenerativeLanguage })
+            let response = try await AIModelRouter.shared.generate(
+                request: AIGenerationRequest(
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    temperature: 0.72,
+                    // 物語本文は2〜7行で十分。過剰な上限は待ち時間と候補の連続出力を増やす。
+                    maxOutputTokens: 1024,
+                    seed: seedOverride.map(Int.init),
+                    onUpdate: { [weak self] update in
+                        self?.handleStreamUpdate(update, generationID: generationID)
+                    },
+                    onModelResolved: { [weak self] identity in
+                        guard let self,
+                              self.activeGenerationID == generationID else { return }
+                        let isGoogleFallback = identity.providerID == .googleGenerativeLanguage
+                            && identity.modelID != "gemma-4-31b-it"
+                        let isProviderFallback = identity.providerID != .googleGenerativeLanguage
+                        let fallbackSuffix = isGoogleFallback || isProviderFallback
+                            ? "（自動fallback）"
+                            : ""
+                        let japanese = identity.displayName + fallbackSuffix + "で発話生成中"
+                        let english = "Generating with " + identity.displayName
+                            + ((isGoogleFallback || isProviderFallback) ? " (automatic fallback)" : "")
+                        self.streamingStatusText = self.statusText(japanese, english)
+                    }
+                ),
+                role: .story,
+                preferredConfigurationID: preferred?.id
             )
-            let text = generation.text
+            let text = response.text
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = text
-                self.streamingStatusText = self.statusText("発話を整形中", "Formatting response")
+                let isGoogleFallback = response.identity.providerID == .googleGenerativeLanguage
+                    && response.identity.modelID != "gemma-4-31b-it"
+                let isProviderFallback = response.identity.providerID != .googleGenerativeLanguage
+                let isFallback = isGoogleFallback || isProviderFallback
+                let japanese = isFallback
+                    ? response.identity.displayName + "（自動fallback）の発話を整形中"
+                    : "発話を整形中"
+                let english = isFallback
+                    ? "Formatting the response from " + response.identity.displayName + " (automatic fallback)"
+                    : "Formatting response"
+                self.streamingStatusText = self.statusText(japanese, english)
                 self.streamingSpeakerName = self.detectCurrentSpeakerName(in: text)
             }
-            return (reply: text, modelIdentity: generation.modelName)
-        } catch let error as StoryGemma31BAPIError {
+            return (reply: text, modelIdentity: response.identity.stableID)
+        } catch {
             // APIエラーをNPC本文として整形すると、空レスポンス時に
             // 同じキャラのフォールバック発話が追加されるためsystem通知にする。
             let message = gemmaRuntimeNotice(for: error)
-            AppLog.error("[StoryGemma31B] generation failed: %@", error.localizedDescription)
-            await MainActor.run {
-                guard self.activeGenerationID == generationID else { return }
-                self.streamingResponse = message
-                self.streamingStatusText = ""
-                self.streamingSpeakerName = nil
-            }
-            return (reply: message, modelIdentity: nil)
-        } catch {
-            let message = localizedNotice(
-                "Gemma4 31B API の応答に失敗しました。もう一度試してください。",
-                "Gemma4 31B API failed to respond. Try again."
-            )
-            AppLog.error("[StoryGemma31B] generation failed: %@", error.localizedDescription)
+            AppLog.error("[AIModelRouter] Story generation failed: %@", error.localizedDescription)
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = message
@@ -3608,6 +3843,8 @@ final class StorySessionService: ObservableObject {
             || text.contains("Gemma4 31B API の出力本文が空")
             || text.contains("Gemma4 31B API returned no response text")
             || text.contains("Gemma4 31B API returned no usable story text")
+            || text.contains("Gemma4 31B API の出力が上限で途中終了")
+            || text.contains("Gemma4 31B API output was truncated")
     }
 
     private func gemmaRuntimeNotice(for error: StoryGemma31BAPIError) -> String {
@@ -3618,9 +3855,61 @@ final class StorySessionService: ObservableObject {
             return localizedNotice("Gemma4 31B API が空レスポンスを返しました。もう一度試してください。", "Gemma4 31B API returned an empty response. Try again.")
         case .emptyText:
             return localizedNotice("Gemma4 31B API の出力本文が空でした。もう一度試してください。", "Gemma4 31B API returned no response text. Try again.")
+        case let .truncated(reason):
+            return localizedNotice(
+                "Gemma4 31B APIの出力が上限(" + reason + ")で途中終了しました。本文は保存していません。続きを生成するか、出力上限を確認してください。",
+                "Gemma4 31B API stopped at its output limit (" + reason + "). The incomplete response was not saved. Generate a continuation or review the output limit."
+            )
         case .invalidURL, .httpStatus:
             return localizedNotice("Gemma4 31B API の応答に失敗しました。もう一度試してください。", "Gemma4 31B API failed to respond. Try again.")
         }
+    }
+
+    /// The Story path now uses the provider-neutral router. Keep provider
+    /// failures as a visible runtime notice rather than treating an adapter
+    /// error as narrator text or silently committing a partial turn.
+    private func gemmaRuntimeNotice(for error: Error) -> String {
+        if let gemmaError = error as? StoryGemma31BAPIError {
+            return gemmaRuntimeNotice(for: gemmaError)
+        }
+        if let providerError = error as? AIProviderError {
+            switch providerError {
+            case .missingCredential:
+                return localizedNotice(
+                    "選択したAI ProviderのAPIキーが未設定です。モデル詳細または設定から登録してください。",
+                    "The selected AI provider has no API key. Add it in Model details or Settings."
+                )
+            case .configurationDisabled:
+                return localizedNotice(
+                    "選択したAIモデル設定は無効です。設定で有効化してから再試行してください。",
+                    "The selected AI model configuration is disabled. Enable it in Settings and try again."
+                )
+            case .invalidEndpoint:
+                return localizedNotice(
+                    "AI Providerの接続先URLが正しくありません。設定を確認してください。",
+                    "The AI provider endpoint is invalid. Check the configuration and try again."
+                )
+            case .noProviderForRole:
+                return localizedNotice(
+                    "Story用のAIモデルが設定されていません。設定からモデルを追加してください。",
+                    "No AI model is configured for Story. Add one in Settings."
+                )
+            case let .generationTruncated(reason):
+                return localizedNotice(
+                    "AI Providerの出力が上限(\(reason))で途中終了しました。本文は保存していません。続きを生成するか、出力上限を確認してください。",
+                    "The AI provider stopped at its output limit (\(reason)). The incomplete response was not saved. Generate a continuation or review the output limit."
+                )
+            case .httpStatus, .invalidResponse, .emptyResponse:
+                return localizedNotice(
+                    "AI Providerの応答に失敗しました。接続・権限・quotaを確認して、もう一度試してください。",
+                    "The AI provider failed to respond. Check connectivity, access, and quota, then try again."
+                )
+            }
+        }
+        return localizedNotice(
+            "AI Providerの応答に失敗しました。もう一度試してください。",
+            "The AI provider failed to respond. Try again."
+        )
     }
 
     private func localStoryRuntimeUnavailableMessage(
@@ -3886,6 +4175,60 @@ final class StorySessionService: ObservableObject {
         text.unicodeScalars.contains { scalar in
             scalar.properties.isAlphabetic || scalar.properties.numericType != nil
         }
+    }
+
+    /// Return references that became invalid while a Story turn was running.
+    ///
+    /// The generation task owns an in-memory snapshot. Character deletion is
+    /// intentionally multi-file and can complete while that task is awaiting
+    /// the model, so checking only the snapshot is not enough. Re-read both
+    /// the Character Library and this world's cast immediately before the
+    /// commit boundary. The deletion marker is checked as well, closing the
+    /// short interval between recording deletion intent and removing the
+    /// profile JSON.
+    private func invalidCharacterReferencesBeforeCommit(
+        session: StorySession,
+        world: StoryWorld,
+        scene: StoryScene,
+        cast: [CastMember],
+        additionalCharacterIDs: Set<UUID> = []
+    ) async throws -> Set<UUID> {
+        // The cross-file deletion fence is a production Local JSON invariant.
+        // Injected session repositories are deliberately allowed to model
+        // their own consistency contract; applying a second world/cast read
+        // to them would turn lightweight unit doubles into false failures.
+        guard sessionRepo is LocalJSONStorySessionRepository else { return [] }
+        let currentCharacters = try await characterRepo.fetchCharacters()
+        let currentCharacterIDs = Set(currentCharacters.map(\.id))
+        let currentCast = try await castRepo.fetchCast(storyWorldId: world.id)
+        let currentCastIDs = Set(currentCast.map(\.characterId))
+
+        var profileReferences = Set(world.characterIds)
+        if let mainCharacterID = world.mainCharacterId {
+            profileReferences.insert(mainCharacterID)
+        }
+        profileReferences.formUnion(scene.activeCharacterIds)
+        profileReferences.formUnion(session.activeCharacterIds ?? [])
+        profileReferences.formUnion(session.storyState?.characterStates.compactMap(\.characterId) ?? [])
+        profileReferences.formUnion(cast.map(\.characterId))
+        profileReferences.formUnion(additionalCharacterIDs)
+
+        var invalid = Set(profileReferences.filter {
+            !currentCharacterIDs.contains($0)
+                || CharacterDeletionCleanupMarker.shared.contains($0)
+        })
+
+        // References that participate in this turn must still belong to the
+        // current world's cast. World.characterIds is intentionally excluded
+        // from this check because old worlds may contain a profile that has
+        // not yet been added to the cast table.
+        var castReferences = Set(scene.activeCharacterIds)
+        castReferences.formUnion(session.activeCharacterIds ?? [])
+        castReferences.formUnion(session.storyState?.characterStates.compactMap(\.characterId) ?? [])
+        castReferences.formUnion(cast.map(\.characterId))
+        castReferences.formUnion(additionalCharacterIDs)
+        invalid.formUnion(castReferences.filter { !currentCastIDs.contains($0) })
+        return invalid
     }
 
     // CharacterProfile は既存データ互換のため専用フラグを持たない。
