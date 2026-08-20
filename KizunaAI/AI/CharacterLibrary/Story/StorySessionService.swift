@@ -393,9 +393,9 @@ final class StorySessionService: ObservableObject {
     /// may contain narration without a safety block.
     private(set) var acceptanceInputSafetyBlocked = false
 
-    // DI (補助タスクは実行可能なlocal runtimeを優先し、未導入時だけ
-    // 明示的なMock fallbackへ落ちる。本文生成と補助生成を同じ実体へ
-    // 直結させず、各Protocolのテスト差し替えは維持する。)
+    // DI (補助タスクは実行可能なlocal runtimeを優先し、未導入時は
+    // 偽の270M結果を作らず、各adapterの中立的な未利用結果を使う。
+    // MockはProtocolへ明示注入するPreview/Test経路だけに残す。)
     private let characterRepo: CharacterRepository
     private let memoryRepo: MemoryRepository
     private let worldRepo: StoryWorldRepository
