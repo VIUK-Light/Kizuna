@@ -90,6 +90,9 @@ struct KizunaContinuationView: View {
         .task {
             await viewModel.reload()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .characterLibraryDidChange)) { _ in
+            reload()
+        }
 #if os(iOS)
         .fullScreenCover(item: $selectedRoute, onDismiss: reload) { route in
             destination(for: route)

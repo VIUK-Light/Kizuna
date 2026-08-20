@@ -33,6 +33,7 @@ struct StorySessionChatBody: View {
     @State private var isShowingUnavailableModelAlert = false
     @State private var isStoryChatNearLatest = true
     @State private var unreadStoryMessageCount = 0
+    @State private var previousStoryMessageIDs: Set<UUID> = []
     @FocusState private var composerFocused: Bool
 
     init(vm: StorySessionViewModel, isShowingRestHelp: Binding<Bool>) {
@@ -63,15 +64,23 @@ struct StorySessionChatBody: View {
                                     streamingPreview
                                 }
                                 bootstrapWarningCard
+                                refreshErrorCard
+                                sendPreparationErrorCard
                                 interruptedTurnCard
                                 // 最新のキャラクター発話の後ろに、会話の一部として表示する。
                                 restSuggestionCard
                                 safetySupportCard
                                 runtimeNoticeCard
+                                Color.clear
+                                    .frame(height: 1)
+                                    .id("story-chat-bottom")
                             }
                             .padding(18)
                         }
                         .background(storyCanvas)
+                        .onAppear {
+                            previousStoryMessageIDs = Set(vm.session.messages.map(\.id))
+                        }
                         .onScrollGeometryChange(for: Bool.self) { geometry in
                             let distanceFromBottom = geometry.contentSize.height
                                 - geometry.contentOffset.y
@@ -84,6 +93,7 @@ struct StorySessionChatBody: View {
                             }
                         }
                         .onChange(of: vm.session.messages.count) { _, _ in
+                            let currentMessageIDs = Set(vm.session.messages.map(\.id))
                             if isStoryChatNearLatest {
                                 if let last = vm.session.messages.last?.id {
                                     withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
@@ -91,8 +101,15 @@ struct StorySessionChatBody: View {
                                     }
                                 }
                             } else {
-                                unreadStoryMessageCount += 1
+                                let newMessageIDs = currentMessageIDs.subtracting(previousStoryMessageIDs)
+                                let newCastMessages = vm.session.messages.filter { message in
+                                    newMessageIDs.contains(message.id) && isUnreadStoryMessage(message)
+                                }
+                                if !newCastMessages.isEmpty {
+                                    unreadStoryMessageCount += newCastMessages.count
+                                }
                             }
+                            previousStoryMessageIDs = currentMessageIDs
                         }
                         .onChange(of: vm.bootstrapWarning) { _, warning in
                             guard warning != nil, isStoryChatNearLatest else { return }
@@ -125,7 +142,7 @@ struct StorySessionChatBody: View {
                         .onChange(of: service.savedTurnRevision) { _, _ in
                             // キャラクター発話の保存後にだけ、アプリ側の60分判定を行う。
                             Task {
-                                await vm.refreshAfterTurn()
+                                guard await vm.refreshAfterTurn() else { return }
                                 await vm.evaluateRestSuggestionAfterTurn()
                             }
                         }
@@ -150,15 +167,16 @@ struct StorySessionChatBody: View {
                         .onChange(of: vm.responseActionError) { _, error in
                             isShowingResponseActionError = error != nil
                         }
+                        .onChange(of: vm.lastStartedUserMessageID) { _, startedID in
+                            guard startedID != nil else { return }
+                            draft = ""
+                            composerFocused = false
+                        }
 
                         if !isStoryChatNearLatest {
                             Button {
                                 withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
-                                    if let last = vm.session.messages.last?.id {
-                                        proxy.scrollTo(last, anchor: .bottom)
-                                    } else {
-                                        proxy.scrollTo("streaming-preview", anchor: .bottom)
-                                    }
+                                    proxy.scrollTo("story-chat-bottom", anchor: .bottom)
                                 }
                                 isStoryChatNearLatest = true
                                 unreadStoryMessageCount = 0
@@ -309,6 +327,68 @@ struct StorySessionChatBody: View {
             )
             .accessibilityElement(children: .contain)
             .id("story.bootstrap-warning")
+        }
+    }
+
+    @ViewBuilder
+    private var refreshErrorCard: some View {
+        if let error = vm.refreshError {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(storyCopy("保存済みの返信を表示中です", "Showing the saved reply"))
+                        .font(.subheadline.weight(.bold))
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(storyText.opacity(0.78))
+                    Button(storyCopy("再読み込み", "Reload")) {
+                        Task { await vm.refreshAfterTurn() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(minHeight: 44)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .id("story.refresh-error")
+        }
+    }
+
+    @ViewBuilder
+    private var sendPreparationErrorCard: some View {
+        if let error = vm.sendPreparationError {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange.opacity(0.9))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(storyCopy("送信を開始できませんでした", "The message could not start"))
+                        .font(.subheadline.weight(.bold))
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(storyText.opacity(0.78))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(storyCopy(
+                        "入力欄の本文は保持しています。保存状態を確認して再送信してください。",
+                        "Your text was kept. Check the saved state and send it again."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(storyMuted)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.orange.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.orange.opacity(0.18), lineWidth: 1)
+            )
+            .id("story.send-preparation-error")
         }
     }
 
@@ -698,10 +778,7 @@ struct StorySessionChatBody: View {
     private func regularSceneStrip(availableHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .center, spacing: 12) {
-                Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(storyText)
-                    .lineLimit(1)
+                currentSceneLabel
                 Spacer()
                 activeCharacterChips
             }
@@ -712,12 +789,7 @@ struct StorySessionChatBody: View {
     private func compactSceneStrip(availableHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 10) {
-                Text(vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title)
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(storyText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-                    .layoutPriority(1)
+                currentSceneLabel
                 Spacer(minLength: 4)
                 activeCharacterChips
                     .frame(maxWidth: 210, alignment: .trailing)
@@ -749,6 +821,39 @@ struct StorySessionChatBody: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+    }
+
+    private var currentSceneLabel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(currentSceneTitle)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(storyText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .layoutPriority(1)
+            if !currentSceneContext.isEmpty {
+                Text(currentSceneContext)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(storyMuted)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var currentSceneTitle: String {
+        let location = vm.session.storyState?.location.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !location.isEmpty {
+            return location
+        }
+        return vm.scene.title.isEmpty ? storyCopy("現在のシーン", "Current scene") : vm.scene.title
+    }
+
+    private var currentSceneContext: String {
+        guard let state = vm.session.storyState else { return "" }
+        return [state.timeOfDay, state.mood, state.weather]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
     }
 
     private func sceneVisualHeight(availableHeight: CGFloat) -> CGFloat {
@@ -794,13 +899,13 @@ struct StorySessionChatBody: View {
                 .contextMenu {
                     responseActionButtons(for: message)
                 }
-                .accessibilityAction(named: Text(storyCopy("コピー", "Copy"))) {
+                .accessibilityAction(named: Text(storyCopy("この発言をコピー", "Copy this message"))) {
                     StorySessionClipboard.copy(message.text)
                 }
-                .accessibilityAction(named: Text(storyCopy("もう一度生成", "Regenerate"))) {
+                .accessibilityAction(named: Text(storyCopy("このターンを再生成", "Regenerate this turn"))) {
                     vm.regenerateLatestResponse()
                 }
-                .accessibilityAction(named: Text(storyCopy("この応答を取り消す", "Undo this response"))) {
+                .accessibilityAction(named: Text(storyCopy("このターンを取り消す", "Undo this turn"))) {
                     vm.undoLatestResponse()
                 }
         } else {
@@ -848,8 +953,8 @@ struct StorySessionChatBody: View {
                 .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(storyCopy("この応答の操作", "Actions for this response"))
-        .accessibilityHint(storyCopy("コピー、再生成、取り消し", "Copy, regenerate, or undo"))
+        .accessibilityLabel(storyCopy("このターンの操作", "Actions for this turn"))
+        .accessibilityHint(storyCopy("この発言をコピー、ターンを再生成または取り消し", "Copy this message, regenerate or undo the turn"))
         .disabled(vm.isHandlingResponseAction)
     }
 
@@ -858,19 +963,18 @@ struct StorySessionChatBody: View {
         Button {
             StorySessionClipboard.copy(message.text)
         } label: {
-            Label(storyCopy("コピー", "Copy"), systemImage: "doc.on.doc")
+            Label(storyCopy("この発言をコピー", "Copy this message"), systemImage: "doc.on.doc")
         }
         Button {
             vm.regenerateLatestResponse()
         } label: {
-            Label(storyCopy("もう一度生成", "Regenerate"), systemImage: "arrow.clockwise")
+            Label(storyCopy("このターンを再生成", "Regenerate this turn"), systemImage: "arrow.clockwise")
         }
         Button(role: .destructive) {
             vm.undoLatestResponse()
         } label: {
-            Label(storyCopy("この応答を取り消す", "Undo this response"), systemImage: "arrow.uturn.backward")
+            Label(storyCopy("このターンを取り消す", "Undo this turn"), systemImage: "arrow.uturn.backward")
         }
-        .keyboardShortcut("z", modifiers: [.command])
     }
 
     @ViewBuilder
@@ -982,7 +1086,6 @@ struct StorySessionChatBody: View {
                     Text(message.text)
                         .font(.body.weight(.medium))
                         .foregroundStyle(storyText.opacity(0.82))
-                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 16)
                         .background(
@@ -993,10 +1096,17 @@ struct StorySessionChatBody: View {
                         .font(.caption2)
                         .foregroundStyle(storyMuted)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: 620, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: 680, alignment: .leading)
         }
+    }
+
+    private func isUnreadStoryMessage(_ message: StoryMessage) -> Bool {
+        if case .cast = message.author {
+            return true
+        }
+        return false
     }
 
     private func storyAccessibilityLabel(for message: StoryMessage) -> String {
@@ -1110,7 +1220,6 @@ struct StorySessionChatBody: View {
                     Text(preview)
                         .font(.body.weight(.medium))
                         .foregroundStyle(storyText.opacity(0.78))
-                        .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1133,7 +1242,10 @@ struct StorySessionChatBody: View {
     }
 
     private var composer: some View {
-        HStack(spacing: 10) {
+        let isPreparing = vm.isPreparingSend
+        let isGenerating = service.phase == .thinking
+        let hasInterruptedTurn = vm.interruptedTurn != nil
+        return HStack(spacing: 10) {
             TextField(
                 "",
                 text: $draft,
@@ -1153,20 +1265,20 @@ struct StorySessionChatBody: View {
                         .fill(Color.white.opacity(0.08))
                 )
                 .onSubmit(submit)
-                .disabled(service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
+                .disabled(isPreparing || isGenerating || hasInterruptedTurn || service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
             Button {
-                if service.phase == .thinking {
+                if isPreparing || isGenerating {
                     vm.cancelGeneration()
                 } else {
                     submit()
                 }
             } label: {
-                Image(systemName: service.phase == .thinking ? "stop.fill" : "paperplane.fill")
+                Image(systemName: isPreparing ? "hourglass" : (isGenerating ? "stop.fill" : "paperplane.fill"))
                     .font(.system(size: 14, weight: .bold))
                     .frame(width: 44, height: 44)
                     .background(
                         Circle().fill(
-                            service.phase == .thinking || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            isPreparing || isGenerating || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 ? Color.accentColor
                                 : Color.white.opacity(0.24)
                         )
@@ -1175,9 +1287,14 @@ struct StorySessionChatBody: View {
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-            .disabled(service.phase != .thinking && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityLabel(service.phase == .thinking ? storyCopy("生成を停止", "Stop generating") : storyCopy("送信", "Send"))
-            .disabled(service.hasPendingStoryCommitRetry || service.isRetryingAuxiliarySave)
+            .disabled((!isPreparing && !isGenerating && (hasInterruptedTurn || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                || service.hasPendingStoryCommitRetry
+                || service.isRetryingAuxiliarySave)
+            .accessibilityLabel(
+                isPreparing
+                    ? storyCopy("送信準備を停止", "Stop preparing to send")
+                    : (isGenerating ? storyCopy("生成を停止", "Stop generating") : storyCopy("送信", "Send"))
+            )
         }
         .padding(14)
         .background(storyPanel)
@@ -1186,14 +1303,16 @@ struct StorySessionChatBody: View {
 
     private func submit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, service.phase != .thinking else { return }
+        guard !text.isEmpty,
+              service.phase != .thinking,
+              !vm.isPreparingSend,
+              vm.interruptedTurn == nil else { return }
         guard selectedModelIsReady else {
             handleUnavailableModelBeforeSubmission()
             return
         }
         // 送信準備中の二重タップでは受付されないため、受理された時だけ入力を消す。
         guard vm.send(text) else { return }
-        draft = ""
         composerFocused = false
     }
 }

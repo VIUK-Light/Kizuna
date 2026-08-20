@@ -67,6 +67,64 @@ enum StoryWorldDeletionJournal {
     }
 }
 
+/// 新規StoryはWorld/Cast/Lorebook/Sceneを複数のJSONへ保存するため、
+/// 保存途中でプロセスが終了すると「作成中」の状態を推測できなくなる。
+/// 作成開始を先に記録し、全保存成功後だけcommittedへ進めることで、
+/// 次回ライブラリー起動時に未完了の新規データを確実に掃除する。
+enum StoryWorldCreationJournal {
+    enum State: String, Codable {
+        case staging
+        case committed
+    }
+
+    struct Entry: Codable, Equatable {
+        let worldID: UUID
+        let generatedCharacterIDs: [UUID]
+        var state: State
+    }
+
+    private static let key = "kizuna.story.pendingWorldCreations"
+
+    static var entries: [Entry] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let decoded = try? JSONDecoder().decode([Entry].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    static func markStaging(worldID: UUID, generatedCharacterIDs: [UUID]) {
+        var values = entries
+        let entry = Entry(
+            worldID: worldID,
+            generatedCharacterIDs: generatedCharacterIDs,
+            state: .staging
+        )
+        if let index = values.firstIndex(where: { $0.worldID == worldID }) {
+            values[index] = entry
+        } else {
+            values.append(entry)
+        }
+        persist(values)
+    }
+
+    static func markCommitted(worldID: UUID) {
+        var values = entries
+        guard let index = values.firstIndex(where: { $0.worldID == worldID }) else { return }
+        values[index].state = .committed
+        persist(values)
+    }
+
+    static func clear(worldID: UUID) {
+        persist(entries.filter { $0.worldID != worldID })
+    }
+
+    private static func persist(_ values: [Entry]) {
+        guard let data = try? JSONEncoder().encode(values) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
 @MainActor
 final class StoryWorldLibraryViewModel: ObservableObject {
     @Published private(set) var worlds: [StoryWorld] = []
@@ -100,6 +158,7 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         // 一覧を表示する前に同じ削除を再試行する。各操作は対象IDに対して
         // 冪等なので、途中まで消えていても安全に続きから実行できる。
         await resumePendingWorldDeletions()
+        await resumePendingWorldCreations()
 
         // 既存データは初期シードを待たずに表示する。大きなJSONを持つMacでも
         // 一覧が空のまま固まったように見えないようにする。
@@ -249,6 +308,41 @@ final class StoryWorldLibraryViewModel: ObservableObject {
                 migrationError = KizunaCopy.text(
                     japanese: "前回のストーリー削除を完了できませんでした。再試行してください。",
                     english: "A previous story deletion could not be completed. Please retry."
+                )
+            }
+        }
+    }
+
+    private func resumePendingWorldCreations() async {
+        for entry in StoryWorldCreationJournal.entries {
+            guard entry.state == .staging else {
+                // 全関連データの保存が成功した後にプロセスが終了した場合は、
+                // 作成済みWorldを削除せず、残ったjournalだけを片付ける。
+                StoryWorldCreationJournal.clear(worldID: entry.worldID)
+                continue
+            }
+
+            do {
+                // 作成画面はSession/Memoryをまだ作らないが、関連データの掃除は
+                // 既存の削除経路と同じ順序・冪等性を使う。
+                try await deleteRelatedWorldData(id: entry.worldID)
+                try await worldRepo.deleteWorld(id: entry.worldID)
+                for characterID in entry.generatedCharacterIDs {
+                    let result = try await characterRepo.deleteCharacter(id: characterID)
+                    if result == .deleted || result == .needsCleanup {
+                        try await characterRepo.completeCharacterDeletionCleanup(id: characterID)
+                    }
+                }
+                StoryWorldCreationJournal.clear(worldID: entry.worldID)
+            } catch {
+                AppLog.error(
+                    "[StoryLibraryVM] pending story creation cleanup failed %@: %@",
+                    entry.worldID.uuidString,
+                    String(describing: error)
+                )
+                migrationError = KizunaCopy.text(
+                    japanese: "未完了のストーリー作成を整理できませんでした。再試行してください。",
+                    english: "An unfinished story creation could not be cleaned up. Please retry."
                 )
             }
         }
@@ -445,10 +539,13 @@ final class StoryWorldCreateViewModel: ObservableObject {
     @Published var generationBrief: String = ""
     @Published private(set) var isGeneratingTemplate: Bool = false
     @Published private(set) var generationStatus: String? = nil
+    @Published private(set) var generationError: String? = nil
+    @Published private(set) var hasAppliedGeneratedTemplate = false
 
     /// 雛形生成中にだけ作ったキャラ。保存ボタンが成功するまでRepositoryへ
     /// 書き込まず、再生成/キャンセルでライブラリーへ孤児を残さない。
     private var pendingGeneratedCharacters: [UUID: CharacterProfile] = [:]
+    private let isCreatingNewWorld: Bool
 
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
@@ -456,8 +553,10 @@ final class StoryWorldCreateViewModel: ObservableObject {
     private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
     private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
     private let safetyPipeline = SafetyPipeline.shared
+    private var generationTask: Task<Void, Never>? = nil
 
     init(existing: StoryWorld? = nil) {
+        self.isCreatingNewWorld = existing == nil
         if let existing {
             self.draft = existing
             self.sceneDraft = StoryScene(
@@ -476,6 +575,45 @@ final class StoryWorldCreateViewModel: ObservableObject {
             self.draft = world
             self.sceneDraft = StoryScene(storyWorldId: world.id)
         }
+    }
+
+    var validationIssues: [String] {
+        var issues: [String] = []
+        if draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append(KizunaCopy.text(japanese: "タイトルを入力してください。", english: "Enter a title."))
+        }
+        if castDrafts.isEmpty {
+            issues.append(KizunaCopy.text(japanese: "キャラクターを1人以上追加してください。", english: "Add at least one character."))
+        }
+        let castIDs = Set(castDrafts.map(\.characterId))
+        if sceneDraft.activeCharacterIds.isEmpty || !Set(sceneDraft.activeCharacterIds).isSubset(of: castIDs) {
+            issues.append(KizunaCopy.text(
+                japanese: "初期シーンに出すキャラクターを1人以上選択してください。",
+                english: "Select at least one character for the opening scene."
+            ))
+        }
+        guard let mainCharacterID = draft.mainCharacterId,
+              castDrafts.contains(where: { $0.characterId == mainCharacterID && $0.roleInStory == .main }) else {
+            issues.append(KizunaCopy.text(
+                japanese: "メインキャラクターを1人指定してください。",
+                english: "Choose one main character."
+            ))
+            return issues
+        }
+        if castDrafts.filter({ $0.roleInStory == .main }).count != 1 {
+            issues.append(KizunaCopy.text(
+                japanese: "メインキャラクターは1人だけにしてください。",
+                english: "Choose exactly one main character."
+            ))
+        }
+        return issues
+    }
+
+    var canSave: Bool {
+        isReadyToSave
+            && !isGeneratingTemplate
+            && !isSaving
+            && validationIssues.isEmpty
     }
 
     func load() async {
@@ -569,9 +707,27 @@ final class StoryWorldCreateViewModel: ObservableObject {
         lorebookDrafts.removeAll { $0.id == id }
     }
 
+    func startTemplateGeneration() {
+        guard generationTask == nil, !isGeneratingTemplate else { return }
+        generationTask = Task { [weak self] in
+            await self?.generateTemplateWith31BThinking()
+        }
+    }
+
+    func cancelTemplateGeneration() {
+        guard isGeneratingTemplate else { return }
+        generationTask?.cancel()
+        generationStatus = KizunaCopy.text(
+            japanese: "雛形の生成を中止しました。",
+            english: "Template generation was canceled."
+        )
+        generationError = nil
+        isGeneratingTemplate = false
+    }
+
     func generateTemplateWith31BThinking() async {
         guard !isSaving else {
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "保存中は雛形を再生成できません。保存が終わってから試してください。",
                 english: "The template cannot be regenerated while the story is being saved. Try again afterward."
             )
@@ -579,7 +735,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         }
         let brief = generationBrief.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !brief.isEmpty else {
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "作りたいストーリーの方向性を入力してください。",
                 english: "Describe the kind of story you want to create."
             )
@@ -587,7 +743,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         }
 
         guard StoryGemma31BAPIService.shared.hasAPIKey else {
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "Gemma4 APIキーが未設定です。\(KizunaCopy.appName)の設定からNAGI APIキーを登録してください。",
                 english: "The Gemma4 API key is not set. Add the NAGI API key in \(KizunaCopy.appName)'s settings."
             )
@@ -599,8 +755,11 @@ final class StoryWorldCreateViewModel: ObservableObject {
             japanese: "Gemma4 31B APIで雛形を作成中…",
             english: "Creating a draft with the Gemma4 31B API…"
         )
-        saveError = nil
-        defer { isGeneratingTemplate = false }
+        generationError = nil
+        defer {
+            isGeneratingTemplate = false
+            generationTask = nil
+        }
 
         let systemPrompt = Self.storyTemplateSystemPrompt + "\n\n" + (KizunaCopy.language == .english
             ? "All human-readable string values in the JSON (title, descriptions, settings, scenes, character text, tags, and rules) must be written in English. Keep enum values exactly as specified. If the request asks for multiple characters, set castMode to ensemble, set characterCount to the number of generated characters, and include every requested character in characters."
@@ -613,9 +772,18 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 temperature: 0.45,
                 maxOutputTokens: 8192
             ).text
+            try Task.checkCancellation()
         } catch {
+            if Task.isCancelled {
+                generationStatus = KizunaCopy.text(
+                    japanese: "雛形の生成を中止しました。",
+                    english: "Template generation was canceled."
+                )
+                generationError = nil
+                return
+            }
             AppLog.error("[StoryWorldCreateVM] template generation failed: %@", error.localizedDescription)
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "雛形の生成に失敗しました。API設定と入力内容を確認して、もう一度試してください。",
                 english: "The template could not be generated. Check the API settings and your idea, then try again."
             )
@@ -624,7 +792,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         }
 
         guard let data = Self.extractJSONObjectData(from: reply) else {
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "雛形の生成に失敗しました。JSONとして読める出力がありません。",
                 english: "The template could not be generated because the response did not contain readable JSON."
             )
@@ -635,13 +803,14 @@ final class StoryWorldCreateViewModel: ObservableObject {
         do {
             let template = try JSONDecoder().decode(GeneratedStoryTemplate.self, from: data)
             try await applyGeneratedTemplate(template)
+            generationError = nil
             generationStatus = KizunaCopy.text(
                 japanese: "雛形をフォームへ反映しました。",
                 english: "The template was applied to the form."
             )
         } catch {
             AppLog.error("[StoryWorldCreateVM] template decode/apply failed: %@", error.localizedDescription)
-            saveError = KizunaCopy.text(
+            generationError = KizunaCopy.text(
                 japanese: "雛形の読み込みに失敗しました。生成内容を確認して、もう一度試してください。",
                 english: "The template could not be loaded. Check the generated content and try again."
             )
@@ -714,11 +883,16 @@ final class StoryWorldCreateViewModel: ObservableObject {
             let replacement = castDrafts.enumerated().first { index, member in
                 index != idx && member.characterId != characterID
             }?.element.characterId
+            guard let replacement else {
+                // 唯一のキャストを主役以外へ変更すると主役ゼロのWorldに
+                // なるため、保存可能な不変条件を維持したまま操作を無視する。
+                draft.mainCharacterId = characterID
+                castDrafts[idx].roleInStory = .main
+                return
+            }
             draft.mainCharacterId = replacement
-            if let replacement {
-                for index in castDrafts.indices where castDrafts[index].characterId == replacement {
-                    castDrafts[index].roleInStory = .main
-                }
+            for index in castDrafts.indices where castDrafts[index].characterId == replacement {
+                castDrafts[index].roleInStory = .main
             }
         }
         castDrafts[idx].roleInStory = role == .main ? .main : role
@@ -787,6 +961,64 @@ final class StoryWorldCreateViewModel: ObservableObject {
         ?? CharacterRelationship(fromCharacterId: fromID, toCharacterId: toID)
     }
 
+    /// 新規作成だけを対象に、途中まで保存された関連データを可能な限り
+    /// 掃除する。各JSONは独立しているため、1つの失敗で残りの掃除を止めず、
+    /// 失敗が残った場合はjournalを次回起動へ引き継ぐ。
+    private func rollbackNewWorldCreation(
+        worldID: UUID,
+        generatedCharacterIDs: [UUID]
+    ) async -> Bool {
+        var didFail = false
+
+        do {
+            for entry in try await lorebookRepo.fetchAllEntries(storyWorldId: worldID) {
+                try await lorebookRepo.deleteEntry(id: entry.id)
+            }
+        } catch {
+            didFail = true
+            AppLog.error("[StoryWorldCreateVM] rollback lorebook cleanup failed: %@", error.localizedDescription)
+        }
+
+        do {
+            try await castRepo.deleteAllCast(storyWorldId: worldID)
+        } catch {
+            didFail = true
+            AppLog.error("[StoryWorldCreateVM] rollback cast cleanup failed: %@", error.localizedDescription)
+        }
+
+        do {
+            try await sceneRepo.deleteAllScenes(storyWorldId: worldID)
+        } catch {
+            didFail = true
+            AppLog.error("[StoryWorldCreateVM] rollback scene cleanup failed: %@", error.localizedDescription)
+        }
+
+        do {
+            try await worldRepo.deleteWorld(id: worldID)
+        } catch {
+            didFail = true
+            AppLog.error("[StoryWorldCreateVM] rollback world cleanup failed: %@", error.localizedDescription)
+        }
+
+        for characterID in generatedCharacterIDs {
+            do {
+                let result = try await characterRepo.deleteCharacter(id: characterID)
+                if result == .deleted || result == .needsCleanup {
+                    try await characterRepo.completeCharacterDeletionCleanup(id: characterID)
+                }
+            } catch {
+                didFail = true
+                AppLog.error(
+                    "[StoryWorldCreateVM] rollback generated character cleanup failed %@: %@",
+                    characterID.uuidString,
+                    error.localizedDescription
+                )
+            }
+        }
+
+        return !didFail
+    }
+
     func updateRelationship(
         from fromID: UUID,
         to toID: UUID,
@@ -828,25 +1060,9 @@ final class StoryWorldCreateViewModel: ObservableObject {
             )
             return nil
         }
-        guard !draft.title.trimmingCharacters(in: .whitespaces).isEmpty else {
-            saveError = KizunaCopy.text(
-                japanese: "タイトルを入力してください。",
-                english: "Enter a title before saving."
-            )
-            return nil
-        }
-        guard !castDrafts.isEmpty else {
-            saveError = KizunaCopy.text(
-                japanese: "少なくとも1人のキャラクターを追加してください。",
-                english: "Add at least one character before saving this story."
-            )
-            return nil
-        }
-        guard !sceneDraft.activeCharacterIds.isEmpty else {
-            saveError = KizunaCopy.text(
-                japanese: "初期シーンに出すキャラクターを1人以上選択してください。",
-                english: "Select at least one character for the opening scene."
-            )
+        let issues = validationIssues
+        guard issues.isEmpty else {
+            saveError = issues.joined(separator: "\n")
             return nil
         }
 
@@ -859,7 +1075,12 @@ final class StoryWorldCreateViewModel: ObservableObject {
         let castSnapshot = castDrafts
         let lorebookSnapshot = lorebookDrafts
         let pendingCharactersSnapshot = pendingGeneratedCharacters
-        var didSaveWorld = false
+        if isCreatingNewWorld {
+            StoryWorldCreationJournal.markStaging(
+                worldID: draftSnapshot.id,
+                generatedCharacterIDs: Array(pendingCharactersSnapshot.keys)
+            )
+        }
         do {
             // 破壊的な置換の前に、すべての既存関連データを読み取っておく。
             // ここで読み取りに失敗した場合はWorld/Cast/Lorebook/Sceneのいずれも
@@ -876,13 +1097,16 @@ final class StoryWorldCreateViewModel: ObservableObject {
 
             // World 保存
             var world = draftSnapshot.normalizedForPersistence
+            let openingSummary = sceneSnapshot.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !openingSummary.isEmpty {
+                world.openingScene = openingSummary
+            }
             // Keep the editor in sync with the persisted invariant so a
             // duplicate does not reappear when the same draft is shown again.
             draft.tags = world.tags
             draft.safetyRules = world.safetyRules
             world.updatedAt = Date()
             try await worldRepo.saveWorld(world)
-            didSaveWorld = true
             // Cast 保存。Repository側の一括置換を使い、deleteAllCastの後に
             // 1件ずつ保存して途中で失敗する部分更新を避ける。
             try await castRepo.replaceCast(castSnapshot, storyWorldId: world.id)
@@ -919,23 +1143,48 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 opening.updatedAt = Date()
                 try await sceneRepo.saveScene(opening)
             }
+            if isCreatingNewWorld {
+                StoryWorldCreationJournal.markCommitted(worldID: world.id)
+            }
             pendingGeneratedCharacters.removeAll()
+            if isCreatingNewWorld {
+                StoryWorldCreationJournal.clear(worldID: world.id)
+            }
             return world
         } catch {
             AppLog.error("[StoryWorldCreateVM] save failed: %@", error.localizedDescription)
-            // Worldを書けていない場合は、この画面だけが作ったキャラを戻す。
-            // Worldまで確定済みなら、関連Castを保持したまま次回保存で再開できる。
-            // ここでpendingをdiscardすると、保存済みWorldのcharacterIdsだけが
-            // 残る参照切れになる。部分保存後は生成Profileを保全し、次回保存で
-            // Cast/Lorebook/Sceneを再試行できる状態にする。
-            if !didSaveWorld {
-                await discardPendingGeneratedCharacters()
+            let rollbackSucceeded: Bool?
+            if isCreatingNewWorld {
+                let didRollback = await rollbackNewWorldCreation(
+                    worldID: draftSnapshot.id,
+                    generatedCharacterIDs: Array(pendingCharactersSnapshot.keys)
+                )
+                rollbackSucceeded = didRollback
+                if didRollback {
+                    StoryWorldCreationJournal.clear(worldID: draftSnapshot.id)
+                } else {
+                    StoryWorldCreationJournal.markStaging(
+                        worldID: draftSnapshot.id,
+                        generatedCharacterIDs: Array(pendingCharactersSnapshot.keys)
+                    )
+                }
             } else {
+                rollbackSucceeded = nil
+                // 編集失敗では既存Worldを推測で削除しない。入力を残したまま
+                // 再試行できるよう、既存の作成画面を維持する。
                 pendingGeneratedCharacters.removeAll()
             }
             saveError = KizunaCopy.text(
-                japanese: "保存に失敗しました。入力内容と保存先を確認して、もう一度試してください。",
-                english: "The story could not be saved. Check the content and storage, then try again."
+                japanese: rollbackSucceeded == true
+                    ? "保存に失敗したため、新規ストーリーを取り消しました。入力を確認して、もう一度試してください。"
+                    : rollbackSucceeded == false
+                        ? "保存に失敗し、作成途中のデータを一部整理できませんでした。次回起動時に整理を再試行します。"
+                        : "保存に失敗しました。入力内容と保存先を確認して、もう一度試してください。",
+                english: rollbackSucceeded == true
+                    ? "The new story was rolled back after saving failed. Check the input and try again."
+                    : rollbackSucceeded == false
+                        ? "Saving failed and some unfinished data could not be cleaned up. Cleanup will retry next time."
+                        : "The story could not be saved. Check the content and storage, then try again."
             )
             return nil
         }
@@ -1065,6 +1314,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 trust: relationship.trust
             )
         }
+        hasAppliedGeneratedTemplate = true
     }
 
     private static let storyTemplateSystemPrompt = """
@@ -1296,6 +1546,8 @@ final class StoryWorldDetailViewModel: ObservableObject {
     @Published private(set) var sessionLoadFailed = false
     @Published private(set) var sessionSaveFailed = false
     @Published private(set) var characterLoadFailed = false
+    /// Castの自動修復に失敗した場合、元の保存内容を保持したままUIへ公開する。
+    @Published private(set) var castRepairFailed = false
 
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let castRepo: CastRepository = LocalJSONCastRepository()
@@ -1310,6 +1562,7 @@ final class StoryWorldDetailViewModel: ObservableObject {
     }
 
     func reload() async {
+        castRepairFailed = false
         // キャストの読込失敗を空配列として扱うと、reconciledCastが「全員削除」と
         // 判断し、保存済みの関係設定まで上書きしてしまう。キャストだけは失敗時に
         // 既存の表示を保持して、明示的な再試行を待つ。
@@ -1345,12 +1598,25 @@ final class StoryWorldDetailViewModel: ObservableObject {
             return
         }
         let repairedCast = reconciledCast(cast, for: world, existingScenes: scenes)
-        if Set(cast.map(\.characterId)) != Set(repairedCast.map(\.characterId)) || cast.count != repairedCast.count {
-            // 部分的に欠けたキャストや、削除済みキャラの孤児参照を一度だけ整理する。
-            try? await castRepo.deleteAllCast(storyWorldId: world.id)
-            for member in repairedCast { try? await castRepo.saveCast(member) }
+        let needsCastRepair = Set(cast.map(\.characterId)) != Set(repairedCast.map(\.characterId))
+            || cast.count != repairedCast.count
+        if needsCastRepair {
+            do {
+                // 既存Castの削除と修復後の全件保存を1回のread-modify-writeに
+                // まとめる。途中失敗で永続化データだけが空/部分状態になるのを防ぐ。
+                try await castRepo.replaceCast(repairedCast, storyWorldId: world.id)
+                self.cast = repairedCast
+            } catch {
+                // 修復に失敗した世代を成功扱いにせず、元のCastを表示して
+                // ユーザーが再試行できるようにする。元データはrepository側で
+                // replaceCastが原子的に保持する。
+                castRepairFailed = true
+                self.cast = cast
+                AppLog.error("[StoryWorldDetailVM] cast repair failed: %@", error.localizedDescription)
+            }
+        } else {
+            self.cast = cast
         }
-        self.cast = repairedCast
         self.scenes = scenes
         self.sessions = sessions
         self.storyMemories = memories
@@ -1514,6 +1780,36 @@ struct StoryRestSuggestion: Identifiable, Equatable {
     let characterName: String
 }
 
+/// App-level active usage clock shared by Story screens. It pauses while the
+/// app is inactive/backgrounded and survives Story ViewModel recreation.
+@MainActor
+final class ContinuousUsageTracker {
+    static let shared = ContinuousUsageTracker()
+
+    private var accumulatedActiveTime: TimeInterval = 0
+    private var activeStartedAt: Date?
+
+    var activeDuration: TimeInterval {
+        accumulatedActiveTime + (activeStartedAt.map { Date().timeIntervalSince($0) } ?? 0)
+    }
+
+    func enterActive() {
+        guard activeStartedAt == nil else { return }
+        activeStartedAt = Date()
+    }
+
+    func enterInactive() {
+        guard let activeStartedAt else { return }
+        accumulatedActiveTime += Date().timeIntervalSince(activeStartedAt)
+        self.activeStartedAt = nil
+    }
+
+    func reset() {
+        accumulatedActiveTime = 0
+        activeStartedAt = Date()
+    }
+}
+
 @MainActor
 final class StorySessionViewModel: ObservableObject {
     @Published private(set) var session: StorySession
@@ -1537,6 +1833,10 @@ final class StorySessionViewModel: ObservableObject {
     /// mistaken for an in-flight model request.
     @Published private(set) var isHandlingResponseAction = false
     @Published private(set) var responseActionError: String?
+    @Published private(set) var refreshError: String?
+    @Published private(set) var sendPreparationError: String?
+    @Published private(set) var lastStartedUserMessageID: UUID?
+    @Published private(set) var isPreparingSend = false
     /// アプリ側で判定した休憩提案。nil の間は提案カードを表示しない。
     @Published var restSuggestion: StoryRestSuggestion?
     /// 了承メッセージの保存中は通常送信を止め、保存結果を待つ。
@@ -1544,6 +1844,8 @@ final class StorySessionViewModel: ObservableObject {
     @Published private(set) var restAcknowledgementError: String?
     @Published var generationModel: StoryGenerationModel {
         didSet {
+            guard !isApplyingTemporaryGenerationModel else { return }
+            preferredGenerationModel = generationModel
             defaults.set(generationModel.rawValue, forKey: generationModelKey)
         }
     }
@@ -1556,9 +1858,9 @@ final class StorySessionViewModel: ObservableObject {
     private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
     private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
     private let generationModelKey: String
+    private var preferredGenerationModel: StoryGenerationModel
+    private var isApplyingTemporaryGenerationModel = false
 
-    // 休憩提案の時計はアプリ側だけが管理する。モデルには判定を任せない。
-    private var continuousUseStartedAt = Date()
     private var restSuggestionSuppressedUntil: Date?
     private var isGeneratingRestSuggestion = false
     // 同じ60分窓で専用生成を繰り返さないためのアプリ側フラグ。
@@ -1582,10 +1884,26 @@ final class StorySessionViewModel: ObservableObject {
         self.generationModelKey = "storySessionGenerationModel.\(world.id.uuidString)"
         let stored = UserDefaults.standard.string(forKey: generationModelKey)
         let savedModel = stored.flatMap(StoryGenerationModel.init(rawValue:)) ?? .e4b
+        self.preferredGenerationModel = savedModel
         self.generationModel = savedModel
         registerDebugRestSuggestionObserver()
         registerDebugSafetyConcernObserver()
         startDebugRequestPolling()
+    }
+
+    var preferredModel: StoryGenerationModel {
+        preferredGenerationModel
+    }
+
+    func applyTemporaryGenerationModel(_ model: StoryGenerationModel) {
+        guard generationModel != model else { return }
+        isApplyingTemporaryGenerationModel = true
+        generationModel = model
+        isApplyingTemporaryGenerationModel = false
+    }
+
+    func restorePreferredGenerationModel() {
+        applyTemporaryGenerationModel(preferredGenerationModel)
     }
 
     deinit {
@@ -1784,7 +2102,9 @@ final class StorySessionViewModel: ObservableObject {
 
     @discardableResult
     func send(_ userText: String) -> Bool {
-        enqueueSend(userText, existingUserMessageID: nil)
+        sendPreparationError = nil
+        lastStartedUserMessageID = nil
+        return enqueueSend(userText, existingUserMessageID: nil)
     }
 
     /// Removes the latest committed AI response while preserving the User
@@ -1850,8 +2170,10 @@ final class StorySessionViewModel: ObservableObject {
                 guard self.enqueueSend(
                     userText,
                     existingUserMessageID: userMessageID,
-                    allowDuringResponseAction: true
+                    allowDuringResponseAction: true,
+                    regenerationSnapshot: sessionSnapshot
                 ) else {
+                    await self.restoreRegenerationSnapshot(sessionSnapshot)
                     self.responseActionError = KizunaCopy.text(
                         japanese: "再生成を開始できませんでした。残っている発言からもう一度お試しください。",
                         english: "Regeneration could not start. Try again from the preserved message."
@@ -1937,7 +2259,9 @@ final class StorySessionViewModel: ObservableObject {
         _ userText: String,
         existingUserMessageID: UUID?,
         isInterruptedRecovery: Bool = false,
-        allowDuringResponseAction: Bool = false
+        allowDuringResponseAction: Bool = false,
+        regenerationSnapshot: StorySession? = nil,
+        runtimeNoticeID: UUID? = nil
     ) -> Bool {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -1945,6 +2269,15 @@ final class StorySessionViewModel: ObservableObject {
               !isSavingRestAcknowledgement,
               (allowDuringResponseAction || !isHandlingResponseAction),
               sendPreparationTask == nil else { return false }
+        guard existingUserMessageID != nil || interruptedTurn == nil else {
+            sendPreparationError = KizunaCopy.text(
+                japanese: "前回の中断した発言を再試行または破棄してから、新しい発言を送信してください。",
+                english: "Retry or discard the interrupted message before sending a new one."
+            )
+            return false
+        }
+        sendPreparationError = nil
+        isPreparingSend = true
         // 直前ターンの保存完了通知と送信タップが競合すると、古い session スナップショットで
         // 次のターンを開始して新しい発言を上書きする。送信前に最新状態を一度だけ読み直す。
         let preparationID = UUID()
@@ -1958,6 +2291,7 @@ final class StorySessionViewModel: ObservableObject {
                 if self.sendPreparationID == preparationID {
                     self.sendPreparationTask = nil
                     self.sendPreparationID = nil
+                    self.isPreparingSend = false
                 }
                 if isInterruptedRecovery,
                    self.interruptedRecoveryPreparationID == preparationID {
@@ -1965,27 +2299,60 @@ final class StorySessionViewModel: ObservableObject {
                     self.isHandlingInterruptedTurn = false
                 }
             }
-            guard !Task.isCancelled, self.sendPreparationID == preparationID else { return }
-            await self.refreshAfterTurn()
+            guard !Task.isCancelled, self.sendPreparationID == preparationID else {
+                if let regenerationSnapshot {
+                    await self.restoreRegenerationSnapshot(regenerationSnapshot)
+                }
+                return
+            }
+            guard await self.refreshAfterTurn() else {
+                self.sendPreparationError = self.refreshError ?? KizunaCopy.text(
+                    japanese: "保存状態を確認できないため、送信を開始できませんでした。",
+                    english: "The message could not start because the saved state could not be verified."
+                )
+                if let regenerationSnapshot {
+                    await self.restoreRegenerationSnapshot(regenerationSnapshot)
+                }
+                return
+            }
             // キャンセルと再送が近接すると、古い準備タスクが最新の送信を
             // 横取りしないよう、IDとTask.isCancelledの両方を確認する。
             guard !Task.isCancelled,
                   self.sendPreparationID == preparationID,
-                  self.service.phase != .thinking else { return }
-            let startedUserMessageID = self.service.send(
+                  self.service.phase != .thinking else {
+                if let regenerationSnapshot {
+                    await self.restoreRegenerationSnapshot(regenerationSnapshot)
+                }
+                return
+            }
+            guard let startedUserMessageID = self.service.send(
                 trimmed,
                 session: self.session,
                 world: self.world,
                 scene: self.scene,
                 generationModel: self.generationModel,
                 existingUserMessageID: existingUserMessageID
-            )
-            if isInterruptedRecovery, startedUserMessageID == nil {
-                self.interruptedTurnRecoveryError = KizunaCopy.text(
-                    japanese: "再試行を開始できませんでした。保存待ちの処理が終わってから、もう一度お試しください。",
-                    english: "The retry could not start. Try again after the pending save finishes."
-                )
+            ) else {
+                if isInterruptedRecovery {
+                    self.interruptedTurnRecoveryError = KizunaCopy.text(
+                        japanese: "再試行を開始できませんでした。保存待ちの処理が終わってから、もう一度お試しください。",
+                        english: "The retry could not start. Try again after the pending save finishes."
+                    )
+                } else {
+                    self.sendPreparationError = KizunaCopy.text(
+                        japanese: "送信を開始できませんでした。入力内容は保持しています。もう一度お試しください。",
+                        english: "The message could not start. Your text was kept; try again."
+                    )
+                }
+                if let regenerationSnapshot {
+                    await self.restoreRegenerationSnapshot(regenerationSnapshot)
+                }
                 return
+            }
+            self.lastStartedUserMessageID = startedUserMessageID
+            if let runtimeNoticeID,
+               self.service.latestRuntimeNotice?.id == runtimeNoticeID {
+                self.service.dismissRuntimeNotice()
             }
 
             // Service 内で session/scene が永続化されるので、こちらは UI 更新のため
@@ -2081,11 +2448,9 @@ final class StorySessionViewModel: ObservableObject {
             // already persisted or needs to be appended.
             let accepted = enqueueSend(
                 notice.userText,
-                existingUserMessageID: notice.persistedUserMessageIDForRetry
+                existingUserMessageID: notice.persistedUserMessageIDForRetry,
+                runtimeNoticeID: notice.id
             )
-            if accepted {
-                service.dismissRuntimeNotice()
-            }
             return accepted
         }
     }
@@ -2111,6 +2476,7 @@ final class StorySessionViewModel: ObservableObject {
         sendPreparationID = nil
         sendPreparationTask?.cancel()
         sendPreparationTask = nil
+        isPreparingSend = false
         if interruptedRecoveryPreparationID != nil {
             interruptedRecoveryPreparationID = nil
             isHandlingInterruptedTurn = false
@@ -2122,6 +2488,24 @@ final class StorySessionViewModel: ObservableObject {
         service.cancel()
     }
 
+    private func restoreRegenerationSnapshot(_ snapshot: StorySession) async {
+        guard session.id == snapshot.id,
+              session.latestTurnCheckpoint?.status == .cancelled,
+              session.latestTurnCheckpoint?.failureCode == "undone" else { return }
+        do {
+            session = try await sessionRepo.restoreUndoneTurn(
+                snapshot,
+                expectedRevision: session.effectivePersistenceRevision
+            )
+        } catch {
+            responseActionError = KizunaCopy.text(
+                japanese: "再生成を開始できず、元の応答も復元できませんでした。保存状態を確認してください。",
+                english: "Regeneration could not start and the original reply could not be restored. Check the saved state."
+            )
+            AppLog.error("[StorySessionVM] regeneration rollback failed: %@", error.localizedDescription)
+        }
+    }
+
     func addNarration(_ text: String) {
         Task { [weak self] in
             guard let self else { return }
@@ -2130,14 +2514,35 @@ final class StorySessionViewModel: ObservableObject {
         }
     }
 
-    func refreshAfterTurn() async {
-        let sessions = (try? await sessionRepo.fetchSessions(storyWorldId: world.id)) ?? []
-        if let updated = sessions.first(where: { $0.id == session.id }) {
-            self.session = updated
-        }
-        let scenes = (try? await sceneRepo.fetchScenes(storyWorldId: world.id)) ?? []
-        if let updated = scenes.first(where: { $0.id == scene.id }) {
-            self.scene = updated
+    @discardableResult
+    func refreshAfterTurn() async -> Bool {
+        do {
+            let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
+            guard let updatedSession = sessions.first(where: { $0.id == session.id }) else {
+                throw StoryTurnPersistenceError.sessionNotFound
+            }
+            let scenes = try await sceneRepo.fetchScenes(storyWorldId: world.id)
+            guard let updatedScene = scenes.first(where: { $0.id == scene.id }) else {
+                throw StoryTurnPersistenceError.turnNotUndoable
+            }
+            self.session = updatedSession
+            self.scene = updatedScene
+            refreshError = nil
+            return true
+        } catch {
+            if let committed = service.lastCommittedSession,
+               committed.id == session.id {
+                // Read-after-write may fail even though commitTurn already
+                // returned the durable snapshot. Keep that snapshot visible
+                // instead of making a saved reply disappear from the chat.
+                self.session = committed
+            }
+            refreshError = KizunaCopy.text(
+                japanese: "保存状態を読み込めませんでした。送信前に再試行してください。",
+                english: "The saved state could not be loaded. Retry before sending."
+            )
+            AppLog.error("[StorySessionVM] refresh after turn failed: %@", error.localizedDescription)
+            return false
         }
     }
 
@@ -2151,7 +2556,7 @@ final class StorySessionViewModel: ObservableObject {
               case .cast = lastMessage.author else { return }
 
         let now = Date()
-        guard now.timeIntervalSince(continuousUseStartedAt) >= 60 * 60 else { return }
+        guard ContinuousUsageTracker.shared.activeDuration >= 60 * 60 else { return }
         if let suppressedUntil = restSuggestionSuppressedUntil, now < suppressedUntil { return }
         if restSuggestionSuppressedUntil != nil {
             // 120分の抑制が終わったら、次の提案窓を開始できる。
@@ -2174,7 +2579,7 @@ final class StorySessionViewModel: ObservableObject {
         ) else {
             // モデルが生成できない場合は固定文を出さず、休憩提案を表示しない。
             // 時計を再スタートし、次の60分窓までは再生成しない。
-            continuousUseStartedAt = now
+            ContinuousUsageTracker.shared.reset()
             restSuggestionAttempted = false
             return
         }
@@ -2191,7 +2596,7 @@ final class StorySessionViewModel: ObservableObject {
     func chooseRestSuggestionBreak() {
         restAcknowledgementError = nil
         restSuggestion = nil
-        continuousUseStartedAt = Date()
+        ContinuousUsageTracker.shared.reset()
         restSuggestionSuppressedUntil = nil
         restSuggestionAttempted = false
     }

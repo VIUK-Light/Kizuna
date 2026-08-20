@@ -44,7 +44,7 @@ struct PersonaMessageBubble: View {
                             }
                             bubble(alignment: .leading)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(maxWidth: 620, alignment: .leading)
                     } else {
                         Spacer(minLength: 40)
                         bubble(alignment: .trailing)
@@ -98,7 +98,6 @@ struct PersonaMessageBubble: View {
                 Text(message.text)
                     .font(.body)
                     .foregroundStyle(message.role == .user ? .white : .primary)
-                    .frame(maxWidth: message.role == .assistant ? .infinity : nil, alignment: .leading)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
                     .background(bubbleBackground)
@@ -162,4 +161,3 @@ struct PersonaMessageBubble: View {
         message.createdAt.formatted(.dateTime.hour().minute())
     }
 }
-

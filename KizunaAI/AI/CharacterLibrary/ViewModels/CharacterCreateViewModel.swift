@@ -150,6 +150,7 @@ final class CharacterCreateViewModel: ObservableObject {
                 return
             }
             state = .saved(normalized)
+            CharacterLibraryChangeCenter.post()
         } catch {
             guard saveOperationID == operationID, self.draftRevision == draftRevision else {
                 return

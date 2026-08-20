@@ -376,6 +376,7 @@ final class StorySessionService: ObservableObject {
     @Published private(set) var streamingSpeakerName: String?
     @Published private(set) var streamingStatusText: String = ""
     @Published private(set) var savedTurnRevision: Int = 0
+    @Published private(set) var lastCommittedSession: StorySession?
     /// 危険な相談の可能性を検知した時だけ、会話とは別にUIへ渡す。
     @Published private(set) var latestSafetyConcern: SafetyConcern?
     /// エラー本文をStorySessionへ保存せず、現在の画面だけに表示する。
@@ -900,6 +901,7 @@ final class StorySessionService: ObservableObject {
         ensureTurnOwnerRegistered()
         phase = .thinking
         streamingResponse = ""
+        lastCommittedSession = nil
         streamingSpeakerName = nil
         streamingStatusText = statusText("準備中", "Preparing")
         latestSafetyConcern = nil
@@ -1583,6 +1585,7 @@ final class StorySessionService: ObservableObject {
                     assistantMessageIDs: [narration.id],
                     memoryRetries: []
                 )
+                lastCommittedSession = session
             } catch {
                 // 入力自体は先の保存で確定しているが、安全ブロックの案内を
                 // 保存できなかった場合は成功ターンとして扱わない。本文を
@@ -1706,10 +1709,6 @@ final class StorySessionService: ObservableObject {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
         }
-        if !selectedMemories.isEmpty {
-            try? await memoryRepo.markUsed(ids: selectedMemories.map(\.id))
-        }
-
         // 5-b) 物語内メモリーは、このStoryWorldの履歴だけから選ぶ。
         let validCastCharacterIDs = Set(cast.map(\.characterId))
         // 物語内メモリーはキャラクター単位の帰属を持つ。現在の場面に
@@ -1762,10 +1761,6 @@ final class StorySessionService: ObservableObject {
             candidates: storyMemoryCandidates,
             topK: 1
         )
-        if !selectedStoryMemories.isEmpty {
-            try? await storyMemoryRepo.markUsed(ids: selectedStoryMemories.map(\.id))
-        }
-
         // Keep prompt-only state aligned before lorebook keyword selection too;
         // otherwise an old Scene location can reintroduce stale rules even
         // when the main prompt uses the newer StoryState.
@@ -2527,6 +2522,7 @@ final class StorySessionService: ObservableObject {
                 assistantMessageIDs: turnMessages.map(\.id),
                 memoryRetries: pendingMemoryRetry.map { [$0] } ?? []
             )
+            lastCommittedSession = session
         } catch {
             AppLog.error("[StorySession] turn commit failed: %@", error.localizedDescription)
             let retry = StoryTurnCommitRetry(
@@ -2549,6 +2545,22 @@ final class StorySessionService: ObservableObject {
                 retry: retry
             )
             return
+        }
+        // Usage metadata is a commit-side effect. Do not change memory ranking
+        // for a generation that never became a durable conversation turn.
+        if !selectedMemories.isEmpty {
+            do {
+                try await memoryRepo.markUsed(ids: selectedMemories.map(\.id))
+            } catch {
+                AppLog.error("[StorySession] character memory usage update failed turn=%@: %@", turnID.uuidString, error.localizedDescription)
+            }
+        }
+        if !selectedStoryMemories.isEmpty {
+            do {
+                try await storyMemoryRepo.markUsed(ids: selectedStoryMemories.map(\.id))
+            } catch {
+                AppLog.error("[StorySession] story memory usage update failed turn=%@: %@", turnID.uuidString, error.localizedDescription)
+            }
         }
         // 13) メモリー保存。抽出はcommit前に済ませているため、ここで
         // 失敗しても同じ候補だけを再試行でき、AI本文は再生成しない。

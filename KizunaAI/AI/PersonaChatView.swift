@@ -89,6 +89,10 @@ struct PersonaChatView: View {
     /// 復旧バナーと後処理バナー。通常・埋め込み両モードで同じ物を表示する。
     @ViewBuilder
     private var recoveryBanners: some View {
+        if let memorySaveError = service.memorySaveError {
+            memorySaveBanner(memorySaveError)
+            Divider()
+        }
         if store.isPersistenceRecoveryRequired {
             personaRecoveryBanner
             Divider()
@@ -99,6 +103,27 @@ struct PersonaChatView: View {
         }
     }
 
+    private func memorySaveBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "memorychip.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+                Task { await service.retryPendingMemorySaves() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .frame(minHeight: 44)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.10))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if showsOnlyContinuations {
@@ -107,15 +132,18 @@ struct PersonaChatView: View {
                 recoveryBanners
                 compactStoryList
             } else if horizontalSizeClass == .compact {
-                compactTopSwitchBar
-                Divider()
-                recoveryBanners
                 if compactShowsChat, store.activeThread != nil {
+                    recoveryBanners
                     compactChat
-                } else if showsStoryActions {
-                    compactStoryList
                 } else {
-                    compactConversationList
+                    compactTopSwitchBar
+                    Divider()
+                    recoveryBanners
+                    if showsStoryActions {
+                        compactStoryList
+                    } else {
+                        compactConversationList
+                    }
                 }
             } else {
                 recoveryBanners
@@ -241,6 +269,7 @@ struct PersonaChatView: View {
         ) {
             Button(KizunaCopy.text(japanese: "削除", english: "Delete"), role: .destructive) {
                 if let thread = pendingThreadDeletion {
+                    service.removeGenerationState(for: thread.id)
                     store.deleteThread(id: thread.id)
                 }
                 pendingThreadDeletion = nil
@@ -250,8 +279,8 @@ struct PersonaChatView: View {
             }
         } message: {
             Text(KizunaCopy.text(
-                japanese: "会話本文もこの端末から削除されます。",
-                english: "The conversation text will also be deleted from this device."
+                japanese: "会話本文もこの端末から削除されます。生成中の場合は生成も停止します。",
+                english: "The conversation text will also be deleted from this device. Any active generation will be stopped."
             ))
         }
         .alert(
@@ -290,6 +319,9 @@ struct PersonaChatView: View {
         }
         .task(id: store.activeThreadID) {
             await refreshCurrentCharacterProfiles()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .characterLibraryDidChange)) { _ in
+            Task { await refreshCurrentCharacterProfiles() }
         }
         .onChange(of: store.activeThreadID) { _, _ in
             isPersonaChatNearBottom = true
@@ -612,10 +644,18 @@ struct PersonaChatView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
-                Text(showsStoryActions
-                     ? KizunaCopy.text(japanese: "あなたの物語", english: "Your story")
-                     : KizunaCopy.text(japanese: "会話", english: "Conversations"))
-                    .font(.headline.weight(.bold))
+                if let active = store.activeThread {
+                    let displayProfile = avatarProfile(for: active)
+                    HStack(spacing: 7) {
+                        PersonaAvatarView(profile: displayProfile, size: 28)
+                        Text(displayProfile.name)
+                            .font(.headline.weight(.bold))
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text(KizunaCopy.text(japanese: "会話", english: "Conversations"))
+                        .font(.headline.weight(.bold))
+                }
                 Spacer()
                 if !showsStoryActions {
                     Button {
@@ -824,7 +864,7 @@ struct PersonaChatView: View {
     private var compactStoryList: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text(KizunaCopy.text(japanese: "続きのある物語", english: "Stories in progress"))
+                Text(KizunaCopy.text(japanese: "続き", english: "Continue"))
                     .font(.subheadline.weight(.bold))
                     .tracking(0.4)
                     .foregroundStyle(.secondary)
@@ -1126,10 +1166,11 @@ struct PersonaChatView: View {
         // キャンセルではアシスタント本文が保存されないため、最後のメッセージで
         // 正常完了とキャンセルを区別する。
         guard let targetThreadID = targetGenerationThreadID,
-              let targetMessageID = targetAssistantMessageID else { return }
-        guard service.activeGenerationThreadID == targetThreadID
-            && service.activeAssistantMessageID == targetMessageID
-            && store.activeThread?.messages.last?.role == .assistant else { return }
+              let targetMessageID = targetAssistantMessageID,
+              let completion = service.lastCompletedGeneration,
+              completion.threadID == targetThreadID,
+              completion.messageID == targetMessageID else { return }
+        guard store.activeThread?.messages.last?.role == .assistant else { return }
         announceGenerationCompleted()
     }
 
@@ -1175,6 +1216,9 @@ struct PersonaChatView: View {
             )
         } catch {
             // 会話本文は継続できるため、画像だけを旧スナップショットへ戻す。
+            // 前回の成功値を残すと、読込に失敗した世代を現在の正本として
+            // 表示し続けてしまうため、snapshot fallbackへ戻す。
+            currentCharacterProfiles = [:]
             AppLog.error("[PersonaChatView] current character appearance load failed: %@", String(describing: error))
         }
     }
@@ -1198,8 +1242,10 @@ struct PersonaChatView: View {
     private var mainArea: some View {
         if let active = store.activeThread {
             VStack(spacing: 0) {
-                chatHeader(active)
-                Divider()
+                if horizontalSizeClass != .compact {
+                    chatHeader(active)
+                    Divider()
+                }
                 messageList(for: active)
                 Divider()
                 // Composerの入力状態はスレッド単位。Viewを再利用すると
@@ -1298,8 +1344,8 @@ struct PersonaChatView: View {
         // IDだけが一瞬残る遷移でも、別スレッドへプレビューを漏らさない。
         let isGeneratingThisThread = service.activeGenerationThreadID == thread.id
             && service.phase == .thinking
-        let isErrorThisThread = service.lastErrorThreadID == thread.id
-            && isGenerationError
+        let generationFailure = service.generationFailure(for: thread.id)
+        let cancelledRequest = service.cancelledRequest(for: thread.id)
         let displayProfile = avatarProfile(for: thread)
         let visibleMessages = thread.messages.filter { msg in
             return !(msg.role == .assistant && PersonaMessage.isPendingAssistantText(msg.text))
@@ -1319,9 +1365,13 @@ struct PersonaChatView: View {
                             streamingPreview(personaProfile: displayProfile)
                                 .id("streaming-preview")
                         }
-                        if isErrorThisThread, case let .error(message) = service.phase {
-                            generationError(message)
+                        if let generationFailure {
+                            generationError(generationFailure.message, threadID: thread.id)
                                 .id("generation-error")
+                        }
+                        if let cancelledRequest {
+                            cancelledGenerationNotice(threadID: thread.id, requestText: cancelledRequest)
+                                .id("cancelled-generation")
                         }
                         Color.clear.frame(height: 4).id("bottom")
                     }
@@ -1340,12 +1390,12 @@ struct PersonaChatView: View {
                     }
                 }
                 .onChange(of: thread.messages.count) { _, _ in
+                    let currentMessageIDs = Set(thread.messages.map(\.id))
                     if isPersonaChatNearBottom {
                         withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     } else {
-                        let currentMessageIDs = Set(thread.messages.map(\.id))
                         let newMessageIDs = currentMessageIDs.subtracting(previousMessageIDs)
                         let newAssistantMessages = thread.messages.filter { msg in
                             newMessageIDs.contains(msg.id) && msg.role == .assistant
@@ -1355,8 +1405,11 @@ struct PersonaChatView: View {
                                 unreadPersonaMessageCount += newAssistantMessages.count
                             }
                         }
-                        previousMessageIDs = currentMessageIDs
                     }
+                    // Replies received while the user was at the latest position
+                    // are already seen. Keep the baseline current in both paths
+                    // so a later off-bottom reply cannot recount them.
+                    previousMessageIDs = currentMessageIDs
                 }
                 .onChange(of: service.streamingResponse) { _, _ in
                     guard isGeneratingThisThread, isPersonaChatNearBottom else { return }
@@ -1414,11 +1467,6 @@ struct PersonaChatView: View {
         }
     }
 
-    private var isGenerationError: Bool {
-        if case .error = service.phase { return true }
-        return false
-    }
-
     private func streamingPreview(personaProfile: PersonaProfile) -> some View {
         let preview = service.streamingResponse.trimmingCharacters(in: .whitespacesAndNewlines)
         return HStack(alignment: .bottom, spacing: 6) {
@@ -1464,7 +1512,7 @@ struct PersonaChatView: View {
         .accessibilityValue(Text(preview))
     }
 
-    private func generationError(_ message: String) -> some View {
+    private func generationError(_ message: String, threadID: UUID) -> some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
@@ -1483,13 +1531,57 @@ struct PersonaChatView: View {
                     .foregroundStyle(.tertiary)
                 HStack(spacing: 8) {
                     Button(KizunaCopy.text(japanese: "同じ内容を再送信", english: "Try again")) {
-                        service.retryLastMessage()
+                        service.retryLastMessage(for: threadID)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .frame(minHeight: 44)
+                    .disabled(service.phase == .thinking)
                     Button(KizunaCopy.text(japanese: "閉じる", english: "Dismiss")) {
-                        service.dismissError()
+                        service.dismissError(for: threadID)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(minHeight: 44)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.orange.opacity(0.22), lineWidth: 1)
+        }
+    }
+
+    private func cancelledGenerationNotice(threadID: UUID, requestText: String) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "pause.circle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(KizunaCopy.text(
+                    japanese: "生成を停止しました",
+                    english: "Generation was stopped"
+                ))
+                    .font(.headline.weight(.bold))
+                Text(KizunaCopy.text(
+                    japanese: "「\(requestText)」への返信はまだありません。",
+                    english: "There is no reply yet for “\(requestText)”."
+                ))
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button(KizunaCopy.text(japanese: "同じ発言から再試行", english: "Retry this message")) {
+                        service.retryCancelledMessage(for: threadID)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .frame(minHeight: 44)
+                    .disabled(service.phase == .thinking)
+                    Button(KizunaCopy.text(japanese: "発言を取り消す", english: "Remove message")) {
+                        service.discardCancelledMessage(for: threadID)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -1515,7 +1607,8 @@ private struct StoryHistoryItem: Identifiable, Hashable {
     var id: UUID { session.id }
 
     var previewText: String {
-        session.messages.last?.text.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "新しい物語"
+        session.messages.last?.text.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            ?? KizunaCopy.text(japanese: "新しい物語", english: "New story")
     }
 }
 

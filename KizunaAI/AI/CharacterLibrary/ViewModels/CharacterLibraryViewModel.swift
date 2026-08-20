@@ -8,6 +8,16 @@
 import Foundation
 import Combine
 
+extension Notification.Name {
+    static let characterLibraryDidChange = Notification.Name("Kizuna.characterLibraryDidChange")
+}
+
+enum CharacterLibraryChangeCenter {
+    static func post() {
+        NotificationCenter.default.post(name: .characterLibraryDidChange, object: nil)
+    }
+}
+
 enum CharacterLibraryLoadIssue: Equatable {
     case characterStorageFailure
 
@@ -150,6 +160,7 @@ final class CharacterLibraryViewModel: ObservableObject {
                 // `.needsCleanup` means a previous attempt already removed
                 // the profile. Continue the idempotent orphan cleanup rather
                 // than turning the retry into a misleading not-found error.
+                CharacterLibraryChangeCenter.post()
                 break
             }
 

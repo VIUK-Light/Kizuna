@@ -36,6 +36,9 @@ final class KizunaContinuationViewModel: ObservableObject {
             currentCharacters = Dictionary(uniqueKeysWithValues: characters.map { ($0.id, $0) })
         } catch {
             // Storyの継続一覧は表示できるため、画像だけ旧スナップショットへ戻す。
+            // 前回の成功値を残すと、読込に失敗した世代でも古い画像を現在値として
+            // 表示してしまうため、personaItem(for:) のsnapshot fallbackへ戻す。
+            currentCharacters = [:]
             AppLog.error("[KizunaContinuationVM] character load failed: %@", String(describing: error))
         }
 
