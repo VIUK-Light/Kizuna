@@ -3827,6 +3827,11 @@ final class StorySessionService: ObservableObject {
                     "Story用のAIモデルが設定されていません。設定からモデルを追加してください。",
                     "No AI model is configured for Story. Add one in Settings."
                 )
+            case let .generationTruncated(reason):
+                return localizedNotice(
+                    "AI Providerの出力が上限(\(reason))で途中終了しました。本文は保存していません。続きを生成するか、出力上限を確認してください。",
+                    "The AI provider stopped at its output limit (\(reason)). The incomplete response was not saved. Generate a continuation or review the output limit."
+                )
             case .httpStatus, .invalidResponse, .emptyResponse:
                 return localizedNotice(
                     "AI Providerの応答に失敗しました。接続・権限・quotaを確認して、もう一度試してください。",

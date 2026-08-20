@@ -959,6 +959,7 @@ enum AIProviderError: LocalizedError, Equatable {
     case httpStatus(Int, String)
     case invalidResponse
     case emptyResponse
+    case generationTruncated(String)
     case noProviderForRole(AIModelRole)
 
     var errorDescription: String? {
@@ -976,6 +977,8 @@ enum AIProviderError: LocalizedError, Equatable {
             return "The AI provider returned an unreadable response."
         case .emptyResponse:
             return "The AI provider returned no response text."
+        case let .generationTruncated(reason):
+            return "The AI provider stopped before completing the response (\(reason))."
         case let .noProviderForRole(role):
             return "No enabled AI model is configured for role \(role.rawValue)."
         }
@@ -1057,6 +1060,10 @@ final class AIModelRouter {
                     configuration.identity.stableID,
                     error.localizedDescription
                 )
+                if let providerError = error as? AIProviderError,
+                   case .generationTruncated = providerError {
+                    throw error
+                }
             }
         }
         throw lastError ?? AIProviderError.noProviderForRole(role)
@@ -1121,42 +1128,70 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
             throw AIProviderError.missingCredential
         }
 
-        let result: StoryGemma31BGenerationResult
+        var result: StoryGemma31BGenerationResult
         if request.onUpdate != nil {
             let accumulator = StoryGemma31BStreamAccumulator()
-            result = try await StoryGemma31BAPIService.shared.generateStreaming(
-                systemPrompt: request.systemPrompt,
-                userPrompt: request.userPrompt,
-                temperature: request.temperature,
-                maxOutputTokens: request.maxOutputTokens,
-                seed: request.seed,
-                apiKey: apiKey,
-                onTextDelta: { delta in
-                    let visible = accumulator.append(delta)
-                    Task { @MainActor in
-                        request.onUpdate?(.visiblePreview(visible))
+            do {
+                result = try await StoryGemma31BAPIService.shared.generateStreaming(
+                    systemPrompt: request.systemPrompt,
+                    userPrompt: request.userPrompt,
+                    temperature: request.temperature,
+                    maxOutputTokens: request.maxOutputTokens,
+                    seed: request.seed,
+                    apiKey: apiKey,
+                    onTextDelta: { delta in
+                        let visible = accumulator.append(delta)
+                        Task { @MainActor in
+                            request.onUpdate?(.visiblePreview(visible))
+                        }
+                    },
+                    onModelResolved: { modelName in
+                        let identity = AIModelIdentity(
+                            providerID: .googleGenerativeLanguage,
+                            modelID: modelName,
+                            displayName: modelName
+                        )
+                        Task { @MainActor in
+                            request.onModelResolved?(identity)
+                        }
                     }
-                },
-                onModelResolved: { modelName in
-                    let identity = AIModelIdentity(
-                        providerID: .googleGenerativeLanguage,
-                        modelID: modelName,
-                        displayName: modelName
-                    )
-                    Task { @MainActor in
-                        request.onModelResolved?(identity)
-                    }
+                )
+            } catch let error as StoryGemma31BAPIError {
+                if case let .truncated(reason) = error {
+                    throw AIProviderError.generationTruncated(reason)
                 }
-            )
+                guard case let .httpStatus(status, _) = error,
+                      [400, 404, 405].contains(status) else {
+                    throw error
+                }
+                // Some deployments expose generateContent but not the SSE
+                // variant. Fall back to the same provider/model request and
+                // keep the lack of deltas explicit rather than faking a stream.
+                result = try await StoryGemma31BAPIService.shared.generate(
+                    systemPrompt: request.systemPrompt,
+                    userPrompt: request.userPrompt,
+                    temperature: request.temperature,
+                    maxOutputTokens: request.maxOutputTokens,
+                    seed: request.seed,
+                    apiKey: apiKey
+                )
+            }
         } else {
-            result = try await StoryGemma31BAPIService.shared.generate(
-                systemPrompt: request.systemPrompt,
-                userPrompt: request.userPrompt,
-                temperature: request.temperature,
-                maxOutputTokens: request.maxOutputTokens,
-                seed: request.seed,
-                apiKey: apiKey
-            )
+            do {
+                result = try await StoryGemma31BAPIService.shared.generate(
+                    systemPrompt: request.systemPrompt,
+                    userPrompt: request.userPrompt,
+                    temperature: request.temperature,
+                    maxOutputTokens: request.maxOutputTokens,
+                    seed: request.seed,
+                    apiKey: apiKey
+                )
+            } catch let error as StoryGemma31BAPIError {
+                if case let .truncated(reason) = error {
+                    throw AIProviderError.generationTruncated(reason)
+                }
+                throw error
+            }
         }
         let usage = result.usageMetadata.map {
             AIGenerationUsage(
