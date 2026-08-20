@@ -94,6 +94,27 @@ struct KizunaSettingsView: View {
                         LabeledContent(KizunaCopy.text(japanese: "モデル", english: "Model"), value: name)
                     }
 
+                    if modelManager.installedModels.count > 1 {
+                        Picker(
+                            KizunaCopy.text(japanese: "使用するローカルモデル", english: "Active local model"),
+                            selection: Binding(
+                                get: { modelManager.activeModelID ?? "" },
+                                set: { _ = modelManager.selectInstalledModel(id: $0) }
+                            )
+                        ) {
+                            ForEach(modelManager.installedModels) { model in
+                                Text("\(model.displayName) (\(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file)))")
+                                    .tag(model.id)
+                            }
+                        }
+                        Text(KizunaCopy.text(
+                            japanese: "複数の検証済みモデルを保持したまま、使用する1つを切り替えられます。",
+                            english: "Keep multiple validated models installed and switch the active one without replacing the others."
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     Picker(KizunaCopy.text(japanese: "モデルの入手先", english: "Model source"), selection: $modelSourceSelection) {
                         ForEach(LocalModelSourceSelection.allCases) { source in
                             Label(source.title, systemImage: source.icon)

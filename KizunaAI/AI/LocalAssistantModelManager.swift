@@ -24,6 +24,23 @@ struct LocalAssistantLoadProgress: Equatable {
     var isDone: Bool
 }
 
+/// An installed local artifact is identified by its relative path, not by a
+/// logical product label such as "iori". Multiple artifacts can therefore
+/// coexist and the active one can be selected without losing provenance.
+struct LocalAssistantInstalledModel: Codable, Equatable, Hashable, Identifiable, Sendable {
+    let id: String
+    let fileName: String
+    let relativePath: String
+    let fileSize: Int64
+    let sourceURL: String?
+
+    var displayName: String { fileName }
+
+    var url: URL {
+        KizunaDataMigration.localModelsURL.appendingPathComponent(relativePath)
+    }
+}
+
 enum LocalAssistantDownloadStatus: String, Codable {
     case idle
     case preflighting
@@ -206,6 +223,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     @Published private(set) var lastErrorMessage: String?
     @Published private(set) var installedFileName: String?
     @Published private(set) var installedFileSize: Int64 = 0
+    @Published private(set) var installedModels: [LocalAssistantInstalledModel] = []
+    @Published private(set) var activeModelID: String?
     @Published private(set) var isDownloading: Bool = false
     @Published private(set) var runtimeRefreshedAt = Date()
     @Published private(set) var downloadStatus: LocalAssistantDownloadStatus = .idle
@@ -260,6 +279,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private let defaults = UserDefaults.standard
     private let sourceURLKey = "localAssistantModelSourceURL"
     private let installedFileNameKey = "localAssistantInstalledFileName"
+    private let activeModelIDKey = "localAssistantActiveModelID"
     private let secretStore = AISecretStore.shared
     private var resolvedInstalledModelURL: URL?
     private var legacyResolvedInstalledModelURL: URL?
@@ -388,6 +408,31 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     var installedModelURL: URL? {
         resolvedInstalledModelURL
+    }
+
+    /// Select an already validated artifact without deleting or replacing any
+    /// other installed model. The runtime is refreshed after the active path
+    /// changes so the next request cannot reuse the previous model session.
+    @discardableResult
+    func selectInstalledModel(id: String) -> Bool {
+        guard let model = installedModels.first(where: { $0.id == id }),
+              isAvailableInstalledModel(at: model.url) else {
+            return false
+        }
+        activeModelID = model.id
+        defaults.set(model.id, forKey: activeModelIDKey)
+        resolvedInstalledModelURL = model.url
+        installedFileName = model.fileName
+        installedFileSize = model.fileSize
+        AILegacyCompatibility.exportString(
+            model.fileName,
+            primaryKey: installedFileNameKey,
+            aliases: AILegacyCompatibility.localModelInstalledFileAliases,
+            defaults: defaults
+        )
+        runtimeAvailabilitySnapshot = .checking
+        refreshEnvironment()
+        return true
     }
 
     var legacyInstalledModelURL: URL? {
@@ -1123,6 +1168,9 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         resetDownloadProgressMetrics()
         lastErrorMessage = nil
         resolvedInstalledModelURL = nil
+        installedModels = []
+        activeModelID = nil
+        defaults.removeObject(forKey: activeModelIDKey)
         downloadStatus = .idle
         setStatus(.modelDeleted, japaneseMessage: "ローカルモデルを削除しました")
         return true
@@ -1419,6 +1467,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         if let resolvedInstalledModelURL {
             adoptExistingModelIfNeeded(at: resolvedInstalledModelURL)
         }
+        refreshInstalledModelCatalog()
         installedFileName = resolvedInstalledModelURL?.lastPathComponent
         installedFileSize = resolvedInstalledModelURL
             .flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }
@@ -1441,6 +1490,74 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
         if !isDownloading {
             applyStatusPresentation()
+        }
+    }
+
+    private func refreshInstalledModelCatalog() {
+        let fileManager = FileManager.default
+        let root = KizunaDataMigration.localModelsURL.standardizedFileURL
+        var models: [LocalAssistantInstalledModel] = []
+        var seen = Set<String>()
+
+        for directory in candidateInstallationDirectories {
+            guard let contents = try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+            for url in contents {
+                guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                      safeModelFileName(url.lastPathComponent) != nil,
+                      isAvailableInstalledModel(at: url) else { continue }
+                let standardized = url.standardizedFileURL
+                let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
+                guard standardized.path.hasPrefix(rootPath) else { continue }
+                let relativePath = String(standardized.path.dropFirst(rootPath.count))
+                guard seen.insert(relativePath).inserted else { continue }
+                let fileSize = (try? standardized.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+                    .map(Int64.init) ?? 0
+                let sourceURL: String? = {
+                    guard let state = persistedDownloadState,
+                          stateReferencedFileName(for: state) == standardized.lastPathComponent else {
+                        return nil
+                    }
+                    return state.sourceURL
+                }()
+                models.append(
+                    LocalAssistantInstalledModel(
+                        id: relativePath,
+                        fileName: standardized.lastPathComponent,
+                        relativePath: relativePath,
+                        fileSize: fileSize,
+                        sourceURL: sourceURL
+                    )
+                )
+            }
+        }
+
+        models.sort { lhs, rhs in
+            lhs.relativePath.localizedStandardCompare(rhs.relativePath) == .orderedAscending
+        }
+        installedModels = models
+
+        let storedActiveID = defaults.string(forKey: activeModelIDKey)
+        let currentID = resolvedInstalledModelURL.flatMap { currentURL in
+            models.first(where: {
+                $0.url.standardizedFileURL == currentURL.standardizedFileURL
+            })?.id
+        }
+        let selectedID = storedActiveID.flatMap { id in
+            models.contains(where: { $0.id == id }) ? id : nil
+        } ?? currentID ?? models.first?.id
+
+        activeModelID = selectedID
+        if let selectedID,
+           let selected = models.first(where: { $0.id == selectedID }) {
+            resolvedInstalledModelURL = selected.url
+            defaults.set(selectedID, forKey: activeModelIDKey)
+        } else {
+            resolvedInstalledModelURL = nil
+            defaults.removeObject(forKey: activeModelIDKey)
         }
     }
 
