@@ -693,7 +693,7 @@ struct StorySessionChatBody: View {
         case .e4b:
             return localModelManager.runtimeAvailability == .executable
         case .b31:
-            return StoryGemma31BAPIService.shared.hasAPIKey
+            return StoryGemma31BAPIService.shared.availability.isUsable
         }
     }
 
@@ -754,10 +754,48 @@ struct StorySessionChatBody: View {
                 )
             }
         case .b31:
-            unavailableModelMessage = storyCopy(
-                "NAGI を使うには Gemma4 API キーが必要です。設定で API キーを登録するか、モデルメニューから iori を選択してください。",
-                "NAGI requires a Gemma4 API key. Add the key in Settings or choose iori from the model menu."
-            )
+            switch StoryGemma31BAPIService.shared.availability {
+            case .savedNotVerified:
+                unavailableModelMessage = storyCopy(
+                    "NAGIのAPIキーは保存済みですが、接続確認がまだ完了していません。モデル詳細から設定を開いて確認してください。",
+                    "NAGI's API key is saved but has not been verified. Open Settings from Model details to verify it."
+                )
+            case .checking:
+                unavailableModelMessage = storyCopy(
+                    "NAGIの接続を確認中です。確認が終わるまで待つか、モデル詳細から設定を開いてください。",
+                    "NAGI is being verified. Wait for the check or open Settings from Model details."
+                )
+            case .authenticationError:
+                unavailableModelMessage = storyCopy(
+                    "NAGIの認証に失敗しました。APIキーとモデルへのアクセス権を設定から確認してください。",
+                    "NAGI authentication failed. Check the API key and model access in Settings."
+                )
+            case .modelUnavailable:
+                unavailableModelMessage = storyCopy(
+                    "NAGIの対象モデルを利用できません。設定でモデルへのアクセス権を確認してください。",
+                    "The selected NAGI model is unavailable. Check model access in Settings."
+                )
+            case .rateLimited:
+                unavailableModelMessage = storyCopy(
+                    "NAGIのquotaまたはrate limitに達しています。時間を置いて再確認してください。",
+                    "NAGI is rate-limited or out of quota. Wait and verify the connection again."
+                )
+            case .unavailable:
+                unavailableModelMessage = storyCopy(
+                    "NAGIへ接続できません。ネットワークと設定を確認してください。",
+                    "NAGI is unavailable. Check the network and Settings."
+                )
+            case .notConfigured:
+                unavailableModelMessage = storyCopy(
+                    "NAGIを使うにはGemma4 APIキーが必要です。モデル詳細から設定を開いて登録してください。",
+                    "NAGI requires a Gemma4 API key. Open Settings from Model details to add it."
+                )
+            case .available:
+                unavailableModelMessage = storyCopy(
+                    "NAGIは利用できます。もう一度送信してください。",
+                    "NAGI is ready. Try sending again."
+                )
+            }
         }
         isShowingUnavailableModelAlert = true
     }
