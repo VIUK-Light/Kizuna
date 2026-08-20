@@ -1539,8 +1539,8 @@ final class StorySessionService: ObservableObject {
             return
         }
 
-        // 2) Mock 安全用に CharacterProfile を 1 つ採用 (main または最 importance)。
-        //    SafetyPipeline は単一 character を要求するシグネチャなので、世界の代表者として渡す。
+        // 2) SafetyPipeline は単一 CharacterProfile を要求するため、
+        //    main または importance 最大のキャラクターを世界の代表者として渡す。
         streamingStatusText = statusText("入力を確認中", "Checking input")
         let representativeCharacter: CharacterProfile = {
             if let mainID = world.mainCharacterId, let p = charIndex[mainID] { return p }
@@ -1670,7 +1670,8 @@ final class StorySessionService: ObservableObject {
         }
         let effectiveUserText = inSafety.rewrittenText ?? userText
 
-        // 4) シーンに居るキャラを 270M (Mock) で選定。
+        // 4) 補助モデルが設定されている場合は、シーンに居るキャラを
+        //    auxiliary roleへ渡して選定する。
         streamingStatusText = statusText("場面のキャラを選定中", "Selecting scene characters")
         // 単体物語は毎ターン「ユーザー + 主役NPC1人」。群像劇だけ最大3人を許可する。
         let activeCharacterLimit = world.isSoloStory
@@ -1739,14 +1740,30 @@ final class StorySessionService: ObservableObject {
         // 5) 全体メモリー候補 + 選別。active を優先しつつ、世界全体の関係継続に必要な inactive の高重要度メモリーも少し入れる。
         streamingStatusText = statusText("記憶を読み込み中", "Loading memories")
         var candidates: [CharacterMemory] = []
-        for member in activeCast {
-            let mems = (try? await memoryRepo.fetchMemories(characterId: member.characterId)) ?? []
-            candidates.append(contentsOf: mems)
-        }
-        for member in inactiveCast {
-            let mems = ((try? await memoryRepo.fetchMemories(characterId: member.characterId)) ?? [])
-                .filter { $0.importance >= 0.65 }
-            candidates.append(contentsOf: mems)
+        do {
+            for member in activeCast {
+                let mems = try await memoryRepo.fetchMemories(characterId: member.characterId)
+                candidates.append(contentsOf: mems)
+            }
+            for member in inactiveCast {
+                let mems = try await memoryRepo.fetchMemories(characterId: member.characterId)
+                    .filter { $0.importance >= 0.65 }
+                candidates.append(contentsOf: mems)
+            }
+        } catch {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "キャラクターの記憶を読み込めなかったため、古い状態で応答を生成しませんでした。もう一度試してください。",
+                    "Character memories could not be loaded, so a reply was not generated from stale context. Try again."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "character memory load failed"
+            )
+            AppLog.error("[StorySession] character memory context load failed: %@", error.localizedDescription)
+            return
         }
         let selectedMemories: [CharacterMemory]
         if candidates.count > 12 {
@@ -1781,17 +1798,33 @@ final class StorySessionService: ObservableObject {
                 error.localizedDescription
             )
         }
-        let scopedStoryMemoryCandidates = ((try? await storyMemoryRepo.fetchMemories(
-            storyWorldId: world.id,
-            storySessionId: session.id
-        )) ?? [])
-            .filter { memory in
+        let scopedStoryMemoryCandidates: [StoryMemory]
+        do {
+            scopedStoryMemoryCandidates = try await storyMemoryRepo.fetchMemories(
+                storyWorldId: world.id,
+                storySessionId: session.id
+            ).filter { memory in
                 // キャラ削除後に古いメモリーJSONが残っていても、次のターンへ
                 // そのキャラを再注入しない。世界イベント(nil)は保持する。
                 guard let characterID = memory.characterId else { return true }
                 return validCastCharacterIDs.contains(characterID)
                     && contextualCharacterIDs.contains(characterID)
             }
+        } catch {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "物語内メモリーを読み込めなかったため、古い状態で応答を生成しませんでした。もう一度試してください。",
+                    "Story memories could not be loaded, so a reply was not generated from stale context. Try again."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "story memory load failed"
+            )
+            AppLog.error("[StorySession] story memory context load failed: %@", error.localizedDescription)
+            return
+        }
         // Memory provenance uses the durable turn identity. generationID is an
         // execution-attempt ID and must not decide whether a saved memory still
         // belongs to the visible session history.
@@ -1821,15 +1854,49 @@ final class StorySessionService: ObservableObject {
 
         // 6) Lorebook: キーワード一致した設定だけを選択する。
         streamingStatusText = statusText("Lorebookを選択中", "Selecting lorebook entries")
-        var lorebookEntries = (try? await lorebookRepo.fetchEntries(storyWorldId: world.id)) ?? []
+        var lorebookEntries: [StoryLorebookEntry]
+        do {
+            lorebookEntries = try await lorebookRepo.fetchEntries(storyWorldId: world.id)
+        } catch {
+            await finishGenerationWithoutSaving(
+                generationID: generationID,
+                notice: localizedNotice(
+                    "Lorebookを読み込めなかったため、設定が欠けた状態で応答を生成しませんでした。もう一度試してください。",
+                    "The lorebook could not be loaded, so a reply was not generated with incomplete story rules. Try again."
+                ),
+                backend: .persistence,
+                userMessageID: userMessageID,
+                userText: userText,
+                backendName: "lorebook load failed"
+            )
+            AppLog.error("[StorySession] lorebook context load failed: %@", error.localizedDescription)
+            return
+        }
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
         }
         // 既存のCharacterLorebookも移行期間は同じ選択器に流し込む。
         for member in cast {
-            guard let legacy = try? await characterRepo.fetchLorebook(characterId: member.characterId),
-                  !legacy.isEmpty else { continue }
+            let legacy: CharacterLorebook?
+            do {
+                legacy = try await characterRepo.fetchLorebook(characterId: member.characterId)
+            } catch {
+                await finishGenerationWithoutSaving(
+                    generationID: generationID,
+                    notice: localizedNotice(
+                        "キャラクター設定を読み込めなかったため、設定が欠けた状態で応答を生成しませんでした。もう一度試してください。",
+                        "A character lorebook could not be loaded, so a reply was not generated with incomplete settings. Try again."
+                    ),
+                    backend: .persistence,
+                    userMessageID: userMessageID,
+                    userText: userText,
+                    backendName: "character lorebook load failed"
+                )
+                AppLog.error("[StorySession] character lorebook context load failed character=%@: %@", member.characterId.uuidString, error.localizedDescription)
+                return
+            }
+            guard let legacy, !legacy.isEmpty else { continue }
             let keywords = (legacy.importantPeople + legacy.importantPlaces + legacy.importantEvents)
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             var contentParts: [String] = [legacy.worldSetting]
