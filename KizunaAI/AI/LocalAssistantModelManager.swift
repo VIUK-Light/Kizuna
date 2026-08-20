@@ -1220,61 +1220,64 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         LocalAssistantRuntimeBridge.shared.clearRuntimeError()
         removeIncompleteDownloadedFileIfNeeded()
 
-        if let installedModelURL {
-            do {
-                if FileManager.default.fileExists(atPath: installedModelURL.path) {
-                    try FileManager.default.removeItem(at: installedModelURL)
-                }
-            } catch {
-                // ファイル削除に失敗したのに状態だけ消すと、UIは未導入と表示し、
-                // 次回起動で同じモデルが残る。実体を保持したまま状態も保持する。
-                lastErrorMessage = "ローカルモデルの削除に失敗しました。ファイルを使用中のアプリを閉じてから再試行してください。"
-                setStatus(.modelDeletionFailed, japaneseMessage: "ローカルモデルの削除に失敗しました")
-                refreshInstalledState()
-                applyStatusPresentation()
-                return false
-            }
-        }
-
-        if let removedURL = installedModelURL,
-           removedURL.deletingLastPathComponent().standardizedFileURL == additionalModelDirectoryURL.standardizedFileURL {
-            let removedID = installedModels.first(where: {
-                $0.url.standardizedFileURL == removedURL.standardizedFileURL
-            })?.id
-            installedModels.removeAll { $0.url.standardizedFileURL == removedURL.standardizedFileURL }
-            activeModelID = nil
-            defaults.removeObject(forKey: activeModelIDKey)
-            if auxiliaryModelID == removedID {
-                auxiliaryModelID = nil
-                defaults.removeObject(forKey: auxiliaryModelIDKey)
-            }
-            resolvedInstalledModelURL = nil
+        guard let removedURL = installedModelURL else {
+            clearPersistedDownloadState(removeResumeData: true)
             refreshInstalledState()
-            setStatus(.modelDeleted, japaneseMessage: "追加ローカルモデルを削除しました")
+            setStatus(.modelMissing(hasLegacyModel: hasLegacyInstalledModel), japaneseMessage: "ローカルモデルは見つかりませんでした")
             return true
         }
 
-        clearPersistedDownloadState(removeResumeData: true)
-        AILegacyCompatibility.removeValue(
-            primaryKey: installedFileNameKey,
-            aliases: AILegacyCompatibility.localModelInstalledFileAliases,
-            defaults: defaults
-        )
-        installedFileName = nil
-        installedFileSize = 0
-        downloadedBytes = 0
-        expectedBytes = 0
-        activeDownloadBaseBytes = 0
-        resetDownloadProgressMetrics()
+        let removedID = installedModels.first(where: {
+            $0.url.standardizedFileURL == removedURL.standardizedFileURL
+        })?.id
+        let isAdditionalModel = removedURL.deletingLastPathComponent().standardizedFileURL
+            == additionalModelDirectoryURL.standardizedFileURL
+
+        do {
+            if FileManager.default.fileExists(atPath: removedURL.path) {
+                try FileManager.default.removeItem(at: removedURL)
+            }
+        } catch {
+            // ファイル削除に失敗したのに状態だけ消すと、UIは未導入と表示し、
+            // 次回起動で同じモデルが残る。実体を保持したまま状態も保持する。
+            lastErrorMessage = "ローカルモデルの削除に失敗しました。ファイルを使用中のアプリを閉じてから再試行してください。"
+            setStatus(.modelDeletionFailed, japaneseMessage: "ローカルモデルの削除に失敗しました")
+            refreshInstalledState()
+            applyStatusPresentation()
+            return false
+        }
+
+        // A catalog can contain the active standard artifact plus imported
+        // artifacts. Removing one entry must not erase the other files or
+        // their identities. Only the download state for the standard slot is
+        // cleared; the catalog is rebuilt from the remaining files below.
+        if !isAdditionalModel {
+            clearPersistedDownloadState(removeResumeData: true)
+            AILegacyCompatibility.removeValue(
+                primaryKey: installedFileNameKey,
+                aliases: AILegacyCompatibility.localModelInstalledFileAliases,
+                defaults: defaults
+            )
+            downloadedBytes = 0
+            expectedBytes = 0
+            activeDownloadBaseBytes = 0
+            resetDownloadProgressMetrics()
+        }
+
         lastErrorMessage = nil
         resolvedInstalledModelURL = nil
-        installedModels = []
         activeModelID = nil
         defaults.removeObject(forKey: activeModelIDKey)
-        auxiliaryModelID = nil
-        defaults.removeObject(forKey: auxiliaryModelIDKey)
+        if auxiliaryModelID == removedID {
+            auxiliaryModelID = nil
+            defaults.removeObject(forKey: auxiliaryModelIDKey)
+        }
         downloadStatus = .idle
-        setStatus(.modelDeleted, japaneseMessage: "ローカルモデルを削除しました")
+        refreshInstalledState()
+        setStatus(
+            .modelDeleted,
+            japaneseMessage: isAdditionalModel ? "追加ローカルモデルを削除しました" : "ローカルモデルを削除しました"
+        )
         return true
     }
 
