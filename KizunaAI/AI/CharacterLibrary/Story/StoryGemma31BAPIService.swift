@@ -114,7 +114,13 @@ final class StoryGemma31BAPIService {
     private init() {}
 
     var hasAPIKey: Bool {
-        secretStore.configuredGemmaWebReaderAPIKey() != nil
+        if secretStore.configuredGemmaWebReaderAPIKey() != nil {
+            return true
+        }
+        return AIModelRegistry.shared.configurations(for: .story).contains { configuration in
+            configuration.identity.providerID != .localRuntime
+                && secretStore.providerAPIKey(for: configuration.id) != nil
+        }
     }
 
     var availability: StoryGemma31BAPIAvailability {
@@ -180,9 +186,10 @@ final class StoryGemma31BAPIService {
         userPrompt: String,
         temperature: Double = 0.72,
         maxOutputTokens: Int = 4096,
-        seed: Int? = nil
+        seed: Int? = nil,
+        apiKey overrideAPIKey: String? = nil
     ) async throws -> StoryGemma31BGenerationResult {
-        guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
+        guard let apiKey = resolvedAPIKey(overrideAPIKey) else {
             throw StoryGemma31BAPIError.missingAPIKey
         }
         let body = try makeRequestBody(
@@ -266,10 +273,11 @@ final class StoryGemma31BAPIService {
         temperature: Double = 0.72,
         maxOutputTokens: Int = 4096,
         seed: Int? = nil,
+        apiKey overrideAPIKey: String? = nil,
         onTextDelta: @escaping @Sendable (String) -> Void,
         onModelResolved: (@Sendable (String) -> Void)? = nil
     ) async throws -> StoryGemma31BGenerationResult {
-        guard let apiKey = secretStore.configuredGemmaWebReaderAPIKey() else {
+        guard let apiKey = resolvedAPIKey(overrideAPIKey) else {
             throw StoryGemma31BAPIError.missingAPIKey
         }
         let body = try makeRequestBody(
@@ -304,6 +312,18 @@ final class StoryGemma31BAPIService {
             }
         }
         throw lastFailure ?? StoryGemma31BAPIError.emptyResponse
+    }
+
+    /// Registry configurations keep provider credentials under their own UUID.
+    /// The legacy NAGI field remains a fallback so existing installations keep
+    /// working during migration, while a newly added Google configuration can
+    /// use its own Keychain entry without copying the key into the legacy slot.
+    private func resolvedAPIKey(_ overrideAPIKey: String?) -> String? {
+        let override = overrideAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !override.isEmpty {
+            return override
+        }
+        return secretStore.configuredGemmaWebReaderAPIKey()
     }
 
     private func makeRequestBody(

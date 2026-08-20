@@ -40,6 +40,8 @@ private final class RegistryTestProvider: AIProvider {
         request: AIGenerationRequest,
         configuration: AIModelConfiguration
     ) async throws -> AIGenerationResponse {
+        request.onModelResolved?(configuration.identity)
+        request.onUpdate?(.visiblePreview("stub response"))
         AIGenerationResponse(
             text: "stub response",
             identity: configuration.identity,
@@ -6521,10 +6523,20 @@ final class KizunaAITests: XCTestCase {
 
         let router = AIModelRouter(registry: registry)
         router.register(RegistryTestProvider())
+        var resolvedIdentity: AIModelIdentity?
+        var preview = ""
         let response = try await router.generate(
             request: AIGenerationRequest(
                 systemPrompt: "system",
-                userPrompt: "hello"
+                userPrompt: "hello",
+                onUpdate: { update in
+                    if case let .visiblePreview(text) = update {
+                        preview = text
+                    }
+                },
+                onModelResolved: { identity in
+                    resolvedIdentity = identity
+                }
             ),
             role: .persona,
             preferredConfigurationID: configuration.id
@@ -6533,6 +6545,8 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(response.text, "stub response")
         XCTAssertEqual(response.identity, configuration.identity)
         XCTAssertEqual(response.finishReason, "STOP")
+        XCTAssertEqual(resolvedIdentity, configuration.identity)
+        XCTAssertEqual(preview, "stub response")
     }
 
     func testPersonaUnfinishedAssistantIsNotPersistedBeforeFinalization() throws {

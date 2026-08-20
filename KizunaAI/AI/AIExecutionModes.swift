@@ -918,6 +918,7 @@ struct AIGenerationRequest: Sendable {
     let maxOutputTokens: Int
     let seed: Int?
     let onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
+    let onModelResolved: (@MainActor @Sendable (AIModelIdentity) -> Void)?
 
     init(
         systemPrompt: String,
@@ -925,7 +926,8 @@ struct AIGenerationRequest: Sendable {
         temperature: Double = 0.72,
         maxOutputTokens: Int = 1024,
         seed: Int? = nil,
-        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
+        onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil,
+        onModelResolved: (@MainActor @Sendable (AIModelIdentity) -> Void)? = nil
     ) {
         self.systemPrompt = systemPrompt
         self.userPrompt = userPrompt
@@ -933,6 +935,7 @@ struct AIGenerationRequest: Sendable {
         self.maxOutputTokens = max(1, maxOutputTokens)
         self.seed = seed
         self.onUpdate = onUpdate
+        self.onModelResolved = onModelResolved
     }
 }
 
@@ -1095,6 +1098,7 @@ private final class LocalAIProvider: AIProvider {
             displayName: configuration.identity.displayName,
             artifactID: result.modelIdentity ?? configuration.identity.artifactID
         )
+        request.onModelResolved?(identity)
         return AIGenerationResponse(
             text: text,
             identity: identity,
@@ -1112,13 +1116,48 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
         request: AIGenerationRequest,
         configuration: AIModelConfiguration
     ) async throws -> AIGenerationResponse {
-        let result = try await StoryGemma31BAPIService.shared.generate(
-            systemPrompt: request.systemPrompt,
-            userPrompt: request.userPrompt,
-            temperature: request.temperature,
-            maxOutputTokens: request.maxOutputTokens,
-            seed: request.seed
-        )
+        guard let apiKey = AISecretStore.shared.providerAPIKey(for: configuration.id)
+                ?? AISecretStore.shared.configuredGemmaWebReaderAPIKey() else {
+            throw AIProviderError.missingCredential
+        }
+
+        let result: StoryGemma31BGenerationResult
+        if request.onUpdate != nil {
+            let accumulator = StoryGemma31BStreamAccumulator()
+            result = try await StoryGemma31BAPIService.shared.generateStreaming(
+                systemPrompt: request.systemPrompt,
+                userPrompt: request.userPrompt,
+                temperature: request.temperature,
+                maxOutputTokens: request.maxOutputTokens,
+                seed: request.seed,
+                apiKey: apiKey,
+                onTextDelta: { delta in
+                    let visible = accumulator.append(delta)
+                    Task { @MainActor in
+                        request.onUpdate?(.visiblePreview(visible))
+                    }
+                },
+                onModelResolved: { modelName in
+                    let identity = AIModelIdentity(
+                        providerID: .googleGenerativeLanguage,
+                        modelID: modelName,
+                        displayName: modelName
+                    )
+                    Task { @MainActor in
+                        request.onModelResolved?(identity)
+                    }
+                }
+            )
+        } else {
+            result = try await StoryGemma31BAPIService.shared.generate(
+                systemPrompt: request.systemPrompt,
+                userPrompt: request.userPrompt,
+                temperature: request.temperature,
+                maxOutputTokens: request.maxOutputTokens,
+                seed: request.seed,
+                apiKey: apiKey
+            )
+        }
         let usage = result.usageMetadata.map {
             AIGenerationUsage(
                 promptTokens: $0.promptTokenCount,
@@ -1132,6 +1171,7 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
             finishReason: result.finishReason,
             usage: usage
         )
+        request.onModelResolved?(response.identity)
         request.onUpdate?(.visiblePreview(response.text))
         return response
     }
@@ -1168,6 +1208,7 @@ private final class OpenAICompatibleProvider: AIProvider {
             configuration: configuration,
             responseParser: Self.parseResponse
         )
+        request.onModelResolved?(response.identity)
         request.onUpdate?(.visiblePreview(response.text))
         return response
     }
@@ -1222,6 +1263,7 @@ private final class AnthropicProvider: AIProvider {
             configuration: configuration,
             responseParser: Self.parseResponse
         )
+        request.onModelResolved?(response.identity)
         request.onUpdate?(.visiblePreview(response.text))
         return response
     }

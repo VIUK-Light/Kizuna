@@ -3351,99 +3351,61 @@ final class StorySessionService: ObservableObject {
         }
 
         do {
-            let streamAccumulator = StoryGemma31BStreamAccumulator()
-            let generation: StoryGemma31BGenerationResult
-            do {
-                generation = try await StoryGemma31BAPIService.shared.generateStreaming(
+            let preferred = AIModelRegistry.shared
+                .configurations(for: .story)
+                .first(where: { $0.identity.providerID == .googleGenerativeLanguage })
+            let response = try await AIModelRouter.shared.generate(
+                request: AIGenerationRequest(
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
                     temperature: 0.72,
                     // 物語本文は2〜7行で十分。過剰な上限は待ち時間と候補の連続出力を増やす。
                     maxOutputTokens: 1024,
                     seed: seedOverride.map(Int.init),
-                    onTextDelta: { [weak self] delta in
-                        let visible = streamAccumulator.append(delta)
-                        Task { @MainActor [weak self] in
-                            guard let self,
-                                  self.activeGenerationID == generationID else { return }
-                            self.streamingResponse = visible
-                            self.streamingStatusText = self.statusText("発話生成中", "Generating response")
-                            self.streamingSpeakerName = self.detectCurrentSpeakerName(in: visible)
-                        }
+                    onUpdate: { [weak self] update in
+                        self?.handleStreamUpdate(update, generationID: generationID)
                     },
-                    onModelResolved: { [weak self] modelName in
-                        Task { @MainActor [weak self] in
-                            guard let self,
-                                  self.activeGenerationID == generationID else { return }
-                            let isFallback = modelName != "gemma-4-31b-it"
-                            let japanese = isFallback
-                                ? "Gemma4 " + modelName + "（自動fallback）で発話生成中"
-                                : "Gemma4 " + modelName + "で発話生成中"
-                            let english = isFallback
-                                ? "Generating with Gemma4 " + modelName + " (automatic fallback)"
-                                : "Generating with Gemma4 " + modelName
-                            self.streamingStatusText = self.statusText(japanese, english)
-                        }
+                    onModelResolved: { [weak self] identity in
+                        guard let self,
+                              self.activeGenerationID == generationID else { return }
+                        let isGoogleFallback = identity.providerID == .googleGenerativeLanguage
+                            && identity.modelID != "gemma-4-31b-it"
+                        let isProviderFallback = identity.providerID != .googleGenerativeLanguage
+                        let fallbackSuffix = isGoogleFallback || isProviderFallback
+                            ? "（自動fallback）"
+                            : ""
+                        let japanese = identity.displayName + fallbackSuffix + "で発話生成中"
+                        let english = "Generating with " + identity.displayName
+                            + ((isGoogleFallback || isProviderFallback) ? " (automatic fallback)" : "")
+                        self.streamingStatusText = self.statusText(japanese, english)
                     }
-                )
-            } catch let streamError as StoryGemma31BAPIError {
-                guard case let .httpStatus(status, _) = streamError,
-                      [400, 404, 405].contains(status) else {
-                    throw streamError
-                }
-                // Some deployments expose generateContent but not the SSE
-                // variant. Fall back explicitly to the same model request and
-                // keep the status text honest instead of pretending deltas
-                // were received.
-                await MainActor.run {
-                    guard self.activeGenerationID == generationID else { return }
-                    self.streamingResponse = self.localizedNotice(
-                        "ナレーション: NAGIが応答を準備しています。",
-                        "Narration: NAGI is preparing the response."
-                    )
-                    self.streamingStatusText = self.statusText("発話を整形中", "Formatting response")
-                }
-                generation = try await StoryGemma31BAPIService.shared.generate(
-                    systemPrompt: systemPrompt,
-                    userPrompt: userPrompt,
-                    temperature: 0.72,
-                    maxOutputTokens: 1024,
-                    seed: seedOverride.map(Int.init)
-                )
-            }
-            let text = generation.text
+                ),
+                role: .story,
+                preferredConfigurationID: preferred?.id
+            )
+            let text = response.text
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = text
-                let isFallback = generation.modelName != "gemma-4-31b-it"
+                let isGoogleFallback = response.identity.providerID == .googleGenerativeLanguage
+                    && response.identity.modelID != "gemma-4-31b-it"
+                let isProviderFallback = response.identity.providerID != .googleGenerativeLanguage
+                let isFallback = isGoogleFallback || isProviderFallback
                 let japanese = isFallback
-                    ? "Gemma4 " + generation.modelName + "（自動fallback）の発話を整形中"
+                    ? response.identity.displayName + "（自動fallback）の発話を整形中"
                     : "発話を整形中"
                 let english = isFallback
-                    ? "Formatting the response from Gemma4 " + generation.modelName + " (automatic fallback)"
+                    ? "Formatting the response from " + response.identity.displayName + " (automatic fallback)"
                     : "Formatting response"
                 self.streamingStatusText = self.statusText(japanese, english)
                 self.streamingSpeakerName = self.detectCurrentSpeakerName(in: text)
             }
-            return (reply: text, modelIdentity: generation.identity.stableID)
-        } catch let error as StoryGemma31BAPIError {
+            return (reply: text, modelIdentity: response.identity.stableID)
+        } catch {
             // APIエラーをNPC本文として整形すると、空レスポンス時に
             // 同じキャラのフォールバック発話が追加されるためsystem通知にする。
             let message = gemmaRuntimeNotice(for: error)
-            AppLog.error("[StoryGemma31B] generation failed: %@", error.localizedDescription)
-            await MainActor.run {
-                guard self.activeGenerationID == generationID else { return }
-                self.streamingResponse = message
-                self.streamingStatusText = ""
-                self.streamingSpeakerName = nil
-            }
-            return (reply: message, modelIdentity: nil)
-        } catch {
-            let message = localizedNotice(
-                "Gemma4 31B API の応答に失敗しました。もう一度試してください。",
-                "Gemma4 31B API failed to respond. Try again."
-            )
-            AppLog.error("[StoryGemma31B] generation failed: %@", error.localizedDescription)
+            AppLog.error("[AIModelRouter] Story generation failed: %@", error.localizedDescription)
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
                 self.streamingResponse = message
@@ -3834,6 +3796,48 @@ final class StorySessionService: ObservableObject {
         case .invalidURL, .httpStatus:
             return localizedNotice("Gemma4 31B API の応答に失敗しました。もう一度試してください。", "Gemma4 31B API failed to respond. Try again.")
         }
+    }
+
+    /// The Story path now uses the provider-neutral router. Keep provider
+    /// failures as a visible runtime notice rather than treating an adapter
+    /// error as narrator text or silently committing a partial turn.
+    private func gemmaRuntimeNotice(for error: Error) -> String {
+        if let gemmaError = error as? StoryGemma31BAPIError {
+            return gemmaRuntimeNotice(for: gemmaError)
+        }
+        if let providerError = error as? AIProviderError {
+            switch providerError {
+            case .missingCredential:
+                return localizedNotice(
+                    "選択したAI ProviderのAPIキーが未設定です。モデル詳細または設定から登録してください。",
+                    "The selected AI provider has no API key. Add it in Model details or Settings."
+                )
+            case .configurationDisabled:
+                return localizedNotice(
+                    "選択したAIモデル設定は無効です。設定で有効化してから再試行してください。",
+                    "The selected AI model configuration is disabled. Enable it in Settings and try again."
+                )
+            case .invalidEndpoint:
+                return localizedNotice(
+                    "AI Providerの接続先URLが正しくありません。設定を確認してください。",
+                    "The AI provider endpoint is invalid. Check the configuration and try again."
+                )
+            case .noProviderForRole:
+                return localizedNotice(
+                    "Story用のAIモデルが設定されていません。設定からモデルを追加してください。",
+                    "No AI model is configured for Story. Add one in Settings."
+                )
+            case .httpStatus, .invalidResponse, .emptyResponse:
+                return localizedNotice(
+                    "AI Providerの応答に失敗しました。接続・権限・quotaを確認して、もう一度試してください。",
+                    "The AI provider failed to respond. Check connectivity, access, and quota, then try again."
+                )
+            }
+        }
+        return localizedNotice(
+            "AI Providerの応答に失敗しました。もう一度試してください。",
+            "The AI provider failed to respond. Try again."
+        )
     }
 
     private func localStoryRuntimeUnavailableMessage(
