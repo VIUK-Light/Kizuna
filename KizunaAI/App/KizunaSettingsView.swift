@@ -139,6 +139,32 @@ struct KizunaSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    if !modelManager.installedModels.isEmpty {
+                        Picker(
+                            KizunaCopy.text(japanese: "補助AIモデル", english: "Auxiliary AI model"),
+                            selection: Binding(
+                                get: { modelManager.auxiliaryModelID ?? "__automatic__" },
+                                set: { value in
+                                    _ = modelManager.selectAuxiliaryModel(
+                                        id: value == "__automatic__" ? nil : value
+                                    )
+                                }
+                            )
+                        ) {
+                            Text(KizunaCopy.text(japanese: "本文モデルに合わせる", english: "Use active model"))
+                                .tag("__automatic__")
+                            ForEach(modelManager.installedModels) { model in
+                                Text(model.displayName).tag(model.id)
+                            }
+                        }
+                        Text(KizunaCopy.text(
+                            japanese: "classifier・Memory・Scene補助処理だけに使うlocal artifactを選べます。Gemma 3 270Mを導入した場合はここで指定してください。",
+                            english: "Choose a local artifact for classifier, memory, and scene helpers. Select a Gemma 3 270M artifact here when installed."
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     Button {
                         isImportingLocalModel = true
                     } label: {

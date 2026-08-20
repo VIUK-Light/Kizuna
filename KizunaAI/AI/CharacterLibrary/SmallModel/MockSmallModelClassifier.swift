@@ -40,9 +40,20 @@ enum LocalAuxiliaryAI {
         maxOutputTokens: Int = 192,
         role: AIModelRole = .classifier
     ) async -> String? {
-        let preferred = AIModelRegistry.shared
-            .configurations(for: role)
-            .first(where: { $0.identity.providerID == .localRuntime })
+        let modelManager = LocalAssistantModelManager.shared
+        let preferred: AIModelConfiguration? = {
+            guard let auxiliaryID = modelManager.auxiliaryModelID,
+                  let model = modelManager.installedModels.first(where: { $0.id == auxiliaryID }) else {
+                return AIModelRegistry.shared
+                    .configurations(for: role)
+                    .first(where: { $0.identity.providerID == .localRuntime })
+            }
+            return AIModelRegistry.shared.localArtifactConfiguration(
+                artifactID: model.id,
+                displayName: model.displayName,
+                roles: [role]
+            )
+        }()
         let request = AIGenerationRequest(
             systemPrompt: "Return only the requested compact result. Do not add explanations.",
             userPrompt: prompt,

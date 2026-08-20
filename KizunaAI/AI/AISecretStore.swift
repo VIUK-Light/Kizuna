@@ -141,6 +141,37 @@ final class AIModelRegistry: @unchecked Sendable {
         return saveUnlocked(items)
     }
 
+    /// Resolve or create the local artifact configuration used by auxiliary
+    /// roles. The configuration ID is persisted so a selected 270M artifact
+    /// remains distinct from the active Story/Persona model.
+    func localArtifactConfiguration(
+        artifactID: String,
+        displayName: String,
+        roles: Set<AIModelRole>
+    ) -> AIModelConfiguration {
+        if let existing = configurations.first(where: {
+            $0.identity.providerID == .localRuntime
+                && $0.identity.artifactID == artifactID
+        }) {
+            var updated = existing
+            updated.roles.formUnion(roles)
+            if updated != existing { _ = register(updated) }
+            return updated
+        }
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: displayName,
+                artifactID: artifactID
+            ),
+            roles: roles,
+            priority: -10
+        )
+        _ = register(configuration)
+        return configuration
+    }
+
     private func loadUnlocked() -> [AIModelConfiguration] {
         guard let data = defaults.data(forKey: storageKey),
               let decoded = try? JSONDecoder().decode([AIModelConfiguration].self, from: data) else {

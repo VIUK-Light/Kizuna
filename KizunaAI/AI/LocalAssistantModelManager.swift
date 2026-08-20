@@ -224,6 +224,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     @Published private(set) var installedFileSize: Int64 = 0
     @Published private(set) var installedModels: [LocalAssistantInstalledModel] = []
     @Published private(set) var activeModelID: String?
+    @Published private(set) var auxiliaryModelID: String?
     @Published private(set) var isDownloading: Bool = false
     @Published private(set) var runtimeRefreshedAt = Date()
     @Published private(set) var downloadStatus: LocalAssistantDownloadStatus = .idle
@@ -279,6 +280,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private let sourceURLKey = "localAssistantModelSourceURL"
     private let installedFileNameKey = "localAssistantInstalledFileName"
     private let activeModelIDKey = "localAssistantActiveModelID"
+    private let auxiliaryModelIDKey = "localAssistantAuxiliaryModelID"
     private let secretStore = AISecretStore.shared
     private var resolvedInstalledModelURL: URL?
     private var legacyResolvedInstalledModelURL: URL?
@@ -500,6 +502,19 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         return installedModels.first(where: {
             $0.id == artifactID || $0.relativePath == artifactID || $0.fileName == artifactID
         })?.url
+    }
+
+    @discardableResult
+    func selectAuxiliaryModel(id: String?) -> Bool {
+        if let id {
+            guard installedModels.contains(where: { $0.id == id }) else { return false }
+            auxiliaryModelID = id
+            defaults.set(id, forKey: auxiliaryModelIDKey)
+        } else {
+            auxiliaryModelID = nil
+            defaults.removeObject(forKey: auxiliaryModelIDKey)
+        }
+        return true
     }
 
     var legacyInstalledModelURL: URL? {
@@ -1223,9 +1238,16 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
         if let removedURL = installedModelURL,
            removedURL.deletingLastPathComponent().standardizedFileURL == additionalModelDirectoryURL.standardizedFileURL {
+            let removedID = installedModels.first(where: {
+                $0.url.standardizedFileURL == removedURL.standardizedFileURL
+            })?.id
             installedModels.removeAll { $0.url.standardizedFileURL == removedURL.standardizedFileURL }
             activeModelID = nil
             defaults.removeObject(forKey: activeModelIDKey)
+            if auxiliaryModelID == removedID {
+                auxiliaryModelID = nil
+                defaults.removeObject(forKey: auxiliaryModelIDKey)
+            }
             resolvedInstalledModelURL = nil
             refreshInstalledState()
             setStatus(.modelDeleted, japaneseMessage: "追加ローカルモデルを削除しました")
@@ -1249,6 +1271,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         installedModels = []
         activeModelID = nil
         defaults.removeObject(forKey: activeModelIDKey)
+        auxiliaryModelID = nil
+        defaults.removeObject(forKey: auxiliaryModelIDKey)
         downloadStatus = .idle
         setStatus(.modelDeleted, japaneseMessage: "ローカルモデルを削除しました")
         return true
@@ -1637,6 +1661,15 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         } else {
             resolvedInstalledModelURL = nil
             defaults.removeObject(forKey: activeModelIDKey)
+        }
+
+        let storedAuxiliaryID = defaults.string(forKey: auxiliaryModelIDKey)
+        if let storedAuxiliaryID,
+           models.contains(where: { $0.id == storedAuxiliaryID }) {
+            auxiliaryModelID = storedAuxiliaryID
+        } else {
+            auxiliaryModelID = nil
+            defaults.removeObject(forKey: auxiliaryModelIDKey)
         }
     }
 
