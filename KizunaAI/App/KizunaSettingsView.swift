@@ -22,15 +22,20 @@ struct KizunaSettingsView: View {
     @State private var registryMessage: String?
     @State private var modelSourceSelection: LocalModelSourceSelection = .standard
     @State private var selectedStandardModelURL = LocalAssistantModelProfile.defaultDownloadURL
+    @State private var selectedActiveModelID = ""
+    @State private var selectedAuxiliaryModelID = "__automatic__"
     @State private var saveMessage: String?
     @State private var saveMessageIsError = false
     @State private var showDeleteAlert = false
     @State private var showClearProfileAlert = false
     @State private var showResetLaunchAlert = false
+    @State private var showUnsavedChangesAlert = false
     @State private var isShowingProfile = false
     @State private var isImportingLocalModel = false
     @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
+#if DEBUG
     @AppStorage("kizuna.debug.restSuggestion.enabled") private var debugRestSuggestionEnabled = false
+#endif
 
     private var canDownload: Bool {
         modelSourceSelection == .standard
@@ -217,8 +222,8 @@ struct KizunaSettingsView: View {
                         Picker(
                             KizunaCopy.text(japanese: "使用するローカルモデル", english: "Active local model"),
                             selection: Binding(
-                                get: { modelManager.activeModelID ?? "" },
-                                set: { _ = modelManager.selectInstalledModel(id: $0) }
+                                get: { selectedActiveModelID },
+                                set: { selectedActiveModelID = $0 }
                             )
                         ) {
                             ForEach(modelManager.installedModels) { model in
@@ -238,12 +243,8 @@ struct KizunaSettingsView: View {
                         Picker(
                             KizunaCopy.text(japanese: "補助AIモデル", english: "Auxiliary AI model"),
                             selection: Binding(
-                                get: { modelManager.auxiliaryModelID ?? "__automatic__" },
-                                set: { value in
-                                    _ = modelManager.selectAuxiliaryModel(
-                                        id: value == "__automatic__" ? nil : value
-                                    )
-                                }
+                                get: { selectedAuxiliaryModelID },
+                                set: { selectedAuxiliaryModelID = $0 }
                             )
                         ) {
                             Text(KizunaCopy.text(japanese: "本文モデルに合わせる", english: "Use active model"))
@@ -409,6 +410,7 @@ struct KizunaSettingsView: View {
                     }
                     }
 
+#if DEBUG
                 Section(KizunaCopy.text(japanese: "デバッグ", english: "Debug")) {
                     Toggle(
                         KizunaCopy.text(japanese: "デバッグオプションを有効化", english: "Enable debug options"),
@@ -437,6 +439,7 @@ struct KizunaSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+#endif
 
                 Section {
                     Button(KizunaCopy.text(japanese: "初期設定を今すぐ開く", english: "Open welcome setup now")) {
@@ -487,7 +490,9 @@ struct KizunaSettingsView: View {
             .navigationTitle(KizunaCopy.text(japanese: "設定", english: "Settings"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) { dismiss() }
+                    Button(KizunaCopy.text(japanese: "閉じる", english: "Close")) {
+                        closeSettings()
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
@@ -536,6 +541,25 @@ struct KizunaSettingsView: View {
                 english: "Your saved profile and model settings will stay unchanged. The setup opens after this sheet closes."
             ))
         }
+        .alert(
+            KizunaCopy.text(japanese: "未保存の変更があります", english: "You have unsaved changes"),
+            isPresented: $showUnsavedChangesAlert
+        ) {
+            Button(KizunaCopy.text(japanese: "保存して閉じる", english: "Save and close")) {
+                if saveSecretsAndModelSource() {
+                    dismiss()
+                }
+            }
+            Button(KizunaCopy.text(japanese: "変更を破棄", english: "Discard changes"), role: .destructive) {
+                dismiss()
+            }
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(KizunaCopy.text(
+                japanese: "設定を保存せずに閉じると、入力した変更は破棄されます。保存するか、変更を破棄するかを選んでください。",
+                english: "If you close Settings without saving, your draft changes will be discarded. Choose whether to save or discard them."
+            ))
+        }
         .sheet(isPresented: $isShowingProfile) {
             KizunaUserProfileView(store: KizunaUserProfileStore.shared)
                 .viukAdaptiveSheetSizing(minWidth: 520, minHeight: 620)
@@ -552,6 +576,8 @@ struct KizunaSettingsView: View {
             modelSourceSelection = standardModelOptions.contains(where: {
                 $0.url == modelManager.resolvedSourceURLString
             }) ? .standard : .huggingFace
+            selectedActiveModelID = modelManager.activeModelID ?? ""
+            selectedAuxiliaryModelID = modelManager.auxiliaryModelID ?? "__automatic__"
             modelManager.refreshEnvironment()
         }
         .fileImporter(
@@ -576,7 +602,38 @@ struct KizunaSettingsView: View {
         }
     }
 
-    private func saveSecretsAndModelSource() {
+    private var hasUnsavedChanges: Bool {
+        let storedNAGIKey = AISecretStore.shared.string(for: .gemmaWebReaderAPIKey) ?? ""
+        let draftNAGIKey = nagiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let storedSourceURL = modelManager.sourceURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draftSourceURL = (modelSourceSelection == .standard
+            ? selectedStandardModelURL
+            : modelSourceURL
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveDraftSourceURL = draftSourceURL.isEmpty
+            ? LocalAssistantModelProfile.defaultDownloadURL
+            : draftSourceURL
+
+        return draftNAGIKey != storedNAGIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            || effectiveDraftSourceURL != storedSourceURL
+            || modelSourceSHA256.trimmingCharacters(in: .whitespacesAndNewlines)
+                != modelManager.customSourceSHA256.trimmingCharacters(in: .whitespacesAndNewlines)
+            || modelAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                != modelManager.accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            || selectedActiveModelID != (modelManager.activeModelID ?? "")
+            || selectedAuxiliaryModelID != (modelManager.auxiliaryModelID ?? "__automatic__")
+    }
+
+    private func closeSettings() {
+        if hasUnsavedChanges {
+            showUnsavedChangesAlert = true
+        } else {
+            dismiss()
+        }
+    }
+
+    @discardableResult
+    private func saveSecretsAndModelSource() -> Bool {
         let apiKeySaved = AISecretStore.shared.setString(nagiAPIKey, for: .gemmaWebReaderAPIKey)
 
         if modelSourceSelection == .standard {
@@ -591,13 +648,21 @@ struct KizunaSettingsView: View {
             : .notConfigured
 
         let accessTokenSaved = modelManager.updateAccessToken(modelAccessToken)
-        saveMessageIsError = !(apiKeySaved && accessTokenSaved)
+        let activeModelSaved = selectedActiveModelID.isEmpty
+            ? modelManager.activeModelID == nil
+            : modelManager.selectInstalledModel(id: selectedActiveModelID)
+        let auxiliaryModelSaved = modelManager.selectAuxiliaryModel(
+            id: selectedAuxiliaryModelID == "__automatic__" ? nil : selectedAuxiliaryModelID
+        )
+        let succeeded = apiKeySaved && accessTokenSaved && activeModelSaved && auxiliaryModelSaved
+        saveMessageIsError = !succeeded
         saveMessage = saveMessageIsError
             ? KizunaCopy.text(
                 japanese: "秘密情報をKeychainへ保存できませんでした。入力は保持したまま、もう一度試してください。",
                 english: "A secret could not be saved to Keychain. Your input was kept; try again."
             )
             : KizunaCopy.text(japanese: "設定を保存しました", english: "Settings saved")
+        return succeeded
     }
 
     private var nagiAvailabilityLabel: String {

@@ -26,6 +26,9 @@ struct KizunaHomeView: View {
     @State private var activeStorySessionID: UUID?
     @State private var activeStoryStartsNewSession = false
     @State private var isShowingRecovery = false
+    @State private var storyLastActivityDates: [UUID: Date] = [:]
+
+    private let storySessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
 
     private enum HomeFilter: String, CaseIterable, Identifiable {
         case all
@@ -96,7 +99,37 @@ struct KizunaHomeView: View {
             let kind: KizunaConversationKind = selectedFilter == .persona ? .persona : .story
             items = items.filter { $0.kind == kind }
         }
-        return items.sorted { $0.updatedAt > $1.updatedAt }
+        return items.sorted { activityDate(for: $0) > activityDate(for: $1) }
+    }
+
+    private func activityDate(for item: HomeCatalogItem) -> Date {
+        switch item {
+        case .persona(let character):
+            let latestThreadActivity = personaStore.threads
+                .filter { $0.characterID == character.id }
+                .compactMap { thread in
+                    thread.messages.map(\.createdAt).max()
+                }
+                .max()
+            return latestThreadActivity ?? character.updatedAt
+        case .story(let world):
+            return storyLastActivityDates[world.id] ?? world.updatedAt
+        }
+    }
+
+    private var hasCharacterLoadFailure: Bool {
+        characterLibraryVM.loadError != nil
+    }
+
+    private var hasStoryLoadFailure: Bool {
+        storyLibraryVM.loadError != nil
+            || storyLibraryVM.seedError != nil
+            || storyLibraryVM.migrationError != nil
+    }
+
+    private var hasUnavailableCatalog: Bool {
+        (hasCharacterLoadFailure && characterLibraryVM.allCharacters.isEmpty)
+            || (hasStoryLoadFailure && storyLibraryVM.worlds.isEmpty)
     }
 
     var body: some View {
@@ -110,9 +143,12 @@ struct KizunaHomeView: View {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
+                } else if hasUnavailableCatalog && catalogItems.isEmpty {
+                    catalogLoadFailureState
                 } else if catalogItems.isEmpty {
                     emptyState
                 } else {
+                    catalogLoadNotice
                     LazyVStack(spacing: 10) {
                         ForEach(catalogItems) { item in
                             catalogRow(item)
@@ -147,7 +183,7 @@ struct KizunaHomeView: View {
             .viukAdaptiveSheetSizing(minWidth: 720, minHeight: 720)
         }
         .sheet(isPresented: $showStoryLibrary, onDismiss: {
-            Task { await storyLibraryVM.reload() }
+            Task { await reloadStoryCatalog() }
             presentPendingStory()
         }) {
             StoryWorldLibraryView(
@@ -168,7 +204,7 @@ struct KizunaHomeView: View {
             .viukAdaptiveSheetSizing(minWidth: 820, minHeight: 720)
         }
         .sheet(item: $selectedStoryWorld, onDismiss: {
-            Task { await storyLibraryVM.reload() }
+            Task { await reloadStoryCatalog() }
             presentPendingStory()
         }) { world in
             StoryWorldDetailView(
@@ -188,7 +224,7 @@ struct KizunaHomeView: View {
             .viukAdaptiveSheetSizing(minWidth: 620, minHeight: 720)
         }
         .sheet(item: $editingStoryWorld, onDismiss: {
-            Task { await storyLibraryVM.reload() }
+            Task { await reloadStoryCatalog() }
         }) { world in
             StoryWorldCreateView(
                 existing: world,
@@ -267,6 +303,8 @@ struct KizunaHomeView: View {
                             )
                         )
                         .foregroundStyle(selectedFilter == filter ? Color.accentColor : .secondary)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
@@ -291,6 +329,8 @@ struct KizunaHomeView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -405,6 +445,109 @@ struct KizunaHomeView: View {
     private func bootstrapCatalog() async {
         await characterLibraryVM.bootstrap()
         await storyLibraryVM.bootstrap()
+        await loadStoryActivityDates()
+    }
+
+    @MainActor
+    private func reloadStoryCatalog() async {
+        await storyLibraryVM.reload()
+        await loadStoryActivityDates()
+    }
+
+    @MainActor
+    private func retryCatalogLoad() async {
+        await characterLibraryVM.retryLoad()
+        await storyLibraryVM.retryBootstrap()
+        await loadStoryActivityDates()
+    }
+
+    @MainActor
+    private func loadStoryActivityDates() async {
+        let worlds = storyLibraryVM.worlds
+        var activityDates: [UUID: Date] = [:]
+        for world in worlds {
+            guard let sessions = try? await storySessionRepo.fetchSessions(storyWorldId: world.id),
+                  let latest = sessions.map(\.updatedAt).max() else {
+                continue
+            }
+            activityDates[world.id] = latest
+        }
+        storyLastActivityDates = activityDates
+    }
+
+    @ViewBuilder
+    private var catalogLoadNotice: some View {
+        if hasCharacterLoadFailure || hasStoryLoadFailure {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(KizunaCopy.text(
+                        japanese: "一部の一覧を読み込めませんでした",
+                        english: "Some library data could not be loaded"
+                    ))
+                        .font(.subheadline.weight(.semibold))
+                    Text(catalogLoadFailureMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+                    Task { await retryCatalogLoad() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .frame(minHeight: 44)
+                .disabled(characterLibraryVM.isLoading || storyLibraryVM.isBootstrapping)
+            }
+            .padding(12)
+            .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private var catalogLoadFailureMessage: String {
+        switch (hasCharacterLoadFailure, hasStoryLoadFailure) {
+        case (true, true):
+            return KizunaCopy.text(
+                japanese: "キャラクターとストーリーの保存データを確認できません。",
+                english: "Character and story data could not be checked."
+            )
+        case (true, false):
+            return characterLibraryVM.loadError?.message
+                ?? KizunaCopy.text(japanese: "キャラクター一覧を確認できません。", english: "Character data could not be checked.")
+        case (false, true):
+            return KizunaCopy.text(
+                japanese: "ストーリーの保存データを確認できません。表示中のデータは削除されていません。",
+                english: "Story data could not be checked. Displayed data was not deleted."
+            )
+        case (false, false):
+            return ""
+        }
+    }
+
+    private var catalogLoadFailureState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+                .font(.system(size: 34))
+                .foregroundStyle(.orange)
+            Text(KizunaCopy.text(
+                japanese: "保存データを読み込めませんでした",
+                english: "Saved data could not be loaded"
+            ))
+                .font(.headline)
+            Text(catalogLoadFailureMessage)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+                Task { await retryCatalogLoad() }
+            }
+            .buttonStyle(.borderedProminent)
+            .frame(minHeight: 44)
+            .disabled(characterLibraryVM.isLoading || storyLibraryVM.isBootstrapping)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 42)
     }
 
     @MainActor

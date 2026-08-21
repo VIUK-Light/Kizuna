@@ -301,6 +301,7 @@ struct PersonaChatView: View {
                 }
                 pendingThreadRename = nil
             }
+            .disabled(threadRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {
                 pendingThreadRename = nil
             }
@@ -1414,6 +1415,19 @@ struct PersonaChatView: View {
                 .onChange(of: service.streamingResponse) { _, _ in
                     guard isGeneratingThisThread, isPersonaChatNearBottom else { return }
                     proxy.scrollTo("bottom", anchor: .bottom)
+                }
+                .task(id: thread.id) {
+                    // 既存スレッドを開いた直後は messages.count が変化しないため、
+                    // onChange だけでは保存済みの最新メッセージへ移動できない。
+                    // LazyVStack の配置を1回待ってから、現在のスレッドだけを初期位置へ移動する。
+                    await Task.yield()
+                    guard !Task.isCancelled, store.activeThreadID == thread.id else { return }
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                    isPersonaChatNearBottom = true
+                    unreadPersonaMessageCount = 0
+                    previousMessageIDs = Set(
+                        (store.activeThread?.messages ?? thread.messages).map(\.id)
+                    )
                 }
 
                 if !isPersonaChatNearBottom {
