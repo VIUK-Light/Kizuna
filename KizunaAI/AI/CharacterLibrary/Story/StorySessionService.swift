@@ -3563,9 +3563,12 @@ final class StorySessionService: ObservableObject {
         }
 
         do {
-            let preferred = AIModelRegistry.shared
-                .configurations(for: .story)
-                .first(where: { $0.identity.providerID == .googleGenerativeLanguage })
+            let storyConfigurations = AIModelRegistry.shared.configurations(for: .story)
+            let preferred = AIModelTuningStore.shared.configurationIDForCurrentMode(
+                for: .story,
+                configurations: storyConfigurations,
+                fallbackProviderID: .googleGenerativeLanguage
+            )
             let response = try await AIModelRouter.shared.generate(
                 request: AIGenerationRequest(
                     systemPrompt: systemPrompt,
@@ -3593,7 +3596,7 @@ final class StorySessionService: ObservableObject {
                     }
                 ),
                 role: .story,
-                preferredConfigurationID: preferred?.id,
+                preferredConfigurationID: preferred,
                 allowsFallback: false
             )
             let text = response.text

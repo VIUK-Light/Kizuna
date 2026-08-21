@@ -245,6 +245,30 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
         }
     }
 
+    /// Resolve the model selected by the current settings surface while
+    /// retaining the legacy provider choice when Simple mode is Automatic.
+    func configurationIDForCurrentMode(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration],
+        fallbackProviderID: AIProviderID?
+    ) -> UUID? {
+        switch mode {
+        case .advanced:
+            if let preferred = preferredConfigurationID(for: AIModelTuningScope(role: role)),
+               configurations.contains(where: { $0.id == preferred }) {
+                return preferred
+            }
+        case .simple:
+            if let simple = simplePreferredConfigurationID(for: role, configurations: configurations) {
+                return simple
+            }
+        }
+
+        return fallbackProviderID.flatMap { providerID in
+            configurations.first(where: { $0.identity.providerID == providerID })?.id
+        }
+    }
+
     mutating func setPreferredConfigurationID(_ id: UUID?, for scope: AIModelTuningScope) {
         if let id {
             preferredConfigurationIDs[scope.rawValue] = id
@@ -306,6 +330,18 @@ final class AIModelTuningStore: @unchecked Sendable {
         configurations: [AIModelConfiguration]
     ) -> UUID? {
         preferences.simplePreferredConfigurationID(for: role, configurations: configurations)
+    }
+
+    func configurationIDForCurrentMode(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration],
+        fallbackProviderID: AIProviderID?
+    ) -> UUID? {
+        preferences.configurationIDForCurrentMode(
+            for: role,
+            configurations: configurations,
+            fallbackProviderID: fallbackProviderID
+        )
     }
 
     @discardableResult

@@ -6715,9 +6715,25 @@ final class KizunaAITests: XCTestCase {
             store.simplePreferredConfigurationID(for: .persona, configurations: [local, online]),
             local.id
         )
+        XCTAssertEqual(
+            store.configurationIDForCurrentMode(
+                for: .persona,
+                configurations: [local, online],
+                fallbackProviderID: .openAICompatible
+            ),
+            local.id
+        )
         XCTAssertTrue(store.setSimpleModelRoute(.online))
         XCTAssertEqual(
             store.simplePreferredConfigurationID(for: .persona, configurations: [local, online]),
+            online.id
+        )
+        XCTAssertEqual(
+            store.configurationIDForCurrentMode(
+                for: .persona,
+                configurations: [local, online],
+                fallbackProviderID: .localRuntime
+            ),
             online.id
         )
     }
@@ -6886,6 +6902,14 @@ final class KizunaAITests: XCTestCase {
         let tuningStore = AIModelTuningStore(defaults: defaults)
         XCTAssertTrue(tuningStore.setMode(.advanced))
         XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: .persona))
+        XCTAssertEqual(
+            tuningStore.configurationIDForCurrentMode(
+                for: .persona,
+                configurations: registry.configurations(for: .persona),
+                fallbackProviderID: .localRuntime
+            ),
+            configuration.id
+        )
         let router = AIModelRouter(registry: registry, tuningStore: tuningStore)
         router.register(RegistryTestProvider())
         var resolvedIdentity: AIModelIdentity?
