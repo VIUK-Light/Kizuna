@@ -109,7 +109,7 @@ struct KizunaContinuationView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(KizunaCopy.text(japanese: "続きから", english: "Continue"))
+            Text(KizunaCopy.text(japanese: "会話", english: "conversation"))
                 .font(.title2.weight(.bold))
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("workspace.continuations.heading")
