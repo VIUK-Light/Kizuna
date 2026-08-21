@@ -50,6 +50,18 @@ enum AIEndpointPolicy {
         return !isLocalEndpoint(endpoint)
     }
 
+    static func allowsEndpoint(providerID: AIProviderID, endpoint: String?) -> Bool {
+        guard providerID != .localRuntime,
+              let endpoint,
+              endpoint.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              let url = URL(string: endpoint),
+              let scheme = url.scheme?.lowercased(),
+              url.host?.isEmpty == false else {
+            return providerID == .localRuntime
+        }
+        return scheme == "https" || (scheme == "http" && isLocalEndpoint(url))
+    }
+
     private static func isLocalHost(_ host: String) -> Bool {
         host == "localhost"
             || host == "127.0.0.1"

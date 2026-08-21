@@ -6675,6 +6675,24 @@ final class KizunaAITests: XCTestCase {
                 endpoint: "https://api.example/v1"
             )
         )
+        XCTAssertTrue(
+            AIEndpointPolicy.allowsEndpoint(
+                providerID: .openAICompatible,
+                endpoint: "http://localhost:1234/v1"
+            )
+        )
+        XCTAssertTrue(
+            AIEndpointPolicy.allowsEndpoint(
+                providerID: .openAICompatible,
+                endpoint: "https://api.example/v1"
+            )
+        )
+        XCTAssertFalse(
+            AIEndpointPolicy.allowsEndpoint(
+                providerID: .openAICompatible,
+                endpoint: "http://api.example/v1"
+            )
+        )
     }
 
     func testAIModelTuningDefaultsToSimpleAutomaticAndPersistsSelection() throws {

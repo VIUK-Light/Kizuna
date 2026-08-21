@@ -355,7 +355,10 @@ struct KizunaSettingsView: View {
                     }
                     if registryProvider != .localRuntime {
                         SecureField(
-                            registryRequiresAPIKey(for: registryProvider)
+                            registryRequiresAPIKey(
+                                for: registryProvider,
+                                endpoint: registryEndpoint
+                            )
                                 ? KizunaCopy.text(japanese: "APIキー（必須）", english: "API key (required)")
                                 : KizunaCopy.text(japanese: "APIキー（任意）", english: "API key (optional)"),
                             text: $registryAPIKey
@@ -1033,7 +1036,7 @@ struct KizunaSettingsView: View {
             )
             return
         }
-        if registryRequiresAPIKey(for: registryProvider)
+        if registryRequiresAPIKey(for: registryProvider, endpoint: registryEndpoint)
             && registryAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             registryMessage = KizunaCopy.text(
                 japanese: "このProviderにはAPIキーが必要です。",
@@ -1087,7 +1090,7 @@ struct KizunaSettingsView: View {
             return endpointError
         }
         let previous = AIModelRegistry.shared.configuration(id: configuration.id)
-        if registryRequiresAPIKey(for: configuration.identity.providerID),
+        if registryRequiresAPIKey(for: configuration.identity.providerID, endpoint: configuration.endpoint),
            apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            AISecretStore.shared.providerAPIKey(for: configuration.id) == nil {
             return KizunaCopy.text(
@@ -1290,8 +1293,8 @@ struct KizunaSettingsView: View {
         }
     }
 
-    private func registryRequiresAPIKey(for provider: AIProviderID) -> Bool {
-        provider == .openAICompatible || provider == .anthropic
+    private func registryRequiresAPIKey(for provider: AIProviderID, endpoint: String?) -> Bool {
+        AIEndpointPolicy.requiresAPIKey(providerID: provider, endpoint: endpoint)
     }
 
     private func registryEndpointValidationError(
@@ -1306,15 +1309,10 @@ struct KizunaSettingsView: View {
                 english: "Enter an endpoint."
             )
         }
-        guard normalized.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
-              let url = URL(string: normalized),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http",
-              let host = url.host,
-              !host.isEmpty else {
+        guard AIEndpointPolicy.allowsEndpoint(providerID: provider, endpoint: normalized) else {
             return KizunaCopy.text(
-                japanese: "Endpointはhttp://またはhttps://で始まり、ホスト名を含むURLにしてください。",
-                english: "Endpoint must be a URL with an http:// or https:// scheme and a host."
+                japanese: "EndpointはHTTPSを使用してください。HTTPはlocalhost / 127.0.0.1 / ::1だけ利用できます。",
+                english: "Use HTTPS for endpoints. HTTP is allowed only for localhost, 127.0.0.1, or ::1."
             )
         }
         return nil
