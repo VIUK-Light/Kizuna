@@ -41,7 +41,7 @@ final class CharacterDeletionCleanupMarker: @unchecked Sendable {
     nonisolated static let shared = CharacterDeletionCleanupMarker()
 
     private let lock = NSLock()
-    private nonisolated let defaults: UserDefaults
+    private let defaults: UserDefaults
     private nonisolated let keyPrefix = "kizuna.characterDeletion.cleanupPending."
     private nonisolated let tombstoneKeyPrefix = "kizuna.characterDeletion.tombstone."
     private nonisolated let pendingIDsIndexKey = "kizuna.characterDeletion.cleanupPending.ids.v1"
