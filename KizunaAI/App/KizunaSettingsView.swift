@@ -265,6 +265,38 @@ struct KizunaSettingsView: View {
                 }
 
                 Section(KizunaCopy.text(japanese: "AIモデルRegistry", english: "AI model registry")) {
+                    if let registryError = AIModelRegistry.shared.loadError {
+                        Label {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(KizunaCopy.text(
+                                    japanese: "保存済みRegistryを読み込めませんでした。元データを退避しているため、自動で上書きしていません。",
+                                    english: "The saved registry could not be loaded. The original data was backed up and was not overwritten."
+                                ))
+                                    .font(.caption)
+                                Text(registryError.localizedDescription)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Button(KizunaCopy.text(
+                                    japanese: "Registryを推奨値へリセット",
+                                    english: "Reset registry to recommendations"
+                                )) {
+                                    if AIModelRegistry.shared.resetCorruptedStorage() {
+                                        registryConfigurations = AIModelRegistry.shared.configurations
+                                        registryMessage = KizunaCopy.text(
+                                            japanese: "Registryを推奨値へリセットしました。",
+                                            english: "The registry was reset to recommendations."
+                                        )
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                        .padding(10)
+                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                    }
                     ForEach(registryConfigurations) { configuration in
                         HStack(alignment: .top, spacing: 8) {
                             Button {

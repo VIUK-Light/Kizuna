@@ -677,6 +677,20 @@ struct AIModelConfiguration: Codable, Equatable, Hashable, Identifiable, Sendabl
     }
 }
 
+enum AIModelRegistryStorageError: LocalizedError, Equatable {
+    case invalidStoredData
+    case encodingFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidStoredData:
+            return "The saved AI model registry is invalid and needs recovery."
+        case .encodingFailed:
+            return "The AI model registry could not be saved."
+        }
+    }
+}
+
 /// A small, provider-neutral registry. It owns configuration metadata only;
 /// execution remains in the existing runtime/API adapters until each adapter
 /// migrates to the common contract. This makes the migration additive instead
@@ -688,15 +702,32 @@ final class AIModelRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private let storageKey = "ai.modelConfigurations.v1"
     private let tuningStore: AIModelTuningStore
+    private let corruptBackupKey = "ai.modelConfigurations.corruptBackup.v1"
+    private let encodeConfigurations: ([AIModelConfiguration]) throws -> Data
+    private(set) var loadError: AIModelRegistryStorageError?
+    private(set) var persistenceError: AIModelRegistryStorageError?
+    private(set) var recoveryDataAvailable = false
 
     init(
         defaults: UserDefaults = .standard,
-        tuningStore: AIModelTuningStore = .shared
+        tuningStore: AIModelTuningStore = .shared,
+        encodeConfigurations: @escaping ([AIModelConfiguration]) throws -> Data = {
+            try JSONEncoder().encode($0)
+        }
     ) {
         self.defaults = defaults
         self.tuningStore = tuningStore
+        self.encodeConfigurations = encodeConfigurations
+        self.loadError = nil
+        self.persistenceError = nil
+        self.recoveryDataAvailable = false
         if defaults.data(forKey: storageKey) == nil {
-            save(Self.legacyDefaultConfigurations)
+            _ = save(Self.legacyDefaultConfigurations)
+        } else if let data = defaults.data(forKey: storageKey),
+                  (try? JSONDecoder().decode([AIModelConfiguration].self, from: data)) == nil {
+            defaults.set(data, forKey: corruptBackupKey)
+            self.loadError = .invalidStoredData
+            self.recoveryDataAvailable = true
         }
     }
 
@@ -721,6 +752,7 @@ final class AIModelRegistry: @unchecked Sendable {
 
     @discardableResult
     func register(_ configuration: AIModelConfiguration) -> Bool {
+        guard !recoveryDataAvailable else { return false }
         lock.lock()
         defer { lock.unlock() }
         var items = loadUnlocked()
@@ -765,6 +797,7 @@ final class AIModelRegistry: @unchecked Sendable {
 
     @discardableResult
     func remove(id: UUID) -> Bool {
+        guard !recoveryDataAvailable else { return false }
         lock.lock()
         defer { lock.unlock() }
         var items = loadUnlocked()
@@ -812,6 +845,17 @@ final class AIModelRegistry: @unchecked Sendable {
         return configuration
     }
 
+    @discardableResult
+    func resetCorruptedStorage() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        defaults.removeObject(forKey: storageKey)
+        defaults.removeObject(forKey: corruptBackupKey)
+        loadError = nil
+        recoveryDataAvailable = false
+        return saveUnlocked(Self.legacyDefaultConfigurations)
+    }
+
     private func loadUnlocked() -> [AIModelConfiguration] {
         guard let data = defaults.data(forKey: storageKey),
               let decoded = try? JSONDecoder().decode([AIModelConfiguration].self, from: data) else {
@@ -820,15 +864,20 @@ final class AIModelRegistry: @unchecked Sendable {
         return decoded
     }
 
-    private func save(_ items: [AIModelConfiguration]) {
+    @discardableResult
+    private func save(_ items: [AIModelConfiguration]) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        _ = saveUnlocked(items)
+        return saveUnlocked(items)
     }
 
     private func saveUnlocked(_ items: [AIModelConfiguration]) -> Bool {
-        guard let data = try? JSONEncoder().encode(items) else { return false }
+        guard let data = try? encodeConfigurations(items) else {
+            persistenceError = .encodingFailed
+            return false
+        }
         defaults.set(data, forKey: storageKey)
+        persistenceError = nil
         return true
     }
 
@@ -897,14 +946,15 @@ final class AISecretStore {
         }
     }
 
-    func setStrings(_ values: [String], for key: SecretKey) {
+    @discardableResult
+    func setStrings(_ values: [String], for key: SecretKey) -> Bool {
         var unique: [String] = []
         for value in values {
             let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty, !unique.contains(normalized) else { continue }
             unique.append(normalized)
         }
-        setString(unique.joined(separator: "\n"), for: key)
+        return setString(unique.joined(separator: "\n"), for: key)
     }
 
     @discardableResult

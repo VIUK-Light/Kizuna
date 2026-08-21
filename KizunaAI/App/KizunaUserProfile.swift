@@ -104,6 +104,7 @@ struct KizunaUserProfile: Codable, Equatable {
 
 enum KizunaUserProfileStoreError: LocalizedError, Equatable {
     case encodingFailed
+    case invalidAvatarImage
     case recoveryRequired
 
     var errorDescription: String? {
@@ -112,6 +113,11 @@ enum KizunaUserProfileStoreError: LocalizedError, Equatable {
             return KizunaCopy.text(
                 japanese: "プロフィールを保存できませんでした。変更は反映していません。",
                 english: "The profile could not be saved. Your change was not applied."
+            )
+        case .invalidAvatarImage:
+            return KizunaCopy.text(
+                japanese: "画像を読み込めないか、保存サイズの上限を超えています。別の画像を選んでください。",
+                english: "The image is invalid or exceeds the storage limit. Choose another image."
             )
         case .recoveryRequired:
             return KizunaCopy.text(
@@ -173,7 +179,13 @@ final class KizunaUserProfileStore: ObservableObject {
         var normalized = value
         normalized.displayName = String(normalized.displayName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
         normalized.nickname = String(normalized.nickname.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
-        normalized.avatarImageData = KizunaAvatarImage.normalizedStoredData(from: normalized.avatarImageData)
+        let normalizedAvatarImage = KizunaAvatarImage.normalizedStoredData(from: normalized.avatarImageData)
+        if normalized.avatarImageData != nil, normalizedAvatarImage == nil {
+            let error = KizunaUserProfileStoreError.invalidAvatarImage
+            persistenceError = error.localizedDescription
+            return .failure(error)
+        }
+        normalized.avatarImageData = normalizedAvatarImage
         guard persist(normalized) else {
             let error = KizunaUserProfileStoreError.encodingFailed
             persistenceError = error.localizedDescription

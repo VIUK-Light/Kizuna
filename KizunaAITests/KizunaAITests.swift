@@ -6719,6 +6719,64 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
     }
 
+    func testAIModelRegistryBacksUpCorruptStorageBeforeReset() throws {
+        let suiteName = "KizunaAIModelRegistryTests.Corrupt.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let corruptData = Data("not-json".utf8)
+        defaults.set(corruptData, forKey: "ai.modelConfigurations.v1")
+
+        let registry = AIModelRegistry(defaults: defaults)
+
+        XCTAssertTrue(registry.recoveryDataAvailable)
+        XCTAssertEqual(defaults.data(forKey: "ai.modelConfigurations.v1"), corruptData)
+        XCTAssertFalse(
+            registry.register(
+                AIModelConfiguration(
+                    identity: AIModelIdentity(
+                        providerID: .openAICompatible,
+                        modelID: "blocked",
+                        displayName: "Blocked"
+                    ),
+                    roles: [.persona]
+                )
+            )
+        )
+        XCTAssertTrue(registry.resetCorruptedStorage())
+        XCTAssertFalse(registry.recoveryDataAvailable)
+        XCTAssertFalse(registry.configurations.isEmpty)
+    }
+
+    func testAIModelRegistryReportsEncodingFailureWithoutRegistering() throws {
+        let suiteName = "KizunaAIModelRegistryTests.Encoding.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let tuningDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName + ".Tuning"))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            tuningDefaults.removePersistentDomain(forName: suiteName + ".Tuning")
+        }
+        let tuningStore = AIModelTuningStore(defaults: tuningDefaults)
+        let registry = AIModelRegistry(
+            defaults: defaults,
+            tuningStore: tuningStore,
+            encodeConfigurations: { _ in
+                throw NSError(domain: "KizunaAITests", code: 2)
+            }
+        )
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "not-saved",
+                displayName: "Not saved"
+            ),
+            roles: [.persona]
+        )
+
+        XCTAssertFalse(registry.register(configuration))
+        XCTAssertEqual(registry.persistenceError, .encodingFailed)
+        XCTAssertFalse(registry.configurations.contains { $0.id == configuration.id })
+    }
+
     func testAIModelRegistryCleansPreferredSelectionsAfterMutation() throws {
         let registrySuite = "KizunaAIModelRegistryTests.Mutation.\(UUID().uuidString)"
         let tuningSuite = "KizunaAIModelTuningTests.Mutation.\(UUID().uuidString)"
@@ -7416,6 +7474,26 @@ final class KizunaAITests: XCTestCase {
 
         let reloaded = KizunaUserProfileStore(defaults: defaults)
         XCTAssertEqual(reloaded.profile, original)
+    }
+
+    @MainActor
+    func testUserProfileStoreRejectsInvalidAvatarWithoutDroppingExistingProfile() {
+        let suiteName = "KizunaUserProfileTests.Avatar.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let original = KizunaUserProfile()
+        let store = KizunaUserProfileStore(defaults: defaults)
+        guard case .success = store.update(original) else {
+            return XCTFail("Expected the initial profile save to succeed")
+        }
+
+        var invalid = original
+        invalid.nickname = "Keep old profile"
+        invalid.avatarImageData = Data(repeating: 0, count: 32)
+        guard case .failure(.invalidAvatarImage) = store.update(invalid) else {
+            return XCTFail("Expected invalid avatar data to be rejected")
+        }
+        XCTAssertEqual(store.profile, original)
     }
 
     @MainActor
