@@ -3,7 +3,11 @@
 - 役割: 3 つの安全 Protocol を統合した薄い Facade。
   キャラ作成/入力/出力の 3 経路で同じインタフェースで安全判定を呼べるようにする。
 - 主な型: `SafetyPipeline`.
-- 編集ポイント: 実装を Mock から本物 (Gemma 3 270M) に差し替える時、init のデフォルト値を変える。
+- デフォルトのinitはテスト/Preview用の決定的なルール判定を使う。
+  本番共有インスタンスは、実行可能なローカル補助モデルを先に使い、
+  モデルが利用できない場合だけ明示的なルール判定へ戻る。
+- 編集ポイント: 本番のモデル契約を変える時は、RuntimeSafety* の構造化出力契約と
+  ルール判定のfail-closed合成を同時に更新する。
 */
 
 import Foundation
@@ -75,8 +79,17 @@ final class SafetyPipeline {
         await concernClassifier.classify(text)
     }
 
-    /// 単一のデフォルトインスタンス (DI 不要なシンプルな呼び出し用)。
-    static let shared = SafetyPipeline()
+    /// Production composition. The local model is attempted first; the
+    /// explicit rule-based checkers remain the fail-closed safety boundary
+    /// when no auxiliary artifact is installed or its output is invalid.
+    static let production = SafetyPipeline(
+        characterChecker: RuntimeCharacterSafetyChecker(),
+        inputChecker: RuntimeInputSafetyChecker(),
+        outputChecker: RuntimeOutputSafetyChecker()
+    )
+
+    /// 単一の本番インスタンス (DI 不要なシンプルな呼び出し用)。
+    static let shared = SafetyPipeline.production
 }
 
 /// 単語1個のブラックリストではなく、相談意図・一人称・切迫性・文脈を組み合わせる初期分類器。

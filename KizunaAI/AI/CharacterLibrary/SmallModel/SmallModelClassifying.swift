@@ -1,6 +1,7 @@
 /*
 仕様:
 - 役割: 補助 LLM (Gemma 3 270M 想定) による軽量分類タスクの Protocol。
+  本番のRuntimeSmallModelClassifierは、選択されたlocal auxiliary modelへ接続する。
 - 主な型: `SmallModelClassifying`, `SmallModelClassification`.
 */
 

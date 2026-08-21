@@ -1,7 +1,7 @@
 /*
 仕様:
 - 役割: 安全性判定を担うコンポーネントの Protocol 群。
-  入力/出力判定は既存Mock、相談分類は文脈特徴による初期実装。将来 Gemma 3 270M 接続版へ差し替える。
+  入力/出力判定はRuntime実装とfail-closedなルールfallback、相談分類は文脈特徴による初期実装。
 - 主な型: CharacterSafetyChecking, InputSafetyChecking, OutputSafetyChecking.
 */
 

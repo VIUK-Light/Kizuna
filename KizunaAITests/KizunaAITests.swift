@@ -7317,6 +7317,45 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(domains.contains(.minors))
     }
 
+    func testRuntimeSafetyDecisionContractParsesStructuredModelOutput() {
+        let decision = RuntimeSafetyDecisionContract.parse(
+            """
+            ACTION=require_edit
+            DOMAINS=self_harm,personal_info
+            SEVERITY=warning
+            REWRITE=安全な言い換え
+            RULES=共感する;具体的な手段は示さない
+            """
+        )
+
+        XCTAssertEqual(decision?.action, .requireEdit)
+        XCTAssertEqual(Set(decision?.riskDomains ?? []), [.selfHarm, .personalInfo])
+        XCTAssertEqual(decision?.severity, .warning)
+        XCTAssertEqual(decision?.rewrittenText, "安全な言い換え")
+        XCTAssertEqual(decision?.addedPromptRules, ["共感する", "具体的な手段は示さない"])
+    }
+
+    func testRuntimeSafetyDecisionContractNeverLowersRuleDecision() {
+        let baseline = SafetyDecision(
+            action: .block,
+            reasons: ["ルール判定"],
+            riskDomains: [.crime],
+            severity: .block
+        )
+        let model = SafetyDecision(
+            action: .allow,
+            riskDomains: [],
+            severity: .info
+        )
+
+        let merged = RuntimeSafetyDecisionContract.merge(baseline: baseline, model: model)
+
+        XCTAssertEqual(merged.action, .block)
+        XCTAssertEqual(merged.severity, .block)
+        XCTAssertEqual(merged.riskDomains, [.crime])
+        XCTAssertEqual(merged.reasons, baseline.reasons)
+    }
+
     func testStoryCurrentConfigurationWinsOverLegacyGenerationFamily() {
         let localConfiguration = AIModelConfiguration(
             identity: AIModelIdentity(
