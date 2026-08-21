@@ -21,6 +21,10 @@ final class CharacterDetailViewModel: ObservableObject {
     @Published private(set) var character: CharacterProfile
     @Published private(set) var lorebook: CharacterLorebook?
     @Published private(set) var memories: [CharacterMemory] = []
+    @Published private(set) var isLoadingLorebook = false
+    @Published private(set) var isLoadingMemories = false
+    @Published private(set) var lorebookLoadError: String?
+    @Published private(set) var memoryLoadError: String?
     /// Local JSON repositories cannot commit all related files atomically.
     /// Expose the resumable phase so the UI never promises a rollback that is
     /// not available.
@@ -40,11 +44,45 @@ final class CharacterDetailViewModel: ObservableObject {
     }
 
     func reload() async {
+        await reloadLorebook()
+        await reloadMemories()
+    }
+
+    func retryLorebook() async {
+        await reloadLorebook()
+    }
+
+    func retryMemories() async {
+        await reloadMemories()
+    }
+
+    private func reloadLorebook() async {
+        isLoadingLorebook = true
+        lorebookLoadError = nil
+        defer { isLoadingLorebook = false }
         do {
             self.lorebook = try await characterRepo.fetchLorebook(characterId: character.id)
+        } catch {
+            lorebookLoadError = KizunaCopy.text(
+                japanese: "ロアブックを読み込めませんでした。再試行してください。",
+                english: "The lorebook could not be loaded. Try again."
+            )
+            AppLog.error("[CharacterDetailVM] lorebook reload failed: %@", String(describing: error))
+        }
+    }
+
+    private func reloadMemories() async {
+        isLoadingMemories = true
+        memoryLoadError = nil
+        defer { isLoadingMemories = false }
+        do {
             self.memories = try await memoryRepo.fetchMemories(characterId: character.id)
         } catch {
-            AppLog.error("[CharacterDetailVM] reload failed: %@", String(describing: error))
+            memoryLoadError = KizunaCopy.text(
+                japanese: "メモリーを読み込めませんでした。再試行してください。",
+                english: "Memories could not be loaded. Try again."
+            )
+            AppLog.error("[CharacterDetailVM] memories reload failed: %@", String(describing: error))
         }
     }
 

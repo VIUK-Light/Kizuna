@@ -15,6 +15,35 @@ enum LocalJSONStoreError: Error {
     case decode(underlying: Error)
 }
 
+struct LocalJSONStoreRecoveryNotice: Equatable, Sendable {
+    let fileName: String
+    let invalidCount: Int
+}
+
+enum LocalJSONStoreRecoveryNotification {
+    static let name = Notification.Name("Kizuna.LocalJSONStore.partialRecovery")
+    static let fileNameKey = "fileName"
+    static let invalidCountKey = "invalidCount"
+
+    /// Repository recovery can happen on a file-I/O queue or inside an actor.
+    /// Deliver the user-facing notice on the main queue so SwiftUI observers
+    /// never have to update state from a storage worker.
+    static func post(fileName: String, invalidCount: Int) {
+        guard invalidCount > 0 else { return }
+        let userInfo: [AnyHashable: Any] = [
+            fileNameKey: fileName,
+            invalidCountKey: invalidCount
+        ]
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: name,
+                object: nil,
+                userInfo: userInfo
+            )
+        }
+    }
+}
+
 /// 機密性の高い会話・記憶データの保存ファイル保護（GHSA-hg44-7rmp-hg8p）。
 /// 平文JSONをバックアップやロック中の物理アクセスへ晒さないため、
 /// 書き込み時に (1) バックアップ除外 (2) File Protection を適用する。
@@ -29,17 +58,35 @@ enum LocalJSONStoreFileProtection {
     }
 
     /// 既存ファイル（コピーや退避で作成されたものを含む）へ保護を適用する。
-    static func apply(to url: URL) {
+    static func apply(to url: URL) throws {
         #if os(iOS)
-        try? FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.complete],
-            ofItemAtPath: url.path
-        )
+        do {
+            try FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.complete],
+                ofItemAtPath: url.path
+            )
+        } catch {
+            AppLog.error(
+                "[LocalJSONStore] file protection failed for %@: %@",
+                url.lastPathComponent,
+                error.localizedDescription
+            )
+            throw LocalJSONStoreError.ioFailure(underlying: error)
+        }
         #endif
         var mutableURL = url
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
-        try? mutableURL.setResourceValues(values)
+        do {
+            try mutableURL.setResourceValues(values)
+        } catch {
+            AppLog.error(
+                "[LocalJSONStore] backup exclusion failed for %@: %@",
+                url.lastPathComponent,
+                error.localizedDescription
+            )
+            throw LocalJSONStoreError.ioFailure(underlying: error)
+        }
     }
 }
 
@@ -338,7 +385,7 @@ enum LocalJSONStoreTransaction {
             let encoder = LocalJSONStoreCoding.makeEncoder()
             let data = try encoder.encode(items)
             try data.write(to: url, options: LocalJSONStoreFileProtection.atomicWriteOptions)
-            LocalJSONStoreFileProtection.apply(to: url)
+            try LocalJSONStoreFileProtection.apply(to: url)
         } catch let encodingError as EncodingError {
             throw LocalJSONStoreError.encode(underlying: encodingError)
         } catch {
@@ -359,7 +406,7 @@ enum LocalJSONStoreTransaction {
         do {
             try FileManager.default.copyItem(at: sourceURL, to: backupURL)
             // 退避ファイルにも同じ機密データが入るため保護を適用する。
-            LocalJSONStoreFileProtection.apply(to: backupURL)
+            try LocalJSONStoreFileProtection.apply(to: backupURL)
             return backupURL
         } catch {
             throw LocalJSONStoreError.ioFailure(underlying: error)
@@ -406,6 +453,10 @@ actor LocalJSONStore<T: Codable> {
             } catch let decodeError as LocalJSONStoreError {
                 guard case .decode = decodeError else { throw decodeError }
                 let recovery = try recoverRecordsUnlocked(fallback: decodeError)
+                LocalJSONStoreRecoveryNotification.post(
+                    fileName: fileName,
+                    invalidCount: recovery.invalidCount
+                )
                 return recovery.items
             }
         }
@@ -431,6 +482,10 @@ actor LocalJSONStore<T: Codable> {
                 let recovery = try recoverRecordsUnlocked(fallback: decodeError)
                 let backupURL = try backupCorruptFileUnlocked()
                 AppLog.error("[LocalJSONStore] recovered %@ for write: %ld valid, %ld invalid; backup=%@", fileName, recovery.items.count, recovery.invalidCount, backupURL.lastPathComponent)
+                LocalJSONStoreRecoveryNotification.post(
+                    fileName: fileName,
+                    invalidCount: recovery.invalidCount
+                )
                 items = recovery.items
             }
             try mutation(&items)
@@ -471,7 +526,7 @@ actor LocalJSONStore<T: Codable> {
         do {
             try fm.copyItem(at: fileURL, to: backupURL)
             // 退避ファイルにも同じ機密データが入るため保護を適用する。
-            LocalJSONStoreFileProtection.apply(to: backupURL)
+            try LocalJSONStoreFileProtection.apply(to: backupURL)
             return backupURL
         } catch {
             throw LocalJSONStoreError.ioFailure(underlying: error)
@@ -486,7 +541,7 @@ actor LocalJSONStore<T: Codable> {
             )
             let data = try encoder.encode(items)
             try data.write(to: fileURL, options: LocalJSONStoreFileProtection.atomicWriteOptions)
-            LocalJSONStoreFileProtection.apply(to: fileURL)
+            try LocalJSONStoreFileProtection.apply(to: fileURL)
         } catch let encodeErr as EncodingError {
             throw LocalJSONStoreError.encode(underlying: encodeErr)
         } catch {

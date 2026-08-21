@@ -20,6 +20,7 @@ struct VIUKKizunaWorkspaceView: View {
     /// デバッグ要求は設定シートの dismiss 完了後に Story を開く。dismiss 完了通知が
     /// 届くまで「開く予約」だけを保持する。
     @State private var pendingDebugStoryOpen = false
+    @State private var localStoreRecoveryNotice: LocalJSONStoreRecoveryNotice?
 
     private var selectedSectionBinding: Binding<KizunaWorkspaceSection> {
         Binding(
@@ -61,6 +62,11 @@ struct VIUKKizunaWorkspaceView: View {
                 .accessibilityIdentifier("workspace.myPage")
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let localStoreRecoveryNotice {
+                localStoreRecoveryBanner(localStoreRecoveryNotice)
+            }
+        }
         // 設定画面のデバッグ要求時はStoryを自動で開く。
         .onReceive(NotificationCenter.default.publisher(for: KizunaDebugOptions.restSuggestionRequestNotification)) { _ in
             openDebugStory()
@@ -70,6 +76,18 @@ struct VIUKKizunaWorkspaceView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: KizunaDebugOptions.settingsDismissedNotification)) { _ in
             flushPendingDebugStoryOpen()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: LocalJSONStoreRecoveryNotification.name)) { notification in
+            guard let userInfo = notification.userInfo,
+                  let fileName = userInfo[LocalJSONStoreRecoveryNotification.fileNameKey] as? String,
+                  let invalidCount = (userInfo[LocalJSONStoreRecoveryNotification.invalidCountKey] as? NSNumber)?.intValue,
+                  invalidCount > 0 else {
+                return
+            }
+            localStoreRecoveryNotice = LocalJSONStoreRecoveryNotice(
+                fileName: fileName,
+                invalidCount: invalidCount
+            )
         }
 #if os(iOS)
         .fullScreenCover(item: $activeStoryWorld, onDismiss: resetStoryPresentation) { world in
@@ -110,6 +128,44 @@ struct VIUKKizunaWorkspaceView: View {
     private func openDebugStory() {
         guard activeStoryWorld == nil else { return }
         pendingDebugStoryOpen = true
+    }
+
+    private func localStoreRecoveryBanner(
+        _ notice: LocalJSONStoreRecoveryNotice
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label {
+                Text(KizunaCopy.text(
+                    japanese: "保存データの一部を読み込めませんでした（\(notice.invalidCount)件）",
+                    english: "Some saved data could not be loaded (\(notice.invalidCount) record\(notice.invalidCount == 1 ? "" : "s"))."
+                ))
+                .font(.callout.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "externaldrive.badge.exclamationmark")
+                    .foregroundStyle(.orange)
+            }
+            Text(KizunaCopy.text(
+                japanese: "\(notice.fileName) の読み込めたデータは表示しています。元ファイルは自動で上書きしていません。",
+                english: "Readable records from \(notice.fileName) are shown. The source file was not overwritten automatically."
+            ))
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer(minLength: 0)
+                Button(KizunaCopy.text(japanese: "閉じる", english: "Dismiss")) {
+                    localStoreRecoveryNotice = nil
+                }
+                .buttonStyle(.bordered)
+                .frame(minHeight: 44)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12))
+        .accessibilityElement(children: .contain)
     }
 
     private func flushPendingDebugStoryOpen() {

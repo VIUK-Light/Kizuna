@@ -1,0 +1,34 @@
+name: Build help
+description: Ask for help reproducing or diagnosing a local development build.
+title: "[Build Help]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove API keys, tokens, private URLs, and personal data from logs before posting.
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, Xcode version, XcodeGen version, and device or Simulator.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and result
+      description: Include the command you ran and the relevant error output.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the smallest sequence that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: changes
+    attributes:
+      label: Local changes
+      description: Mention project.yml or other local modifications.

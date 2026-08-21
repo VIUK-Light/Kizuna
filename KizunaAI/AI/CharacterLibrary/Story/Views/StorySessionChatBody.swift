@@ -17,6 +17,7 @@ import UIKit
 struct StorySessionChatBody: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject var vm: StorySessionViewModel
     @ObservedObject private var service: StorySessionService
@@ -424,7 +425,7 @@ struct StorySessionChatBody: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                HStack(spacing: 10) {
+                adaptiveStoryActions {
                     if vm.isHandlingInterruptedTurn {
                         ProgressView()
                             .controlSize(.small)
@@ -516,7 +517,7 @@ struct StorySessionChatBody: View {
                     }
                 }
 
-                HStack(spacing: 10) {
+                adaptiveStoryActions {
                     Button(storyCopy("少し休む", "Take a short break")) {
                         vm.chooseRestSuggestionBreak()
                     }
@@ -568,7 +569,7 @@ struct StorySessionChatBody: View {
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(storyText.opacity(0.78))
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
+                    adaptiveStoryActions {
                         Button(
                             notice.retryAction.isAuxiliarySave
                                 ? storyCopy("保存を再試行", "Retry save")
@@ -651,7 +652,7 @@ struct StorySessionChatBody: View {
                     .font(.caption)
                     .foregroundStyle(storyMuted)
 
-                HStack(spacing: 10) {
+                adaptiveStoryActions {
                     Button(storyCopy("相談先を見る", "View support resources")) {
                         isShowingSafetyResources = true
                     }
@@ -838,7 +839,7 @@ struct StorySessionChatBody: View {
 
     private func sceneVisual(availableHeight: CGFloat) -> some View {
         StorySceneImageView(
-            scene: vm.scene,
+            scene: displayedScene,
             world: vm.world.localizedForCurrentLanguage,
             contentMode: .fit
         )
@@ -859,6 +860,36 @@ struct StorySessionChatBody: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+    }
+
+    /// A catalog scene owns its authored image, while StoryState owns the
+    /// runtime location/time/mood. When those diverge, render a synthesized
+    /// state scene without the stale catalog image so the visual fallback and
+    /// its accessibility text follow the same state shown above the chat.
+    private var displayedScene: StoryScene {
+        guard let state = vm.session.storyState else { return vm.scene }
+        var scene = vm.scene
+        var differsFromCatalog = false
+        func nonEmpty(_ value: String) -> String? {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let location = nonEmpty(state.location), location != scene.location {
+            scene.location = location
+            differsFromCatalog = true
+        }
+        if let timeOfDay = nonEmpty(state.timeOfDay), timeOfDay != scene.timeOfDay {
+            scene.timeOfDay = timeOfDay
+            differsFromCatalog = true
+        }
+        if let mood = nonEmpty(state.mood), mood != scene.mood {
+            scene.mood = mood
+            differsFromCatalog = true
+        }
+        if differsFromCatalog {
+            scene.imageKey = nil
+        }
+        return scene
     }
 
     private var currentSceneLabel: some View {
@@ -1337,6 +1368,21 @@ struct StorySessionChatBody: View {
         .padding(14)
         .background(storyPanel)
         .storyKeyboardDismissToolbar($composerFocused)
+    }
+
+    @ViewBuilder
+    private func adaptiveStoryActions<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+        } else {
+            HStack(spacing: 10) {
+                content()
+            }
+        }
     }
 
     private func submit() {

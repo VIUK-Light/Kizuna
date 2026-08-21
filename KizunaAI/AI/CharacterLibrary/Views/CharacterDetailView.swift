@@ -64,7 +64,27 @@ struct CharacterDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     summarySection
+                    if vm.isLoadingLorebook {
+                        detailLoadingRow(
+                            KizunaCopy.text(japanese: "ロアブックを読み込み中…", english: "Loading lorebook…")
+                        )
+                    }
+                    if let error = vm.lorebookLoadError {
+                        detailLoadErrorRow(error) {
+                            Task { await vm.retryLorebook() }
+                        }
+                    }
                     if let lore = vm.lorebook, !lore.isEmpty { lorebookSection(lore) }
+                    if vm.isLoadingMemories {
+                        detailLoadingRow(
+                            KizunaCopy.text(japanese: "メモリーを読み込み中…", english: "Loading memories…")
+                        )
+                    }
+                    if let error = vm.memoryLoadError {
+                        detailLoadErrorRow(error) {
+                            Task { await vm.retryMemories() }
+                        }
+                    }
                     if !vm.memories.isEmpty { memoriesSection }
                     if !character.rules.isEmpty || !character.resolvedSafetyRules.isEmpty {
                         rulesSection
@@ -93,8 +113,8 @@ struct CharacterDetailView: View {
             }
         } message: {
             Text(KizunaCopy.text(
-                japanese: "メモリーも一緒に削除されます。元には戻せません。",
-                english: "This also deletes the character's memories. This cannot be undone."
+                japanese: "キャラクター本体とメモリーを削除し、既存のStoryからこのキャラクターへの参照を外します。Persona会話本文は残りますが、Character Libraryとの連携は解除されます。元には戻せません。",
+                english: "This deletes the character and its memories, removes the character from existing Stories, and detaches Persona conversations from the Character Library. Persona conversation text remains. This cannot be undone."
             ))
         }
         .alert(KizunaCopy.text(japanese: "削除に失敗しました", english: "Deletion failed"), isPresented: Binding(
@@ -137,6 +157,35 @@ struct CharacterDetailView: View {
                 english: "Deletion stopped partway through. Some related data may have changed. Retry to finish."
             )
         }
+    }
+
+    private func detailLoadingRow(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func detailLoadErrorRow(_ message: String, retry: @escaping () -> Void) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button(KizunaCopy.text(japanese: "再試行", english: "Retry"), action: retry)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.orange.opacity(0.10))
+        )
     }
 
     private func performDelete() {

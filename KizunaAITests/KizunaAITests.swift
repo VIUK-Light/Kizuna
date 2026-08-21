@@ -6041,6 +6041,125 @@ final class KizunaAITests: XCTestCase {
     }
 
     @MainActor
+    func testPersonaFileStoreMigratesLegacyBlobAndWritesOnlyChangedThread() async throws {
+        let suiteName = "KizunaAITests.PersonaFileStore.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KizunaPersonaHistory-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let first = PersonaThread(
+            personaSnapshot: profile,
+            title: "First",
+            messages: [PersonaMessage(role: .user, text: "first message")]
+        )
+        let second = PersonaThread(
+            personaSnapshot: profile,
+            title: "Second",
+            messages: [PersonaMessage(role: .user, text: "second message")]
+        )
+        defaults.set(
+            try JSONEncoder().encode([first, second]),
+            forKey: "persona.threads.v1"
+        )
+
+        let migrated = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertEqual(migrated.threads.count, 2)
+        XCTAssertNil(defaults.object(forKey: "persona.threads.v1"))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: storageURL.appendingPathComponent("index.json").path
+            )
+        )
+        defaults.set(first.id.uuidString, forKey: "persona.activeThreadID.v1")
+
+        let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        let firstSummary = try XCTUnwrap(reloaded.threads.first(where: { $0.id == first.id }))
+        XCTAssertFalse(firstSummary.isMessageHistoryLoaded)
+        XCTAssertEqual(firstSummary.messageCount, 1)
+        XCTAssertEqual(firstSummary.latestMessage?.text, "first message")
+        XCTAssertEqual(reloaded.activeThread?.messages.map(\.text), ["first message"])
+        let cachedSummary = try XCTUnwrap(reloaded.threads.first(where: { $0.id == first.id }))
+        XCTAssertFalse(cachedSummary.isMessageHistoryLoaded)
+
+        let secondFileURL = storageURL.appendingPathComponent("thread-\(second.id.uuidString).json")
+        let untouchedSecondData = try Data(contentsOf: secondFileURL)
+        XCTAssertTrue(
+            reloaded.appendMessage(
+                PersonaMessage(role: .assistant, text: "reply"),
+                toThread: first.id
+            )
+        )
+        reloaded.flushPendingPersistence()
+        await reloaded.waitForPendingPersistence()
+
+        XCTAssertEqual(try Data(contentsOf: secondFileURL), untouchedSecondData)
+        XCTAssertNil(defaults.object(forKey: "persona.threads.v1"))
+        XCTAssertGreaterThan(reloaded.persistedHistoryByteCount, 0)
+
+        let finalReload = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertEqual(
+            finalReload.thread(id: first.id)?.messages.map(\.text),
+            ["first message", "reply"]
+        )
+    }
+
+    @MainActor
+    func testPersonaFileStoreIsolatesOneCorruptThreadFile() throws {
+        let suiteName = "KizunaAITests.PersonaFileCorrupt.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KizunaPersonaHistory-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let corruptThread = PersonaThread(
+            personaSnapshot: profile,
+            title: "Corrupt",
+            messages: [PersonaMessage(role: .user, text: "unreadable")]
+        )
+        let validThread = PersonaThread(
+            personaSnapshot: profile,
+            title: "Valid",
+            messages: [PersonaMessage(role: .user, text: "still available")]
+        )
+        defaults.set(
+            try JSONEncoder().encode([corruptThread, validThread]),
+            forKey: "persona.threads.v1"
+        )
+        _ = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+
+        let corruptFileURL = storageURL.appendingPathComponent(
+            "thread-\(corruptThread.id.uuidString).json"
+        )
+        try Data([0x00, 0xFF, 0x10]).write(to: corruptFileURL, options: .atomic)
+
+        let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertEqual(reloaded.threads.count, 2)
+        XCTAssertFalse(reloaded.isPersistenceRecoveryRequired)
+        XCTAssertEqual(
+            reloaded.thread(id: validThread.id)?.messages.map(\.text),
+            ["still available"]
+        )
+        XCTAssertNil(reloaded.thread(id: corruptThread.id))
+        XCTAssertTrue(reloaded.isPartialRecoveryRequired)
+        XCTAssertEqual(reloaded.partialRecoveryInvalidCount, 1)
+    }
+
+    @MainActor
     func testPersonaStorePreservesCorruptRawBlobAcrossCRUDAndFinalize() {
         let suiteName = "KizunaAITests.PersonaCorrupt.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -6503,6 +6622,166 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
     }
 
+    func testAIModelTuningDefaultsToSimpleAutomaticAndPersistsSelection() throws {
+        let suiteName = "KizunaAIModelTuningTests.Defaults.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertEqual(store.preferences.mode, .simple)
+        XCTAssertEqual(store.preferences.simplePreset, .automatic)
+
+        XCTAssertTrue(store.setSimplePreset(.stable))
+        XCTAssertTrue(store.setMode(.advanced))
+
+        let reloaded = AIModelTuningStore(defaults: defaults)
+        XCTAssertEqual(reloaded.preferences.mode, .advanced)
+        XCTAssertEqual(reloaded.preferences.simplePreset, .stable)
+    }
+
+    func testAIModelTuningNormalizesAndDropsUnsupportedProviderValues() throws {
+        let suiteName = "KizunaAIModelTuningTests.Capabilities.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertTrue(store.setOverrides(
+            AIGenerationOverrides(
+                temperature: 9,
+                topP: -1,
+                topK: 999,
+                maxOutputTokens: 99_999,
+                seed: -4,
+                localRuntime: AILocalRuntimeOverrides(
+                    contextSize: 999_999,
+                    batchSize: 9_999,
+                    microBatchSize: 9_999,
+                    threadCount: 999,
+                    gpuLayers: 9_999
+                )
+            ),
+            for: .persona
+        ))
+        let request = AIGenerationRequest(
+            systemPrompt: "system",
+            userPrompt: "user",
+            temperature: 0.72,
+            maxOutputTokens: 1_024,
+            seed: 24
+        )
+        let openAIConfiguration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "test",
+                displayName: "Test"
+            ),
+            roles: [.persona]
+        )
+
+        let remote = store.resolvedRequest(
+            request,
+            role: .persona,
+            configuration: openAIConfiguration
+        )
+        XCTAssertEqual(remote.temperature, 2, accuracy: 0.0001)
+        XCTAssertEqual(remote.topP, 0)
+        XCTAssertNil(remote.topK)
+        XCTAssertEqual(remote.maxOutputTokens, 32_768)
+        XCTAssertEqual(remote.seed, 0)
+        XCTAssertNil(remote.localRuntimeOverrides)
+
+        let localConfiguration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Local"
+            ),
+            roles: [.persona]
+        )
+        let local = store.resolvedRequest(
+            request,
+            role: .persona,
+            configuration: localConfiguration
+        )
+        XCTAssertEqual(local.topK, 200)
+        XCTAssertEqual(local.localRuntimeOverrides?.contextSize, 131_072)
+        XCTAssertEqual(local.localRuntimeOverrides?.batchSize, 2_048)
+        XCTAssertEqual(local.localRuntimeOverrides?.microBatchSize, 2_048)
+        XCTAssertEqual(local.localRuntimeOverrides?.threadCount, 64)
+        XCTAssertEqual(local.localRuntimeOverrides?.gpuLayers, 999)
+        XCTAssertEqual(local.localSamplerOverrides?.temperature, 2)
+        XCTAssertEqual(local.localSamplerOverrides?.topP, 0)
+        XCTAssertEqual(local.localSamplerOverrides?.topK, 200)
+        XCTAssertEqual(local.localSamplerOverrides?.maxOutputTokens, 32_768)
+    }
+
+    func testAIModelTuningAutomaticLeavesLocalSamplerPresetUntouched() throws {
+        let suiteName = "KizunaAIModelTuningTests.Automatic.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Local"
+            ),
+            roles: [.story]
+        )
+        let resolved = store.resolvedRequest(
+            AIGenerationRequest(
+                systemPrompt: "system",
+                userPrompt: "story",
+                temperature: 0.72,
+                maxOutputTokens: 1_024
+            ),
+            role: .story,
+            configuration: configuration
+        )
+
+        XCTAssertNil(resolved.localSamplerOverrides)
+        XCTAssertNil(resolved.localRuntimeOverrides)
+    }
+
+    func testAIModelTuningFastPresetResolvesIntentToSafeValues() throws {
+        let suiteName = "KizunaAIModelTuningTests.Fast.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(store.setSimplePreset(.fast))
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Local"
+            ),
+            roles: [.story]
+        )
+        let resolved = store.resolvedRequest(
+            AIGenerationRequest(
+                systemPrompt: "system",
+                userPrompt: "story",
+                temperature: 0.72,
+                maxOutputTokens: 1_024
+            ),
+            role: .story,
+            configuration: configuration
+        )
+
+        XCTAssertEqual(resolved.temperature, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(resolved.topP, 0.8)
+        XCTAssertEqual(resolved.topK, 16)
+        XCTAssertEqual(resolved.maxOutputTokens, 512)
+        XCTAssertEqual(resolved.localRuntimeOverrides?.contextSize, 4_096)
+        XCTAssertEqual(resolved.localSamplerOverrides?.temperature, 0.25)
+        XCTAssertEqual(resolved.localSamplerOverrides?.topP, 0.8)
+        XCTAssertEqual(resolved.localSamplerOverrides?.topK, 16)
+        XCTAssertEqual(resolved.localSamplerOverrides?.maxOutputTokens, 512)
+    }
+
     func testAIModelRouterUsesPreferredConfigurationAndProvider() async throws {
         let suiteName = "KizunaAIModelRouterTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -6521,7 +6800,10 @@ final class KizunaAITests: XCTestCase {
         )
         XCTAssertTrue(registry.register(configuration))
 
-        let router = AIModelRouter(registry: registry)
+        let router = AIModelRouter(
+            registry: registry,
+            tuningStore: AIModelTuningStore(defaults: defaults)
+        )
         router.register(RegistryTestProvider())
         var resolvedIdentity: AIModelIdentity?
         var preview = ""
@@ -6547,6 +6829,202 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(response.finishReason, "STOP")
         XCTAssertEqual(resolvedIdentity, configuration.identity)
         XCTAssertEqual(preview, "stub response")
+    }
+
+    func testUserAgeSafetyStorePersistsOnlyCoarseTierAndAssurance() throws {
+        let suiteName = "KizunaUserAgeSafetyTests.Persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = UserAgeSafetyStore(defaults: defaults)
+        XCTAssertEqual(store.context, .default)
+        XCTAssertTrue(store.update(.selfDeclared(.teen)))
+
+        let reloaded = UserAgeSafetyStore(defaults: defaults)
+        XCTAssertEqual(reloaded.context.tier, .teen)
+        XCTAssertEqual(reloaded.context.assuranceLevel, .selfDeclared)
+        let storedData = try XCTUnwrap(
+            defaults.data(forKey: "kizuna.userAgeSafetyContext.v1")
+        )
+        let storedJSON = try XCTUnwrap(String(data: storedData, encoding: .utf8)).lowercased()
+        XCTAssertFalse(storedJSON.contains("birth"))
+        XCTAssertFalse(storedJSON.contains("date"))
+
+        XCTAssertTrue(store.update(.selfDeclared(.unknown)))
+        XCTAssertNil(defaults.data(forKey: "kizuna.userAgeSafetyContext.v1"))
+        XCTAssertEqual(store.context, .default)
+    }
+
+    func testEffectiveAgeSafetyPolicyRatingMatrixAndUnknownDefault() {
+        let expected: [UserAgeTier: Set<SafetyRating>] = [
+            .unknown: [.general],
+            .child: [.general],
+            .teen: [.general, .teen],
+            .adult: [.general, .teen, .sensitive]
+        ]
+
+        for tier in UserAgeTier.allCases {
+            let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(tier))
+            for rating in SafetyRating.allCases {
+                XCTAssertEqual(
+                    policy.allows(rating),
+                    expected[tier]?.contains(rating) == true,
+                    "Unexpected availability for \(tier.rawValue) × \(rating.rawValue)"
+                )
+            }
+            XCTAssertFalse(policy.allows(.restricted))
+        }
+
+        let unknown = EffectiveSafetyPolicy.make(for: .default)
+        XCTAssertEqual(unknown.ageContext, .default)
+        XCTAssertEqual(unknown.dependencyProtectionLevel, .strict)
+    }
+
+    func testEffectiveAgeSafetyPolicyRatingAndDomainCrossProduct() {
+        let invariantDomainActions: [SafetyDomain: SafetyAction] = [
+            .crime: .block,
+            .selfHarm: .warn,
+            .personalInfo: .warn,
+            .harassment: .soften,
+            .medical: .warn,
+            .financial: .warn,
+            .legal: .warn
+        ]
+        let ageSpecificDomainActions: [UserAgeTier: [SafetyDomain: SafetyAction]] = [
+            .unknown: [.romance: .warn, .violence: .soften, .sexual: .block],
+            .child: [.romance: .warn, .violence: .soften, .sexual: .block],
+            .teen: [.romance: .allow, .violence: .warn, .sexual: .block],
+            .adult: [.romance: .allow, .violence: .warn, .sexual: .warn]
+        ]
+
+        for tier in UserAgeTier.allCases {
+            let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(tier))
+            for rating in SafetyRating.allCases {
+                for domain in SafetyDomain.allCases {
+                    let ratingAction: SafetyAction = policy.allows(rating) ? .allow : .block
+                    let domainAction = ageSpecificDomainActions[tier]?[domain]
+                        ?? invariantDomainActions[domain]
+                        ?? .allow
+                    let decision = policy.applying(
+                        to: SafetyDecision(riskDomains: [domain]),
+                        characterRating: rating
+                    )
+
+                    XCTAssertEqual(
+                        decision.action,
+                        max(ratingAction, domainAction),
+                        "Unexpected action for \(tier.rawValue) × \(rating.rawValue) × \(domain.rawValue)"
+                    )
+                    XCTAssertFalse(decision.addedPromptRules.isEmpty)
+                }
+            }
+        }
+    }
+
+    func testAgeTierChangeFiltersWithoutMutatingCharacterData() {
+        let characters = SafetyRating.allCases.map { rating in
+            CharacterProfile(
+                name: rating.rawValue,
+                displayName: rating.rawValue,
+                category: .chatBuddy,
+                relationshipGenre: .none,
+                safetyRating: rating
+            )
+        }
+        let originalIDs = characters.map(\.id)
+        let childPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.child))
+        let adultPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.adult))
+
+        XCTAssertEqual(characters.filter { childPolicy.allows($0.safetyRating) }.count, 1)
+        XCTAssertEqual(characters.filter { adultPolicy.allows($0.safetyRating) }.count, 3)
+        XCTAssertEqual(characters.map(\.id), originalIDs)
+        XCTAssertEqual(characters.count, 4)
+    }
+
+    func testSafetyPipelineAppliesOneAgePolicyToInputAndOutput() async {
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+        let pipeline = SafetyPipeline(policyProvider: { policy })
+        let character = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+
+        let input = await pipeline.evaluateInput("hello", character: character)
+        let output = await pipeline.evaluateOutput("hello", character: character)
+
+        XCTAssertEqual(input.action, .block)
+        XCTAssertEqual(output.action, .block)
+        XCTAssertEqual(input.addedPromptRules, output.addedPromptRules)
+    }
+
+    func testAgePolicyBlocksBeforeLocalAndRemotePersonaRouting() async throws {
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+        let character = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+
+        for model in PersonaGenerationModel.allCases {
+            let (_, store, thread) = try makePersonaServiceTestContext(character: character)
+            var routedThread = thread
+            routedThread.preferredGenerationModel = model
+            let runtime = PersonaTestRuntime(reply: "must not run")
+            let service = makeCharacterPersonaService(
+                character: character,
+                store: store,
+                runtime: runtime,
+                outputDecision: .allow,
+                policyProvider: { policy }
+            )
+
+            XCTAssertTrue(service.send("hello", to: routedThread))
+            await waitForPersonaService(service) { $0 == .idle }
+            XCTAssertEqual(
+                runtime.generatedRequestCount,
+                0,
+                "Safety boundary ran after provider routing for \(model.rawValue)"
+            )
+            XCTAssertEqual(store.thread(id: thread.id)?.messages.count, 2)
+        }
+    }
+
+    func testAgePolicyAlsoRunsBeforeLegacyPersonaProviderRouting() async throws {
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+        let inputChecker = PersonaTestInputSafetyChecker(
+            decision: SafetyDecision(riskDomains: [.sexual])
+        )
+
+        for model in PersonaGenerationModel.allCases {
+            let (_, store, thread) = try makePersonaServiceTestContext()
+            var routedThread = thread
+            routedThread.preferredGenerationModel = model
+            let runtime = PersonaTestRuntime(reply: "must not run")
+            let service = PersonaChatService(
+                runtime: runtime,
+                store: store,
+                safetyPipeline: SafetyPipeline(
+                    inputChecker: inputChecker,
+                    outputChecker: PersonaTestOutputSafetyChecker(decision: .allow),
+                    policyProvider: { policy }
+                ),
+                watchdogNanoseconds: 1_000_000_000
+            )
+
+            XCTAssertTrue(service.send("hello", to: routedThread))
+            await waitForPersonaService(service) { $0 == .idle }
+            XCTAssertEqual(
+                runtime.generatedRequestCount,
+                0,
+                "Legacy safety boundary ran after provider routing for \(model.rawValue)"
+            )
+            XCTAssertEqual(store.thread(id: thread.id)?.messages.count, 2)
+        }
     }
 
     func testStorySessionModelPreferenceMigratesFromWorldKey() {
@@ -7256,13 +7734,15 @@ final class KizunaAITests: XCTestCase {
         runtime: PersonaReplyGenerating,
         outputDecision: SafetyDecision,
         characterRepository: CharacterRepository? = nil,
+        policyProvider: @escaping () -> EffectiveSafetyPolicy = { .current },
         watchdogNanoseconds: UInt64 = 1_000_000_000
     ) -> PersonaChatService {
         PersonaChatService(
             runtime: runtime,
             store: store,
             safetyPipeline: SafetyPipeline(
-                outputChecker: PersonaTestOutputSafetyChecker(decision: outputDecision)
+                outputChecker: PersonaTestOutputSafetyChecker(decision: outputDecision),
+                policyProvider: policyProvider
             ),
             characterRepo: characterRepository ?? PersonaTestCharacterRepository(character: character),
             memoryRepo: PersonaTestMemoryRepository(),
@@ -7440,6 +7920,18 @@ private final class PersonaTestRuntime: PersonaReplyGenerating, @unchecked Senda
 }
 
 private final class PersonaTestOutputSafetyChecker: OutputSafetyChecking, @unchecked Sendable {
+    let decision: SafetyDecision
+
+    init(decision: SafetyDecision) {
+        self.decision = decision
+    }
+
+    func evaluate(_ text: String, character: CharacterProfile) async -> SafetyDecision {
+        decision
+    }
+}
+
+private final class PersonaTestInputSafetyChecker: InputSafetyChecking, @unchecked Sendable {
     let decision: SafetyDecision
 
     init(decision: SafetyDecision) {

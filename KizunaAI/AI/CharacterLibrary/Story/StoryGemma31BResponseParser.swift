@@ -47,6 +47,7 @@ struct StoryGemma31BThinkingConfig: Encodable {
 struct StoryGemma31BGenerationConfig: Encodable {
     let temperature: Double
     let topP: Double
+    let topK: Int?
     let maxOutputTokens: Int
     let thinkingConfig: StoryGemma31BThinkingConfig
     let seed: Int?
@@ -62,6 +63,7 @@ struct StoryGemma31BGenerateContentRequest: Encodable {
         userPrompt: String,
         temperature: Double,
         topP: Double = 0.92,
+        topK: Int? = nil,
         maxOutputTokens: Int,
         thinkingLevel: String,
         seed: Int? = nil
@@ -79,6 +81,7 @@ struct StoryGemma31BGenerateContentRequest: Encodable {
         generationConfig = StoryGemma31BGenerationConfig(
             temperature: temperature,
             topP: topP,
+            topK: topK,
             maxOutputTokens: maxOutputTokens,
             thinkingConfig: StoryGemma31BThinkingConfig(thinkingLevel: thinkingLevel),
             seed: seed

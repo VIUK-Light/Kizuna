@@ -145,8 +145,8 @@ struct CharacterLibraryView: View {
                     english: "Delete \"\(character.visibleName)\"?"
                 )),
                 message: Text(KizunaCopy.text(
-                    japanese: "メモリーも一緒に削除されます。元には戻せません。",
-                    english: "This also deletes the character's memories. This cannot be undone."
+                    japanese: "キャラクター本体とメモリーを削除し、既存のStoryからこのキャラクターへの参照を外します。Persona会話本文は残りますが、Character Libraryとの連携は解除されます。元には戻せません。",
+                    english: "This deletes the character and its memories, removes the character from existing Stories, and detaches Persona conversations from the Character Library. Persona conversation text remains. This cannot be undone."
                 )),
                 primaryButton: .destructive(Text(KizunaCopy.text(japanese: "削除", english: "Delete"))) {
                     Task {
@@ -330,6 +330,9 @@ struct CharacterLibraryView: View {
                                 .background(Capsule().fill(Color.primary.opacity(0.06)))
                         }
                         .buttonStyle(.plain)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                        .accessibilityLabel(KizunaCopy.text(japanese: "フィルターをクリア", english: "Clear filters"))
                     }
                 }
                 .padding(.vertical, 2)
@@ -360,13 +363,15 @@ struct CharacterLibraryView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
+            .frame(minHeight: 44)
             .background(
                 Capsule().fill(selection == nil ? Color.primary.opacity(0.06) : Color.accentColor.opacity(0.18))
             )
             .foregroundStyle(selection == nil ? .primary : Color.accentColor)
         }
         .buttonStyle(.plain)
-        .contentShape(Capsule())
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
         .accessibilityLabel(
             KizunaCopy.text(japanese: "\(label)のフィルター", english: "Filter by \(label)")
         )

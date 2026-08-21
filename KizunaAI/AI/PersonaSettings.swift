@@ -12,7 +12,7 @@ import Foundation
 import Combine
 
 /// 口調プリセット。
-enum PersonaTone: String, Codable, CaseIterable, Identifiable {
+enum PersonaTone: String, Codable, CaseIterable, Identifiable, Sendable {
     case casual          // タメ口
     case polite          // 敬語
     case sweet           // 甘め
@@ -79,7 +79,7 @@ enum PersonaTone: String, Codable, CaseIterable, Identifiable {
 }
 
 /// 関係性プリセット。
-enum PersonaRelation: String, Codable, CaseIterable, Identifiable {
+enum PersonaRelation: String, Codable, CaseIterable, Identifiable, Sendable {
     case partner         // 恋人 (年齢を問わない健全な範囲)
     case friend          // 友達
     case senior          // 先輩
@@ -150,7 +150,7 @@ enum PersonaRelation: String, Codable, CaseIterable, Identifiable {
 }
 
 /// 単一のペルソナプロファイル。
-struct PersonaProfile: Codable, Hashable, Identifiable {
+struct PersonaProfile: Codable, Hashable, Identifiable, Sendable {
     var id: UUID
     var name: String              // キャラの名前 (例: アオイ)
     var age: Int?                 // 任意

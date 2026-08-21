@@ -35,6 +35,14 @@ Many safety systems react to isolated keywords and discard the surrounding creat
 
 Kizuna is under active development. Feature proposals, bug reports, documentation improvements, and Pull Requests are welcome.
 
+## Supported platforms and installation
+
+The official clients currently target iOS and macOS. Kizuna does not currently provide Windows, Linux, Android, or Web clients, and no prebuilt end-user release is available yet.
+
+The first non-Apple access path will be Web-first while the existing Apple clients remain supported. The [Web client design direction](docs/architecture/web-client-plan.md) defines the client-independent API, Web MVP, remote-provider behavior, and security/privacy gates. It is a design decision, not an announcement that a Web client or hosted service is already available.
+
+Until a downloadable release is published, Kizuna can be tried by building from source on a supported macOS development environment. If you are not setting up a development environment, see the [public roadmap](ROADMAP.md) for the direction of future distribution and Web support.
+
 | Item | Current requirement |
 | --- | --- |
 | Development | Xcode 26.1 or later / XcodeGen |
@@ -88,6 +96,8 @@ KizunaAI/
 
 ## Contributing
 
+Read [CONTRIBUTING.en.md](CONTRIBUTING.en.md) and the [public roadmap](ROADMAP.md) before opening an Issue or Pull Request. Small entry points are listed through [good first issue](https://github.com/VIUK-Light/Kizuna/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) and [help wanted](https://github.com/VIUK-Light/Kizuna/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+
 Issues and Pull Requests should include, where possible:
 
 - Reproduction steps, expected behavior, and actual behavior
@@ -100,6 +110,8 @@ Do not publish conversation history, API keys, access tokens, private URLs, or o
 ## License and third-party components
 
 Kizuna's software components—including Swift source code, tests, scripts, project configuration, and documentation—are provided under the [Apache License 2.0](LICENSE). The original Kizuna software was developed by VIUK-Light. See [NOTICE](NOTICE) for the attribution that must accompany redistributions.
+
+The license boundaries and assets that require replacement before redistribution are summarized in [LICENSES.md](LICENSES.md).
 
 The following content is not licensed under the Apache License 2.0. Unless separately and explicitly licensed, all rights to this content are reserved by VIUK-Light contributors.
 

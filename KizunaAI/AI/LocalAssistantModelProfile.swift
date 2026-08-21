@@ -42,7 +42,7 @@ enum LocalAssistantModelProfile {
         }
     }
 
-    struct RuntimePreset {
+    struct RuntimePreset: Equatable, Sendable {
         let contextSize: Int
         let batchSize: Int
         let microBatchSize: Int
@@ -51,6 +51,21 @@ enum LocalAssistantModelProfile {
         let gpuLayers: Int
         let flashAttentionEnabled: Bool
         let disableKVOffload: Bool
+
+        func applying(_ overrides: AILocalRuntimeOverrides?) -> RuntimePreset {
+            guard let overrides else { return self }
+            let resolvedBatchSize = overrides.batchSize ?? batchSize
+            return RuntimePreset(
+                contextSize: overrides.contextSize ?? contextSize,
+                batchSize: resolvedBatchSize,
+                microBatchSize: min(overrides.microBatchSize ?? microBatchSize, resolvedBatchSize),
+                threadCount: overrides.threadCount ?? threadCount,
+                batchThreadCount: overrides.batchThreadCount ?? batchThreadCount,
+                gpuLayers: overrides.gpuLayers ?? gpuLayers,
+                flashAttentionEnabled: overrides.flashAttentionEnabled ?? flashAttentionEnabled,
+                disableKVOffload: overrides.disableKVOffload ?? disableKVOffload
+            )
+        }
     }
 
     struct GenerationPreset {

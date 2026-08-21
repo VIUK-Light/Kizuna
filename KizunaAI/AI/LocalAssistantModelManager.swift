@@ -1216,11 +1216,30 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
 
     @discardableResult
     func removeInstalledModel() -> Bool {
+        removeInstalledModel(id: nil)
+    }
+
+    /// Remove one catalog entry without implicitly deleting every installed
+    /// artifact. When `id` is nil, preserve the legacy behavior and remove the
+    /// active model.
+    @discardableResult
+    func removeInstalledModel(id: String?) -> Bool {
         cancelActiveTasksWithoutResume()
         LocalAssistantRuntimeBridge.shared.clearRuntimeError()
         removeIncompleteDownloadedFileIfNeeded()
 
-        guard let removedURL = installedModelURL else {
+        let targetModel: LocalAssistantInstalledModel?
+        if let id {
+            guard let model = installedModels.first(where: { $0.id == id }) else {
+                return false
+            }
+            targetModel = model
+        } else {
+            targetModel = nil
+        }
+
+        let activeURLBeforeRemoval = installedModelURL
+        guard let removedURL = targetModel?.url ?? activeURLBeforeRemoval else {
             clearPersistedDownloadState(removeResumeData: true)
             refreshInstalledState()
             setStatus(.modelMissing(hasLegacyModel: hasLegacyInstalledModel), japaneseMessage: "ローカルモデルは見つかりませんでした")
@@ -1232,6 +1251,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         })?.id
         let isAdditionalModel = removedURL.deletingLastPathComponent().standardizedFileURL
             == additionalModelDirectoryURL.standardizedFileURL
+        let isActiveModel = activeURLBeforeRemoval?.standardizedFileURL == removedURL.standardizedFileURL
 
         do {
             if FileManager.default.fileExists(atPath: removedURL.path) {
@@ -1265,9 +1285,11 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         }
 
         lastErrorMessage = nil
-        resolvedInstalledModelURL = nil
-        activeModelID = nil
-        defaults.removeObject(forKey: activeModelIDKey)
+        if isActiveModel {
+            resolvedInstalledModelURL = nil
+            activeModelID = nil
+            defaults.removeObject(forKey: activeModelIDKey)
+        }
         if auxiliaryModelID == removedID {
             auxiliaryModelID = nil
             defaults.removeObject(forKey: auxiliaryModelIDKey)

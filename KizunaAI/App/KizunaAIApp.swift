@@ -26,43 +26,80 @@ struct KizunaAIApp: App {
 private struct KizunaMigrationGateView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var isReady = false
+    @State private var migrationError: String?
+    @State private var migrationAttempt = 0
     @AppStorage(KizunaStorageKeys.launchCompleted) private var launchCompleted = false
 
     var body: some View {
-        Group {
+        ZStack {
             if isReady {
                 if launchCompleted {
-                    VIUKKizunaWorkspaceView()
+                    AnyView(VIUKKizunaWorkspaceView())
                 } else {
-                    KizunaLaunchView {
-                        launchCompleted = true
+                    AnyView(
+                        KizunaLaunchView {
+                            launchCompleted = true
+                        }
+                    )
+                }
+            } else if let errorMessage = migrationError {
+                AnyView(
+                    VStack(spacing: 16) {
+                        Image(systemName: "externaldrive.badge.exclamationmark")
+                            .font(.system(size: 48, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        Text(KizunaCopy.text(
+                            japanese: "保存領域を準備できませんでした",
+                            english: "Storage could not be prepared"
+                        ))
+                            .font(.headline)
+                        Text(errorMessage)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 480)
+                        Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+                            migrationError = nil
+                            migrationAttempt &+= 1
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                }
+                    .padding(32)
+                )
             } else {
-                VStack(spacing: 18) {
-                    Image(systemName: "infinity.circle.fill")
-                        .font(.system(size: 54, weight: .bold))
-                        .foregroundStyle(.tint)
-                    ProgressView()
-                    Text(KizunaCopy.text(japanese: "\(KizunaCopy.appName)のデータを準備しています", english: "Preparing \(KizunaCopy.appName)"))
-                        .font(.headline)
-                    Text(KizunaCopy.text(
-                        japanese: "初回だけ、キャラクターとローカルモデルを準備するため数分かかる場合があります。",
-                        english: "The first launch may take a few minutes while characters and the local model are prepared."
-                    ))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 460)
-                }
-                .padding(32)
+                AnyView(
+                    VStack(spacing: 18) {
+                        Image(systemName: "infinity.circle.fill")
+                            .font(.system(size: 54, weight: .bold))
+                            .foregroundStyle(.tint)
+                        ProgressView()
+                        Text(KizunaCopy.text(japanese: "\(KizunaCopy.appName)のデータを準備しています", english: "Preparing \(KizunaCopy.appName)"))
+                            .font(.headline)
+                        Text(KizunaCopy.text(
+                            japanese: "初回だけ、キャラクターとローカルモデルを準備するため数分かかる場合があります。",
+                            english: "The first launch may take a few minutes while characters and the local model are prepared."
+                        ))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 460)
+                    }
+                    .padding(32)
+                )
             }
         }
-        .task {
+        .task(id: migrationAttempt) {
             guard !isReady else { return }
-            await Task.detached(priority: .userInitiated) {
+            let didSucceed = await Task.detached(priority: .userInitiated) {
                 KizunaDataMigration.performIfNeeded()
             }.value
+            guard didSucceed else {
+                migrationError = KizunaCopy.text(
+                    japanese: "移行または保存先の準備に失敗しました。データ保護のためWorkspaceを開いていません。保存領域を確認して再試行してください。",
+                    english: "Migration or storage preparation failed. The workspace is blocked to protect your data. Check the storage location and try again."
+                )
+                return
+            }
             isReady = true
             PersonaSettings.shared.primeBridge()
             KizunaUserProfileStore.shared.primeBridge()
@@ -76,7 +113,10 @@ private struct KizunaMigrationGateView: View {
         .onChange(of: scenePhase) { _, phase in
             // iPhoneでアプリを離れたまま1GB級のモデルとKVキャッシュを保持しない。
             // 次回の端末内生成では必要時に再初期化する。
-            guard phase == .background else { return }
+            guard phase == .background, isReady else { return }
+            PersonaChatStore.shared.flushPendingPersistence()
+            PersonaChatService.shared.cancel()
+            StorySessionService.cancelAllActiveGenerations()
             LocalAssistantRuntimeBridge.shared.cancelActiveGeneration()
             LocalAssistantLiteRTLMRuntime.shared.releaseResourcesForBackground()
             // バックグラウンド中も平文シークレットをメモリに残さない。
@@ -85,3 +125,4 @@ private struct KizunaMigrationGateView: View {
         }
     }
 }
+

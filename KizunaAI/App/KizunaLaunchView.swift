@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// 初回起動ではプロフィールだけを設定する。物語の好みはここで選ばせない。
+/// 初回起動ではプロフィールと安全設定を扱う。物語の好みはここで選ばせない。
 struct KizunaLaunchView: View {
     @ObservedObject private var profileStore = KizunaUserProfileStore.shared
     @State private var draft: KizunaUserProfile
+    @State private var ageContext: UserAgeSafetyContext
     @State private var isLoadingPhoto = false
 
     var onFinished: () -> Void
@@ -11,6 +12,7 @@ struct KizunaLaunchView: View {
     init(onFinished: @escaping () -> Void) {
         self.onFinished = onFinished
         _draft = State(initialValue: KizunaUserProfileStore.shared.profile)
+        _ageContext = State(initialValue: UserAgeSafetyStore.shared.context)
     }
 
     var body: some View {
@@ -22,6 +24,7 @@ struct KizunaLaunchView: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     profileCard
+                    ageSafetyCard
                 }
                 .padding(.horizontal, 22)
                 .padding(.vertical, 24)
@@ -31,6 +34,36 @@ struct KizunaLaunchView: View {
             bottomBar
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
+    }
+
+    private var ageTierBinding: Binding<UserAgeTier> {
+        Binding(
+            get: { ageContext.tier },
+            set: { ageContext = .selfDeclared($0) }
+        )
+    }
+
+    private var ageSafetyCard: some View {
+        KizunaProfileCard(
+            title: KizunaCopy.text(japanese: "安全設定", english: "Safety settings"),
+            icon: "checkmark.shield",
+            spacing: 12
+        ) {
+            Picker(
+                KizunaCopy.text(japanese: "年齢層", english: "Age range"),
+                selection: ageTierBinding
+            ) {
+                ForEach(UserAgeTier.allCases) { tier in
+                    Text(tier.localizedDisplayName).tag(tier)
+                }
+            }
+            Text(KizunaCopy.text(
+                japanese: "安全設定のための区分だけを端末に保存します。生年月日は保存しません。未指定では安全側の設定を使います。",
+                english: "Only the range used for safety settings is stored on this device. No birth date is stored. Not specified uses the safer default."
+            ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var profileCard: some View {
@@ -70,6 +103,7 @@ struct KizunaLaunchView: View {
             Spacer()
 
             Button {
+                _ = UserAgeSafetyStore.shared.update(ageContext)
                 profileStore.update(draft)
                 onFinished()
             } label: {

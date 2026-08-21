@@ -28,6 +28,270 @@ enum AIModelRole: String, Codable, CaseIterable, Hashable, Sendable {
     case safety
 }
 
+/// The default settings surface stays intent-based. Raw sampler/runtime
+/// values are persisted separately and are only used while Advanced mode is
+/// selected.
+enum AIModelSettingsMode: String, Codable, CaseIterable, Hashable, Sendable {
+    case simple
+    case advanced
+}
+
+enum AISimpleModelPreset: String, Codable, CaseIterable, Hashable, Sendable {
+    case automatic
+    case stable
+    case balanced
+    case creative
+    case fast
+}
+
+/// Advanced overrides are grouped by product use case instead of being tied
+/// to a provider. This lets a Persona/Story preference survive a model swap;
+/// unsupported values are removed when the effective provider is resolved.
+enum AIModelTuningScope: String, Codable, CaseIterable, Hashable, Sendable {
+    case persona
+    case story
+    case auxiliary
+
+    init(role: AIModelRole) {
+        switch role {
+        case .persona:
+            self = .persona
+        case .story:
+            self = .story
+        case .classifier, .memoryExtraction, .memoryRetrieval,
+             .sceneCharacterSelection, .sceneSummary, .nextSceneSuggestion, .safety:
+            self = .auxiliary
+        }
+    }
+
+    var routingRole: AIModelRole {
+        switch self {
+        case .persona: return .persona
+        case .story: return .story
+        case .auxiliary: return .classifier
+        }
+    }
+}
+
+struct AILocalRuntimeOverrides: Codable, Equatable, Hashable, Sendable {
+    var contextSize: Int?
+    var batchSize: Int?
+    var microBatchSize: Int?
+    var threadCount: Int?
+    var batchThreadCount: Int?
+    var gpuLayers: Int?
+    var flashAttentionEnabled: Bool?
+    var disableKVOffload: Bool?
+
+    init(
+        contextSize: Int? = nil,
+        batchSize: Int? = nil,
+        microBatchSize: Int? = nil,
+        threadCount: Int? = nil,
+        batchThreadCount: Int? = nil,
+        gpuLayers: Int? = nil,
+        flashAttentionEnabled: Bool? = nil,
+        disableKVOffload: Bool? = nil
+    ) {
+        self.contextSize = contextSize
+        self.batchSize = batchSize
+        self.microBatchSize = microBatchSize
+        self.threadCount = threadCount
+        self.batchThreadCount = batchThreadCount
+        self.gpuLayers = gpuLayers
+        self.flashAttentionEnabled = flashAttentionEnabled
+        self.disableKVOffload = disableKVOffload
+    }
+
+    var isEmpty: Bool {
+        contextSize == nil
+            && batchSize == nil
+            && microBatchSize == nil
+            && threadCount == nil
+            && batchThreadCount == nil
+            && gpuLayers == nil
+            && flashAttentionEnabled == nil
+            && disableKVOffload == nil
+    }
+}
+
+struct AIGenerationOverrides: Codable, Equatable, Hashable, Sendable {
+    var temperature: Double?
+    var topP: Double?
+    var topK: Int?
+    var maxOutputTokens: Int?
+    var seed: Int?
+    var localRuntime: AILocalRuntimeOverrides?
+
+    init(
+        temperature: Double? = nil,
+        topP: Double? = nil,
+        topK: Int? = nil,
+        maxOutputTokens: Int? = nil,
+        seed: Int? = nil,
+        localRuntime: AILocalRuntimeOverrides? = nil
+    ) {
+        self.temperature = temperature
+        self.topP = topP
+        self.topK = topK
+        self.maxOutputTokens = maxOutputTokens
+        self.seed = seed
+        self.localRuntime = localRuntime
+    }
+
+    var isEmpty: Bool {
+        temperature == nil
+            && topP == nil
+            && topK == nil
+            && maxOutputTokens == nil
+            && seed == nil
+            && (localRuntime?.isEmpty ?? true)
+    }
+}
+
+struct AIModelTuningPreferences: Codable, Equatable, Sendable {
+    var mode: AIModelSettingsMode
+    var simplePreset: AISimpleModelPreset
+    private var scopeOverrides: [String: AIGenerationOverrides]
+
+    init(
+        mode: AIModelSettingsMode = .simple,
+        simplePreset: AISimpleModelPreset = .automatic,
+        scopeOverrides: [String: AIGenerationOverrides] = [:]
+    ) {
+        self.mode = mode
+        self.simplePreset = simplePreset
+        self.scopeOverrides = scopeOverrides
+    }
+
+    static let `default` = AIModelTuningPreferences()
+
+    func overrides(for scope: AIModelTuningScope) -> AIGenerationOverrides {
+        scopeOverrides[scope.rawValue] ?? AIGenerationOverrides()
+    }
+
+    mutating func setOverrides(_ overrides: AIGenerationOverrides, for scope: AIModelTuningScope) {
+        if overrides.isEmpty {
+            scopeOverrides[scope.rawValue] = nil
+        } else {
+            scopeOverrides[scope.rawValue] = overrides
+        }
+    }
+
+    mutating func resetOverrides() {
+        scopeOverrides.removeAll()
+    }
+}
+
+/// Metadata-only persistence for user tuning. Credentials stay in Keychain;
+/// these values are safe to keep in UserDefaults and reset independently.
+final class AIModelTuningStore: @unchecked Sendable {
+    static let shared = AIModelTuningStore()
+
+    private let defaults: UserDefaults
+    private let lock = NSLock()
+    private let storageKey = "ai.modelTuningPreferences.v1"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var preferences: AIModelTuningPreferences {
+        lock.lock()
+        defer { lock.unlock() }
+        return loadUnlocked()
+    }
+
+    @discardableResult
+    func setMode(_ mode: AIModelSettingsMode) -> Bool {
+        update { $0.mode = mode }
+    }
+
+    @discardableResult
+    func setSimplePreset(_ preset: AISimpleModelPreset) -> Bool {
+        update { $0.simplePreset = preset }
+    }
+
+    @discardableResult
+    func setOverrides(_ overrides: AIGenerationOverrides, for scope: AIModelTuningScope) -> Bool {
+        update { $0.setOverrides(overrides, for: scope) }
+    }
+
+    @discardableResult
+    func resetAdvancedOverrides() -> Bool {
+        update { $0.resetOverrides() }
+    }
+
+    @discardableResult
+    func resetToRecommended() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return saveUnlocked(.default)
+    }
+
+    private func update(_ mutation: (inout AIModelTuningPreferences) -> Void) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        var value = loadUnlocked()
+        mutation(&value)
+        return saveUnlocked(value)
+    }
+
+    private func loadUnlocked() -> AIModelTuningPreferences {
+        guard let data = defaults.data(forKey: storageKey),
+              let value = try? JSONDecoder().decode(AIModelTuningPreferences.self, from: data) else {
+            return .default
+        }
+        return value
+    }
+
+    private func saveUnlocked(_ value: AIModelTuningPreferences) -> Bool {
+        guard let data = try? JSONEncoder().encode(value) else { return false }
+        defaults.set(data, forKey: storageKey)
+        return true
+    }
+}
+
+enum AIModelTuningParameter: String, CaseIterable, Hashable, Sendable {
+    case temperature
+    case topP
+    case topK
+    case maxOutputTokens
+    case seed
+    case contextSize
+    case batchSize
+    case threads
+    case gpuLayers
+    case flashAttention
+}
+
+struct AIProviderParameterCapabilities: Sendable {
+    let supportedParameters: Set<AIModelTuningParameter>
+
+    func supports(_ parameter: AIModelTuningParameter) -> Bool {
+        supportedParameters.contains(parameter)
+    }
+
+    static func capabilities(for providerID: AIProviderID) -> AIProviderParameterCapabilities {
+        switch providerID {
+        case .localRuntime:
+            return AIProviderParameterCapabilities(supportedParameters: Set(AIModelTuningParameter.allCases))
+        case .googleGenerativeLanguage:
+            return AIProviderParameterCapabilities(
+                supportedParameters: [.temperature, .topP, .topK, .maxOutputTokens, .seed]
+            )
+        case .openAICompatible:
+            return AIProviderParameterCapabilities(
+                supportedParameters: [.temperature, .topP, .maxOutputTokens, .seed]
+            )
+        case .anthropic:
+            return AIProviderParameterCapabilities(
+                supportedParameters: [.temperature, .topP, .topK, .maxOutputTokens]
+            )
+        }
+    }
+}
+
 struct AIModelIdentity: Codable, Equatable, Hashable, Sendable {
     let providerID: AIProviderID
     let modelID: String

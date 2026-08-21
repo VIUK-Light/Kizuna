@@ -32,6 +32,11 @@ private extension Image {
     }
 }
 
+private enum CharacterAvatarLoadError: Error {
+    case missingData
+    case unsupportedImage
+}
+
 struct CharacterCreateView: View {
     /// 既存編集モード時に渡す。
     var existing: CharacterProfile? = nil
@@ -41,6 +46,7 @@ struct CharacterCreateView: View {
 
     @StateObject private var vm: CharacterCreateViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var newTagText = ""
     @State private var newRuleText = ""
     @State private var newSafetyRuleText = ""
@@ -48,6 +54,14 @@ struct CharacterCreateView: View {
     /// PhotosPickerの選択ごとに世代を進める。古いloadTransferableが遅れて
     /// 完了しても、新しい画像を上書きしない。
     @State private var avatarLoadGeneration = 0
+    @State private var isLoadingAvatar = false
+    @State private var avatarLoadError: String?
+    /// The draft captured after the editor's initial template (if any) is
+    /// applied. Keeping a value snapshot makes every editable field,
+    /// including tags, rules, and the avatar, participate in dirty tracking.
+    @State private var initialDraft: CharacterProfile?
+    @State private var isShowingDiscardConfirmation = false
+    @State private var pendingTemplate: CharacterTemplate?
 
     init(
         existing: CharacterProfile? = nil,
@@ -87,12 +101,19 @@ struct CharacterCreateView: View {
             footer
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
-        .interactiveDismissDisabled(isFormLocked)
+        // SwiftUI does not expose an "interactive dismiss attempted" callback
+        // on all supported platforms. Blocking the gesture while dirty avoids
+        // silently losing the form; the Cancel button provides the explicit
+        // discard confirmation.
+        .interactiveDismissDisabled(isFormLocked || isDirty)
         .task {
             // 親画面から渡されたテンプレートは同期的に先に適用する。
             // テンプレート一覧のI/Oを待ってから適用すると、その待機中に
             // ユーザーが編集したフォームを後からテンプレートで上書きしてしまう。
-            if let t = template { vm.applyTemplate(t) }
+            if initialDraft == nil {
+                if let t = template { vm.applyTemplate(t) }
+                initialDraft = vm.draft
+            }
             await vm.loadTemplates()
         }
         .alert(
@@ -118,8 +139,44 @@ struct CharacterCreateView: View {
                 Text(decision.localizedReasons.joined(separator: "\n"))
             }
         }
+        .alert(
+            KizunaCopy.text(japanese: "変更を破棄しますか？", english: "Discard changes?"),
+            isPresented: $isShowingDiscardConfirmation
+        ) {
+            Button(KizunaCopy.text(japanese: "編集を続ける", english: "Keep editing"), role: .cancel) { }
+            Button(KizunaCopy.text(japanese: "破棄して閉じる", english: "Discard and close"), role: .destructive) {
+                dismiss()
+            }
+        } message: {
+            Text(KizunaCopy.text(
+                japanese: "保存していない入力は失われます。",
+                english: "Your unsaved changes will be lost."
+            ))
+        }
+        .alert(
+            KizunaCopy.text(japanese: "テンプレートを適用しますか？", english: "Apply template?"),
+            isPresented: pendingTemplateAlertBinding
+        ) {
+            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {
+                pendingTemplate = nil
+            }
+            Button(KizunaCopy.text(japanese: "適用", english: "Apply")) {
+                if let pendingTemplate {
+                    vm.applyTemplate(pendingTemplate)
+                }
+                self.pendingTemplate = nil
+            }
+        } message: {
+            Text(
+                KizunaCopy.text(
+                    japanese: "現在の入力を「\(pendingTemplate?.displayName ?? "このテンプレート")」で置き換えます。",
+                    english: "This will replace the current draft with “\(pendingTemplate?.displayName ?? "this template")”."
+                )
+            )
+        }
         .onChange(of: vm.state) { _, new in
             if case let .saved(c) = new {
+                initialDraft = c
                 onSaved?(c)
                 dismiss()
             }
@@ -130,6 +187,8 @@ struct CharacterCreateView: View {
             // gone. Interactive dismissal and the header button are blocked
             // while validation is active, but this is the final race guard.
             vm.cancelPendingSave()
+            avatarLoadGeneration &+= 1
+            isLoadingAvatar = false
         }
         .onChange(of: selectedAvatarItem) { _, item in
             avatarLoadGeneration &+= 1
@@ -140,19 +199,38 @@ struct CharacterCreateView: View {
 
     // MARK: - Header / Footer
 
+    @ViewBuilder
     private var header: some View {
-        HStack {
-            Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { dismiss() }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .disabled(isFormLocked)
-            Spacer()
-            Text(existing == nil
-                 ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")
-                 : KizunaCopy.text(japanese: "キャラを編集", english: "Edit character"))
-                .font(.system(size: 15, weight: .semibold))
-            Spacer()
-            Color.clear.frame(width: 80, height: 1)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { requestDismiss() }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .disabled(isFormLocked)
+                        Spacer()
+                    }
+                    Text(existing == nil
+                         ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")
+                         : KizunaCopy.text(japanese: "キャラを編集", english: "Edit character"))
+                        .font(.system(size: 15, weight: .semibold))
+                }
+            } else {
+                HStack {
+                    Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { requestDismiss() }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .disabled(isFormLocked)
+                    Spacer()
+                    Text(existing == nil
+                         ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")
+                         : KizunaCopy.text(japanese: "キャラを編集", english: "Edit character"))
+                        .font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                    Color.clear.frame(width: 80, height: 1)
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -183,12 +261,35 @@ struct CharacterCreateView: View {
     }
 
     private var canSave: Bool {
-        !vm.draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !isLoadingAvatar
+            && !vm.draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var isFormLocked: Bool {
         if case .validating = vm.state { return true }
         return false
+    }
+
+    private var isDirty: Bool {
+        guard let initialDraft else { return false }
+        return vm.draft != initialDraft
+    }
+
+    private func requestDismiss() {
+        guard !isFormLocked else { return }
+        if isDirty {
+            isShowingDiscardConfirmation = true
+        } else {
+            dismiss()
+        }
+    }
+
+    private func selectTemplate(_ template: CharacterTemplate) {
+        if isDirty {
+            pendingTemplate = template
+        } else {
+            vm.applyTemplate(template)
+        }
     }
 
     // MARK: - Sections
@@ -221,7 +322,7 @@ struct CharacterCreateView: View {
                 HStack(spacing: 10) {
                     ForEach(vm.availableTemplates) { t in
                         Button {
-                            vm.applyTemplate(t)
+                            selectTemplate(t)
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Image(systemName: t.category.group.iconName)
@@ -287,6 +388,22 @@ struct CharacterCreateView: View {
                             )
                         }
                         .buttonStyle(.bordered)
+
+                        if isLoadingAvatar {
+                            Label(
+                                KizunaCopy.text(japanese: "画像を読み込み中…", english: "Loading image…"),
+                                systemImage: "arrow.triangle.2.circlepath"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+
+                        if let avatarLoadError {
+                            Text(avatarLoadError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
 
                         if hasAvatar {
                             Button(role: .destructive) {
@@ -436,30 +553,44 @@ struct CharacterCreateView: View {
     private func removeAvatar() {
         avatarLoadGeneration &+= 1
         selectedAvatarItem = nil
+        isLoadingAvatar = false
+        avatarLoadError = nil
         vm.draft.avatarImageData = nil
     }
 
     @MainActor
     private func loadAvatar(from item: PhotosPickerItem?, generation: Int) async {
-        guard let item,
-              let data = try? await item.loadTransferable(type: Data.self),
-              let normalized = normalizedImageData(from: data),
-              generation == avatarLoadGeneration else { return }
-        vm.draft.avatarImageData = normalized
-    }
+        guard let item else {
+            isLoadingAvatar = false
+            avatarLoadError = nil
+            return
+        }
 
-    private func normalizedImageData(from data: Data) -> Data? {
-        #if canImport(AppKit)
-        guard let image = NSImage(data: data),
-              let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff) else { return data }
-        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.82]) ?? data
-        #elseif canImport(UIKit)
-        guard let image = UIImage(data: data) else { return data }
-        return image.jpegData(compressionQuality: 0.82) ?? data
-        #else
-        return data
-        #endif
+        isLoadingAvatar = true
+        avatarLoadError = nil
+
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                throw CharacterAvatarLoadError.missingData
+            }
+            let normalized = await Task.detached(priority: .userInitiated) {
+                KizunaAvatarImage.normalizedData(from: data)
+            }.value
+            guard generation == avatarLoadGeneration else { return }
+            guard let normalized else {
+                throw CharacterAvatarLoadError.unsupportedImage
+            }
+            vm.draft.avatarImageData = normalized
+            isLoadingAvatar = false
+        } catch {
+            guard generation == avatarLoadGeneration else { return }
+            isLoadingAvatar = false
+            avatarLoadError = KizunaCopy.text(
+                japanese: "画像を読み込めませんでした。別の画像を選ぶか、画像を削除してください。",
+                english: "We couldn't load that image. Choose another image or remove it."
+            )
+            AppLog.error("[CharacterCreateView] avatar load failed: %@", error.localizedDescription)
+        }
     }
 
     private func platformImage(from data: Data) -> CharacterCreatePlatformImage? {
@@ -590,14 +721,25 @@ struct CharacterCreateView: View {
 
     // MARK: - Reusable
 
+    @ViewBuilder
     private func labeledField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 110, alignment: .leading)
-            content()
-                .frame(maxWidth: .infinity, alignment: .leading)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                content()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            HStack(alignment: .center, spacing: 12) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 110, alignment: .leading)
+                content()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -626,6 +768,11 @@ struct CharacterCreateView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityLabel(
+                        KizunaCopy.text(japanese: "(t)を削除", english: "Remove (t)")
+                    )
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -649,4 +796,12 @@ struct CharacterCreateView: View {
             set: { if !$0 { vm.resetState() } }
         )
     }
+
+    private var pendingTemplateAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingTemplate != nil },
+            set: { if !$0 { pendingTemplate = nil } }
+        )
+    }
 }
+

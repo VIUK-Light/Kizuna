@@ -328,6 +328,7 @@ private struct BundledServerSession {
     let runnerPath: String
     let apiKey: String
     let nativeThinkingEnabled: Bool
+    let runtimePreset: LocalAssistantModelProfile.RuntimePreset
     /// 起動時に指定した `--spec-type` の値 (nil なら投機デコード無効)。
     /// セッション再利用時の判定に使う: ユーザーが設定変更したら値が変わるため再起動が必要。
     let activeSpecType: String?
@@ -965,7 +966,8 @@ final class LocalAssistantRuntimeBridge {
     private func ensureBundledServer(
         modelPath: String,
         timeoutSeconds: Int = 60,
-        reasoningMode: ReasoningMode = .thinking
+        reasoningMode: ReasoningMode = .thinking,
+        runtimeOverrides: AILocalRuntimeOverrides? = nil
     ) -> BundledServerSession? {
         lastBundledServerLaunchErrorMessage = nil
         let nativeThinkingEnabled = shouldEnableNativeThinking(forModelPath: modelPath, reasoningMode: reasoningMode)
@@ -980,10 +982,16 @@ final class LocalAssistantRuntimeBridge {
             modelPath: modelPath,
             capabilities: capabilities
         )
+        let runtimePreset = bundledServerRuntimePreset(
+            forModelPath: modelPath,
+            reasoningMode: reasoningMode,
+            runtimeOverrides: runtimeOverrides
+        )
 
         if let session = bundledServerSession,
            session.modelPath == modelPath,
            session.nativeThinkingEnabled == nativeThinkingEnabled,
+           session.runtimePreset == runtimePreset,
            session.activeSpecType == resolvedSpecType,
            session.process.isRunning,
            (bundledServerLastUsedAt == nil || Date().timeIntervalSince(bundledServerLastUsedAt ?? .distantPast) <= bundledServerIdleReuseWindow),
@@ -994,7 +1002,6 @@ final class LocalAssistantRuntimeBridge {
 
         terminateBundledServer()
 
-        let runtimePreset = bundledServerRuntimePreset(forModelPath: modelPath, reasoningMode: reasoningMode)
         // localhost 上でも他プロセスから推論APIへ接続できるため、
         // 起動ごとに推測できない一時キーを発行して認証する。
         let apiKey = UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -1115,6 +1122,7 @@ final class LocalAssistantRuntimeBridge {
                 runnerPath: runnerURL.path,
                 apiKey: apiKey,
                 nativeThinkingEnabled: nativeThinkingEnabled,
+                runtimePreset: runtimePreset,
                 activeSpecType: resolvedSpecType
             )
             bundledServerSession = session
@@ -1809,9 +1817,14 @@ final class BundledServerLogAggregator {
         /// LiteRT-LMへrole付きで渡す短い会話履歴。SDK非対応のruntimeでは使わない。
         initialMessages: [LocalAssistantLiteRTLMHistoryMessage] = [],
         overrideModelURL: URL? = nil,
+        temperatureOverride: Float? = nil,
+        topPOverride: Float? = nil,
+        topKOverride: Int? = nil,
+        maxOutputTokensOverride: Int? = nil,
         /// Internal acceptance runs may pin the sampler seed. Ordinary Story
         /// turns keep the production per-turn seed behavior when this is nil.
         seedOverride: UInt32? = nil,
+        runtimeOverrides: AILocalRuntimeOverrides? = nil,
         generationID: UUID? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
     ) async -> LocalAssistantGenerationResult {
@@ -1855,6 +1868,10 @@ final class BundledServerLogAggregator {
             for: reasoningMode,
             researchMode: researchMode,
             advancedSettings: advancedSettings,
+            temperatureOverride: temperatureOverride,
+            topPOverride: topPOverride,
+            topKOverride: topKOverride,
+            maxOutputTokensOverride: maxOutputTokensOverride,
             seedOverride: seedOverride
         )
         let startedAt = Date()
@@ -1912,6 +1929,7 @@ final class BundledServerLogAggregator {
                     modelPath: installedModelURL.path,
                     reasoningMode: reasoningMode,
                     parameters: parameters,
+                    runtimeOverrides: runtimeOverrides,
                     stage: .generation,
                     startedAt: startedAt,
                     onUpdate: onUpdate
@@ -2622,11 +2640,12 @@ final class BundledServerLogAggregator {
 
     private func bundledServerRuntimePreset(
         forModelPath modelPath: String,
-        reasoningMode: ReasoningMode = .thinking
+        reasoningMode: ReasoningMode = .thinking,
+        runtimeOverrides: AILocalRuntimeOverrides? = nil
     ) -> LocalAssistantModelProfile.RuntimePreset {
         let base = runtimePreset(for: reasoningMode)
         guard shouldPreferBundledServer(forModelPath: modelPath) else {
-            return base
+            return base.applying(runtimeOverrides)
         }
 
         let severeDiskPressure = hasSevereDiskPressure(forModelPath: modelPath)
@@ -2642,7 +2661,7 @@ final class BundledServerLogAggregator {
         } else {
             targetContextSize = base.contextSize
         }
-        return LocalAssistantModelProfile.RuntimePreset(
+        let requested = LocalAssistantModelProfile.RuntimePreset(
             contextSize: targetContextSize,
             batchSize: severeDiskPressure ? 64 : base.batchSize,
             microBatchSize: severeDiskPressure ? 16 : base.microBatchSize,
@@ -2651,6 +2670,18 @@ final class BundledServerLogAggregator {
             gpuLayers: base.gpuLayers,
             flashAttentionEnabled: base.flashAttentionEnabled,
             disableKVOffload: false
+        ).applying(runtimeOverrides)
+        guard severeDiskPressure else { return requested }
+        let safeBatchSize = min(requested.batchSize, 64)
+        return LocalAssistantModelProfile.RuntimePreset(
+            contextSize: min(requested.contextSize, 2_048),
+            batchSize: safeBatchSize,
+            microBatchSize: min(requested.microBatchSize, min(safeBatchSize, 16)),
+            threadCount: requested.threadCount,
+            batchThreadCount: requested.batchThreadCount,
+            gpuLayers: requested.gpuLayers,
+            flashAttentionEnabled: requested.flashAttentionEnabled,
+            disableKVOffload: requested.disableKVOffload
         )
     }
 
@@ -2879,6 +2910,7 @@ final class BundledServerLogAggregator {
         modelPath: String,
         reasoningMode: ReasoningMode,
         parameters: (maxTokens: Int, temperature: Float, topP: Float, topK: Int, seed: UInt32),
+        runtimeOverrides: AILocalRuntimeOverrides? = nil,
         stage: LocalAssistantRuntimeDiagnostic.Stage,
         startedAt: Date,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil
@@ -3005,7 +3037,8 @@ final class BundledServerLogAggregator {
                     modelPath: modelPath,
                     reasoningMode: reasoningMode,
                     requestedMaxTokens: parameters.maxTokens,
-                    structured: false
+                    structured: false,
+                    runtimeOverrides: runtimeOverrides
                 )
                 emitStatus(
                     .warmingRuntime,
@@ -3019,7 +3052,12 @@ final class BundledServerLogAggregator {
                     startedAt: startedAt,
                     onUpdate: onUpdate
                 )
-                guard let session = ensureBundledServer(modelPath: modelPath, timeoutSeconds: 60, reasoningMode: reasoningMode) else {
+                guard let session = ensureBundledServer(
+                    modelPath: modelPath,
+                    timeoutSeconds: 60,
+                    reasoningMode: reasoningMode,
+                    runtimeOverrides: runtimeOverrides
+                ) else {
                     lastFailure = VIUKEmbeddedRuntimeResult(success: false, text: nil, errorMessage: bundledServerFailureMessage("ローカル server の起動に失敗しました。"))
                     recordRuntimeDebugSnapshot(
                         stage: stage,
@@ -3228,7 +3266,12 @@ final class BundledServerLogAggregator {
                 // 失敗したら server を再起動して 1 回だけリトライ（再試行は非ストリーミング）
                 if response == nil {
                     terminateBundledServer()
-                    if let retrySession = ensureBundledServer(modelPath: modelPath, timeoutSeconds: 45, reasoningMode: reasoningMode) {
+                    if let retrySession = ensureBundledServer(
+                        modelPath: modelPath,
+                        timeoutSeconds: 45,
+                        reasoningMode: reasoningMode,
+                        runtimeOverrides: runtimeOverrides
+                    ) {
                         response = requestBundledServerChat(
                             session: retrySession,
                             messages: serverMessages,
@@ -3312,6 +3355,7 @@ final class BundledServerLogAggregator {
                     topP: parameters.topP,
                     topK: parameters.topK,
                     seed: parameters.seed,
+                    runtimeOverrides: runtimeOverrides,
                     timeoutSeconds: cliGenerationTimeoutSeconds(for: reasoningMode, structured: false),
                     stage: stage,
                     startedAt: startedAt,
@@ -4556,6 +4600,7 @@ final class BundledServerLogAggregator {
         topP: Float,
         topK: Int,
         seed: UInt32,
+        runtimeOverrides: AILocalRuntimeOverrides? = nil,
         timeoutSeconds: Int,
         stage: LocalAssistantRuntimeDiagnostic.Stage,
         startedAt: Date,
@@ -4576,7 +4621,7 @@ final class BundledServerLogAggregator {
             return VIUKEmbeddedRuntimeResult(success: false, text: nil, errorMessage: diagnostic.detailedMessage)
         }
 
-        let runtimePreset = runtimePreset(for: reasoningMode)
+        let runtimePreset = runtimePreset(for: reasoningMode).applying(runtimeOverrides)
         let forceConservativeCPURuntime = shouldForceConservativeCPURuntime(forModelPath: modelPath)
         let disableNativeThinking = !shouldEnableNativeThinking(forModelPath: modelPath, reasoningMode: reasoningMode)
         let tuning = effectiveCLITuning(
@@ -4584,7 +4629,8 @@ final class BundledServerLogAggregator {
             modelPath: modelPath,
             reasoningMode: reasoningMode,
             requestedMaxTokens: maxTokens,
-            structured: false
+            structured: false,
+            runtimeOverrides: runtimeOverrides
         )
         let initialWarmState = warmState(for: .bundledCLI, modelPath: modelPath)
         let flashAttentionEnabled = forceConservativeCPURuntime ? false : runtimePreset.flashAttentionEnabled
@@ -6211,7 +6257,8 @@ final class BundledServerLogAggregator {
         modelPath: String,
         reasoningMode: ReasoningMode,
         requestedMaxTokens: Int,
-        structured: Bool
+        structured: Bool,
+        runtimeOverrides: AILocalRuntimeOverrides? = nil
     ) -> (
         contextSize: Int,
         batchSize: Int,
@@ -6220,7 +6267,7 @@ final class BundledServerLogAggregator {
         timeoutSeconds: Int,
         loadingPreview: String?
     ) {
-        let runtimePreset = runtimePreset(for: reasoningMode)
+        let runtimePreset = runtimePreset(for: reasoningMode).applying(runtimeOverrides)
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let shortPrompt = trimmedPrompt.count <= 120
         let mediumPrompt = trimmedPrompt.count > 120 && trimmedPrompt.count <= 1600
@@ -6245,9 +6292,16 @@ final class BundledServerLogAggregator {
             contextSize = 4_096
         }
 
+        if let requestedContextSize = runtimeOverrides?.contextSize {
+            contextSize = requestedContextSize
+        }
+
         let isFast = reasoningMode == .fast || reasoningMode == .persona
-        var batchSize = isFast ? 24 : 40
-        var microBatchSize = isFast ? 12 : 20
+        var batchSize = runtimeOverrides?.batchSize ?? (isFast ? 24 : 40)
+        var microBatchSize = min(
+            runtimeOverrides?.microBatchSize ?? (isFast ? 12 : 20),
+            batchSize
+        )
         let maxTokens = requestedMaxTokens
         var timeoutSeconds = cliGenerationTimeoutSeconds(for: reasoningMode, structured: structured)
 
@@ -7191,6 +7245,10 @@ final class BundledServerLogAggregator {
         for reasoningMode: ReasoningMode,
         researchMode: ResearchMode = .on,
         advancedSettings: GemmaAdvancedSettings = makeRuntimeDefaultGemmaAdvancedSettings(),
+        temperatureOverride: Float? = nil,
+        topPOverride: Float? = nil,
+        topKOverride: Int? = nil,
+        maxOutputTokensOverride: Int? = nil,
         seedOverride: UInt32? = nil
     ) -> (maxTokens: Int, temperature: Float, topP: Float, topK: Int, seed: UInt32) {
         let preset = LocalAssistantModelProfile.generationPreset(
@@ -7207,10 +7265,10 @@ final class BundledServerLogAggregator {
                 : Float(normalized.clampedTemperature)
         }
         return (
-            maxTokens: preset.maxTokens,
-            temperature: effectiveTemperature,
-            topP: preset.topP,
-            topK: preset.topK,
+            maxTokens: maxOutputTokensOverride ?? preset.maxTokens,
+            temperature: temperatureOverride ?? effectiveTemperature,
+            topP: topPOverride ?? preset.topP,
+            topK: topKOverride ?? preset.topK,
             seed: seedOverride ?? preset.seed
         )
     }

@@ -62,7 +62,8 @@ enum LocalAuxiliaryAI {
         guard let result = try? await AIModelRouter.shared.generate(
             request: request,
             role: role,
-            preferredConfigurationID: preferred?.id
+            preferredConfigurationID: preferred?.id,
+            allowsFallback: false
         ) else {
             return nil
         }

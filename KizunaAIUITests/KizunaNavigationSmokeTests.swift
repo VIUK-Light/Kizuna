@@ -20,7 +20,7 @@ final class KizunaNavigationSmokeTests: XCTestCase {
         XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
 
         let homeTab = tabBar.buttons["ホーム"]
-        let continuationsTab = tabBar.buttons["続きから"]
+        let continuationsTab = tabBar.buttons["会話"]
         let myPageTab = tabBar.buttons["My"]
 
         XCTAssertTrue(homeTab.exists)

@@ -1,16 +1,25 @@
 import SwiftUI
 
-/// 名前とプロフィール画像だけを編集する画面。
+/// 名前、プロフィール画像、年齢に合わせた安全設定を編集する画面。
 @MainActor
 struct KizunaUserProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store: KizunaUserProfileStore
     @State private var draft: KizunaUserProfile
+    @State private var ageContext: UserAgeSafetyContext
     @State private var isLoadingPhoto = false
 
     init(store: KizunaUserProfileStore) {
         self.store = store
         _draft = State(initialValue: store.profile)
+        _ageContext = State(initialValue: UserAgeSafetyStore.shared.context)
+    }
+
+    private var ageTierBinding: Binding<UserAgeTier> {
+        Binding(
+            get: { ageContext.tier },
+            set: { ageContext = .selfDeclared($0) }
+        )
     }
 
     private var nameBinding: Binding<String> {
@@ -45,6 +54,28 @@ struct KizunaUserProfileView: View {
                             isLoadingPhoto: $isLoadingPhoto
                         )
                     }
+
+                    KizunaProfileCard(
+                        title: KizunaCopy.text(japanese: "安全設定", english: "Safety settings"),
+                        icon: "checkmark.shield",
+                        spacing: 12,
+                        showsBorder: false
+                    ) {
+                        Picker(
+                            KizunaCopy.text(japanese: "年齢層", english: "Age range"),
+                            selection: ageTierBinding
+                        ) {
+                            ForEach(UserAgeTier.allCases) { tier in
+                                Text(tier.localizedDisplayName).tag(tier)
+                            }
+                        }
+                        Text(KizunaCopy.text(
+                            japanese: "年齢に合う安全設定を選ぶため、粗い区分だけをこの端末に保存します。生年月日は保存せず、自己申告は本人確認済み年齢として扱いません。",
+                            english: "Only this coarse range is stored on this device to choose age-appropriate safety settings. No birth date is stored, and self-declaration is not treated as verified age."
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 20)
@@ -61,6 +92,7 @@ struct KizunaUserProfileView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
+                        _ = UserAgeSafetyStore.shared.update(ageContext)
                         store.update(draft)
                         dismiss()
                     }

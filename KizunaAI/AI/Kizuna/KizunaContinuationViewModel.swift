@@ -102,9 +102,8 @@ final class KizunaContinuationViewModel: ObservableObject {
             displayProfile.avatarStyleID = character.imageKey
             displayProfile.avatarImageData = character.avatarImageData
         }
-        let preview = thread.messages.last {
-            !($0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text))
-        }?.text.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        let preview = thread.latestDisplayableMessage?.text
+            .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
             ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation")
         return KizunaContinuationItem(
             route: .persona(threadID: thread.id),

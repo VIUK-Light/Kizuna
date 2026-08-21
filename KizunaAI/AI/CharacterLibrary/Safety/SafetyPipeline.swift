@@ -13,27 +13,33 @@ final class SafetyPipeline {
     private let inputChecker: InputSafetyChecking
     private let outputChecker: OutputSafetyChecking
     private let concernClassifier: SafetyConcernClassifying
+    private let policyProvider: () -> EffectiveSafetyPolicy
 
     init(
         characterChecker: CharacterSafetyChecking = MockCharacterSafetyChecker(),
         inputChecker: InputSafetyChecking = MockInputSafetyChecker(),
         outputChecker: OutputSafetyChecking = MockOutputSafetyChecker(),
-        concernClassifier: SafetyConcernClassifying = ContextualSafetyConcernClassifier()
+        concernClassifier: SafetyConcernClassifying = ContextualSafetyConcernClassifier(),
+        policyProvider: @escaping () -> EffectiveSafetyPolicy = { .current }
     ) {
         self.characterChecker = characterChecker
         self.inputChecker = inputChecker
         self.outputChecker = outputChecker
         self.concernClassifier = concernClassifier
+        self.policyProvider = policyProvider
     }
 
     func evaluateCharacter(_ c: CharacterProfile) async -> SafetyDecision {
-        await characterChecker.evaluate(c)
+        let decision = await characterChecker.evaluate(c)
+        return policyProvider().applying(to: decision, characterRating: c.safetyRating)
     }
     func evaluateInput(_ text: String, character: CharacterProfile) async -> SafetyDecision {
-        await inputChecker.evaluate(text, character: character)
+        let decision = await inputChecker.evaluate(text, character: character)
+        return policyProvider().applying(to: decision, characterRating: character.safetyRating)
     }
     func evaluateOutput(_ text: String, character: CharacterProfile) async -> SafetyDecision {
-        await outputChecker.evaluate(text, character: character)
+        let decision = await outputChecker.evaluate(text, character: character)
+        return policyProvider().applying(to: decision, characterRating: character.safetyRating)
     }
 
     /// 危険な相談の可能性だけを分類する。会話の入力・出力を変更しない。
