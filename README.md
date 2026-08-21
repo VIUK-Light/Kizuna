@@ -46,6 +46,8 @@ Kizunaは現在開発中です。機能提案、バグ報告、ドキュメン�
 
 現在の公式クライアントはiOSとmacOSです。Windows、Linux、Android、Web向けのクライアントや事前ビルド済みの一般配布版は、現時点では提供していません。
 
+Windowsなど非Apple環境への最初の入口はWeb版を優先し、既存Apple版は維持します。クライアント非依存API、Web MVP、remote provider、公開前のSecurity/Privacy条件は[Webクライアント設計方針](docs/architecture/web-client-plan.md)に整理しています。これは実装・公開済みという案内ではありません。
+
 一般ユーザー向けのダウンロード版がない間は、対応するmacOS環境でソースからビルドして試せます。開発環境の準備が目的でない場合は、[公開Roadmap](ROADMAP.md)で今後の配布・Web対応方針を確認してください。
 
 | 項目 | 内容 |

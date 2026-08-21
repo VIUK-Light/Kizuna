@@ -15,12 +15,12 @@ open an Issue before starting a large change.
 
 - Import/export and recovery workflows that are easier to inspect
 - More focused tests for persistence races, safety boundaries, and UI flows
-- A design proposal for Web access and a client-independent domain/API boundary
+- Contract fixtures and a first client-independent Character/Persona vertical slice for the accepted [Web-first design](docs/architecture/web-client-plan.md)
 - A simple/advanced model settings split after provider capability design
 
 ## Later / exploring
 
-- Windows/Web access beyond the current Apple clients
+- A self-hostable Web client/API preview as the first Windows/Linux/ChromeOS access path
 - Broader runtime and provider support
 - Account or synchronization features with explicit privacy boundaries
 - Age-tier safety policy after product, privacy, and legal review

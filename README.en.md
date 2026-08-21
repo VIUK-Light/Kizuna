@@ -39,6 +39,8 @@ Kizuna is under active development. Feature proposals, bug reports, documentatio
 
 The official clients currently target iOS and macOS. Kizuna does not currently provide Windows, Linux, Android, or Web clients, and no prebuilt end-user release is available yet.
 
+The first non-Apple access path will be Web-first while the existing Apple clients remain supported. The [Web client design direction](docs/architecture/web-client-plan.md) defines the client-independent API, Web MVP, remote-provider behavior, and security/privacy gates. It is a design decision, not an announcement that a Web client or hosted service is already available.
+
 Until a downloadable release is published, Kizuna can be tried by building from source on a supported macOS development environment. If you are not setting up a development environment, see the [public roadmap](ROADMAP.md) for the direction of future distribution and Web support.
 
 | Item | Current requirement |
