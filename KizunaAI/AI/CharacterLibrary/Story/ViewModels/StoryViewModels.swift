@@ -42,6 +42,26 @@ enum StoryLibraryLoadIssue: String, Equatable, Sendable {
     var messageKey: String { "ストーリーの保存データを読み込めません" }
 }
 
+struct StoryWorldAgeAvailability: Equatable, Sendable {
+    let unavailableCharacterIDs: [UUID]
+
+    var isAvailable: Bool { unavailableCharacterIDs.isEmpty }
+
+    static func resolve(
+        world: StoryWorld,
+        charactersById: [UUID: CharacterProfile],
+        policy: EffectiveSafetyPolicy
+    ) -> StoryWorldAgeAvailability {
+        var seen = Set<UUID>()
+        let unavailable = world.characterIds.filter { id in
+            guard seen.insert(id).inserted,
+                  let character = charactersById[id] else { return false }
+            return !policy.allows(character.safetyRating)
+        }
+        return StoryWorldAgeAvailability(unavailableCharacterIDs: unavailable)
+    }
+}
+
 /// 世界と関連レコードを複数のJSONストアから削除する処理は、アプリ終了や
 /// 1つのストアの一時的なI/O失敗で途中停止しうる。削除対象のIDだけを
 /// UserDefaultsへ記録し、次のライブラリー起動時に同じ冪等処理を再試行する。
@@ -137,6 +157,8 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     @Published private(set) var migrationError: String?
     @Published var searchText: String = ""
     @Published var groupFilter: CategoryGroup? = nil
+    private let ageSafetyPolicyProvider: () -> EffectiveSafetyPolicy
+    private var ageSafetyContextSubscription: AnyCancellable?
 
     private let worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository()
     private let characterRepo: CharacterRepository = LocalJSONCharacterRepository()
@@ -145,6 +167,19 @@ final class StoryWorldLibraryViewModel: ObservableObject {
     private let sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository()
     private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
     private let storyMemoryRepo: StoryMemoryRepository = LocalJSONStoryMemoryRepository()
+
+    init(
+        ageSafetyPolicyProvider: @escaping () -> EffectiveSafetyPolicy = { .current }
+    ) {
+        self.ageSafetyPolicyProvider = ageSafetyPolicyProvider
+        self.ageSafetyContextSubscription = NotificationCenter.default.publisher(
+            for: .userAgeSafetyContextDidChange
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
 
     func bootstrap() async {
         guard !isBootstrapping else { return }
@@ -493,8 +528,37 @@ final class StoryWorldLibraryViewModel: ObservableObject {
         await reload()
     }
 
+    var ageAvailableWorlds: [StoryWorld] {
+        let policy = ageSafetyPolicyProvider()
+        return worlds.filter {
+            StoryWorldAgeAvailability.resolve(
+                world: $0,
+                charactersById: charactersById,
+                policy: policy
+            ).isAvailable
+        }
+    }
+
+    var hiddenWorldCount: Int {
+        max(0, worlds.count - ageAvailableWorlds.count)
+    }
+
+    nonisolated static func ageAvailableWorlds(
+        from worlds: [StoryWorld],
+        charactersById: [UUID: CharacterProfile],
+        policy: EffectiveSafetyPolicy
+    ) -> [StoryWorld] {
+        worlds.filter {
+            StoryWorldAgeAvailability.resolve(
+                world: $0,
+                charactersById: charactersById,
+                policy: policy
+            ).isAvailable
+        }
+    }
+
     var filtered: [StoryWorld] {
-        var result = worlds
+        var result = ageAvailableWorlds
         if let g = groupFilter { result = result.filter { $0.genre.group == g } }
         let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !needle.isEmpty {

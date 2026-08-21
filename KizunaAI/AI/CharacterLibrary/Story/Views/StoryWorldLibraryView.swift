@@ -180,10 +180,18 @@ struct StoryWorldLibraryView: View {
             Text(vm.isBootstrapping && vm.worlds.isEmpty
                  ? KizunaCopy.text(japanese: "初期ストーリーを準備中…", english: "Preparing stories…")
                  : KizunaCopy.language == .english
-                    ? "Choose a world · \(vm.worlds.count)"
-                    : "世界観から選ぶ ・ \(vm.worlds.count) 件")
+                    ? "Choose a world · \(vm.ageAvailableWorlds.count)"
+                    : "世界観から選ぶ ・ \(vm.ageAvailableWorlds.count) 件")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if vm.hiddenWorldCount > 0 {
+                Text(KizunaCopy.text(
+                    japanese: "一部のストーリーは現在の安全設定で非表示です。",
+                    english: "Some stories are hidden by the current safety settings."
+                ))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 

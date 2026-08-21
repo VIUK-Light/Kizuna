@@ -7281,6 +7281,46 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(characters.count, 2)
     }
 
+    func testStoryWorldAgeAvailabilityUsesAllWorldCharacters() {
+        let general = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+        let sensitive = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+        let world = StoryWorld(
+            title: "Mixed cast",
+            characterIds: [general.id, sensitive.id],
+            mainCharacterId: general.id
+        )
+        let teenPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+
+        let availability = StoryWorldAgeAvailability.resolve(
+            world: world,
+            charactersById: [general.id: general, sensitive.id: sensitive],
+            policy: teenPolicy
+        )
+
+        XCTAssertFalse(availability.isAvailable)
+        XCTAssertEqual(availability.unavailableCharacterIDs, [sensitive.id])
+        XCTAssertEqual(
+            StoryWorldLibraryViewModel.ageAvailableWorlds(
+                from: [world],
+                charactersById: [general.id: general, sensitive.id: sensitive],
+                policy: teenPolicy
+            ),
+            []
+        )
+    }
+
     func testSafetyPipelineAppliesOneAgePolicyToInputAndOutput() async {
         let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
         let pipeline = SafetyPipeline(policyProvider: { policy })
