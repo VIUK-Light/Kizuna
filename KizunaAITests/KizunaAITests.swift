@@ -6806,14 +6806,19 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(store.setMode(.advanced))
 
         let selectedConfigurationID = UUID()
-        XCTAssertTrue(store.setPreferredConfigurationID(selectedConfigurationID, for: .story))
+        XCTAssertTrue(
+            store.setPreferredConfigurationID(
+                selectedConfigurationID,
+                for: AIModelTuningScope.story
+            )
+        )
 
         let reloaded = AIModelTuningStore(defaults: defaults)
         XCTAssertEqual(reloaded.preferences.mode, .advanced)
         XCTAssertEqual(reloaded.preferences.simplePreset, .stable)
         XCTAssertEqual(reloaded.preferences.simpleModelRoute, .onDevice)
         XCTAssertEqual(
-            reloaded.preferredConfigurationID(for: .story),
+            reloaded.preferredConfigurationID(for: AIModelTuningScope.story),
             selectedConfigurationID
         )
     }
@@ -7093,10 +7098,15 @@ final class KizunaAITests: XCTestCase {
 
         let tuningStore = AIModelTuningStore(defaults: defaults)
         XCTAssertTrue(tuningStore.setMode(.advanced))
-        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: .persona))
+        XCTAssertTrue(
+            tuningStore.setPreferredConfigurationID(
+                configuration.id,
+                for: AIModelRole.persona
+            )
+        )
         XCTAssertEqual(
             tuningStore.configurationIDForCurrentMode(
-                for: .persona,
+                for: AIModelRole.persona,
                 configurations: registry.configurations(for: .persona),
                 fallbackProviderID: .localRuntime
             ),
@@ -7362,7 +7372,12 @@ final class KizunaAITests: XCTestCase {
             LocalAssistantRuntimeBridge.preservesConfiguredProviderBoundary(store.preferences)
         )
         XCTAssertTrue(store.setMode(.advanced))
-        XCTAssertTrue(store.setPreferredConfigurationID(UUID(), for: .persona))
+        XCTAssertTrue(
+            store.setPreferredConfigurationID(
+                UUID(),
+                for: AIModelRole.persona
+            )
+        )
         XCTAssertTrue(
             LocalAssistantRuntimeBridge.preservesConfiguredProviderBoundary(store.preferences)
         )
