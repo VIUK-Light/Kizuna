@@ -98,17 +98,45 @@ final class RuntimeSmallModelClassifier: SmallModelClassifying {
             "Text: " + text
         ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 48, role: .classifier) else {
-            return await fallback?.classify(text: text, labels: labels)
-                ?? SmallModelClassification(label: "", confidence: 0)
+            if let fallbackResult = await fallback?.classify(text: text, labels: labels) {
+                return SmallModelClassification(
+                    label: fallbackResult.label,
+                    confidence: fallbackResult.confidence,
+                    status: .fallback,
+                    failureReason: "The local auxiliary model was unavailable."
+                )
+            }
+            return SmallModelClassification(
+                label: "",
+                confidence: 0,
+                status: .unavailable,
+                failureReason: "The local auxiliary model was unavailable."
+            )
         }
         let parts = LocalAuxiliaryAI.normalized(raw).split(separator: "|", maxSplits: 1).map(String.init)
         guard parts.count == 2,
               let label = labels.first(where: { $0.caseInsensitiveCompare(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame }),
               let confidence = Double(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
               confidence.isFinite else {
-            return await fallback?.classify(text: text, labels: labels)
-                ?? SmallModelClassification(label: "", confidence: 0)
+            if let fallbackResult = await fallback?.classify(text: text, labels: labels) {
+                return SmallModelClassification(
+                    label: fallbackResult.label,
+                    confidence: fallbackResult.confidence,
+                    status: .fallback,
+                    failureReason: "The local auxiliary model returned an invalid contract."
+                )
+            }
+            return SmallModelClassification(
+                label: "",
+                confidence: 0,
+                status: .invalidResponse,
+                failureReason: "The local auxiliary model returned an invalid contract."
+            )
         }
-        return SmallModelClassification(label: label, confidence: min(max(confidence, 0), 1))
+        return SmallModelClassification(
+            label: label,
+            confidence: min(max(confidence, 0), 1),
+            status: .success
+        )
     }
 }

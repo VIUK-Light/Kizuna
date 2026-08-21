@@ -7476,6 +7476,19 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(marker.containsPending(pendingID))
     }
 
+    func testSmallModelClassificationCarriesFailureStatus() {
+        let result = SmallModelClassification(
+            label: "",
+            confidence: 0,
+            status: .unavailable,
+            failureReason: "local runtime unavailable"
+        )
+
+        XCTAssertEqual(result.status, .unavailable)
+        XCTAssertEqual(result.failureReason, "local runtime unavailable")
+        XCTAssertEqual(result.confidence, 0)
+    }
+
     func testStoryWorldAgeAvailabilityUsesAllWorldCharacters() {
         let general = CharacterProfile(
             name: "General",

@@ -319,6 +319,17 @@ enum LocalAssistantStructuredTurnUpdate: Equatable {
 struct LocalAssistantGenerationResult: Sendable {
     let text: String?
     let modelIdentity: String?
+    let errorMessage: String?
+
+    init(
+        text: String?,
+        modelIdentity: String?,
+        errorMessage: String? = nil
+    ) {
+        self.text = text
+        self.modelIdentity = modelIdentity
+        self.errorMessage = errorMessage
+    }
 }
 
 private struct BundledServerSession {

@@ -526,6 +526,26 @@ enum CharacterLibrarySeed {
                 return "ストーリーの保存データを読み込めません"
             }
         }
+
+        var localizedMessage: String {
+            switch self {
+            case .bundledStoryPackMissing:
+                return KizunaCopy.text(
+                    japanese: "初期ストーリーのデータが見つかりません。",
+                    english: "Starter story data could not be found."
+                )
+            case .bundledStoryPackInvalid:
+                return KizunaCopy.text(
+                    japanese: "初期ストーリーのデータを読み込めません。",
+                    english: "Starter story data could not be loaded."
+                )
+            case .storageFailure:
+                return KizunaCopy.text(
+                    japanese: "ストーリーの保存データを読み込めません。",
+                    english: "Saved story data could not be loaded."
+                )
+            }
+        }
     }
 
     private enum SeedError: Error {

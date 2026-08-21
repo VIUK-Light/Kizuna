@@ -87,6 +87,83 @@ enum PersonaGenerationModel: String, Codable, CaseIterable, Identifiable, Hashab
     }
 }
 
+private func personaGenerationErrorMessage(for error: Error) -> String {
+    if error is CancellationError {
+        return KizunaCopy.text(japanese: "生成をキャンセルしました。", english: "Generation was canceled.")
+    }
+    if let providerError = error as? AIProviderError {
+        switch providerError {
+        case .missingCredential:
+            return KizunaCopy.text(
+                japanese: "選択したAI Providerの認証情報がありません。設定を確認してください。",
+                english: "The selected AI provider has no credential. Check Settings."
+            )
+        case .invalidEndpoint:
+            return KizunaCopy.text(
+                japanese: "AI ProviderのEndpointが不正です。設定を確認してください。",
+                english: "The AI provider endpoint is invalid. Check Settings."
+            )
+        case let .localArtifactUnavailable(artifactID):
+            return KizunaCopy.text(
+                japanese: "選択したローカルモデル(\(artifactID))が見つかりません。別のモデルを選択してください。",
+                english: "The selected local model artifact (\(artifactID)) is missing. Choose another model."
+            )
+        case let .httpStatus(status, _):
+            if status == 401 || status == 403 {
+                return KizunaCopy.text(
+                    japanese: "AI Providerの認証に失敗しました。APIキーと権限を確認してください。",
+                    english: "AI provider authentication failed. Check the API key and permissions."
+                )
+            }
+            if status == 429 {
+                return KizunaCopy.text(
+                    japanese: "AI Providerの利用上限に達しました。時間を置いて再試行してください。",
+                    english: "The AI provider rate limit was reached. Try again later."
+                )
+            }
+            return KizunaCopy.text(
+                japanese: "AI Providerで一時的なエラーが発生しました。接続状態を確認して再試行してください。",
+                english: "The AI provider returned a temporary error. Check the connection and try again."
+            )
+        case .configurationDisabled:
+            return KizunaCopy.text(japanese: "選択したAIモデル設定は無効です。", english: "The selected AI model configuration is disabled.")
+        case .invalidResponse, .emptyResponse:
+            return KizunaCopy.text(japanese: "AI Providerから有効な応答を受け取れませんでした。", english: "The AI provider returned no usable response.")
+        case let .generationTruncated(reason):
+            return KizunaCopy.text(
+                japanese: "AI Providerの出力が途中で終了しました(\(reason))。もう一度試してください。",
+                english: "The AI provider stopped before completing the response (\(reason)). Try again."
+            )
+        case .noProviderForRole:
+            return KizunaCopy.text(japanese: "Persona用のAIモデルが設定されていません。", english: "No AI model is configured for Persona.")
+        }
+    }
+    if let gemmaError = error as? StoryGemma31BAPIError {
+        switch gemmaError {
+        case .missingAPIKey:
+            return KizunaCopy.text(japanese: "NAGIのAPIキーが設定されていません。", english: "The NAGI API key is not configured.")
+        case let .httpStatus(status, _):
+            if status == 401 || status == 403 {
+                return KizunaCopy.text(japanese: "NAGIの認証に失敗しました。APIキーを確認してください。", english: "NAGI authentication failed. Check the API key.")
+            }
+            if status == 429 {
+                return KizunaCopy.text(japanese: "NAGIの利用上限に達しました。時間を置いて再試行してください。", english: "NAGI rate limit reached. Try again later.")
+            }
+            return KizunaCopy.text(japanese: "NAGIへの接続に失敗しました。", english: "NAGI connection failed.")
+        case .emptyResponse, .emptyText:
+            return KizunaCopy.text(japanese: "NAGIから有効な本文を受け取れませんでした。", english: "NAGI returned no usable text.")
+        case .invalidURL:
+            return KizunaCopy.text(japanese: "NAGIのEndpointが不正です。", english: "The NAGI endpoint is invalid.")
+        case let .truncated(reason):
+            return KizunaCopy.text(japanese: "NAGIの出力が途中で終了しました(\(reason))。", english: "NAGI output was truncated (\(reason)).")
+        }
+    }
+    return KizunaCopy.text(
+        japanese: "AI生成に失敗しました。設定と接続状態を確認して再試行してください。",
+        english: "AI generation failed. Check Settings and the connection, then try again."
+    )
+}
+
 /// The small runtime surface Persona needs. Keeping this separate from the
 /// large runtime bridge makes completion, cancellation, and watchdog paths
 /// deterministic in tests without changing the production runtime.
@@ -210,6 +287,7 @@ extension PersonaReplyGenerating {
         let preservesConfiguredProviderBoundary = Self.preservesConfiguredProviderBoundary(
             AIModelTuningStore.shared.preferences
         )
+        var lastGenerationErrorMessage: String?
         func generateThroughRegistry() async -> LocalAssistantGenerationResult? {
             // Preserve injected test/future runtimes. The shared production
             // bridge is the composition root that opts into the provider
@@ -238,18 +316,22 @@ extension PersonaReplyGenerating {
                 maxOutputTokens: 1_024,
                 onUpdate: onUpdate
             )
-            guard let response = try? await AIModelRouter.shared.generate(
-                request: request,
-                role: .persona,
-                preferredConfigurationID: preferred,
-                allowsFallback: AIModelTuningStore.shared.allowsFallbackForCurrentMode
-            ) else {
+            do {
+                let response = try await AIModelRouter.shared.generate(
+                    request: request,
+                    role: .persona,
+                    preferredConfigurationID: preferred,
+                    allowsFallback: AIModelTuningStore.shared.allowsFallbackForCurrentMode
+                )
+                return LocalAssistantGenerationResult(
+                    text: response.text,
+                    modelIdentity: response.identity.stableID
+                )
+            } catch {
+                lastGenerationErrorMessage = personaGenerationErrorMessage(for: error)
+                AppLog.error("[PersonaChatService] registry generation failed: %@", lastGenerationErrorMessage ?? "unknown")
                 return nil
             }
-            return LocalAssistantGenerationResult(
-                text: response.text,
-                modelIdentity: response.identity.stableID
-            )
         }
 
         if let routed = await generateThroughRegistry() {
@@ -259,32 +341,46 @@ extension PersonaReplyGenerating {
             // An Advanced UUID is an explicit provider boundary. A failed
             // registry request must not cross back into the legacy local/NAGI
             // family switch and silently change where the prompt is sent.
-            return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
+            return LocalAssistantGenerationResult(
+                text: nil,
+                modelIdentity: nil,
+                errorMessage: lastGenerationErrorMessage
+            )
         }
 
         func generateNAGI() async -> LocalAssistantGenerationResult? {
-            guard StoryGemma31BAPIService.shared.hasAPIKey else { return nil }
+            guard StoryGemma31BAPIService.shared.hasAPIKey else {
+                lastGenerationErrorMessage = KizunaCopy.text(
+                    japanese: "NAGIのAPIキーが設定されていません。",
+                    english: "The NAGI API key is not configured."
+                )
+                return nil
+            }
             let userPrompt: String
             if let contextPrompt, !contextPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 userPrompt = contextPrompt + "\n\n" + prompt
             } else {
                 userPrompt = prompt
             }
-            guard let generation = try? await StoryGemma31BAPIService.shared.generate(
-                systemPrompt: overrideSystemPrompt ?? "",
-                userPrompt: userPrompt,
-                temperature: 0.72,
-                maxOutputTokens: 1_024
-            ) else {
+            do {
+                let generation = try await StoryGemma31BAPIService.shared.generate(
+                    systemPrompt: overrideSystemPrompt ?? "",
+                    userPrompt: userPrompt,
+                    temperature: 0.72,
+                    maxOutputTokens: 1_024
+                )
+                if let onUpdate {
+                    await onUpdate(.visiblePreview(generation.text))
+                }
+                return LocalAssistantGenerationResult(
+                    text: generation.text,
+                    modelIdentity: generation.identity.stableID
+                )
+            } catch {
+                lastGenerationErrorMessage = personaGenerationErrorMessage(for: error)
+                AppLog.error("[PersonaChatService] NAGI generation failed: %@", lastGenerationErrorMessage ?? "unknown")
                 return nil
             }
-            if let onUpdate {
-                await onUpdate(.visiblePreview(generation.text))
-            }
-            return LocalAssistantGenerationResult(
-                text: generation.text,
-                modelIdentity: generation.identity.stableID
-            )
         }
 
         func generateLocal() async -> LocalAssistantGenerationResult {
@@ -308,7 +404,11 @@ extension PersonaReplyGenerating {
             return await generateLocal()
         case .nagi:
             return await generateNAGI()
-                ?? LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
+                ?? LocalAssistantGenerationResult(
+                    text: nil,
+                    modelIdentity: nil,
+                    errorMessage: lastGenerationErrorMessage
+                )
         }
     }
 
@@ -370,17 +470,23 @@ extension PersonaReplyGenerating {
             maxOutputTokens: 1_024,
             onUpdate: onUpdate
         )
-        guard let response = try? await AIModelRouter.shared.generate(
-            request: request,
-            configurationID: configurationID,
-            role: .persona
-        ) else {
-            return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
+        do {
+            let response = try await AIModelRouter.shared.generate(
+                request: request,
+                configurationID: configurationID,
+                role: .persona
+            )
+            return LocalAssistantGenerationResult(
+                text: response.text,
+                modelIdentity: response.identity.stableID
+            )
+        } catch {
+            return LocalAssistantGenerationResult(
+                text: nil,
+                modelIdentity: nil,
+                errorMessage: personaGenerationErrorMessage(for: error)
+            )
         }
-        return LocalAssistantGenerationResult(
-            text: response.text,
-            modelIdentity: response.identity.stableID
-        )
     }
 }
 
@@ -722,7 +828,7 @@ final class PersonaChatService: ObservableObject {
                 self.failGeneration(
                     threadID: threadID,
                     generationID: generationID,
-                    message: KizunaCopy.text(
+                    message: generation.errorMessage ?? KizunaCopy.text(
                         japanese: "応答本文を受け取れませんでした。入力欄からもう一度試してください。",
                         english: "No reply text was received. Try sending the message again."
                     )
@@ -894,6 +1000,13 @@ final class PersonaChatService: ObservableObject {
                 text: effectiveUserText,
                 labels: ["recall_needed", "casual_chat"]
             )
+            if c.status != .success {
+                AppLog.note(
+                    "[PersonaService] small model classification status=%@ reason=%@",
+                    c.status.rawValue,
+                    c.failureReason ?? "unknown"
+                )
+            }
             guard isGenerationActive(generationID) else { return }
             needsRecall = (c.label == "recall_needed" && c.confidence > 0.35) || candidates.count <= 3
         }
@@ -976,7 +1089,7 @@ final class PersonaChatService: ObservableObject {
                 self.failGeneration(
                     threadID: threadID,
                     generationID: generationID,
-                    message: KizunaCopy.text(
+                    message: generation.errorMessage ?? KizunaCopy.text(
                         japanese: "応答本文を受け取れませんでした。入力欄からもう一度試してください。",
                         english: "No reply text was received. Try sending the message again."
                     )

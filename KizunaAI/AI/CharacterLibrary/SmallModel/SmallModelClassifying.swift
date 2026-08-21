@@ -7,9 +7,30 @@
 
 import Foundation
 
-struct SmallModelClassification: Equatable, Hashable {
+enum SmallModelClassificationStatus: String, Equatable, Hashable, Sendable {
+    case success
+    case unavailable
+    case invalidResponse
+    case fallback
+}
+
+struct SmallModelClassification: Equatable, Hashable, Sendable {
     let label: String
     let confidence: Double   // 0.0...1.0
+    let status: SmallModelClassificationStatus
+    let failureReason: String?
+
+    init(
+        label: String,
+        confidence: Double,
+        status: SmallModelClassificationStatus = .success,
+        failureReason: String? = nil
+    ) {
+        self.label = label
+        self.confidence = confidence
+        self.status = status
+        self.failureReason = failureReason
+    }
 }
 
 protocol SmallModelClassifying: AnyObject {

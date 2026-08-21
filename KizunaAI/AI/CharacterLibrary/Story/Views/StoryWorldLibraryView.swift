@@ -268,7 +268,10 @@ struct StoryWorldLibraryView: View {
         adaptiveErrorBanner(
             icon: "exclamationmark.triangle.fill",
             title: KizunaCopy.text(japanese: "一部の初期ストーリーを読み込めませんでした", english: "Some starter stories could not be loaded"),
-            detail: LocalizedStringKey(vm.seedError?.messageKey ?? "ストーリーの初期データを確認して再試行してください。"),
+            detail: vm.seedError?.localizedMessage ?? KizunaCopy.text(
+                japanese: "ストーリーの初期データを確認して再試行してください。",
+                english: "Check the starter story data and try again."
+            ),
             retryLabel: KizunaCopy.text(japanese: "再試行", english: "Retry")
         ) {
                 Task { await vm.retryBootstrap() }
@@ -282,7 +285,10 @@ struct StoryWorldLibraryView: View {
                 japanese: "最新のストーリー一覧を読み込めませんでした。表示中の一覧は削除されていません。",
                 english: "The latest story list could not be loaded. The displayed list was not deleted."
             ),
-            detail: LocalizedStringKey(vm.loadError?.messageKey ?? "保存データを確認して再試行してください。"),
+            detail: vm.loadError?.localizedMessage ?? KizunaCopy.text(
+                japanese: "保存データを確認して再試行してください。",
+                english: "Check the saved data and try again."
+            ),
             retryLabel: KizunaCopy.text(japanese: "再試行", english: "Retry"),
             retryDisabled: vm.isBootstrapping
         ) {
@@ -297,7 +303,10 @@ struct StoryWorldLibraryView: View {
                 japanese: "保存データの整理を完了できませんでした。",
                 english: "Saved-data cleanup could not be completed."
             ),
-            detail: LocalizedStringKey("保存データを確認して再試行してください。"),
+            detail: KizunaCopy.text(
+                japanese: "保存データを確認して再試行してください。",
+                english: "Check the saved data and try again."
+            ),
             retryLabel: KizunaCopy.text(japanese: "再試行", english: "Retry"),
             retryDisabled: vm.isBootstrapping
         ) {
@@ -309,7 +318,7 @@ struct StoryWorldLibraryView: View {
     private func adaptiveErrorBanner(
         icon: String,
         title: String,
-        detail: LocalizedStringKey,
+        detail: String,
         retryLabel: String,
         retryDisabled: Bool = false,
         retry: @escaping () -> Void

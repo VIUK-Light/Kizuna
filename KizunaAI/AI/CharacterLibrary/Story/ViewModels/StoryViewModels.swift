@@ -40,6 +40,13 @@ enum StoryLibraryLoadIssue: String, Equatable, Sendable {
     case storageFailure
 
     var messageKey: String { "ストーリーの保存データを読み込めません" }
+
+    var localizedMessage: String {
+        KizunaCopy.text(
+            japanese: "ストーリーの保存データを読み込めません。",
+            english: "Saved story data could not be loaded."
+        )
+    }
 }
 
 struct StoryWorldAgeAvailability: Equatable, Sendable {
