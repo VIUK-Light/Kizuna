@@ -484,10 +484,10 @@ private final class BundledSSECollector: NSObject, URLSessionDataDelegate {
         // 診断: 最初の non-empty デルタが content / reasoning_content のどちらに乗ってきたかを必ず記録。
         // Gemma 4 の `<|channel>thought\n...<channel|>` が content 側にこぼれていないか調べるため。
         if !cc.isEmpty && accContent.count - cc.count < 200 {
-            AppLog.note("[BundledSSE] content delta(len=%d) prefix=%@", cc.count, String(cc.prefix(120)).replacingOccurrences(of: "\n", with: "\\n"))
+            AppLog.note("[BundledSSE] content delta received len=%d", cc.count)
         }
         if !rc.isEmpty && accReasoning.count - rc.count < 200 {
-            AppLog.note("[BundledSSE] reasoning_content delta(len=%d) prefix=%@", rc.count, String(rc.prefix(120)).replacingOccurrences(of: "\n", with: "\\n"))
+            AppLog.note("[BundledSSE] reasoning delta received len=%d", rc.count)
         }
         let now = Date()
         let hasThinkingDelta = !rc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
@@ -3163,11 +3163,7 @@ final class BundledServerLogAggregator {
                         AppLog.note("[ThinkDiag-Chat] onDelta fired: accContent.count=%d accReasoning.count=%d nativeThinking=%d isFastBypass=%d",
                               accContent.count, accReasoning.count,
                               nativeThinkingEnabled ? 1 : 0, isFastBypass ? 1 : 0)
-                        if accContent.count <= 300 {
-                            AppLog.note("[ThinkDiag-Chat] accContent(raw): %@", accContent)
-                        } else {
-                            AppLog.note("[ThinkDiag-Chat] accContent first300: %@", String(accContent.prefix(300)))
-                        }
+                        AppLog.note("[ThinkDiag-Chat] content/reasoning lengths=%d/%d", accContent.count, accReasoning.count)
                         // vendored llama.cpp は Gemma 4 の `<|channel>thought\n...<channel|>` を
                         // reasoning_content に振り分けない。そのため accContent 側に来た raw を
                         // 自前で (thinking, visible) に分解して両プレビューを更新する。
@@ -4278,10 +4274,7 @@ final class BundledServerLogAggregator {
             // それを成功扱いで返す（「生成されているのに失敗」現象を防ぐ）。
             let hasContent = !collector.accContent.isEmpty || !collector.accReasoning.isEmpty
             if collector.statusCode != 200 && !hasContent {
-                let bodyPreview = collector.accContent.isEmpty ? collector.accReasoning : collector.accContent
-                if !bodyPreview.isEmpty {
-                    AppLog.error("[BundledServer] stream error body=%@", String(bodyPreview.prefix(240)))
-                }
+                AppLog.error("[BundledServer] stream error status=%d bodyLength=%d", collector.statusCode, collector.accContent.count + collector.accReasoning.count)
                 return nil
             }
             if collector.statusCode != 200 && hasContent {
@@ -5555,16 +5548,13 @@ final class BundledServerLogAggregator {
         }
     }
 
-    private func compactRuntimeDebugText(_ text: String?, limit: Int = 1800) -> String? {
+    private func compactRuntimeDebugText(_ text: String?, limit _: Int = 1800) -> String? {
         guard let text else { return nil }
         let compact = text
             .replacingOccurrences(of: "\r", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !compact.isEmpty else { return nil }
-        if compact.count <= limit {
-            return compact
-        }
-        return String(compact.prefix(limit)) + "..."
+        return "[redacted runtime output; length=\(compact.count)]"
     }
 
     private func cleanStructuredCLIOutput(_ rawText: String) -> String {
