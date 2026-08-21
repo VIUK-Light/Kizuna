@@ -599,10 +599,12 @@ final class PersonaChatService: ObservableObject {
     private var pendingMemoryCharacterID: UUID? = nil
     private var pendingMemorySaves: [UUID: [CharacterMemory]] = [:]
     private var streamSanitizationTask: Task<Void, Never>?
+    /// Raw cumulative preview is retained only for runtime bookkeeping. It
+    /// must never be published before the full output-safety decision.
+    private var rawStreamingBuffer = ""
     /// A later runtime preview always supersedes a prior cumulative preview.
     /// This prevents a slow background sanitizer result from overwriting the
     /// newest text after it returns to the main actor.
-    private var streamPreviewRevision = 0
     private var activeGenerationID: UUID?
     private var activeThreadID: UUID?
     private var lastRequestThreadID: UUID?
@@ -1435,42 +1437,15 @@ final class PersonaChatService: ObservableObject {
     private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, generationID: UUID) {
         guard activeGenerationID == generationID else { return }
         guard case let .visiblePreview(text) = update else { return }
-
-        streamPreviewRevision &+= 1
-        let revision = streamPreviewRevision
         streamSanitizationTask?.cancel()
-        streamSanitizationTask = Task.detached(priority: .utility) { [weak self] in
-            // Structured previews are cumulative and can arrive faster than a
-            // full sanitization pass. Give a newer update 32 ms to supersede
-            // this one, then check cancellation again before scanning text.
-            // Task.sleep only throws when this task is cancelled.
-            guard !Task.isCancelled else { return }
-            try? await Task.sleep(nanoseconds: 32_000_000)
-            guard !Task.isCancelled else { return }
-            let sanitized = PersonaResponseSanitizer.sanitize(text)
-            guard !Task.isCancelled else { return }
-            await self?.applySanitizedStreamPreview(
-                sanitized,
-                generationID: generationID,
-                revision: revision
-            )
-        }
-    }
-
-    private func applySanitizedStreamPreview(
-        _ text: String,
-        generationID: UUID,
-        revision: Int
-    ) {
-        guard activeGenerationID == generationID,
-              streamPreviewRevision == revision else { return }
-        streamingResponse = text
+        streamSanitizationTask = nil
+        rawStreamingBuffer = text
     }
 
     private func invalidatePendingStreamSanitization() {
-        streamPreviewRevision &+= 1
         streamSanitizationTask?.cancel()
         streamSanitizationTask = nil
+        rawStreamingBuffer = ""
     }
 
     private func finalize(

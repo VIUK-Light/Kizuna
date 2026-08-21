@@ -338,6 +338,7 @@ private struct BundledServerSession {
     let modelPath: String
     let runnerPath: String
     let apiKey: String
+    let apiKeyFileURL: URL
     let nativeThinkingEnabled: Bool
     let runtimePreset: LocalAssistantModelProfile.RuntimePreset
     /// 起動時に指定した `--spec-type` の値 (nil なら投機デコード無効)。
@@ -967,6 +968,7 @@ final class LocalAssistantRuntimeBridge {
             // シリアルキューで呼ばれるため一時ブロックは問題ない。
             session.process.waitUntilExit()
         }
+        try? FileManager.default.removeItem(at: session.apiKeyFileURL)
     }
 
     private func bundledServerFailureMessage(_ fallback: String) -> String {
@@ -1014,8 +1016,8 @@ final class LocalAssistantRuntimeBridge {
         terminateBundledServer()
 
         // localhost 上でも他プロセスから推論APIへ接続できるため、
-        // 起動ごとに推測できない一時キーを発行して認証する。
-        let apiKey = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            // 起動ごとに推測できない一時キーを発行して認証する。
+            let apiKey = UUID().uuidString.replacingOccurrences(of: "-", with: "")
 
         for port in bundledServerPortCandidates() {
             guard isBundledServerPortAvailable(port) else {
@@ -1026,10 +1028,26 @@ final class LocalAssistantRuntimeBridge {
             process.executableURL = runnerURL
             process.qualityOfService = .userInitiated
 
+            let apiKeyFileURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("kizuna-local-server-key-\(UUID().uuidString).txt")
+            do {
+                try Data(apiKey.utf8).write(
+                    to: apiKeyFileURL,
+                    options: LocalJSONStoreFileProtection.atomicWriteOptions
+                )
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: NSNumber(value: Int16(0o600))],
+                    ofItemAtPath: apiKeyFileURL.path
+                )
+            } catch {
+                try? FileManager.default.removeItem(at: apiKeyFileURL)
+                continue
+            }
+
             var arguments = [
                 "--host", "127.0.0.1",
                 "--port", String(port),
-                "--api-key", apiKey,
+                "--api-key-file", apiKeyFileURL.path,
                 "--model", modelPath,
                 "--alias", "viuk-local",
                 "--ctx-size", String(runtimePreset.contextSize),
@@ -1112,6 +1130,7 @@ final class LocalAssistantRuntimeBridge {
             do {
                 try process.run()
             } catch {
+                try? FileManager.default.removeItem(at: apiKeyFileURL)
                 errorPipe.fileHandleForReading.readabilityHandler = nil
                 let diagnostic = classifyRuntimeFailure(
                     stage: .generation,
@@ -1132,6 +1151,7 @@ final class LocalAssistantRuntimeBridge {
                 modelPath: modelPath,
                 runnerPath: runnerURL.path,
                 apiKey: apiKey,
+                apiKeyFileURL: apiKeyFileURL,
                 nativeThinkingEnabled: nativeThinkingEnabled,
                 runtimePreset: runtimePreset,
                 activeSpecType: resolvedSpecType
@@ -1158,6 +1178,7 @@ final class LocalAssistantRuntimeBridge {
                 process.terminate()
                 process.waitUntilExit()
             }
+            try? FileManager.default.removeItem(at: apiKeyFileURL)
             let stdout = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let stderr = stderrAggregator.snapshot().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4680,10 +4701,6 @@ final class BundledServerLogAggregator {
                 "--chat-template-kwargs", #"{"enable_thinking":true}"#
             ])
         }
-        if let systemPrompt, systemPrompt.isEmpty == false {
-            baseArguments.append(contentsOf: ["--system-prompt", systemPrompt])
-        }
-        baseArguments.append(contentsOf: ["--prompt", prompt])
         if forceConservativeCPURuntime {
             baseArguments.append(contentsOf: ["--device", "none"])
         } else if gpuLayers > 0 {
@@ -4701,6 +4718,8 @@ final class BundledServerLogAggregator {
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
+            let inputPipe = Pipe()
+            process.standardInput = inputPipe
             process.standardOutput = outputPipe
             process.standardError = errorPipe
             let terminationSemaphore = DispatchSemaphore(value: 0)
@@ -4791,6 +4810,14 @@ final class BundledServerLogAggregator {
 
             do {
                 try process.run()
+                let cliInput = [systemPrompt, prompt]
+                    .compactMap { value -> String? in
+                        guard let value, !value.isEmpty else { return nil }
+                        return value
+                    }
+                    .joined(separator: "\n\n") + "\n"
+                try inputPipe.fileHandleForWriting.write(contentsOf: Data(cliInput.utf8))
+                try inputPipe.fileHandleForWriting.close()
                 emitStatus(
                     .loadingModel,
                     title: "Gemma 4 をロード中",
@@ -5060,10 +5087,6 @@ final class BundledServerLogAggregator {
                 "--chat-template-kwargs", #"{"enable_thinking":true}"#
             ])
         }
-        if let systemPrompt, !systemPrompt.isEmpty {
-            baseArguments.append(contentsOf: ["--system-prompt", systemPrompt])
-        }
-        baseArguments.append(contentsOf: ["--prompt", prompt])
         if forceConservativeCPURuntime {
             baseArguments.append(contentsOf: ["--device", "none"])
         } else if gpuLayers > 0 {
@@ -5082,6 +5105,8 @@ final class BundledServerLogAggregator {
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
+            let inputPipe = Pipe()
+            process.standardInput = inputPipe
             process.standardOutput = outputPipe
             process.standardError = errorPipe
             let terminationSemaphore = DispatchSemaphore(value: 0)
@@ -5173,6 +5198,14 @@ final class BundledServerLogAggregator {
 
             do {
                 try process.run()
+                let cliInput = [systemPrompt, prompt]
+                    .compactMap { value -> String? in
+                        guard let value, !value.isEmpty else { return nil }
+                        return value
+                    }
+                    .joined(separator: "\n\n") + "\n"
+                try inputPipe.fileHandleForWriting.write(contentsOf: Data(cliInput.utf8))
+                try inputPipe.fileHandleForWriting.close()
                 emitStatus(
                     .loadingModel,
                     title: "Gemma 4 をロード中",

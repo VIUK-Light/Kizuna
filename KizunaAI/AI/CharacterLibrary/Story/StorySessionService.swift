@@ -2397,7 +2397,7 @@ final class StorySessionService: ObservableObject {
                 isRuntimeNotice = generated.runtimeNotice
                 usedBackendName = generated.backend + "・重複再試行"
                 retryWhenLocalReady = generated.retryWhenLocalReady
-                let retryRawOutput = (reply?.isEmpty == false ? reply! : streamingResponse)
+                let retryRawOutput = (reply?.isEmpty == false ? reply! : lastVisibleText)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let retryStateMetadata = parseStateMetadata(from: retryRawOutput)
                 // 破棄した1回目の本文のSTATE_UPDATEを、採用候補の本文へ
@@ -3658,7 +3658,6 @@ final class StorySessionService: ObservableObject {
             let text = response.text
             await MainActor.run {
                 guard self.activeGenerationID == generationID else { return }
-                self.streamingResponse = text
                 let isGoogleFallback = response.identity.providerID == .googleGenerativeLanguage
                     && response.identity.modelID != "gemma-4-31b-it"
                 let isProviderFallback = response.identity.providerID != .googleGenerativeLanguage
@@ -3692,15 +3691,11 @@ final class StorySessionService: ObservableObject {
         guard activeGenerationID == generationID else { return }
         guard case let .visiblePreview(text) = update else { return }
         let stripped = sanitize(text)
-        streamingSpeakerName = detectCurrentSpeakerName(in: stripped)
         streamingStatusText = statusText("発話生成中", "Generating response")
-        if stripped.count >= lastVisibleText.count {
-            lastVisibleText = stripped
-            streamingResponse = stripped
-        } else {
-            lastVisibleText = stripped
-            streamingResponse = stripped
-        }
+        // Keep the cumulative raw preview private until the full output has
+        // passed Output Safety. The final safe text or system notice is the
+        // only content allowed to cross the UI boundary.
+        lastVisibleText = stripped
     }
 
     private func startWatchdog(
