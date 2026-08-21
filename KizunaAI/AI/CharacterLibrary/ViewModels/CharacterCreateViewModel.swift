@@ -107,7 +107,19 @@ final class CharacterCreateViewModel: ObservableObject {
         var working = draft.normalizedForPersistence
         working.updatedAt = Date()
 
-        let decision = await safetyPipeline.evaluateCharacter(working)
+        var decision = await safetyPipeline.evaluateCharacter(working)
+        let classification = CharacterSafetyClassification.from(decision)
+        let classifiedRating = CharacterSafetyClassification.preserveStrictest(
+            current: working.safetyRating,
+            recommended: classification.recommendedRating
+        )
+        if classifiedRating != working.safetyRating {
+            working.safetyRating = classifiedRating
+            decision.reasons.append(KizunaCopy.text(
+                japanese: "保存時に安全レーティングを\(classifiedRating.displayName)へ更新します。",
+                english: "Saving will update the safety rating to \(classifiedRating.displayName)."
+            ))
+        }
 
         // Editing is disabled in the view while validation runs, but retain
         // this guard for programmatic bindings and delayed test doubles.

@@ -1139,6 +1139,7 @@ enum AIProviderError: LocalizedError, Equatable {
     case configurationDisabled
     case missingCredential
     case invalidEndpoint
+    case localArtifactUnavailable(String)
     case httpStatus(Int, String)
     case invalidResponse
     case emptyResponse
@@ -1153,6 +1154,8 @@ enum AIProviderError: LocalizedError, Equatable {
             return "The selected AI provider credential is not configured."
         case .invalidEndpoint:
             return "The selected AI provider endpoint is invalid."
+        case let .localArtifactUnavailable(artifactID):
+            return "The selected local model artifact is unavailable: \(artifactID)."
         case let .httpStatus(status, body):
             let preview = String(body.prefix(180))
             return preview.isEmpty ? "AI provider request failed with HTTP \(status)." : "AI provider request failed with HTTP \(status): \(preview)"
@@ -1213,6 +1216,9 @@ final class AIModelRouter {
         guard let configuration = registry.configuration(id: configurationID) else {
             throw AIProviderError.invalidResponse
         }
+        if let role, !configuration.roles.contains(role) {
+            throw AIProviderError.noProviderForRole(role)
+        }
         guard configuration.isEnabled else {
             throw AIProviderError.configurationDisabled
         }
@@ -1231,7 +1237,11 @@ final class AIModelRouter {
         preferredConfigurationID: UUID? = nil,
         allowsFallback: Bool = true
     ) async throws -> AIGenerationResponse {
-        var configurations = registry.configurations(for: role)
+        var configurations = tuningStore.orderedConfigurationsForCurrentMode(
+            for: role,
+            configurations: registry.configurations(for: role),
+            fallbackProviderID: nil
+        )
         let storedPreferredConfigurationID = preferredConfigurationID
             ?? tuningStore.configurationIDForCurrentMode(
                 for: role,
@@ -1293,9 +1303,14 @@ private final class LocalAIProvider: AIProvider {
         request: AIGenerationRequest,
         configuration: AIModelConfiguration
     ) async throws -> AIGenerationResponse {
-        let selectedModelURL = LocalAssistantModelManager.shared.modelURL(
+        let modelManager = LocalAssistantModelManager.shared
+        let selectedModelURL = modelManager.modelURL(
             forArtifactID: configuration.identity.artifactID
         )
+        if let artifactID = configuration.identity.artifactID,
+           selectedModelURL == nil {
+            throw AIProviderError.localArtifactUnavailable(artifactID)
+        }
         let result = await LocalAssistantRuntimeBridge.shared.generateReply(
             prompt: request.userPrompt,
             contextPrompt: nil,
@@ -1323,7 +1338,7 @@ private final class LocalAIProvider: AIProvider {
             .split(separator: "/")
             .last
             .map(String.init)
-        let artifactID = observedArtifactID ?? configuration.identity.artifactID
+        let artifactID = configuration.identity.artifactID ?? observedArtifactID
         let identity = AIModelIdentity(
             providerID: .localRuntime,
             modelID: configuration.identity.modelID,

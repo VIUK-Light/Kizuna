@@ -76,8 +76,15 @@ final class CharacterLibraryViewModel: ObservableObject {
         )
         .receive(on: RunLoop.main)
         .sink { [weak self] _ in
+            self?.reconcileAgeFilteredState()
             self?.objectWillChange.send()
         }
+    }
+
+    private func reconcileAgeFilteredState() {
+        guard let tagFilter,
+              !Self.availableTags(from: ageVisibleCharacters).contains(tagFilter) else { return }
+        self.tagFilter = nil
     }
 
     func bootstrap() async {
@@ -227,11 +234,22 @@ final class CharacterLibraryViewModel: ObservableObject {
         }
     }
 
+    var ageVisibleCharacters: [CharacterProfile] {
+        Self.ageVisibleCharacters(
+            from: allCharacters,
+            policy: ageSafetyPolicyProvider()
+        )
+    }
+
+    nonisolated static func ageVisibleCharacters(
+        from characters: [CharacterProfile],
+        policy: EffectiveSafetyPolicy
+    ) -> [CharacterProfile] {
+        characters.filter { policy.allows($0.safetyRating) }
+    }
+
     var filtered: [CharacterProfile] {
-        let ageSafetyPolicy = ageSafetyPolicyProvider()
-        var result = allCharacters.filter {
-            ageSafetyPolicy.allows($0.safetyRating)
-        }
+        var result = ageVisibleCharacters
         if let g = groupFilter { result = result.filter { $0.category.group == g } }
         if let c = categoryFilter { result = result.filter { $0.category == c } }
         if let r = genreFilter { result = result.filter { $0.relationshipGenre == r } }
@@ -253,9 +271,13 @@ final class CharacterLibraryViewModel: ObservableObject {
 
     /// 検索/絞り込みで「該当タグ」候補を返す (タグフィルターの選択肢)。
     var availableTags: [String] {
+        Self.availableTags(from: ageVisibleCharacters)
+    }
+
+    nonisolated static func availableTags(from characters: [CharacterProfile]) -> [String] {
         var seen = Set<String>()
         var out: [String] = []
-        for c in allCharacters {
+        for c in characters {
             for t in c.tags where seen.insert(t).inserted { out.append(t) }
         }
         return out.sorted()

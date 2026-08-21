@@ -87,6 +87,83 @@ enum PersonaGenerationModel: String, Codable, CaseIterable, Identifiable, Hashab
     }
 }
 
+private func personaGenerationErrorMessage(for error: Error) -> String {
+    if error is CancellationError {
+        return KizunaCopy.text(japanese: "生成をキャンセルしました。", english: "Generation was canceled.")
+    }
+    if let providerError = error as? AIProviderError {
+        switch providerError {
+        case .missingCredential:
+            return KizunaCopy.text(
+                japanese: "選択したAI Providerの認証情報がありません。設定を確認してください。",
+                english: "The selected AI provider has no credential. Check Settings."
+            )
+        case .invalidEndpoint:
+            return KizunaCopy.text(
+                japanese: "AI ProviderのEndpointが不正です。設定を確認してください。",
+                english: "The AI provider endpoint is invalid. Check Settings."
+            )
+        case let .localArtifactUnavailable(artifactID):
+            return KizunaCopy.text(
+                japanese: "選択したローカルモデル(\(artifactID))が見つかりません。別のモデルを選択してください。",
+                english: "The selected local model artifact (\(artifactID)) is missing. Choose another model."
+            )
+        case let .httpStatus(status, _):
+            if status == 401 || status == 403 {
+                return KizunaCopy.text(
+                    japanese: "AI Providerの認証に失敗しました。APIキーと権限を確認してください。",
+                    english: "AI provider authentication failed. Check the API key and permissions."
+                )
+            }
+            if status == 429 {
+                return KizunaCopy.text(
+                    japanese: "AI Providerの利用上限に達しました。時間を置いて再試行してください。",
+                    english: "The AI provider rate limit was reached. Try again later."
+                )
+            }
+            return KizunaCopy.text(
+                japanese: "AI Providerで一時的なエラーが発生しました。接続状態を確認して再試行してください。",
+                english: "The AI provider returned a temporary error. Check the connection and try again."
+            )
+        case .configurationDisabled:
+            return KizunaCopy.text(japanese: "選択したAIモデル設定は無効です。", english: "The selected AI model configuration is disabled.")
+        case .invalidResponse, .emptyResponse:
+            return KizunaCopy.text(japanese: "AI Providerから有効な応答を受け取れませんでした。", english: "The AI provider returned no usable response.")
+        case let .generationTruncated(reason):
+            return KizunaCopy.text(
+                japanese: "AI Providerの出力が途中で終了しました(\(reason))。もう一度試してください。",
+                english: "The AI provider stopped before completing the response (\(reason)). Try again."
+            )
+        case .noProviderForRole:
+            return KizunaCopy.text(japanese: "Persona用のAIモデルが設定されていません。", english: "No AI model is configured for Persona.")
+        }
+    }
+    if let gemmaError = error as? StoryGemma31BAPIError {
+        switch gemmaError {
+        case .missingAPIKey:
+            return KizunaCopy.text(japanese: "NAGIのAPIキーが設定されていません。", english: "The NAGI API key is not configured.")
+        case let .httpStatus(status, _):
+            if status == 401 || status == 403 {
+                return KizunaCopy.text(japanese: "NAGIの認証に失敗しました。APIキーを確認してください。", english: "NAGI authentication failed. Check the API key.")
+            }
+            if status == 429 {
+                return KizunaCopy.text(japanese: "NAGIの利用上限に達しました。時間を置いて再試行してください。", english: "NAGI rate limit reached. Try again later.")
+            }
+            return KizunaCopy.text(japanese: "NAGIへの接続に失敗しました。", english: "NAGI connection failed.")
+        case .emptyResponse, .emptyText:
+            return KizunaCopy.text(japanese: "NAGIから有効な本文を受け取れませんでした。", english: "NAGI returned no usable text.")
+        case .invalidURL:
+            return KizunaCopy.text(japanese: "NAGIのEndpointが不正です。", english: "The NAGI endpoint is invalid.")
+        case let .truncated(reason):
+            return KizunaCopy.text(japanese: "NAGIの出力が途中で終了しました(\(reason))。", english: "NAGI output was truncated (\(reason)).")
+        }
+    }
+    return KizunaCopy.text(
+        japanese: "AI生成に失敗しました。設定と接続状態を確認して再試行してください。",
+        english: "AI generation failed. Check Settings and the connection, then try again."
+    )
+}
+
 /// The small runtime surface Persona needs. Keeping this separate from the
 /// large runtime bridge makes completion, cancellation, and watchdog paths
 /// deterministic in tests without changing the production runtime.
@@ -207,6 +284,10 @@ extension PersonaReplyGenerating {
         model: PersonaGenerationModel,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
     ) async -> LocalAssistantGenerationResult {
+        let preservesConfiguredProviderBoundary = Self.preservesConfiguredProviderBoundary(
+            AIModelTuningStore.shared.preferences
+        )
+        var lastGenerationErrorMessage: String?
         func generateThroughRegistry() async -> LocalAssistantGenerationResult? {
             // Preserve injected test/future runtimes. The shared production
             // bridge is the composition root that opts into the provider
@@ -235,47 +316,71 @@ extension PersonaReplyGenerating {
                 maxOutputTokens: 1_024,
                 onUpdate: onUpdate
             )
-            guard let response = try? await AIModelRouter.shared.generate(
-                request: request,
-                role: .persona,
-                preferredConfigurationID: preferred,
-                allowsFallback: false
-            ) else {
+            do {
+                let response = try await AIModelRouter.shared.generate(
+                    request: request,
+                    role: .persona,
+                    preferredConfigurationID: preferred,
+                    allowsFallback: AIModelTuningStore.shared.allowsFallbackForCurrentMode
+                )
+                return LocalAssistantGenerationResult(
+                    text: response.text,
+                    modelIdentity: response.identity.stableID
+                )
+            } catch {
+                lastGenerationErrorMessage = personaGenerationErrorMessage(for: error)
+                AppLog.error("[PersonaChatService] registry generation failed: %@", lastGenerationErrorMessage ?? "unknown")
                 return nil
             }
-            return LocalAssistantGenerationResult(
-                text: response.text,
-                modelIdentity: response.identity.stableID
-            )
         }
 
         if let routed = await generateThroughRegistry() {
             return routed
         }
+        if preservesConfiguredProviderBoundary {
+            // An Advanced UUID is an explicit provider boundary. A failed
+            // registry request must not cross back into the legacy local/NAGI
+            // family switch and silently change where the prompt is sent.
+            return LocalAssistantGenerationResult(
+                text: nil,
+                modelIdentity: nil,
+                errorMessage: lastGenerationErrorMessage
+            )
+        }
 
         func generateNAGI() async -> LocalAssistantGenerationResult? {
-            guard StoryGemma31BAPIService.shared.hasAPIKey else { return nil }
+            guard StoryGemma31BAPIService.shared.hasAPIKey else {
+                lastGenerationErrorMessage = KizunaCopy.text(
+                    japanese: "NAGIのAPIキーが設定されていません。",
+                    english: "The NAGI API key is not configured."
+                )
+                return nil
+            }
             let userPrompt: String
             if let contextPrompt, !contextPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 userPrompt = contextPrompt + "\n\n" + prompt
             } else {
                 userPrompt = prompt
             }
-            guard let generation = try? await StoryGemma31BAPIService.shared.generate(
-                systemPrompt: overrideSystemPrompt ?? "",
-                userPrompt: userPrompt,
-                temperature: 0.72,
-                maxOutputTokens: 1_024
-            ) else {
+            do {
+                let generation = try await StoryGemma31BAPIService.shared.generate(
+                    systemPrompt: overrideSystemPrompt ?? "",
+                    userPrompt: userPrompt,
+                    temperature: 0.72,
+                    maxOutputTokens: 1_024
+                )
+                if let onUpdate {
+                    await onUpdate(.visiblePreview(generation.text))
+                }
+                return LocalAssistantGenerationResult(
+                    text: generation.text,
+                    modelIdentity: generation.identity.stableID
+                )
+            } catch {
+                lastGenerationErrorMessage = personaGenerationErrorMessage(for: error)
+                AppLog.error("[PersonaChatService] NAGI generation failed: %@", lastGenerationErrorMessage ?? "unknown")
                 return nil
             }
-            if let onUpdate {
-                await onUpdate(.visiblePreview(generation.text))
-            }
-            return LocalAssistantGenerationResult(
-                text: generation.text,
-                modelIdentity: generation.identity.stableID
-            )
         }
 
         func generateLocal() async -> LocalAssistantGenerationResult {
@@ -299,8 +404,21 @@ extension PersonaReplyGenerating {
             return await generateLocal()
         case .nagi:
             return await generateNAGI()
-                ?? LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
+                ?? LocalAssistantGenerationResult(
+                    text: nil,
+                    modelIdentity: nil,
+                    errorMessage: lastGenerationErrorMessage
+                )
         }
+    }
+
+    static func preservesConfiguredProviderBoundary(
+        _ preferences: AIModelTuningPreferences
+    ) -> Bool {
+        if preferences.mode == .advanced {
+            return preferences.preferredConfigurationID(for: AIModelRole.persona) != nil
+        }
+        return preferences.simpleModelRoute != .automatic
     }
 
     func generatePersonaReplyResult(
@@ -352,17 +470,23 @@ extension PersonaReplyGenerating {
             maxOutputTokens: 1_024,
             onUpdate: onUpdate
         )
-        guard let response = try? await AIModelRouter.shared.generate(
-            request: request,
-            configurationID: configurationID,
-            role: .persona
-        ) else {
-            return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
+        do {
+            let response = try await AIModelRouter.shared.generate(
+                request: request,
+                configurationID: configurationID,
+                role: .persona
+            )
+            return LocalAssistantGenerationResult(
+                text: response.text,
+                modelIdentity: response.identity.stableID
+            )
+        } catch {
+            return LocalAssistantGenerationResult(
+                text: nil,
+                modelIdentity: nil,
+                errorMessage: personaGenerationErrorMessage(for: error)
+            )
         }
-        return LocalAssistantGenerationResult(
-            text: response.text,
-            modelIdentity: response.identity.stableID
-        )
     }
 }
 
@@ -475,10 +599,12 @@ final class PersonaChatService: ObservableObject {
     private var pendingMemoryCharacterID: UUID? = nil
     private var pendingMemorySaves: [UUID: [CharacterMemory]] = [:]
     private var streamSanitizationTask: Task<Void, Never>?
+    /// Raw cumulative preview is retained only for runtime bookkeeping. It
+    /// must never be published before the full output-safety decision.
+    private var rawStreamingBuffer = ""
     /// A later runtime preview always supersedes a prior cumulative preview.
     /// This prevents a slow background sanitizer result from overwriting the
     /// newest text after it returns to the main actor.
-    private var streamPreviewRevision = 0
     private var activeGenerationID: UUID?
     private var activeThreadID: UUID?
     private var lastRequestThreadID: UUID?
@@ -562,7 +688,23 @@ final class PersonaChatService: ObservableObject {
         activeRequestText = trimmed
         let generationID = UUID()
         let selectedGenerationModel = thread.preferredGenerationModel ?? generationModel
-        let selectedConfigurationID = thread.preferredGenerationConfigurationID
+        var selectedConfigurationID = thread.preferredGenerationConfigurationID
+        if let configurationID = selectedConfigurationID {
+            let isUsable = AIModelRegistry.shared.configuration(id: configurationID).map {
+                $0.isEnabled && $0.roles.contains(.persona)
+            } == true
+            if !isUsable {
+                // Registry deletion/Role edits can race with an already
+                // persisted Thread override. Self-heal the Thread before
+                // starting generation so UI and execution share the default.
+                _ = store.setPreferredGenerationModel(
+                    thread.preferredGenerationModel,
+                    configurationID: nil,
+                    forThread: thread.id
+                )
+                selectedConfigurationID = nil
+            }
+        }
         activeGenerationID = generationID
         activeThreadID = thread.id
         activeAssistantMessageID = assistantMessageID
@@ -628,7 +770,7 @@ final class PersonaChatService: ObservableObject {
             character: legacySafetyCharacter
         )
         guard isGenerationActive(generationID) else { return }
-        if inSafety.action == .block {
+        if inSafety.action == .block || inSafety.action == .requireEdit {
             let polite = PersonaOutputSafetyPolicy.sanitizedRewrite(inSafety.rewrittenText)
                 ?? KizunaCopy.text(
                     japanese: "その話題には答えられません。別の話にしましょう。",
@@ -645,7 +787,14 @@ final class PersonaChatService: ObservableObject {
             return
         }
 
-        let effectiveUserText = inSafety.rewrittenText ?? userText
+        guard let effectiveUserText = SafetyInputPolicy.acceptedText(
+            action: inSafety.action,
+            original: userText,
+            rewritten: inSafety.rewrittenText
+        ) else {
+            AppLog.error("[PersonaService] input safety decision had no accepted text")
+            return
+        }
         var promptThread = thread
         if let latestUserIndex = promptThread.messages.lastIndex(where: { $0.role == .user }) {
             promptThread.messages[latestUserIndex].text = effectiveUserText
@@ -697,7 +846,7 @@ final class PersonaChatService: ObservableObject {
                 self.failGeneration(
                     threadID: threadID,
                     generationID: generationID,
-                    message: KizunaCopy.text(
+                    message: generation.errorMessage ?? KizunaCopy.text(
                         japanese: "応答本文を受け取れませんでした。入力欄からもう一度試してください。",
                         english: "No reply text was received. Try sending the message again."
                     )
@@ -806,7 +955,7 @@ final class PersonaChatService: ObservableObject {
         // ── 2) 入力 safety ──
         let inSafety = await safetyPipeline.evaluateInput(userText, character: character)
         guard isGenerationActive(generationID) else { return }
-        if inSafety.action == .block {
+        if inSafety.action == .block || inSafety.action == .requireEdit {
             // ブロックされたらキャラから穏当な拒否メッセージを返して終了
             let polite = PersonaOutputSafetyPolicy.sanitizedRewrite(inSafety.rewrittenText)
                 ?? KizunaCopy.text(
@@ -833,7 +982,14 @@ final class PersonaChatService: ObservableObject {
             }
             return
         }
-        let effectiveUserText = inSafety.rewrittenText ?? userText
+        guard let effectiveUserText = SafetyInputPolicy.acceptedText(
+            action: inSafety.action,
+            original: userText,
+            rewritten: inSafety.rewrittenText
+        ) else {
+            AppLog.error("[PersonaService] character input safety decision had no accepted text")
+            return
+        }
 
         // ── 3) メモリー候補と選別 ──
         let candidates: [CharacterMemory]
@@ -862,6 +1018,13 @@ final class PersonaChatService: ObservableObject {
                 text: effectiveUserText,
                 labels: ["recall_needed", "casual_chat"]
             )
+            if c.status != .success {
+                AppLog.note(
+                    "[PersonaService] small model classification status=%@ reason=%@",
+                    c.status.rawValue,
+                    c.failureReason ?? "unknown"
+                )
+            }
             guard isGenerationActive(generationID) else { return }
             needsRecall = (c.label == "recall_needed" && c.confidence > 0.35) || candidates.count <= 3
         }
@@ -944,7 +1107,7 @@ final class PersonaChatService: ObservableObject {
                 self.failGeneration(
                     threadID: threadID,
                     generationID: generationID,
-                    message: KizunaCopy.text(
+                    message: generation.errorMessage ?? KizunaCopy.text(
                         japanese: "応答本文を受け取れませんでした。入力欄からもう一度試してください。",
                         english: "No reply text was received. Try sending the message again."
                     )
@@ -1290,42 +1453,15 @@ final class PersonaChatService: ObservableObject {
     private func handleStreamUpdate(_ update: LocalAssistantStructuredTurnUpdate, generationID: UUID) {
         guard activeGenerationID == generationID else { return }
         guard case let .visiblePreview(text) = update else { return }
-
-        streamPreviewRevision &+= 1
-        let revision = streamPreviewRevision
         streamSanitizationTask?.cancel()
-        streamSanitizationTask = Task.detached(priority: .utility) { [weak self] in
-            // Structured previews are cumulative and can arrive faster than a
-            // full sanitization pass. Give a newer update 32 ms to supersede
-            // this one, then check cancellation again before scanning text.
-            // Task.sleep only throws when this task is cancelled.
-            guard !Task.isCancelled else { return }
-            try? await Task.sleep(nanoseconds: 32_000_000)
-            guard !Task.isCancelled else { return }
-            let sanitized = PersonaResponseSanitizer.sanitize(text)
-            guard !Task.isCancelled else { return }
-            await self?.applySanitizedStreamPreview(
-                sanitized,
-                generationID: generationID,
-                revision: revision
-            )
-        }
-    }
-
-    private func applySanitizedStreamPreview(
-        _ text: String,
-        generationID: UUID,
-        revision: Int
-    ) {
-        guard activeGenerationID == generationID,
-              streamPreviewRevision == revision else { return }
-        streamingResponse = text
+        streamSanitizationTask = nil
+        rawStreamingBuffer = text
     }
 
     private func invalidatePendingStreamSanitization() {
-        streamPreviewRevision &+= 1
         streamSanitizationTask?.cancel()
         streamSanitizationTask = nil
+        rawStreamingBuffer = ""
     }
 
     private func finalize(
@@ -1406,9 +1542,9 @@ final class PersonaChatService: ObservableObject {
         lastErrorThreadID = nil
     }
 
-    /// Adapt a legacy PersonaProfile to the CharacterProfile context required
-    /// by the shared input/output pipeline. Legacy profiles have no independent
-    /// safety-rating field, so they use the existing general-audience default.
+    /// Adapt a PersonaProfile to the CharacterProfile context required by the
+    /// shared input/output pipeline. The captured rating survives a detached
+    /// Character reference; old profiles decode with the general default.
     private func safetyCharacter(for profile: PersonaProfile) -> CharacterProfile {
         CharacterProfile(
             id: profile.id,
@@ -1418,7 +1554,7 @@ final class PersonaChatService: ObservableObject {
             relationshipGenre: .none,
             personality: profile.personality,
             scenario: profile.freeFormAddendum,
-            safetyRating: .general
+            safetyRating: profile.safetyRating
         )
     }
 

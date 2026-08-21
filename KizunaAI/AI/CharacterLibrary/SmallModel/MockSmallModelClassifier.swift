@@ -40,18 +40,43 @@ enum LocalAuxiliaryAI {
         role: AIModelRole = .classifier
     ) async -> String? {
         let modelManager = LocalAssistantModelManager.shared
+        let registry = AIModelRegistry.shared
+        let configurations = registry.configurations(for: role)
+        let tuningStore = AIModelTuningStore.shared
+        let dedicatedAuxiliaryModelID = modelManager.auxiliaryModelID
         let preferred: AIModelConfiguration? = {
-            guard let auxiliaryID = modelManager.auxiliaryModelID,
-                  let model = modelManager.installedModels.first(where: { $0.id == auxiliaryID }) else {
-                return AIModelRegistry.shared
-                    .configurations(for: role)
-                    .first(where: { $0.identity.providerID == .localRuntime })
+            if let auxiliaryID = dedicatedAuxiliaryModelID {
+                guard let model = modelManager.installedModels.first(where: { $0.id == auxiliaryID }) else {
+                    AppLog.error(
+                        "[LocalAuxiliaryAI] dedicated local artifact is missing id=%@",
+                        auxiliaryID
+                    )
+                    return nil
+                }
+                return registry.localArtifactConfiguration(
+                    artifactID: model.id,
+                    displayName: model.displayName,
+                    roles: [role]
+                )
+            } else {
+                if tuningStore.preferences.mode == .advanced,
+                   let configuredID = tuningStore.preferredConfigurationID(for: role),
+                   !configurations.contains(where: { $0.id == configuredID }) {
+                    AppLog.error(
+                        "[LocalAuxiliaryAI] configured model is not registered for role=%@ id=%@",
+                        role.rawValue,
+                        configuredID.uuidString
+                    )
+                    return nil
+                }
+                return tuningStore.configurationIDForCurrentMode(
+                    for: role,
+                    configurations: configurations,
+                    fallbackProviderID: nil
+                ).flatMap { preferredID in
+                    configurations.first(where: { $0.id == preferredID })
+                }
             }
-            return AIModelRegistry.shared.localArtifactConfiguration(
-                artifactID: model.id,
-                displayName: model.displayName,
-                roles: [role]
-            )
         }()
         let request = AIGenerationRequest(
             systemPrompt: "Return only the requested compact result. Do not add explanations.",
@@ -63,7 +88,8 @@ enum LocalAuxiliaryAI {
             request: request,
             role: role,
             preferredConfigurationID: preferred?.id,
-            allowsFallback: false
+            allowsFallback: dedicatedAuxiliaryModelID == nil
+                && tuningStore.allowsFallbackForCurrentMode
         ) else {
             return nil
         }
@@ -98,17 +124,45 @@ final class RuntimeSmallModelClassifier: SmallModelClassifying {
             "Text: " + text
         ].joined(separator: "\n")
         guard let raw = await LocalAuxiliaryAI.generate(prompt: prompt, maxOutputTokens: 48, role: .classifier) else {
-            return await fallback?.classify(text: text, labels: labels)
-                ?? SmallModelClassification(label: "", confidence: 0)
+            if let fallbackResult = await fallback?.classify(text: text, labels: labels) {
+                return SmallModelClassification(
+                    label: fallbackResult.label,
+                    confidence: fallbackResult.confidence,
+                    status: .fallback,
+                    failureReason: "The local auxiliary model was unavailable."
+                )
+            }
+            return SmallModelClassification(
+                label: "",
+                confidence: 0,
+                status: .unavailable,
+                failureReason: "The local auxiliary model was unavailable."
+            )
         }
         let parts = LocalAuxiliaryAI.normalized(raw).split(separator: "|", maxSplits: 1).map(String.init)
         guard parts.count == 2,
               let label = labels.first(where: { $0.caseInsensitiveCompare(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame }),
               let confidence = Double(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
               confidence.isFinite else {
-            return await fallback?.classify(text: text, labels: labels)
-                ?? SmallModelClassification(label: "", confidence: 0)
+            if let fallbackResult = await fallback?.classify(text: text, labels: labels) {
+                return SmallModelClassification(
+                    label: fallbackResult.label,
+                    confidence: fallbackResult.confidence,
+                    status: .fallback,
+                    failureReason: "The local auxiliary model returned an invalid contract."
+                )
+            }
+            return SmallModelClassification(
+                label: "",
+                confidence: 0,
+                status: .invalidResponse,
+                failureReason: "The local auxiliary model returned an invalid contract."
+            )
         }
-        return SmallModelClassification(label: label, confidence: min(max(confidence, 0), 1))
+        return SmallModelClassification(
+            label: label,
+            confidence: min(max(confidence, 0), 1),
+            status: .success
+        )
     }
 }

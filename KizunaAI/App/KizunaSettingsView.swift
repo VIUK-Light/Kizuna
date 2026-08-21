@@ -26,6 +26,7 @@ struct KizunaSettingsView: View {
     @State private var registryConfigurations: [AIModelConfiguration] = []
     @State private var registryProvider: AIProviderID = .openAICompatible
     @State private var registryModelID = ""
+    @State private var registryArtifactID: String?
     @State private var registryDisplayName = ""
     @State private var registryEndpoint = "https://api.openai.com/v1"
     @State private var registryAPIKey = ""
@@ -264,6 +265,38 @@ struct KizunaSettingsView: View {
                 }
 
                 Section(KizunaCopy.text(japanese: "AIモデルRegistry", english: "AI model registry")) {
+                    if let registryError = AIModelRegistry.shared.loadError {
+                        Label {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(KizunaCopy.text(
+                                    japanese: "保存済みRegistryを読み込めませんでした。元データを退避しているため、自動で上書きしていません。",
+                                    english: "The saved registry could not be loaded. The original data was backed up and was not overwritten."
+                                ))
+                                    .font(.caption)
+                                Text(registryError.localizedDescription)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Button(KizunaCopy.text(
+                                    japanese: "Registryを推奨値へリセット",
+                                    english: "Reset registry to recommendations"
+                                )) {
+                                    if AIModelRegistry.shared.resetCorruptedStorage() {
+                                        registryConfigurations = AIModelRegistry.shared.configurations
+                                        registryMessage = KizunaCopy.text(
+                                            japanese: "Registryを推奨値へリセットしました。",
+                                            english: "The registry was reset to recommendations."
+                                        )
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                        .padding(10)
+                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                    }
                     ForEach(registryConfigurations) { configuration in
                         HStack(alignment: .top, spacing: 8) {
                             Button {
@@ -328,6 +361,9 @@ struct KizunaSettingsView: View {
                         if currentEndpoint.isEmpty || currentEndpoint == registryDefaultEndpoint(for: oldProvider) {
                             registryEndpoint = registryDefaultEndpoint(for: newProvider)
                         }
+                        if newProvider != .localRuntime {
+                            registryArtifactID = nil
+                        }
                     }
                     TextField(
                         KizunaCopy.text(japanese: "Model ID", english: "Model ID"),
@@ -345,6 +381,26 @@ struct KizunaSettingsView: View {
                         ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Picker(
+                            KizunaCopy.text(japanese: "使用するインストール済みモデル", english: "Installed model to use"),
+                            selection: $registryArtifactID
+                        ) {
+                            Text(KizunaCopy.text(
+                                japanese: "現在のアクティブモデルに追従",
+                                english: "Follow active local model"
+                            ))
+                            .tag(Optional<String>.none)
+                            ForEach(modelManager.installedModels) { model in
+                                Text("\(model.displayName) · \(model.fileName)")
+                                    .tag(Optional(model.id))
+                            }
+                        }
+                        Text(KizunaCopy.text(
+                            japanese: "固定モデルを選ぶと、active modelを切り替えてもこの構成は同じartifactを使います。",
+                            english: "A fixed artifact keeps this configuration on the same model when the active model changes."
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     } else {
                         TextField(
                             KizunaCopy.text(japanese: "Endpoint", english: "Endpoint"),
@@ -355,7 +411,10 @@ struct KizunaSettingsView: View {
                     }
                     if registryProvider != .localRuntime {
                         SecureField(
-                            registryRequiresAPIKey(for: registryProvider)
+                            registryRequiresAPIKey(
+                                for: registryProvider,
+                                endpoint: registryEndpoint
+                            )
                                 ? KizunaCopy.text(japanese: "APIキー（必須）", english: "API key (required)")
                                 : KizunaCopy.text(japanese: "APIキー（任意）", english: "API key (optional)"),
                             text: $registryAPIKey
@@ -587,15 +646,15 @@ struct KizunaSettingsView: View {
                         SecureField(KizunaCopy.text(japanese: "アクセストークン（必要な場合）", english: "Access token (if required)"), text: $modelAccessToken)
                             .textContentType(.password)
 
-                        TextField(KizunaCopy.text(japanese: "SHA-256（任意・整合性検証用）", english: "SHA-256 (optional, integrity check)"), text: $modelSourceSHA256)
+                        TextField(KizunaCopy.text(japanese: "SHA-256（必須・整合性検証用）", english: "SHA-256 (required, integrity check)"), text: $modelSourceSHA256)
                             .autocorrectionDisabled()
                             #if os(iOS)
                             .textInputAutocapitalization(.never)
                             #endif
 
                         Text(KizunaCopy.text(
-                            japanese: "配布元が公開しているSHA-256（64桁の16進数）を入力すると、ダウンロード後に整合性を検証します。未入力の場合は形式のみ検証します。",
-                            english: "If you enter the SHA-256 digest (64 hex digits) published by the source, Kizuna verifies the download's integrity. Without it, only the format is checked."
+                            japanese: "カスタム配布元では、配布元が公開しているSHA-256（64桁の16進数）が必須です。digest不一致のモデルは保存・実行しません。",
+                            english: "Custom model sources require the SHA-256 digest (64 hex digits) published by the source. A digest mismatch prevents saving and execution."
                         ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -744,6 +803,9 @@ struct KizunaSettingsView: View {
                         .background(.regularMaterial)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
+            }
+            .onChange(of: languageRawValue) { _, _ in
+                KizunaCopy.notifyLanguageDidChange()
             }
             .navigationTitle(KizunaCopy.text(japanese: "設定", english: "Settings"))
             .toolbar {
@@ -1020,7 +1082,22 @@ struct KizunaSettingsView: View {
     }
 
     private func addRegistryConfiguration() {
-        let modelID = registryModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let enteredModelID = registryModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedArtifact = registryArtifactID.flatMap { artifactID in
+            modelManager.installedModels.first { $0.id == artifactID }
+        }
+        if registryProvider == .localRuntime,
+           registryArtifactID != nil,
+           selectedArtifact == nil {
+            registryMessage = KizunaCopy.text(
+                japanese: "選択したローカルモデルが見つかりません。インストール済みモデルを選び直してください。",
+                english: "The selected local model is missing. Choose an installed model again."
+            )
+            return
+        }
+        let modelID = enteredModelID.isEmpty && registryProvider == .localRuntime
+            ? (selectedArtifact?.id ?? "local-active")
+            : enteredModelID
         let displayName = registryDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !modelID.isEmpty else {
             registryMessage = KizunaCopy.text(japanese: "Model IDを入力してください。", english: "Enter a model ID.")
@@ -1033,7 +1110,7 @@ struct KizunaSettingsView: View {
             )
             return
         }
-        if registryRequiresAPIKey(for: registryProvider)
+        if registryRequiresAPIKey(for: registryProvider, endpoint: registryEndpoint)
             && registryAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             registryMessage = KizunaCopy.text(
                 japanese: "このProviderにはAPIキーが必要です。",
@@ -1052,7 +1129,10 @@ struct KizunaSettingsView: View {
             identity: AIModelIdentity(
                 providerID: registryProvider,
                 modelID: modelID,
-                displayName: displayName.isEmpty ? modelID : displayName
+                displayName: displayName.isEmpty
+                    ? (selectedArtifact?.displayName ?? modelID)
+                    : displayName,
+                artifactID: registryProvider == .localRuntime ? registryArtifactID : nil
             ),
             roles: registryRoles,
             endpoint: registryProvider == .localRuntime
@@ -1068,6 +1148,7 @@ struct KizunaSettingsView: View {
             return
         }
         registryModelID = ""
+        registryArtifactID = nil
         registryDisplayName = ""
         registryAPIKey = ""
         registryRoles = [.persona]
@@ -1087,7 +1168,7 @@ struct KizunaSettingsView: View {
             return endpointError
         }
         let previous = AIModelRegistry.shared.configuration(id: configuration.id)
-        if registryRequiresAPIKey(for: configuration.identity.providerID),
+        if registryRequiresAPIKey(for: configuration.identity.providerID, endpoint: configuration.endpoint),
            apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            AISecretStore.shared.providerAPIKey(for: configuration.id) == nil {
             return KizunaCopy.text(
@@ -1159,6 +1240,10 @@ struct KizunaSettingsView: View {
         }
         switch configuration.identity.providerID {
         case .localRuntime:
+            if let artifactID = configuration.identity.artifactID,
+               LocalAssistantModelManager.shared.modelURL(forArtifactID: artifactID) == nil {
+                return .unavailable
+            }
             return LocalAssistantModelManager.shared.runtimeAvailability == .executable
                 ? .unverified
                 : .unavailable
@@ -1240,7 +1325,7 @@ struct KizunaSettingsView: View {
                     registryConnectionStatuses[configuration.id] = .missingCredential
                 case .invalidEndpoint:
                     registryConnectionStatuses[configuration.id] = .invalidEndpoint
-                case .httpStatus, .invalidResponse, .emptyResponse, .generationTruncated, .noProviderForRole:
+                case .localArtifactUnavailable, .httpStatus, .invalidResponse, .emptyResponse, .generationTruncated, .noProviderForRole:
                     registryConnectionStatuses[configuration.id] = .unavailable
                 }
                 registryMessage = KizunaCopy.text(
@@ -1290,8 +1375,8 @@ struct KizunaSettingsView: View {
         }
     }
 
-    private func registryRequiresAPIKey(for provider: AIProviderID) -> Bool {
-        provider == .openAICompatible || provider == .anthropic
+    private func registryRequiresAPIKey(for provider: AIProviderID, endpoint: String?) -> Bool {
+        AIEndpointPolicy.requiresAPIKey(providerID: provider, endpoint: endpoint)
     }
 
     private func registryEndpointValidationError(
@@ -1306,15 +1391,10 @@ struct KizunaSettingsView: View {
                 english: "Enter an endpoint."
             )
         }
-        guard normalized.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
-              let url = URL(string: normalized),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http",
-              let host = url.host,
-              !host.isEmpty else {
+        guard AIEndpointPolicy.allowsEndpoint(providerID: provider, endpoint: normalized) else {
             return KizunaCopy.text(
-                japanese: "Endpointはhttp://またはhttps://で始まり、ホスト名を含むURLにしてください。",
-                english: "Endpoint must be a URL with an http:// or https:// scheme and a host."
+                japanese: "EndpointはHTTPSを使用してください。HTTPはlocalhost / 127.0.0.1 / ::1だけ利用できます。",
+                english: "Use HTTPS for endpoints. HTTP is allowed only for localhost, 127.0.0.1, or ::1."
             )
         }
         return nil
@@ -1435,7 +1515,11 @@ private struct AIAdvancedModelSettingsView: View {
             Section {
                 ForEach(AIModelTuningScope.allCases, id: \.self) { scope in
                     NavigationLink {
-                        AIAdvancedScopeSettingsView(scope: scope)
+                        if scope == .auxiliary {
+                            AIAdvancedAuxiliaryModelSettingsView()
+                        } else {
+                            AIAdvancedScopeSettingsView(scope: scope)
+                        }
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(scopeName(scope))
@@ -1494,6 +1578,116 @@ private struct AIAdvancedModelSettingsView: View {
             return KizunaCopy.text(japanese: "物語本文と雛形生成", english: "Story turns and template generation")
         case .auxiliary:
             return KizunaCopy.text(japanese: "分類・記憶・Scene補助", english: "Classification, memory, and scene helpers")
+        }
+    }
+}
+
+private struct AIAdvancedAuxiliaryModelSettingsView: View {
+    @State private var resetMessage: String?
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(AIModelRole.auxiliaryCases, id: \.self) { role in
+                    AIAuxiliaryRoleModelSelectionRow(role: role)
+                }
+            } header: {
+                Text(KizunaCopy.text(
+                    japanese: "補助AIの用途別モデル",
+                    english: "Models by auxiliary role"
+                ))
+            } footer: {
+                Text(KizunaCopy.text(
+                    japanese: "Memory、Scene、Safetyなどは、それぞれのRoleに登録されたモデルから選びます。未指定なら優先度順のおまかせです。",
+                    english: "Memory, Scene, and Safety roles choose from their own registered models. Unset roles use automatic priority order."
+                ))
+            }
+
+            Section {
+                Button {
+                    for role in AIModelRole.auxiliaryCases {
+                        _ = AIModelTuningStore.shared.setPreferredConfigurationID(nil, for: role)
+                    }
+                    resetMessage = KizunaCopy.text(
+                        japanese: "補助AIのモデル選択をおまかせに戻しました。",
+                        english: "Auxiliary model selections were restored to automatic."
+                    )
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "補助AIをおまかせに戻す", english: "Restore auxiliary automatic routing"),
+                        systemImage: "arrow.counterclockwise"
+                    )
+                }
+                if let resetMessage {
+                    Text(resetMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle(KizunaCopy.text(japanese: "補助AIモデル", english: "Auxiliary models"))
+    }
+}
+
+private struct AIAuxiliaryRoleModelSelectionRow: View {
+    let role: AIModelRole
+    private let candidateConfigurations: [AIModelConfiguration]
+    @State private var selectedConfigurationID: UUID?
+
+    init(role: AIModelRole) {
+        self.role = role
+        let candidates = AIModelRegistry.shared.configurations(for: role)
+        candidateConfigurations = candidates
+        let stored = AIModelTuningStore.shared.preferredConfigurationID(for: role)
+        _selectedConfigurationID = State(
+            initialValue: candidates.contains(where: { $0.id == stored }) ? stored : nil
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Picker(roleName, selection: $selectedConfigurationID) {
+                Text(KizunaCopy.text(japanese: "自動（優先度順）", english: "Automatic (priority order)"))
+                    .tag(Optional<UUID>.none)
+                ForEach(candidateConfigurations) { configuration in
+                    Text("\(configuration.identity.displayName) · \(providerName(configuration.identity.providerID))")
+                        .tag(Optional(configuration.id))
+                }
+            }
+            .onChange(of: selectedConfigurationID) { _, newValue in
+                _ = AIModelTuningStore.shared.setPreferredConfigurationID(newValue, for: role)
+            }
+            if candidateConfigurations.isEmpty {
+                Text(KizunaCopy.text(
+                    japanese: "このRoleに登録されたモデルはありません。",
+                    english: "No model is registered for this role."
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var roleName: String {
+        switch role {
+        case .classifier: return "Classifier"
+        case .memoryExtraction: return "Memory extraction"
+        case .memoryRetrieval: return "Memory retrieval"
+        case .sceneCharacterSelection: return "Scene character selection"
+        case .sceneSummary: return "Scene summary"
+        case .nextSceneSuggestion: return "Next scene suggestion"
+        case .safety: return "Safety"
+        case .persona, .story: return role.rawValue
+        }
+    }
+
+    private func providerName(_ provider: AIProviderID) -> String {
+        switch provider {
+        case .localRuntime: return "Local"
+        case .googleGenerativeLanguage: return "Google"
+        case .openAICompatible: return "OpenAI-compatible"
+        case .anthropic: return "Anthropic"
         }
     }
 }
@@ -1877,9 +2071,11 @@ private struct AIModelRegistryEditorView: View {
     let configuration: AIModelConfiguration
     let onSave: (AIModelConfiguration, String) -> String?
 
+    @ObservedObject private var modelManager = LocalAssistantModelManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var provider: AIProviderID
     @State private var modelID: String
+    @State private var artifactID: String?
     @State private var displayName: String
     @State private var endpoint: String
     @State private var apiKey = ""
@@ -1898,6 +2094,7 @@ private struct AIModelRegistryEditorView: View {
         let initialProvider = configuration.identity.providerID
         _provider = State(initialValue: initialProvider)
         _modelID = State(initialValue: configuration.identity.modelID)
+        _artifactID = State(initialValue: configuration.identity.artifactID)
         _displayName = State(initialValue: configuration.identity.displayName)
         _endpoint = State(initialValue: configuration.endpoint ?? Self.defaultEndpoint(for: initialProvider))
         _roles = State(initialValue: configuration.roles)
@@ -1925,6 +2122,9 @@ private struct AIModelRegistryEditorView: View {
                         if currentEndpoint.isEmpty || currentEndpoint == Self.defaultEndpoint(for: oldProvider) {
                             endpoint = Self.defaultEndpoint(for: newProvider)
                         }
+                        if newProvider != .localRuntime {
+                            artifactID = nil
+                        }
                         disabledCompatibilityParameters.removeAll()
                     }
                     TextField(
@@ -1943,6 +2143,29 @@ private struct AIModelRegistryEditorView: View {
                         ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Picker(
+                            KizunaCopy.text(japanese: "使用するインストール済みモデル", english: "Installed model to use"),
+                            selection: $artifactID
+                        ) {
+                            Text(KizunaCopy.text(
+                                japanese: "現在のアクティブモデルに追従",
+                                english: "Follow active local model"
+                            ))
+                            .tag(Optional<String>.none)
+                            ForEach(modelManager.installedModels) { model in
+                                Text("\(model.displayName) · \(model.fileName)")
+                                    .tag(Optional(model.id))
+                            }
+                        }
+                        if let artifactID,
+                           !modelManager.installedModels.contains(where: { $0.id == artifactID }) {
+                            Text(KizunaCopy.text(
+                                japanese: "この構成が参照していたモデルは見つかりません。別のモデルを選ぶか、active modelに追従へ変更してください。",
+                                english: "The artifact referenced by this configuration is missing. Choose another model or follow the active model."
+                            ))
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
                     } else {
                         TextField(
                             KizunaCopy.text(japanese: "Endpoint", english: "Endpoint"),
@@ -2067,6 +2290,15 @@ private struct AIModelRegistryEditorView: View {
         }
 
         let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if provider == .localRuntime,
+           let artifactID,
+           !modelManager.installedModels.contains(where: { $0.id == artifactID }) {
+            validationMessage = KizunaCopy.text(
+                japanese: "選択したローカルモデルが見つかりません。別のモデルを選ぶか、active modelに追従へ変更してください。",
+                english: "The selected local model is missing. Choose another model or follow the active model."
+            )
+            return
+        }
         let hasExistingAPIKey = AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
         if Self.requiresAPIKey(for: provider, endpoint: trimmedEndpoint)
             && apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2091,7 +2323,7 @@ private struct AIModelRegistryEditorView: View {
                 displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? trimmedModelID
                     : displayName.trimmingCharacters(in: .whitespacesAndNewlines),
-                artifactID: provider == .localRuntime ? configuration.identity.artifactID : nil
+                artifactID: provider == .localRuntime ? artifactID : nil
             ),
             roles: roles,
             endpoint: provider == .localRuntime || trimmedEndpoint.isEmpty ? nil : trimmedEndpoint,

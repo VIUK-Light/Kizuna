@@ -6,6 +6,7 @@ struct KizunaLaunchView: View {
     @State private var draft: KizunaUserProfile
     @State private var ageContext: UserAgeSafetyContext
     @State private var isLoadingPhoto = false
+    @State private var saveError: String?
 
     var onFinished: () -> Void
 
@@ -93,26 +94,37 @@ struct KizunaLaunchView: View {
     }
 
     private var bottomBar: some View {
-        HStack(spacing: 12) {
-            Button(KizunaCopy.text(japanese: "あとで", english: "Not now")) {
-                onFinished()
+        VStack(alignment: .leading, spacing: 8) {
+            if let saveError {
+                Label(saveError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button(KizunaCopy.text(japanese: "あとで", english: "Not now")) {
+                    onFinished()
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
 
-            Spacer()
+                Spacer()
 
-            Button {
-                _ = UserAgeSafetyStore.shared.update(ageContext)
-                profileStore.update(draft)
-                onFinished()
-            } label: {
-                Text(KizunaCopy.text(japanese: "始める", english: "Start"))
-                    .fontWeight(.semibold)
+                Button {
+                    _ = UserAgeSafetyStore.shared.update(ageContext)
+                    switch profileStore.update(draft) {
+                    case .success:
+                        onFinished()
+                    case let .failure(error):
+                        saveError = error.localizedDescription
+                    }
+                } label: {
+                    Text(KizunaCopy.text(japanese: "始める", english: "Start"))
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(isLoadingPhoto)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isLoadingPhoto)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 13)

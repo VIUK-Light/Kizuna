@@ -26,6 +26,16 @@ enum AIModelRole: String, Codable, CaseIterable, Hashable, Sendable {
     case sceneSummary
     case nextSceneSuggestion
     case safety
+
+    static let auxiliaryCases: [AIModelRole] = [
+        .classifier,
+        .memoryExtraction,
+        .memoryRetrieval,
+        .sceneCharacterSelection,
+        .sceneSummary,
+        .nextSceneSuggestion,
+        .safety
+    ]
 }
 
 enum AIEndpointPolicy {
@@ -48,6 +58,18 @@ enum AIEndpointPolicy {
             return false
         }
         return !isLocalEndpoint(endpoint)
+    }
+
+    static func allowsEndpoint(providerID: AIProviderID, endpoint: String?) -> Bool {
+        guard providerID != .localRuntime,
+              let endpoint,
+              endpoint.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              let url = URL(string: endpoint),
+              let scheme = url.scheme?.lowercased(),
+              url.host?.isEmpty == false else {
+            return providerID == .localRuntime
+        }
+        return scheme == "https" || (scheme == "http" && isLocalEndpoint(url))
     }
 
     private static func isLocalHost(_ host: String) -> Bool {
@@ -261,6 +283,16 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
         preferredConfigurationIDs[scope.rawValue]
     }
 
+    func preferredConfigurationID(for role: AIModelRole) -> UUID? {
+        let roleKey = role == .persona || role == .story
+            ? AIModelTuningScope(role: role).rawValue
+            : "role.\(role.rawValue)"
+        return preferredConfigurationIDs[roleKey]
+            ?? (AIModelTuningScope(role: role) == .auxiliary
+                ? preferredConfigurationIDs[AIModelTuningScope.auxiliary.rawValue]
+                : nil)
+    }
+
     func simplePreferredConfigurationID(
         for role: AIModelRole,
         configurations: [AIModelConfiguration]
@@ -284,7 +316,7 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
     ) -> UUID? {
         switch mode {
         case .advanced:
-            if let preferred = preferredConfigurationID(for: AIModelTuningScope(role: role)),
+            if let preferred = preferredConfigurationID(for: role),
                configurations.contains(where: { $0.id == preferred }) {
                 return preferred
             }
@@ -299,6 +331,51 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
         }
     }
 
+    func orderedConfigurationsForCurrentMode(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration],
+        fallbackProviderID: AIProviderID?
+    ) -> [AIModelConfiguration] {
+        let preferredID = configurationIDForCurrentMode(
+            for: role,
+            configurations: configurations,
+            fallbackProviderID: fallbackProviderID
+        )
+        var ordered = configurations
+        if let preferredID,
+           let index = ordered.firstIndex(where: { $0.id == preferredID }) {
+            let preferred = ordered.remove(at: index)
+            ordered.insert(preferred, at: 0)
+        }
+
+        guard mode == .simple else { return ordered }
+        switch simpleModelRoute {
+        case .automatic:
+            return ordered
+        case .onDevice:
+            return preferredFirst(
+                ordered,
+                where: { $0.identity.providerID == .localRuntime }
+            )
+        case .online:
+            return preferredFirst(
+                ordered,
+                where: { $0.identity.providerID != .localRuntime }
+            )
+        }
+    }
+
+    var allowsFallbackForCurrentMode: Bool {
+        mode == .simple
+    }
+
+    private func preferredFirst(
+        _ configurations: [AIModelConfiguration],
+        where predicate: (AIModelConfiguration) -> Bool
+    ) -> [AIModelConfiguration] {
+        configurations.filter(predicate) + configurations.filter { !predicate($0) }
+    }
+
     mutating func setPreferredConfigurationID(_ id: UUID?, for scope: AIModelTuningScope) {
         if let id {
             preferredConfigurationIDs[scope.rawValue] = id
@@ -307,8 +384,40 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
         }
     }
 
+    mutating func setPreferredConfigurationID(_ id: UUID?, for role: AIModelRole) {
+        let roleKey = role == .persona || role == .story
+            ? AIModelTuningScope(role: role).rawValue
+            : "role.\(role.rawValue)"
+        if let id {
+            preferredConfigurationIDs[roleKey] = id
+        } else {
+            preferredConfigurationIDs[roleKey] = nil
+        }
+    }
+
+    mutating func clearPreferredConfigurationID(
+        _ id: UUID,
+        for roles: Set<AIModelRole>? = nil
+    ) {
+        let rolesToClear = roles ?? Set(AIModelRole.allCases)
+        for role in rolesToClear {
+            if preferredConfigurationID(for: role) == id {
+                setPreferredConfigurationID(nil, for: role)
+            }
+            let scope = AIModelTuningScope(role: role)
+            if preferredConfigurationID(for: scope) == id {
+                setPreferredConfigurationID(nil, for: scope)
+            }
+        }
+    }
+
     mutating func resetOverrides() {
         scopeOverrides.removeAll()
+    }
+
+    mutating func resetAdvancedSettings() {
+        resetOverrides()
+        preferredConfigurationIDs.removeAll()
     }
 }
 
@@ -355,6 +464,10 @@ final class AIModelTuningStore: @unchecked Sendable {
         preferences.preferredConfigurationID(for: scope)
     }
 
+    func preferredConfigurationID(for role: AIModelRole) -> UUID? {
+        preferences.preferredConfigurationID(for: role)
+    }
+
     func simplePreferredConfigurationID(
         for role: AIModelRole,
         configurations: [AIModelConfiguration]
@@ -374,14 +487,43 @@ final class AIModelTuningStore: @unchecked Sendable {
         )
     }
 
+    func orderedConfigurationsForCurrentMode(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration],
+        fallbackProviderID: AIProviderID?
+    ) -> [AIModelConfiguration] {
+        preferences.orderedConfigurationsForCurrentMode(
+            for: role,
+            configurations: configurations,
+            fallbackProviderID: fallbackProviderID
+        )
+    }
+
+    var allowsFallbackForCurrentMode: Bool {
+        preferences.allowsFallbackForCurrentMode
+    }
+
     @discardableResult
     func setPreferredConfigurationID(_ id: UUID?, for scope: AIModelTuningScope) -> Bool {
         update { $0.setPreferredConfigurationID(id, for: scope) }
     }
 
     @discardableResult
+    func setPreferredConfigurationID(_ id: UUID?, for role: AIModelRole) -> Bool {
+        update { $0.setPreferredConfigurationID(id, for: role) }
+    }
+
+    @discardableResult
     func resetAdvancedOverrides() -> Bool {
-        update { $0.resetOverrides() }
+        update { $0.resetAdvancedSettings() }
+    }
+
+    @discardableResult
+    func clearPreferredConfigurationID(
+        _ id: UUID,
+        for roles: Set<AIModelRole>? = nil
+    ) -> Bool {
+        update { $0.clearPreferredConfigurationID(id, for: roles) }
     }
 
     @discardableResult
@@ -535,6 +677,20 @@ struct AIModelConfiguration: Codable, Equatable, Hashable, Identifiable, Sendabl
     }
 }
 
+enum AIModelRegistryStorageError: LocalizedError, Equatable {
+    case invalidStoredData
+    case encodingFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidStoredData:
+            return "The saved AI model registry is invalid and needs recovery."
+        case .encodingFailed:
+            return "The AI model registry could not be saved."
+        }
+    }
+}
+
 /// A small, provider-neutral registry. It owns configuration metadata only;
 /// execution remains in the existing runtime/API adapters until each adapter
 /// migrates to the common contract. This makes the migration additive instead
@@ -545,11 +701,33 @@ final class AIModelRegistry: @unchecked Sendable {
     private let defaults: UserDefaults
     private let lock = NSLock()
     private let storageKey = "ai.modelConfigurations.v1"
+    private let tuningStore: AIModelTuningStore
+    private let corruptBackupKey = "ai.modelConfigurations.corruptBackup.v1"
+    private let encodeConfigurations: ([AIModelConfiguration]) throws -> Data
+    private(set) var loadError: AIModelRegistryStorageError?
+    private(set) var persistenceError: AIModelRegistryStorageError?
+    private(set) var recoveryDataAvailable = false
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        tuningStore: AIModelTuningStore = .shared,
+        encodeConfigurations: @escaping ([AIModelConfiguration]) throws -> Data = {
+            try JSONEncoder().encode($0)
+        }
+    ) {
         self.defaults = defaults
+        self.tuningStore = tuningStore
+        self.encodeConfigurations = encodeConfigurations
+        self.loadError = nil
+        self.persistenceError = nil
+        self.recoveryDataAvailable = false
         if defaults.data(forKey: storageKey) == nil {
-            save(Self.legacyDefaultConfigurations)
+            _ = save(Self.legacyDefaultConfigurations)
+        } else if let data = defaults.data(forKey: storageKey),
+                  (try? JSONDecoder().decode([AIModelConfiguration].self, from: data)) == nil {
+            defaults.set(data, forKey: corruptBackupKey)
+            self.loadError = .invalidStoredData
+            self.recoveryDataAvailable = true
         }
     }
 
@@ -574,26 +752,66 @@ final class AIModelRegistry: @unchecked Sendable {
 
     @discardableResult
     func register(_ configuration: AIModelConfiguration) -> Bool {
+        guard !recoveryDataAvailable else { return false }
         lock.lock()
         defer { lock.unlock() }
         var items = loadUnlocked()
+        let previous: AIModelConfiguration?
         if let index = items.firstIndex(where: { $0.id == configuration.id }) {
+            previous = items[index]
             items[index] = configuration
         } else {
+            previous = nil
             items.append(configuration)
         }
-        return saveUnlocked(items)
+        guard saveUnlocked(items) else { return false }
+
+        var rolesToClear = Set<AIModelRole>()
+        if let previous {
+            rolesToClear.formUnion(previous.roles.subtracting(configuration.roles))
+            if previous.isEnabled && !configuration.isEnabled {
+                rolesToClear.formUnion(previous.roles)
+            }
+        }
+        guard !rolesToClear.isEmpty else {
+            return true
+        }
+        if tuningStore.clearPreferredConfigurationID(
+            configuration.id,
+            for: rolesToClear
+        ) {
+            return true
+        }
+
+        // Keep registry metadata and tuning preferences consistent if the
+        // preference store cannot persist the cleanup.
+        if let previous,
+           let index = items.firstIndex(where: { $0.id == configuration.id }) {
+            items[index] = previous
+        } else {
+            items.removeAll { $0.id == configuration.id }
+        }
+        _ = saveUnlocked(items)
+        return false
     }
 
     @discardableResult
     func remove(id: UUID) -> Bool {
+        guard !recoveryDataAvailable else { return false }
         lock.lock()
         defer { lock.unlock() }
         var items = loadUnlocked()
-        let originalCount = items.count
+        guard let removed = items.first(where: { $0.id == id }) else {
+            return tuningStore.clearPreferredConfigurationID(id)
+        }
         items.removeAll { $0.id == id }
-        guard items.count != originalCount else { return true }
-        return saveUnlocked(items)
+        guard saveUnlocked(items) else { return false }
+        guard tuningStore.clearPreferredConfigurationID(id) else {
+            items.append(removed)
+            _ = saveUnlocked(items)
+            return false
+        }
+        return true
     }
 
     /// Resolve or create the local artifact configuration used by auxiliary
@@ -627,6 +845,17 @@ final class AIModelRegistry: @unchecked Sendable {
         return configuration
     }
 
+    @discardableResult
+    func resetCorruptedStorage() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        defaults.removeObject(forKey: storageKey)
+        defaults.removeObject(forKey: corruptBackupKey)
+        loadError = nil
+        recoveryDataAvailable = false
+        return saveUnlocked(Self.legacyDefaultConfigurations)
+    }
+
     private func loadUnlocked() -> [AIModelConfiguration] {
         guard let data = defaults.data(forKey: storageKey),
               let decoded = try? JSONDecoder().decode([AIModelConfiguration].self, from: data) else {
@@ -635,15 +864,20 @@ final class AIModelRegistry: @unchecked Sendable {
         return decoded
     }
 
-    private func save(_ items: [AIModelConfiguration]) {
+    @discardableResult
+    private func save(_ items: [AIModelConfiguration]) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        _ = saveUnlocked(items)
+        return saveUnlocked(items)
     }
 
     private func saveUnlocked(_ items: [AIModelConfiguration]) -> Bool {
-        guard let data = try? JSONEncoder().encode(items) else { return false }
+        guard let data = try? encodeConfigurations(items) else {
+            persistenceError = .encodingFailed
+            return false
+        }
         defaults.set(data, forKey: storageKey)
+        persistenceError = nil
         return true
     }
 
@@ -712,14 +946,15 @@ final class AISecretStore {
         }
     }
 
-    func setStrings(_ values: [String], for key: SecretKey) {
+    @discardableResult
+    func setStrings(_ values: [String], for key: SecretKey) -> Bool {
         var unique: [String] = []
         for value in values {
             let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty, !unique.contains(normalized) else { continue }
             unique.append(normalized)
         }
-        setString(unique.joined(separator: "\n"), for: key)
+        return setString(unique.joined(separator: "\n"), for: key)
     }
 
     @discardableResult

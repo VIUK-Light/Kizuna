@@ -46,15 +46,17 @@ struct PersonaComposer: View {
         guard let configurationID = store.thread(id: thread.id)?.preferredGenerationConfigurationID else {
             return nil
         }
-        return AIModelRegistry.shared.configuration(id: configurationID)
+        guard let configuration = AIModelRegistry.shared.configuration(id: configurationID),
+              configuration.isEnabled,
+              configuration.roles.contains(.persona) else {
+            return nil
+        }
+        return configuration
     }
 
     private var customRegistryConfigurations: [AIModelConfiguration] {
         AIModelRegistry.shared.configurations
-            .filter { configuration in
-                configuration.roles.contains(.persona)
-                    && [.openAICompatible, .anthropic].contains(configuration.identity.providerID)
-            }
+            .filter { $0.roles.contains(.persona) }
             .sorted {
                 if $0.priority != $1.priority { return $0.priority < $1.priority }
                 return $0.identity.displayName.localizedStandardCompare($1.identity.displayName) == .orderedAscending
@@ -276,11 +278,17 @@ struct PersonaComposer: View {
         switch configuration.identity.providerID {
         case .localRuntime:
             return LocalAssistantModelManager.shared.runtimeAvailability == .executable
+                && LocalAssistantModelManager.shared.modelURL(
+                    forArtifactID: configuration.identity.artifactID
+                ) != nil
         case .googleGenerativeLanguage:
             return AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
                 || AISecretStore.shared.configuredGemmaWebReaderAPIKey() != nil
         case .openAICompatible, .anthropic:
-            return AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
+            return !AIEndpointPolicy.requiresAPIKey(
+                providerID: configuration.identity.providerID,
+                endpoint: configuration.endpoint
+            ) || AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
         }
     }
 

@@ -4,6 +4,12 @@ import Foundation
 /// UserDefaults の値は AppStorage と同じキーを使うため、設定画面を閉じた後も
 /// 次の再描画でただちに反映される。
 enum KizunaCopy {
+    static let languageDidChangeNotification = Notification.Name("Kizuna.languageDidChange")
+
+    static func notifyLanguageDidChange() {
+        NotificationCenter.default.post(name: languageDidChangeNotification, object: nil)
+    }
+
     static var language: KizunaLanguage {
         KizunaLanguage(rawValue: UserDefaults.standard.string(forKey: "kizuna.language") ?? "")
             ?? .japanese

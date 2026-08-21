@@ -12,6 +12,7 @@ struct KizunaMyPageView: View {
     @State private var isShowingDetailedSettings = false
     @State private var isShowingDataManagement = false
     @State private var isShowingResetLaunchAlert = false
+    @State private var languageRevision = 0
 
     var body: some View {
         ScrollView {
@@ -57,6 +58,10 @@ struct KizunaMyPageView: View {
         }
         .onAppear {
             modelManager.refreshEnvironment()
+        }
+        .onChange(of: languageRawValue) { _, _ in
+            KizunaCopy.notifyLanguageDidChange()
+            languageRevision &+= 1
         }
     }
 

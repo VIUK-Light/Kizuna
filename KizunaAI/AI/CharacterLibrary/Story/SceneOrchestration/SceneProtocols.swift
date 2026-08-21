@@ -1,7 +1,7 @@
 /*
 仕様:
 - 役割: Story モード用の 270M (Gemma 3 270M) 補助タスクを抽象化する Protocol。
-  実モデル接続前は Mock で動作確認、後で実装差し替え。
+  Runtimeアダプターは選択されたlocal auxiliary modelへ接続し、Mockは明示的なPreview/Test注入に残す。
 - 主な型: SceneCharacterSelecting, SceneSummarizing, NextSceneSuggesting.
 */
 

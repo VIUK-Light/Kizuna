@@ -202,7 +202,7 @@ struct CharacterLibraryView: View {
                     .font(.system(size: 15, weight: .semibold))
                 Text(vm.loadError != nil && !vm.didLoadCharacters
                      ? KizunaCopy.text(japanese: "読み込みエラー", english: "Load error")
-                     : "\(vm.allCharacters.count) " + KizunaCopy.text(japanese: "件", english: "characters"))
+                     : "\(vm.ageVisibleCharacters.count) " + KizunaCopy.text(japanese: "件", english: "characters"))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

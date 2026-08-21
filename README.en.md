@@ -31,6 +31,8 @@ Many safety systems react to isolated keywords and discard the surrounding creat
 - Remain transparent that the character is AI and that its answers may be wrong.
 - Do not make unnecessary collection of private conversations the price of immersion.
 
+See the [AI pipeline implementation status](docs/AI_PIPELINE_STATUS.md) for production wiring, auxiliary-model contracts, and explicit behavior when a local model is unavailable.
+
 ## Project status
 
 Kizuna is under active development. Feature proposals, bug reports, documentation improvements, and Pull Requests are welcome.

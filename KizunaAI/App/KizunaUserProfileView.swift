@@ -8,6 +8,8 @@ struct KizunaUserProfileView: View {
     @State private var draft: KizunaUserProfile
     @State private var ageContext: UserAgeSafetyContext
     @State private var isLoadingPhoto = false
+    @State private var saveError: String?
+    @State private var languageRevision = 0
 
     init(store: KizunaUserProfileStore) {
         self.store = store
@@ -36,6 +38,35 @@ struct KizunaUserProfileView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if store.recoveryDataAvailable {
+                        Label {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(store.loadError ?? KizunaCopy.text(
+                                    japanese: "プロフィールの復旧が必要です。",
+                                    english: "Profile recovery is required."
+                                ))
+                                    .font(.caption)
+                                Button(KizunaCopy.text(
+                                    japanese: "壊れたプロフィールをリセット",
+                                    english: "Reset damaged profile"
+                                )) {
+                                    store.resetCorruptedProfile()
+                                    draft = store.profile
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                        .padding(12)
+                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    if let saveError {
+                        Label(saveError, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                     KizunaProfileCard(
                         title: KizunaCopy.text(japanese: "名前と画像", english: "Name and photo"),
                         icon: "person.crop.circle",
@@ -93,13 +124,20 @@ struct KizunaUserProfileView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(KizunaCopy.text(japanese: "保存", english: "Save")) {
                         _ = UserAgeSafetyStore.shared.update(ageContext)
-                        store.update(draft)
-                        dismiss()
+                        switch store.update(draft) {
+                        case .success:
+                            dismiss()
+                        case let .failure(error):
+                            saveError = error.localizedDescription
+                        }
                     }
                     .fontWeight(.semibold)
                     .disabled(isLoadingPhoto)
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: KizunaCopy.languageDidChangeNotification)) { _ in
+            languageRevision &+= 1
         }
     }
 }

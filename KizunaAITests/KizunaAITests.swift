@@ -6078,6 +6078,13 @@ final class KizunaAITests: XCTestCase {
                 atPath: storageURL.appendingPathComponent("index.json").path
             )
         )
+        let indexData = try Data(
+            contentsOf: storageURL.appendingPathComponent("index.json")
+        )
+        let indexText = try XCTUnwrap(String(data: indexData, encoding: .utf8))
+        XCTAssertTrue(indexText.contains("personaIndex"))
+        XCTAssertFalse(indexText.contains("avatarImageData"))
+        XCTAssertFalse(indexText.contains("freeFormAddendum"))
         defaults.set(first.id.uuidString, forKey: "persona.activeThreadID.v1")
 
         let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)
@@ -6108,6 +6115,96 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(
             finalReload.thread(id: first.id)?.messages.map(\.text),
             ["first message", "reply"]
+        )
+    }
+
+    @MainActor
+    func testPersonaFileStoreRecoversDurableDeletionJournal() async throws {
+        let suiteName = "KizunaAITests.PersonaDeletionJournal." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KizunaPersonaDeletionJournal-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let profile = PersonaProfile(
+            name: "Delete journal",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let thread = PersonaThread(
+            personaSnapshot: profile,
+            title: "To delete",
+            messages: [PersonaMessage(role: .user, text: "private")]
+        )
+        defaults.set(
+            try JSONEncoder().encode([thread]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        store.flushPendingPersistence()
+        await store.waitForPendingPersistence()
+        store.deleteThread(id: thread.id)
+        store.flushPendingPersistence()
+        await store.waitForPendingPersistence()
+
+        let threadURL = storageURL.appendingPathComponent("thread-\(thread.id.uuidString).json")
+        let journalURL = storageURL.appendingPathComponent("deletion-journal.json")
+        try JSONEncoder().encode(thread).write(to: threadURL, options: .atomic)
+        try JSONEncoder().encode([thread.id]).write(to: journalURL, options: .atomic)
+
+        let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: threadURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journalURL.path))
+        XCTAssertFalse(reloaded.threads.contains(where: { $0.id == thread.id }))
+    }
+
+    @MainActor
+    func testPersonaFileStoreRecoversValidThreadFilesMissingFromIndex() async throws {
+        let suiteName = "KizunaAITests.PersonaOrphanRecovery." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KizunaPersonaOrphanRecovery-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let profile = PersonaProfile(
+            name: "Recoverable",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let first = PersonaThread(
+            personaSnapshot: profile,
+            title: "First",
+            messages: [PersonaMessage(role: .user, text: "first")]
+        )
+        let second = PersonaThread(
+            personaSnapshot: profile,
+            title: "Recovered",
+            messages: [PersonaMessage(role: .user, text: "recovered")]
+        )
+        defaults.set(
+            try JSONEncoder().encode([first]),
+            forKey: "persona.threads.v1"
+        )
+        let store = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        store.flushPendingPersistence()
+        await store.waitForPendingPersistence()
+
+        let secondURL = storageURL.appendingPathComponent("thread-\(second.id.uuidString).json")
+        try JSONEncoder().encode(second).write(to: secondURL, options: .atomic)
+        try FileManager.default.removeItem(at: storageURL.appendingPathComponent("index.json"))
+
+        let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertEqual(reloaded.threads.count, 2)
+        XCTAssertEqual(reloaded.thread(id: second.id)?.messages.map(\.text), ["recovered"])
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: storageURL.appendingPathComponent("index.json").path
+            )
         )
     }
 
@@ -6622,6 +6719,174 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
     }
 
+    func testAIModelRegistryBacksUpCorruptStorageBeforeReset() throws {
+        let suiteName = "KizunaAIModelRegistryTests.Corrupt.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let corruptData = Data("not-json".utf8)
+        defaults.set(corruptData, forKey: "ai.modelConfigurations.v1")
+
+        let registry = AIModelRegistry(defaults: defaults)
+
+        XCTAssertTrue(registry.recoveryDataAvailable)
+        XCTAssertEqual(defaults.data(forKey: "ai.modelConfigurations.v1"), corruptData)
+        XCTAssertFalse(
+            registry.register(
+                AIModelConfiguration(
+                    identity: AIModelIdentity(
+                        providerID: .openAICompatible,
+                        modelID: "blocked",
+                        displayName: "Blocked"
+                    ),
+                    roles: [.persona]
+                )
+            )
+        )
+        XCTAssertTrue(registry.resetCorruptedStorage())
+        XCTAssertFalse(registry.recoveryDataAvailable)
+        XCTAssertFalse(registry.configurations.isEmpty)
+    }
+
+    func testAIModelRegistryReportsEncodingFailureWithoutRegistering() throws {
+        let suiteName = "KizunaAIModelRegistryTests.Encoding.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let tuningDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName + ".Tuning"))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            tuningDefaults.removePersistentDomain(forName: suiteName + ".Tuning")
+        }
+        let tuningStore = AIModelTuningStore(defaults: tuningDefaults)
+        let registry = AIModelRegistry(
+            defaults: defaults,
+            tuningStore: tuningStore,
+            encodeConfigurations: { _ in
+                throw NSError(domain: "KizunaAITests", code: 2)
+            }
+        )
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "not-saved",
+                displayName: "Not saved"
+            ),
+            roles: [.persona]
+        )
+
+        XCTAssertFalse(registry.register(configuration))
+        XCTAssertEqual(registry.persistenceError, .encodingFailed)
+        XCTAssertFalse(registry.configurations.contains { $0.id == configuration.id })
+    }
+
+    func testAIModelRegistryCleansPreferredSelectionsAfterMutation() throws {
+        let registrySuite = "KizunaAIModelRegistryTests.Mutation.\(UUID().uuidString)"
+        let tuningSuite = "KizunaAIModelTuningTests.Mutation.\(UUID().uuidString)"
+        let registryDefaults = try XCTUnwrap(UserDefaults(suiteName: registrySuite))
+        let tuningDefaults = try XCTUnwrap(UserDefaults(suiteName: tuningSuite))
+        defer {
+            registryDefaults.removePersistentDomain(forName: registrySuite)
+            tuningDefaults.removePersistentDomain(forName: tuningSuite)
+        }
+
+        let tuningStore = AIModelTuningStore(defaults: tuningDefaults)
+        let registry = AIModelRegistry(defaults: registryDefaults, tuningStore: tuningStore)
+        let missingConfigurationID = UUID()
+        XCTAssertTrue(
+            tuningStore.setPreferredConfigurationID(
+                missingConfigurationID,
+                for: AIModelRole.story
+            )
+        )
+        XCTAssertTrue(registry.remove(id: missingConfigurationID))
+        XCTAssertNil(tuningStore.preferredConfigurationID(for: AIModelRole.story))
+
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "mutation-model",
+                displayName: "Mutation model"
+            ),
+            roles: [.persona, .story],
+            endpoint: "https://example.invalid/v1"
+        )
+        XCTAssertTrue(registry.register(configuration))
+        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: AIModelRole.persona))
+        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: AIModelRole.story))
+
+        let storyOnly = AIModelConfiguration(
+            id: configuration.id,
+            identity: configuration.identity,
+            roles: [.story],
+            endpoint: configuration.endpoint
+        )
+        XCTAssertTrue(registry.register(storyOnly))
+        XCTAssertNil(tuningStore.preferredConfigurationID(for: AIModelRole.persona))
+        XCTAssertEqual(tuningStore.preferredConfigurationID(for: AIModelRole.story), configuration.id)
+
+        let disabled = AIModelConfiguration(
+            id: storyOnly.id,
+            identity: storyOnly.identity,
+            roles: storyOnly.roles,
+            endpoint: storyOnly.endpoint,
+            isEnabled: false
+        )
+        XCTAssertTrue(registry.register(disabled))
+        XCTAssertNil(tuningStore.preferredConfigurationID(for: AIModelRole.story))
+
+        XCTAssertTrue(registry.register(storyOnly))
+        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: AIModelRole.story))
+        XCTAssertTrue(registry.remove(id: configuration.id))
+        XCTAssertNil(tuningStore.preferredConfigurationID(for: AIModelRole.story))
+    }
+
+    func testLocalRegistryConfigurationsPreserveDistinctArtifactIdentity() {
+        let first = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Model A",
+                artifactID: "artifact-a"
+            ),
+            roles: [.persona]
+        )
+        let second = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Model B",
+                artifactID: "artifact-b"
+            ),
+            roles: [.story]
+        )
+
+        XCTAssertEqual(first.identity.artifactID, "artifact-a")
+        XCTAssertEqual(second.identity.artifactID, "artifact-b")
+        XCTAssertNotEqual(first.identity.stableID, second.identity.stableID)
+    }
+
+    func testAIModelTuningResetAdvancedOverridesAlsoClearsModelSelections() throws {
+        let suiteName = "KizunaAIModelTuningTests.FullReset.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        let personaID = UUID()
+        let storyID = UUID()
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertTrue(store.setPreferredConfigurationID(personaID, for: AIModelRole.persona))
+        XCTAssertTrue(store.setPreferredConfigurationID(storyID, for: AIModelTuningScope.story))
+        XCTAssertTrue(
+            store.setOverrides(
+                AIGenerationOverrides(temperature: 0.25),
+                for: AIModelTuningScope.story
+            )
+        )
+
+        XCTAssertTrue(store.resetAdvancedOverrides())
+        XCTAssertNil(store.preferredConfigurationID(for: AIModelRole.persona))
+        XCTAssertNil(store.preferredConfigurationID(for: AIModelTuningScope.story))
+        XCTAssertTrue(store.preferences.overrides(for: .story).isEmpty)
+    }
+
     func testGoogleRegistryRouteUsesConfiguredModelAndEndpoint() throws {
         let streamingURL = try XCTUnwrap(
             StoryGemma31BAPIEndpoint.url(
@@ -6675,6 +6940,24 @@ final class KizunaAITests: XCTestCase {
                 endpoint: "https://api.example/v1"
             )
         )
+        XCTAssertTrue(
+            AIEndpointPolicy.allowsEndpoint(
+                providerID: .openAICompatible,
+                endpoint: "http://localhost:1234/v1"
+            )
+        )
+        XCTAssertTrue(
+            AIEndpointPolicy.allowsEndpoint(
+                providerID: .openAICompatible,
+                endpoint: "https://api.example/v1"
+            )
+        )
+        XCTAssertFalse(
+            AIEndpointPolicy.allowsEndpoint(
+                providerID: .openAICompatible,
+                endpoint: "http://api.example/v1"
+            )
+        )
     }
 
     func testAIModelTuningDefaultsToSimpleAutomaticAndPersistsSelection() throws {
@@ -6691,14 +6974,19 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(store.setMode(.advanced))
 
         let selectedConfigurationID = UUID()
-        XCTAssertTrue(store.setPreferredConfigurationID(selectedConfigurationID, for: .story))
+        XCTAssertTrue(
+            store.setPreferredConfigurationID(
+                selectedConfigurationID,
+                for: AIModelTuningScope.story
+            )
+        )
 
         let reloaded = AIModelTuningStore(defaults: defaults)
         XCTAssertEqual(reloaded.preferences.mode, .advanced)
         XCTAssertEqual(reloaded.preferences.simplePreset, .stable)
         XCTAssertEqual(reloaded.preferences.simpleModelRoute, .onDevice)
         XCTAssertEqual(
-            reloaded.preferredConfigurationID(for: .story),
+            reloaded.preferredConfigurationID(for: AIModelTuningScope.story),
             selectedConfigurationID
         )
     }
@@ -6753,6 +7041,52 @@ final class KizunaAITests: XCTestCase {
                 fallbackProviderID: .localRuntime
             ),
             online.id
+        )
+        XCTAssertEqual(
+            store.orderedConfigurationsForCurrentMode(
+                for: .persona,
+                configurations: [local, online],
+                fallbackProviderID: .localRuntime
+            ).map(\.id),
+            [online.id, local.id]
+        )
+        XCTAssertTrue(store.allowsFallbackForCurrentMode)
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertFalse(store.allowsFallbackForCurrentMode)
+    }
+
+    func testAuxiliaryModelSelectionIsStoredPerRole() throws {
+        let suiteName = "KizunaAIAuxiliaryRouteTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let memoryModel = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "memory-model",
+                displayName: "Memory model"
+            ),
+            roles: [.memoryExtraction],
+            endpoint: "https://example.invalid/v1"
+        )
+        let sceneModel = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "scene-model",
+                displayName: "Scene model"
+            ),
+            roles: [.sceneSummary]
+        )
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertTrue(store.setPreferredConfigurationID(memoryModel.id, for: .memoryExtraction))
+        XCTAssertTrue(store.setPreferredConfigurationID(sceneModel.id, for: .sceneSummary))
+
+        XCTAssertEqual(store.preferredConfigurationID(for: .memoryExtraction), memoryModel.id)
+        XCTAssertEqual(store.preferredConfigurationID(for: .sceneSummary), sceneModel.id)
+        XCTAssertNotEqual(
+            store.preferredConfigurationID(for: .memoryExtraction),
+            store.preferredConfigurationID(for: .sceneSummary)
         )
     }
 
@@ -6932,10 +7266,15 @@ final class KizunaAITests: XCTestCase {
 
         let tuningStore = AIModelTuningStore(defaults: defaults)
         XCTAssertTrue(tuningStore.setMode(.advanced))
-        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: .persona))
+        XCTAssertTrue(
+            tuningStore.setPreferredConfigurationID(
+                configuration.id,
+                for: AIModelRole.persona
+            )
+        )
         XCTAssertEqual(
             tuningStore.configurationIDForCurrentMode(
-                for: .persona,
+                for: AIModelRole.persona,
                 configurations: registry.configurations(for: .persona),
                 fallbackProviderID: .localRuntime
             ),
@@ -7079,6 +7418,331 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(characters.count, 4)
     }
 
+    func testCharacterLibraryMetadataUsesAgeVisibleCharacters() {
+        let general = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            tags: ["shared"],
+            safetyRating: .general
+        )
+        let sensitive = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            tags: ["adult-only"],
+            safetyRating: .sensitive
+        )
+        let characters = [general, sensitive]
+        let teenPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+
+        let visible = CharacterLibraryViewModel.ageVisibleCharacters(
+            from: characters,
+            policy: teenPolicy
+        )
+        let tags = CharacterLibraryViewModel.availableTags(from: visible)
+
+        XCTAssertEqual(visible.map(\.id), [general.id])
+        XCTAssertEqual(tags, ["shared"])
+        XCTAssertEqual(characters.count, 2)
+    }
+
+    @MainActor
+    func testUserProfileStoreKeepsPreviousValueWhenEncodingFails() {
+        let suiteName = "KizunaUserProfileTests.Encoding.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let original = KizunaUserProfile()
+        let persisted = KizunaUserProfileStore(defaults: defaults)
+        guard case .success = persisted.update(original) else {
+            return XCTFail("Expected the initial profile save to succeed")
+        }
+
+        let failing = KizunaUserProfileStore(
+            defaults: defaults,
+            encodeProfile: { _ in
+                throw NSError(domain: "KizunaAITests", code: 1)
+            }
+        )
+        var newValue = original
+        newValue.nickname = "Not persisted"
+        guard case .failure(.encodingFailed) = failing.update(newValue) else {
+            return XCTFail("Expected an explicit profile encoding failure")
+        }
+
+        let reloaded = KizunaUserProfileStore(defaults: defaults)
+        XCTAssertEqual(reloaded.profile, original)
+    }
+
+    @MainActor
+    func testUserProfileStoreRejectsInvalidAvatarWithoutDroppingExistingProfile() {
+        let suiteName = "KizunaUserProfileTests.Avatar.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let original = KizunaUserProfile()
+        let store = KizunaUserProfileStore(defaults: defaults)
+        guard case .success = store.update(original) else {
+            return XCTFail("Expected the initial profile save to succeed")
+        }
+
+        var invalid = original
+        invalid.nickname = "Keep old profile"
+        invalid.avatarImageData = Data(repeating: 0, count: 32)
+        guard case .failure(.invalidAvatarImage) = store.update(invalid) else {
+            return XCTFail("Expected invalid avatar data to be rejected")
+        }
+        XCTAssertEqual(store.profile, original)
+    }
+
+    @MainActor
+    func testUserProfileResetRollsBackWhenAgeSafetyResetFails() {
+        let profileSuite = "KizunaUserProfileTests.Reset.\(UUID().uuidString)"
+        let ageSuite = "KizunaUserProfileTests.ResetAge.\(UUID().uuidString)"
+        let profileDefaults = UserDefaults(suiteName: profileSuite)!
+        let ageDefaults = UserDefaults(suiteName: ageSuite)!
+        defer {
+            profileDefaults.removePersistentDomain(forName: profileSuite)
+            ageDefaults.removePersistentDomain(forName: ageSuite)
+        }
+        var removed = false
+        let ageStore = UserAgeSafetyStore(
+            defaults: ageDefaults,
+            removeStoredValue: {
+                removed = true
+                return false
+            }
+        )
+        XCTAssertTrue(ageStore.update(.selfDeclared(.teen)))
+        let original = KizunaUserProfile()
+        let store = KizunaUserProfileStore(
+            defaults: profileDefaults,
+            ageSafetyStore: ageStore
+        )
+        guard case .success = store.update(original) else {
+            return XCTFail("Expected the initial profile save to succeed")
+        }
+
+        guard case .failure(.ageSafetyResetFailed) = store.reset() else {
+            return XCTFail("Expected reset to report the safety-store failure")
+        }
+        XCTAssertTrue(removed)
+        XCTAssertEqual(store.profile, original)
+        XCTAssertEqual(ageStore.context.tier, .teen)
+    }
+
+    @MainActor
+    func testUserProfileStoreBacksUpCorruptDataBeforeExplicitReset() {
+        let suiteName = "KizunaUserProfileTests.Corrupt.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let corruptData = Data("not-json".utf8)
+        defaults.set(corruptData, forKey: "kizuna.userProfile.v1")
+
+        let store = KizunaUserProfileStore(defaults: defaults)
+
+        XCTAssertTrue(store.recoveryDataAvailable)
+        XCTAssertNotNil(store.loadError)
+        XCTAssertEqual(defaults.data(forKey: "kizuna.userProfile.v1"), corruptData)
+        guard case .failure(.recoveryRequired) = store.update(KizunaUserProfile()) else {
+            return XCTFail("Corrupt data must require explicit recovery before update")
+        }
+
+        store.resetCorruptedProfile()
+        XCTAssertFalse(store.recoveryDataAvailable)
+        XCTAssertNil(defaults.data(forKey: "kizuna.userProfile.v1"))
+    }
+
+    func testDataMigrationResultDistinguishesFailureReasonsAndRetryability() {
+        let invalidJSON = KizunaDataMigrationResult(
+            failure: .characterLibrary(fileName: "characters.json", reason: .invalidJSON)
+        )
+        let stagingFailure = KizunaDataMigrationResult(
+            failure: .localModels(reason: .stagingCleanupFailed)
+        )
+
+        XCTAssertFalse(invalidJSON.succeeded)
+        XCTAssertFalse(invalidJSON.isRetryable)
+        XCTAssertTrue(invalidJSON.failure?.localizedDescription.contains("characters.json") == true)
+        XCTAssertTrue(stagingFailure.isRetryable)
+    }
+
+    func testCharacterDeletionMarkersCompactOldTombstonesAndIndexPendingIDs() {
+        let suiteName = "KizunaCharacterDeletionMarkers.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let marker = CharacterDeletionCleanupMarker(defaults: defaults)
+        let oldID = UUID()
+        let recentID = UUID()
+        let pendingID = UUID()
+        let now = Date().timeIntervalSince1970
+
+        defaults.set(now - 100, forKey: "kizuna.characterDeletion.tombstone.\(oldID.uuidString)")
+        defaults.set(now, forKey: "kizuna.characterDeletion.tombstone.\(recentID.uuidString)")
+        marker.insert(pendingID)
+
+        XCTAssertEqual(marker.pendingIDs(), [pendingID])
+        XCTAssertTrue(marker.contains(oldID))
+        XCTAssertEqual(marker.compactTombstones(olderThan: 10), 1)
+        XCTAssertFalse(marker.contains(oldID))
+        XCTAssertTrue(marker.contains(recentID))
+        XCTAssertTrue(marker.containsPending(pendingID))
+    }
+
+    func testSmallModelClassificationCarriesFailureStatus() {
+        let result = SmallModelClassification(
+            label: "",
+            confidence: 0,
+            status: .unavailable,
+            failureReason: "local runtime unavailable"
+        )
+
+        XCTAssertEqual(result.status, .unavailable)
+        XCTAssertEqual(result.failureReason, "local runtime unavailable")
+        XCTAssertEqual(result.confidence, 0)
+    }
+
+    func testStoryWorldAgeAvailabilityUsesAllWorldCharacters() {
+        let general = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+        let sensitive = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+        let world = StoryWorld(
+            title: "Mixed cast",
+            characterIds: [general.id, sensitive.id],
+            mainCharacterId: general.id
+        )
+        let teenPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+
+        let availability = StoryWorldAgeAvailability.resolve(
+            world: world,
+            charactersById: [general.id: general, sensitive.id: sensitive],
+            policy: teenPolicy
+        )
+
+        XCTAssertFalse(availability.isAvailable)
+        XCTAssertEqual(availability.unavailableCharacterIDs, [sensitive.id])
+        XCTAssertEqual(
+            StoryWorldLibraryViewModel.ageAvailableWorlds(
+                from: [world],
+                charactersById: [general.id: general, sensitive.id: sensitive],
+                policy: teenPolicy
+            ),
+            []
+        )
+    }
+
+    func testStoryCreateCandidatesRespectAgePolicy() {
+        let general = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+        let sensitive = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+
+        let addable = StoryWorldCreateViewModel.addableCharacters(
+            from: [general, sensitive],
+            policy: policy
+        )
+
+        XCTAssertEqual(addable.map(\.id), [general.id])
+    }
+
+    func testCharacterSafetyClassificationRaisesButNeverLowersRating() {
+        let sensitive = CharacterSafetyClassification.from(
+            SafetyDecision(action: .warn, riskDomains: [.sexual])
+        )
+        let neutral = CharacterSafetyClassification.from(SafetyDecision())
+
+        XCTAssertEqual(sensitive.recommendedRating, .sensitive)
+        XCTAssertEqual(
+            CharacterSafetyClassification.preserveStrictest(
+                current: .general,
+                recommended: sensitive.recommendedRating
+            ),
+            .sensitive
+        )
+        XCTAssertEqual(
+            CharacterSafetyClassification.preserveStrictest(
+                current: .sensitive,
+                recommended: neutral.recommendedRating
+            ),
+            .sensitive
+        )
+    }
+
+    @MainActor
+    func testCharacterCreateForceSavePersistsRaisedSafetyRating() async {
+        let character = CharacterProfile(
+            name: "Adult draft",
+            displayName: "Adult draft",
+            shortDescription: "裸の表現を含む設定",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.adult))
+        let pipeline = SafetyPipeline(policyProvider: { policy })
+        let viewModel = CharacterCreateViewModel(
+            existing: character,
+            characterRepo: PersonaTestCharacterRepository(character: character),
+            safetyPipeline: pipeline
+        )
+
+        await viewModel.attemptSave(force: true)
+
+        guard case let .saved(saved) = viewModel.state else {
+            return XCTFail("Expected the warning acknowledgement to save the classified character")
+        }
+        XCTAssertEqual(saved.safetyRating, .sensitive)
+    }
+
+    func testPersonaContinuationLocksUnavailableThreadWithoutDeletingIt() {
+        let profile = PersonaProfile(
+            name: "Sensitive persona",
+            personality: "Careful",
+            tone: .calm,
+            relation: .friend,
+            safetyRating: .sensitive
+        )
+        let thread = PersonaThread(
+            personaSnapshot: profile,
+            title: "Private conversation"
+        )
+        let teenPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+
+        XCTAssertTrue(
+            KizunaContinuationViewModel.personaThreadIsAgeRestricted(
+                thread,
+                currentCharacters: [:],
+                characterLoadCompleted: true,
+                characterLoadFailed: false,
+                policy: teenPolicy
+            )
+        )
+        XCTAssertEqual(thread.personaSnapshot.safetyRating, .sensitive)
+    }
+
     func testSafetyPipelineAppliesOneAgePolicyToInputAndOutput() async {
         let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
         let pipeline = SafetyPipeline(policyProvider: { policy })
@@ -7096,6 +7760,205 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(input.action, .block)
         XCTAssertEqual(output.action, .block)
         XCTAssertEqual(input.addedPromptRules, output.addedPromptRules)
+    }
+
+    func testAgePolicyEvaluatesAllParticipatingStoryCharacterRatings() async {
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+        let general = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+        let pipeline = SafetyPipeline(policyProvider: { policy })
+
+        let decision = policy.applying(
+            to: SafetyDecision(),
+            characterRatings: [.general, .sensitive]
+        )
+        XCTAssertEqual(decision.action, .block)
+
+        let evaluated = await pipeline.evaluateOutput(
+            "safe-looking text",
+            character: general,
+            additionalCharacterRatings: [.sensitive]
+        )
+        XCTAssertEqual(evaluated.action, .block)
+    }
+
+    func testOutputSafetyCheckerEmitsPolicyDomains() async {
+        let character = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+        let decision = await MockOutputSafetyChecker().evaluate(
+            "殴る。死ね。自殺。住所。診断。送金。逮捕。小学生。",
+            character: character
+        )
+        let domains = Set(decision.riskDomains)
+        XCTAssertTrue(domains.contains(.violence))
+        XCTAssertTrue(domains.contains(.harassment))
+        XCTAssertTrue(domains.contains(.selfHarm))
+        XCTAssertTrue(domains.contains(.personalInfo))
+        XCTAssertTrue(domains.contains(.medical))
+        XCTAssertTrue(domains.contains(.financial))
+        XCTAssertTrue(domains.contains(.legal))
+        XCTAssertTrue(domains.contains(.minors))
+    }
+
+    func testRuntimeSafetyDecisionContractParsesStructuredModelOutput() {
+        let decision = RuntimeSafetyDecisionContract.parse(
+            """
+            ACTION=require_edit
+            DOMAINS=self_harm,personal_info
+            SEVERITY=warning
+            REWRITE=安全な言い換え
+            RULES=共感する;具体的な手段は示さない
+            """
+        )
+
+        XCTAssertEqual(decision?.action, .requireEdit)
+        XCTAssertEqual(Set(decision?.riskDomains ?? []), [.selfHarm, .personalInfo])
+        XCTAssertEqual(decision?.severity, .warning)
+        XCTAssertEqual(decision?.rewrittenText, "安全な言い換え")
+        XCTAssertEqual(decision?.addedPromptRules, ["共感する", "具体的な手段は示さない"])
+    }
+
+    func testRuntimeSafetyDecisionContractNeverLowersRuleDecision() {
+        let baseline = SafetyDecision(
+            action: .block,
+            reasons: ["ルール判定"],
+            riskDomains: [.crime],
+            severity: .block
+        )
+        let model = SafetyDecision(
+            action: .allow,
+            riskDomains: [],
+            severity: .info
+        )
+
+        let merged = RuntimeSafetyDecisionContract.merge(baseline: baseline, model: model)
+
+        XCTAssertEqual(merged.action, .block)
+        XCTAssertEqual(merged.severity, .block)
+        XCTAssertEqual(merged.riskDomains, [.crime])
+        XCTAssertEqual(merged.reasons, baseline.reasons)
+    }
+
+    func testStoryCurrentConfigurationWinsOverLegacyGenerationFamily() {
+        let localConfiguration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Local"
+            ),
+            roles: [.story]
+        )
+        let remoteConfiguration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "remote-model",
+                displayName: "Remote"
+            ),
+            roles: [.story],
+            endpoint: "https://example.invalid/v1"
+        )
+
+        XCTAssertFalse(
+            StorySessionService.usesRemoteAIConfiguration(
+                localConfiguration,
+                legacyGenerationModel: .b31
+            )
+        )
+        XCTAssertTrue(
+            StorySessionService.usesRemoteAIConfiguration(
+                remoteConfiguration,
+                legacyGenerationModel: .e4b
+            )
+        )
+        XCTAssertTrue(
+            StorySessionService.usesRemoteAIConfiguration(
+                nil,
+                legacyGenerationModel: .b31
+            )
+        )
+        XCTAssertFalse(
+            StorySessionService.usesRemoteAIConfiguration(
+                nil,
+                legacyGenerationModel: .e4b
+            )
+        )
+    }
+
+    func testAdvancedPersonaSelectionPreservesProviderBoundary() {
+        let suiteName = "KizunaAIPersonaRoutingBoundary." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = AIModelTuningStore(defaults: defaults)
+
+        XCTAssertFalse(
+            LocalAssistantRuntimeBridge.preservesConfiguredProviderBoundary(store.preferences)
+        )
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertTrue(
+            store.setPreferredConfigurationID(
+                UUID(),
+                for: AIModelRole.persona
+            )
+        )
+        XCTAssertTrue(
+            LocalAssistantRuntimeBridge.preservesConfiguredProviderBoundary(store.preferences)
+        )
+    }
+
+    func testSafetyPipelineRejectsRewriteLessSoftening() async {
+        let pipeline = SafetyPipeline(
+            policyProvider: { EffectiveSafetyPolicy.make(for: .selfDeclared(.adult)) }
+        )
+        let character = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+
+        let decision = await pipeline.evaluateInput("死ね", character: character)
+        XCTAssertEqual(decision.action, .requireEdit)
+        XCTAssertNil(decision.rewrittenText)
+        XCTAssertNil(
+            SafetyInputPolicy.acceptedText(
+                action: decision.action,
+                original: "死ね",
+                rewritten: decision.rewrittenText
+            )
+        )
+        XCTAssertEqual(
+            SafetyDecision(action: .soften).enforcingRewriteContract().action,
+            .requireEdit
+        )
+    }
+
+    func testPersonaProfilePreservesCharacterSafetyRating() throws {
+        let character = CharacterProfile(
+            name: "Sensitive character",
+            displayName: "Sensitive character",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+        let profile = PersonaProfile(character: character)
+        XCTAssertEqual(profile.safetyRating, .sensitive)
+
+        let reloaded = try JSONDecoder().decode(
+            PersonaProfile.self,
+            from: JSONEncoder().encode(profile)
+        )
+        XCTAssertEqual(reloaded.safetyRating, .sensitive)
     }
 
     func testAgePolicyBlocksBeforeLocalAndRemotePersonaRouting() async throws {

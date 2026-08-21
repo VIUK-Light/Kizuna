@@ -115,9 +115,17 @@ final class UserAgeSafetyStore: @unchecked Sendable {
     private let defaults: UserDefaults
     private let lock = NSLock()
     private let storageKey = "kizuna.userAgeSafetyContext.v1"
+    private let removeStoredValue: () -> Bool
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        removeStoredValue: (() -> Bool)? = nil
+    ) {
         self.defaults = defaults
+        self.removeStoredValue = removeStoredValue ?? {
+            defaults.removeObject(forKey: "kizuna.userAgeSafetyContext.v1")
+            return true
+        }
     }
 
     var context: UserAgeSafetyContext {
@@ -157,11 +165,15 @@ final class UserAgeSafetyStore: @unchecked Sendable {
         return succeeded
     }
 
-    func reset() {
+    @discardableResult
+    func reset() -> Bool {
         lock.lock()
-        defaults.removeObject(forKey: storageKey)
+        let succeeded = removeStoredValue()
         lock.unlock()
-        NotificationCenter.default.post(name: .userAgeSafetyContextDidChange, object: nil)
+        if succeeded {
+            NotificationCenter.default.post(name: .userAgeSafetyContextDidChange, object: nil)
+        }
+        return succeeded
     }
 }
 
@@ -385,6 +397,81 @@ struct SafetyDecision: Equatable, Hashable {
     var localizedReasons: [String] {
         reasons.map(SafetyReasonLocalization.localized)
     }
+
+    /// `.soften` is a text transformation contract. A checker or age policy
+    /// that raises the action without supplying rewritten text must not let
+    /// the original text pass through as if it were softened.
+    func enforcingRewriteContract() -> SafetyDecision {
+        guard action == .soften,
+              rewrittenText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
+            return self
+        }
+        var normalized = self
+        normalized.action = .requireEdit
+        normalized.severity = .warning
+        normalized.reasons.append("緩和後の本文を作成できないため、元の表現は通しません。")
+        return normalized
+    }
+}
+
+struct CharacterSafetyClassification: Equatable, Sendable {
+    let recommendedRating: SafetyRating
+    let riskDomains: [SafetyDomain]
+
+    static func from(_ decision: SafetyDecision) -> CharacterSafetyClassification {
+        let domains = Set(decision.riskDomains)
+        let recommendedRating: SafetyRating
+        if domains.contains(where: {
+            [.crime, .sexual, .selfHarm, .violence, .minors].contains($0)
+        }) {
+            recommendedRating = .sensitive
+        } else if !domains.isEmpty {
+            recommendedRating = .teen
+        } else {
+            recommendedRating = .general
+        }
+        return CharacterSafetyClassification(
+            recommendedRating: recommendedRating,
+            riskDomains: decision.riskDomains
+        )
+    }
+
+    static func preserveStrictest(
+        current: SafetyRating,
+        recommended: SafetyRating
+    ) -> SafetyRating {
+        func rank(_ rating: SafetyRating) -> Int {
+            switch rating {
+            case .general: return 0
+            case .teen: return 1
+            case .sensitive: return 2
+            case .restricted: return 3
+            }
+        }
+        return rank(current) >= rank(recommended) ? current : recommended
+    }
+}
+
+/// Decide which user input may cross into a generation prompt. Input and
+/// output use the same `.soften` contract: rewrite is required, and an
+/// incomplete decision never falls back to the original text.
+enum SafetyInputPolicy {
+    static func acceptedText(
+        action: SafetyAction,
+        original: String,
+        rewritten: String?
+    ) -> String? {
+        switch action {
+        case .allow, .warn:
+            return original
+        case .soften:
+            guard let rewritten else { return nil }
+            let value = rewritten.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : rewritten
+        case .block, .requireEdit:
+            return nil
+        }
+    }
 }
 
 enum DependencyProtectionLevel: String, Codable, Equatable, Hashable, Sendable {
@@ -498,8 +585,16 @@ struct EffectiveSafetyPolicy: Equatable, Sendable {
         to decision: SafetyDecision,
         characterRating: SafetyRating
     ) -> SafetyDecision {
+        applying(to: decision, characterRatings: [characterRating])
+    }
+
+    func applying(
+        to decision: SafetyDecision,
+        characterRatings: [SafetyRating]
+    ) -> SafetyDecision {
         var result = decision
-        var policyAction: SafetyAction = allows(characterRating) ? .allow : .block
+        let ratings = characterRatings.isEmpty ? [.general] : characterRatings
+        var policyAction: SafetyAction = ratings.allSatisfy(allows) ? .allow : .block
         for domain in decision.riskDomains {
             policyAction = max(policyAction, domainRules[domain] ?? .allow)
         }
@@ -508,7 +603,7 @@ struct EffectiveSafetyPolicy: Equatable, Sendable {
         result.action = max(result.action, policyAction)
         if result.action > previousAction {
             result.reasons.append(
-                allows(characterRating)
+                ratings.allSatisfy(allows)
                     ? KizunaCopy.text(
                         japanese: "年齢に合わせた安全設定を適用しました。",
                         english: "Age-appropriate safety settings were applied."

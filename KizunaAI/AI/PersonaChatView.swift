@@ -59,6 +59,8 @@ struct PersonaChatView: View {
     /// characterIDを持つスレッドのアバターは、保存時のスナップショットではなく
     /// Character Libraryの現在値を優先する。スレッドごとの古い画像を表示しない。
     @State private var currentCharacterProfiles: [UUID: CharacterProfile] = [:]
+    @State private var currentCharacterProfilesLoaded = false
+    @State private var currentCharacterProfilesLoadFailed = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -745,12 +747,20 @@ struct PersonaChatView: View {
                 .buttonStyle(.plain)
                 Spacer()
                 if let active = store.activeThread {
-                    let displayProfile = avatarProfile(for: active)
-                    HStack(spacing: 7) {
-                        PersonaAvatarView(profile: displayProfile, size: 28)
-                        Text(displayProfile.name)
-                            .font(.headline.weight(.bold))
-                            .lineLimit(1)
+                    if isThreadAgeRestricted(active) {
+                        Label(
+                            KizunaCopy.text(japanese: "安全設定でロック中", english: "Locked by safety settings"),
+                            systemImage: "lock.fill"
+                        )
+                        .font(.headline.weight(.bold))
+                    } else {
+                        let displayProfile = avatarProfile(for: active)
+                        HStack(spacing: 7) {
+                            PersonaAvatarView(profile: displayProfile, size: 28)
+                            Text(displayProfile.name)
+                                .font(.headline.weight(.bold))
+                                .lineLimit(1)
+                        }
                     }
                 } else {
                     Text(KizunaCopy.text(japanese: "会話", english: "Conversations"))
@@ -1116,12 +1126,14 @@ struct PersonaChatView: View {
 
     private func threadRow(_ thread: PersonaThread) -> some View {
         let isActive = store.activeThreadID == thread.id
+        let isAgeRestricted = isThreadAgeRestricted(thread)
         let unreadCount = unreadPersonaMessageCounts[thread.id] ?? 0
         let displayProfile = avatarProfile(for: thread)
         let style = PersonaAvatarStyle(profile: displayProfile)
         let previewText = thread.latestDisplayableMessage?.text
             ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation")
         return Button {
+            guard !isAgeRestricted else { return }
             if showsOnlyContinuations {
                 continuationPresentedThread = thread
                 return
@@ -1132,19 +1144,30 @@ struct PersonaChatView: View {
             }
         } label: {
             HStack(spacing: 11) {
-                PersonaAvatarView(profile: displayProfile, size: 40)
+                if isAgeRestricted {
+                    Image(systemName: "lock.circle")
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, height: 40)
+                } else {
+                    PersonaAvatarView(profile: displayProfile, size: 40)
+                }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(thread.title)
+                    Text(isAgeRestricted
+                         ? KizunaCopy.text(japanese: "安全設定でロック中", english: "Locked by safety settings")
+                         : thread.title)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                Text(previewText)
+                    Text(isAgeRestricted
+                         ? KizunaCopy.text(japanese: "現在の安全設定では開けません。", english: "Unavailable under the current safety settings.")
+                         : previewText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                if unreadCount > 0 {
+                if unreadCount > 0, !isAgeRestricted {
                     Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.white)
@@ -1330,18 +1353,35 @@ struct PersonaChatView: View {
     /// 読み込みに失敗した場合は保存済みPersonaスナップショットへフォールバックする。
     @MainActor
     private func refreshCurrentCharacterProfiles() async {
+        currentCharacterProfilesLoaded = false
+        currentCharacterProfilesLoadFailed = false
         do {
             let characters = try await characterRepo.fetchCharacters()
             currentCharacterProfiles = Dictionary(
                 uniqueKeysWithValues: characters.map { ($0.id, $0) }
             )
+            currentCharacterProfilesLoaded = true
         } catch {
             // 会話本文は継続できるため、画像だけを旧スナップショットへ戻す。
             // 前回の成功値を残すと、読込に失敗した世代を現在の正本として
             // 表示し続けてしまうため、snapshot fallbackへ戻す。
             currentCharacterProfiles = [:]
+            currentCharacterProfilesLoadFailed = true
+            currentCharacterProfilesLoaded = true
             AppLog.error("[PersonaChatView] current character appearance load failed: %@", String(describing: error))
         }
+    }
+
+    private func isThreadAgeRestricted(_ thread: PersonaThread) -> Bool {
+        let rating: SafetyRating
+        if let characterID = thread.characterID {
+            guard currentCharacterProfilesLoaded,
+                  !currentCharacterProfilesLoadFailed else { return true }
+            rating = currentCharacterProfiles[characterID]?.safetyRating ?? thread.personaSnapshot.safetyRating
+        } else {
+            rating = thread.personaSnapshot.safetyRating
+        }
+        return !EffectiveSafetyPolicy.current.allows(rating)
     }
 
     /// リンク済みキャラクターの現在の画像/スタイルを表示用Personaへ反映する。
@@ -1361,7 +1401,9 @@ struct PersonaChatView: View {
 
     @ViewBuilder
     private var mainArea: some View {
-        if let active = store.activeThread {
+        if let active = store.activeThread, isThreadAgeRestricted(active) {
+            ageRestrictedState
+        } else if let active = store.activeThread {
             VStack(spacing: 0) {
                 if horizontalSizeClass != .compact {
                     chatHeader(active)
@@ -1379,6 +1421,30 @@ struct PersonaChatView: View {
         } else {
             noActiveThreadState
         }
+    }
+
+    private var ageRestrictedState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "lock.shield.fill")
+                .font(.system(size: 42, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(KizunaCopy.text(
+                japanese: "この会話は現在の安全設定でロックされています",
+                english: "This conversation is locked by the current safety settings"
+            ))
+                .font(.headline.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text(KizunaCopy.text(
+                japanese: "会話データは削除されていません。年齢設定を戻すと再び利用できます。",
+                english: "The conversation data has not been deleted. Restore the age setting to use it again."
+            ))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(32)
+        .background(personaChatBackground)
     }
 
     private func draftBinding(for threadID: UUID) -> Binding<String> {
@@ -1856,4 +1922,3 @@ private extension String {
         isEmpty ? nil : self
     }
 }
-

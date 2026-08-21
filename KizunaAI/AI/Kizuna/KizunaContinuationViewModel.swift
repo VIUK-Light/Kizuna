@@ -13,33 +13,57 @@ final class KizunaContinuationViewModel: ObservableObject {
     @Published private(set) var storyItems: [KizunaContinuationItem] = []
     @Published private(set) var currentCharacters: [UUID: CharacterProfile] = [:]
     @Published private(set) var loadError: String?
+    @Published private(set) var characterLoadFailed = false
+    @Published private(set) var characterLoadCompleted = false
 
     private let worldRepo: StoryWorldRepository
     private let sessionRepo: StorySessionRepository
     private let characterRepo: CharacterRepository
+    private let ageSafetyPolicyProvider: () -> EffectiveSafetyPolicy
+    private var ageSafetyContextSubscription: AnyCancellable?
 
     init(
         worldRepo: StoryWorldRepository = LocalJSONStoryWorldRepository(),
         sessionRepo: StorySessionRepository = LocalJSONStorySessionRepository(),
-        characterRepo: CharacterRepository = LocalJSONCharacterRepository()
+        characterRepo: CharacterRepository = LocalJSONCharacterRepository(),
+        ageSafetyPolicyProvider: @escaping () -> EffectiveSafetyPolicy = { .current }
     ) {
         self.worldRepo = worldRepo
         self.sessionRepo = sessionRepo
         self.characterRepo = characterRepo
+        self.ageSafetyPolicyProvider = ageSafetyPolicyProvider
+        self.ageSafetyContextSubscription = NotificationCenter.default.publisher(
+            for: .userAgeSafetyContextDidChange
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     func reload() async {
         loadError = nil
+        characterLoadFailed = false
+        characterLoadCompleted = false
 
         do {
             let characters = try await characterRepo.fetchCharacters()
             currentCharacters = Dictionary(uniqueKeysWithValues: characters.map { ($0.id, $0) })
+            characterLoadFailed = false
+            characterLoadCompleted = true
         } catch {
             // Storyの継続一覧は表示できるため、画像だけ旧スナップショットへ戻す。
             // 前回の成功値を残すと、読込に失敗した世代でも古い画像を現在値として
             // 表示してしまうため、personaItem(for:) のsnapshot fallbackへ戻す。
             currentCharacters = [:]
+            characterLoadFailed = true
+            characterLoadCompleted = true
             AppLog.error("[KizunaContinuationVM] character load failed: %@", String(describing: error))
+        }
+
+        guard !characterLoadFailed else {
+            storyItems = []
+            return
         }
 
         do {
@@ -49,6 +73,11 @@ final class KizunaContinuationViewModel: ObservableObject {
             var failedWorldCount = 0
 
             for world in worlds {
+                guard StoryWorldAgeAvailability.resolve(
+                    world: world,
+                    charactersById: currentCharacters,
+                    policy: ageSafetyPolicyProvider()
+                ).isAvailable else { continue }
                 do {
                     let sessions = try await sessionRepo.fetchSessions(storyWorldId: world.id)
                     for session in sessions where seenSessionIDs.insert(session.id).inserted {
@@ -65,7 +94,8 @@ final class KizunaContinuationViewModel: ObservableObject {
                                 preview: preview,
                                 updatedAt: session.updatedAt,
                                 personaProfile: nil,
-                                storyWorld: world
+                                storyWorld: world,
+                                isAgeRestricted: false
                             )
                         )
                     }
@@ -96,6 +126,7 @@ final class KizunaContinuationViewModel: ObservableObject {
     }
 
     func personaItem(for thread: PersonaThread) -> KizunaContinuationItem {
+        let isAgeRestricted = personaThreadIsAgeRestricted(thread)
         var displayProfile = thread.personaSnapshot
         if let characterID = thread.characterID,
            let character = currentCharacters[characterID] {
@@ -108,12 +139,44 @@ final class KizunaContinuationViewModel: ObservableObject {
         return KizunaContinuationItem(
             route: .persona(threadID: thread.id),
             kind: .persona,
-            title: thread.title,
-            preview: preview,
+            title: isAgeRestricted
+                ? KizunaCopy.text(japanese: "安全設定でロック中の会話", english: "Conversation locked by safety settings")
+                : thread.title,
+            preview: isAgeRestricted
+                ? KizunaCopy.text(japanese: "現在の安全設定では開けません。", english: "This conversation is unavailable under the current safety settings.")
+                : preview,
             updatedAt: thread.updatedAt,
-            personaProfile: displayProfile,
-            storyWorld: nil
+            personaProfile: isAgeRestricted ? nil : displayProfile,
+            storyWorld: nil,
+            isAgeRestricted: isAgeRestricted
         )
+    }
+
+    private func personaThreadIsAgeRestricted(_ thread: PersonaThread) -> Bool {
+        Self.personaThreadIsAgeRestricted(
+            thread,
+            currentCharacters: currentCharacters,
+            characterLoadCompleted: characterLoadCompleted,
+            characterLoadFailed: characterLoadFailed,
+            policy: ageSafetyPolicyProvider()
+        )
+    }
+
+    nonisolated static func personaThreadIsAgeRestricted(
+        _ thread: PersonaThread,
+        currentCharacters: [UUID: CharacterProfile],
+        characterLoadCompleted: Bool,
+        characterLoadFailed: Bool,
+        policy: EffectiveSafetyPolicy
+    ) -> Bool {
+        let rating: SafetyRating
+        if let characterID = thread.characterID {
+            guard characterLoadCompleted, !characterLoadFailed else { return true }
+            rating = currentCharacters[characterID]?.safetyRating ?? thread.personaSnapshot.safetyRating
+        } else {
+            rating = thread.personaSnapshot.safetyRating
+        }
+        return !policy.allows(rating)
     }
 
     func storyWorld(for route: KizunaConversationRoute) -> StoryWorld? {

@@ -196,9 +196,42 @@ enum PersonaChatRecoveryError: LocalizedError {
     }
 }
 
+private struct PersonaThreadIndexProfile: Codable, Sendable {
+    let id: UUID
+    let name: String
+    let age: Int?
+    let tone: PersonaTone
+    let relation: PersonaRelation
+    let safetyRating: SafetyRating
+    let avatarStyleID: String?
+
+    nonisolated init(profile: PersonaProfile) {
+        id = profile.id
+        name = profile.name
+        age = profile.age
+        tone = profile.tone
+        relation = profile.relation
+        safetyRating = profile.safetyRating
+        avatarStyleID = profile.avatarStyleID
+    }
+
+    nonisolated func makeProfile() -> PersonaProfile {
+        PersonaProfile(
+            id: id,
+            name: name,
+            age: age,
+            personality: "",
+            tone: tone,
+            relation: relation,
+            safetyRating: safetyRating,
+            avatarStyleID: avatarStyleID
+        )
+    }
+}
+
 private struct PersonaThreadIndexEntry: Codable, Sendable {
     let id: UUID
-    let personaSnapshot: PersonaProfile
+    let personaIndex: PersonaThreadIndexProfile
     let characterID: UUID?
     let title: String
     let lastUsedModelIdentity: String?
@@ -209,9 +242,24 @@ private struct PersonaThreadIndexEntry: Codable, Sendable {
     let messageCount: Int
     let lastMessage: PersonaMessage?
 
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case personaIndex
+        case personaSnapshot
+        case characterID
+        case title
+        case lastUsedModelIdentity
+        case preferredGenerationModel
+        case preferredGenerationConfigurationID
+        case createdAt
+        case updatedAt
+        case messageCount
+        case lastMessage
+    }
+
     nonisolated init(thread: PersonaThread) {
         id = thread.id
-        personaSnapshot = thread.personaSnapshot
+        personaIndex = PersonaThreadIndexProfile(profile: thread.personaSnapshot)
         characterID = thread.characterID
         title = thread.title
         lastUsedModelIdentity = thread.lastUsedModelIdentity
@@ -231,10 +279,51 @@ private struct PersonaThreadIndexEntry: Codable, Sendable {
         }
     }
 
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        if let index = try container.decodeIfPresent(PersonaThreadIndexProfile.self, forKey: .personaIndex) {
+            personaIndex = index
+        } else {
+            // Existing index.json files contain a full PersonaProfile. Read
+            // them once without making the legacy payload the new write shape.
+            personaIndex = PersonaThreadIndexProfile(
+                profile: try container.decode(PersonaProfile.self, forKey: .personaSnapshot)
+            )
+        }
+        characterID = try container.decodeIfPresent(UUID.self, forKey: .characterID)
+        title = try container.decode(String.self, forKey: .title)
+        lastUsedModelIdentity = try container.decodeIfPresent(String.self, forKey: .lastUsedModelIdentity)
+        preferredGenerationModel = try container.decodeIfPresent(PersonaGenerationModel.self, forKey: .preferredGenerationModel)
+        preferredGenerationConfigurationID = try container.decodeIfPresent(UUID.self, forKey: .preferredGenerationConfigurationID)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        messageCount = try container.decode(Int.self, forKey: .messageCount)
+        lastMessage = try container.decodeIfPresent(PersonaMessage.self, forKey: .lastMessage)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(personaIndex, forKey: .personaIndex)
+        try container.encodeIfPresent(characterID, forKey: .characterID)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(lastUsedModelIdentity, forKey: .lastUsedModelIdentity)
+        try container.encodeIfPresent(preferredGenerationModel, forKey: .preferredGenerationModel)
+        try container.encodeIfPresent(
+            preferredGenerationConfigurationID,
+            forKey: .preferredGenerationConfigurationID
+        )
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(messageCount, forKey: .messageCount)
+        try container.encodeIfPresent(lastMessage, forKey: .lastMessage)
+    }
+
     nonisolated func makePlaceholder() -> PersonaThread {
         var thread = PersonaThread(
             id: id,
-            personaSnapshot: personaSnapshot,
+            personaSnapshot: personaIndex.makeProfile(),
             characterID: characterID,
             title: title,
             messages: [],
@@ -290,6 +379,7 @@ private enum PersonaThreadFilePersistenceError: LocalizedError {
 /// each complete conversation is isolated in its own file.
 private enum PersonaThreadFilePersistence {
     nonisolated static let indexFileName = "index.json"
+    nonisolated static let deletionJournalFileName = "deletion-journal.json"
     nonisolated private static let threadPrefix = "thread-"
     nonisolated private static let threadSuffix = ".json"
 
@@ -300,12 +390,38 @@ private enum PersonaThreadFilePersistence {
     nonisolated static func loadIndex(at directoryURL: URL) throws -> ([PersonaThread], Int64)? {
         try LocalJSONStoreFileLock.shared.withLock {
             let url = indexURL(in: directoryURL)
-            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-            let data = try Data(contentsOf: url)
-            let entries = try LocalJSONStoreCoding.makeDecoder().decode(
-                [PersonaThreadIndexEntry].self,
-                from: data
+            var entries: [PersonaThreadIndexEntry] = []
+            if FileManager.default.fileExists(atPath: url.path) {
+                let data = try Data(contentsOf: url)
+                entries = try LocalJSONStoreCoding.makeDecoder().decode(
+                    [PersonaThreadIndexEntry].self,
+                    from: data
+                )
+            }
+            let pendingDeletionIDs = recoverPendingDeletions(at: directoryURL)
+            let liveIDs = Set(entries.map(\.id))
+            let recoveredEntries = recoverOrphanThreadEntries(
+                liveIDs: liveIDs,
+                excludedIDs: pendingDeletionIDs,
+                at: directoryURL
             )
+            if !recoveredEntries.isEmpty {
+                entries.append(contentsOf: recoveredEntries)
+                do {
+                    let recoveredIndexData = try LocalJSONStoreCoding.makeEncoder().encode(entries)
+                    try recoveredIndexData.write(
+                        to: url,
+                        options: LocalJSONStoreFileProtection.atomicWriteOptions
+                    )
+                    try LocalJSONStoreFileProtection.apply(to: url)
+                } catch {
+                    AppLog.error(
+                        "[PersonaChatStore] failed to persist recovered thread index: %@",
+                        error.localizedDescription
+                    )
+                }
+            }
+            guard !entries.isEmpty else { return nil }
             var seen = Set<UUID>()
             let threads = try entries.map { entry -> PersonaThread in
                 guard seen.insert(entry.id).inserted else {
@@ -407,13 +523,118 @@ private enum PersonaThreadFilePersistence {
                     IDsToDelete.insert(id)
                 }
             }
+            if !IDsToDelete.isEmpty {
+                try writeDeletionJournal(IDsToDelete, at: directoryURL)
+            }
             for id in IDsToDelete {
                 let url = threadURL(for: id, in: directoryURL)
                 guard fileManager.fileExists(atPath: url.path) else { continue }
                 try fileManager.removeItem(at: url)
             }
+            if !IDsToDelete.isEmpty {
+                try clearDeletionJournal(at: directoryURL)
+            }
             return persistedByteCountUnlocked(at: directoryURL)
         }
+    }
+
+    /// Retry only deletion IDs explicitly requested by the user. The journal
+    /// remains on disk when a file cannot be removed, so a later launch does
+    /// not silently lose the deletion intent.
+    nonisolated private static func recoverPendingDeletions(at directoryURL: URL) -> Set<UUID> {
+        let journalURL = directoryURL.appendingPathComponent(deletionJournalFileName)
+        guard FileManager.default.fileExists(atPath: journalURL.path) else { return [] }
+        var journalIDs = Set<UUID>()
+        do {
+            let data = try Data(contentsOf: journalURL)
+            let IDs = try LocalJSONStoreCoding.makeDecoder().decode([UUID].self, from: data)
+            journalIDs = Set(IDs)
+            var unresolved = false
+            for id in IDs {
+                let url = threadURL(for: id, in: directoryURL)
+                guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                do {
+                    try FileManager.default.removeItem(at: url)
+                } catch {
+                    unresolved = true
+                    AppLog.error(
+                        "[PersonaChatStore] deferred deletion failed for %@: %@",
+                        id.uuidString,
+                        error.localizedDescription
+                    )
+                }
+            }
+            if !unresolved {
+                try FileManager.default.removeItem(at: journalURL)
+            }
+        } catch {
+            AppLog.error(
+                "[PersonaChatStore] failed to recover deletion journal: %@",
+                error.localizedDescription
+            )
+            return []
+        }
+        return journalIDs
+    }
+
+    nonisolated private static func recoverOrphanThreadEntries(
+        liveIDs: Set<UUID>,
+        excludedIDs: Set<UUID>,
+        at directoryURL: URL
+    ) -> [PersonaThreadIndexEntry] {
+        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+        var recovered: [PersonaThreadIndexEntry] = []
+        for fileURL in fileURLs {
+            guard let id = threadID(from: fileURL),
+                  !liveIDs.contains(id),
+                  !excludedIDs.contains(id) else { continue }
+            do {
+                let data = try Data(contentsOf: fileURL)
+                let thread = try LocalJSONStoreCoding.makeDecoder().decode(PersonaThread.self, from: data)
+                guard thread.id == id else {
+                    throw PersonaThreadFilePersistenceError.mismatchedThread(
+                        expected: id,
+                        actual: thread.id
+                    )
+                }
+                recovered.append(PersonaThreadIndexEntry(thread: thread))
+                AppLog.note(
+                    "[PersonaChatStore] recovered orphan Persona thread %@ into index",
+                    id.uuidString
+                )
+            } catch {
+                AppLog.error(
+                    "[PersonaChatStore] orphan Persona thread %@ could not be recovered: %@",
+                    id.uuidString,
+                    error.localizedDescription
+                )
+            }
+        }
+        return recovered
+    }
+
+    nonisolated private static func writeDeletionJournal(
+        _ IDs: Set<UUID>,
+        at directoryURL: URL
+    ) throws {
+        let data = try LocalJSONStoreCoding.makeEncoder().encode(
+            IDs.sorted { $0.uuidString < $1.uuidString }
+        )
+        let url = directoryURL.appendingPathComponent(deletionJournalFileName)
+        try data.write(to: url, options: LocalJSONStoreFileProtection.atomicWriteOptions)
+        try LocalJSONStoreFileProtection.apply(to: url)
+    }
+
+    nonisolated private static func clearDeletionJournal(at directoryURL: URL) throws {
+        let url = directoryURL.appendingPathComponent(deletionJournalFileName)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
     }
 
     nonisolated static func rawIndexData(at directoryURL: URL) throws -> Data {
@@ -1218,10 +1439,12 @@ final class PersonaChatStore: ObservableObject {
         )
         let fileName = "\(prefix)-\(UUID().uuidString).\(fileExtension)"
         let exportURL = exportDirectory.appendingPathComponent(fileName)
-        try data.write(
-            to: exportURL,
-            options: [.atomic, .completeFileProtection]
-        )
+        #if os(iOS)
+        let writeOptions: Data.WritingOptions = [.atomic, .completeFileProtection]
+        #else
+        let writeOptions: Data.WritingOptions = [.atomic]
+        #endif
+        try data.write(to: exportURL, options: writeOptions)
         return exportURL
     }
 

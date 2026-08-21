@@ -20,6 +20,7 @@ struct StoryWorldLibraryView: View {
     @State private var showCreate = false
     @State private var editing: StoryWorld? = nil
     @State private var selected: StoryWorld? = nil
+    @State private var languageRevision = 0
 
     private var storyCoverHeight: CGFloat {
         dynamicTypeSize.isAccessibilitySize ? 320 : 230
@@ -85,6 +86,9 @@ struct StoryWorldLibraryView: View {
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
         .accessibilityElement(children: .contain)
+        .onReceive(NotificationCenter.default.publisher(for: KizunaCopy.languageDidChangeNotification)) { _ in
+            languageRevision &+= 1
+        }
         .task { await vm.bootstrap() }
         .sheet(isPresented: $showCreate) {
             StoryWorldCreateView(onSaved: { _ in
@@ -180,10 +184,18 @@ struct StoryWorldLibraryView: View {
             Text(vm.isBootstrapping && vm.worlds.isEmpty
                  ? KizunaCopy.text(japanese: "初期ストーリーを準備中…", english: "Preparing stories…")
                  : KizunaCopy.language == .english
-                    ? "Choose a world · \(vm.worlds.count)"
-                    : "世界観から選ぶ ・ \(vm.worlds.count) 件")
+                    ? "Choose a world · \(vm.ageAvailableWorlds.count)"
+                    : "世界観から選ぶ ・ \(vm.ageAvailableWorlds.count) 件")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if vm.hiddenWorldCount > 0 {
+                Text(KizunaCopy.text(
+                    japanese: "一部のストーリーは現在の安全設定で非表示です。",
+                    english: "Some stories are hidden by the current safety settings."
+                ))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -260,7 +272,10 @@ struct StoryWorldLibraryView: View {
         adaptiveErrorBanner(
             icon: "exclamationmark.triangle.fill",
             title: KizunaCopy.text(japanese: "一部の初期ストーリーを読み込めませんでした", english: "Some starter stories could not be loaded"),
-            detail: LocalizedStringKey(vm.seedError?.messageKey ?? "ストーリーの初期データを確認して再試行してください。"),
+            detail: vm.seedError?.localizedMessage ?? KizunaCopy.text(
+                japanese: "ストーリーの初期データを確認して再試行してください。",
+                english: "Check the starter story data and try again."
+            ),
             retryLabel: KizunaCopy.text(japanese: "再試行", english: "Retry")
         ) {
                 Task { await vm.retryBootstrap() }
@@ -274,7 +289,10 @@ struct StoryWorldLibraryView: View {
                 japanese: "最新のストーリー一覧を読み込めませんでした。表示中の一覧は削除されていません。",
                 english: "The latest story list could not be loaded. The displayed list was not deleted."
             ),
-            detail: LocalizedStringKey(vm.loadError?.messageKey ?? "保存データを確認して再試行してください。"),
+            detail: vm.loadError?.localizedMessage ?? KizunaCopy.text(
+                japanese: "保存データを確認して再試行してください。",
+                english: "Check the saved data and try again."
+            ),
             retryLabel: KizunaCopy.text(japanese: "再試行", english: "Retry"),
             retryDisabled: vm.isBootstrapping
         ) {
@@ -289,7 +307,10 @@ struct StoryWorldLibraryView: View {
                 japanese: "保存データの整理を完了できませんでした。",
                 english: "Saved-data cleanup could not be completed."
             ),
-            detail: LocalizedStringKey("保存データを確認して再試行してください。"),
+            detail: KizunaCopy.text(
+                japanese: "保存データを確認して再試行してください。",
+                english: "Check the saved data and try again."
+            ),
             retryLabel: KizunaCopy.text(japanese: "再試行", english: "Retry"),
             retryDisabled: vm.isBootstrapping
         ) {
@@ -301,7 +322,7 @@ struct StoryWorldLibraryView: View {
     private func adaptiveErrorBanner(
         icon: String,
         title: String,
-        detail: LocalizedStringKey,
+        detail: String,
         retryLabel: String,
         retryDisabled: Bool = false,
         retry: @escaping () -> Void
