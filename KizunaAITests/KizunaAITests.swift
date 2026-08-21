@@ -6112,6 +6112,49 @@ final class KizunaAITests: XCTestCase {
     }
 
     @MainActor
+    func testPersonaFileStoreRecoversDurableDeletionJournal() async throws {
+        let suiteName = "KizunaAITests.PersonaDeletionJournal." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KizunaPersonaDeletionJournal-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let profile = PersonaProfile(
+            name: "Delete journal",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let thread = PersonaThread(
+            personaSnapshot: profile,
+            title: "To delete",
+            messages: [PersonaMessage(role: .user, text: "private")]
+        )
+        defaults.set(
+            try JSONEncoder().encode([thread]),
+            forKey: "persona.threads.v1"
+        )
+
+        let store = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        store.flushPendingPersistence()
+        await store.waitForPendingPersistence()
+        store.deleteThread(id: thread.id)
+        store.flushPendingPersistence()
+        await store.waitForPendingPersistence()
+
+        let threadURL = storageURL.appendingPathComponent("thread-\(thread.id.uuidString).json")
+        let journalURL = storageURL.appendingPathComponent("deletion-journal.json")
+        try JSONEncoder().encode(thread).write(to: threadURL, options: .atomic)
+        try JSONEncoder().encode([thread.id]).write(to: journalURL, options: .atomic)
+
+        let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: threadURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journalURL.path))
+        XCTAssertFalse(reloaded.threads.contains(where: { $0.id == thread.id }))
+    }
+
+    @MainActor
     func testPersonaFileStoreIsolatesOneCorruptThreadFile() throws {
         let suiteName = "KizunaAITests.PersonaFileCorrupt.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

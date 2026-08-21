@@ -290,6 +290,7 @@ private enum PersonaThreadFilePersistenceError: LocalizedError {
 /// each complete conversation is isolated in its own file.
 private enum PersonaThreadFilePersistence {
     nonisolated static let indexFileName = "index.json"
+    nonisolated static let deletionJournalFileName = "deletion-journal.json"
     nonisolated private static let threadPrefix = "thread-"
     nonisolated private static let threadSuffix = ".json"
 
@@ -306,6 +307,7 @@ private enum PersonaThreadFilePersistence {
                 [PersonaThreadIndexEntry].self,
                 from: data
             )
+            recoverPendingDeletions(at: directoryURL)
             var seen = Set<UUID>()
             let threads = try entries.map { entry -> PersonaThread in
                 guard seen.insert(entry.id).inserted else {
@@ -407,13 +409,72 @@ private enum PersonaThreadFilePersistence {
                     IDsToDelete.insert(id)
                 }
             }
+            if !IDsToDelete.isEmpty {
+                try writeDeletionJournal(IDsToDelete, at: directoryURL)
+            }
             for id in IDsToDelete {
                 let url = threadURL(for: id, in: directoryURL)
                 guard fileManager.fileExists(atPath: url.path) else { continue }
                 try fileManager.removeItem(at: url)
             }
+            if !IDsToDelete.isEmpty {
+                try clearDeletionJournal(at: directoryURL)
+            }
             return persistedByteCountUnlocked(at: directoryURL)
         }
+    }
+
+    /// Retry only deletion IDs explicitly requested by the user. The journal
+    /// remains on disk when a file cannot be removed, so a later launch does
+    /// not silently lose the deletion intent.
+    nonisolated private static func recoverPendingDeletions(at directoryURL: URL) {
+        let journalURL = directoryURL.appendingPathComponent(deletionJournalFileName)
+        guard FileManager.default.fileExists(atPath: journalURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: journalURL)
+            let IDs = try LocalJSONStoreCoding.makeDecoder().decode([UUID].self, from: data)
+            var unresolved = false
+            for id in IDs {
+                let url = threadURL(for: id, in: directoryURL)
+                guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                do {
+                    try FileManager.default.removeItem(at: url)
+                } catch {
+                    unresolved = true
+                    AppLog.error(
+                        "[PersonaChatStore] deferred deletion failed for %@: %@",
+                        id.uuidString,
+                        error.localizedDescription
+                    )
+                }
+            }
+            if !unresolved {
+                try FileManager.default.removeItem(at: journalURL)
+            }
+        } catch {
+            AppLog.error(
+                "[PersonaChatStore] failed to recover deletion journal: %@",
+                error.localizedDescription
+            )
+        }
+    }
+
+    nonisolated private static func writeDeletionJournal(
+        _ IDs: Set<UUID>,
+        at directoryURL: URL
+    ) throws {
+        let data = try LocalJSONStoreCoding.makeEncoder().encode(
+            IDs.sorted { $0.uuidString < $1.uuidString }
+        )
+        let url = directoryURL.appendingPathComponent(deletionJournalFileName)
+        try data.write(to: url, options: LocalJSONStoreFileProtection.atomicWriteOptions)
+        try LocalJSONStoreFileProtection.apply(to: url)
+    }
+
+    nonisolated private static func clearDeletionJournal(at directoryURL: URL) throws {
+        let url = directoryURL.appendingPathComponent(deletionJournalFileName)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
     }
 
     nonisolated static func rawIndexData(at directoryURL: URL) throws -> Data {
