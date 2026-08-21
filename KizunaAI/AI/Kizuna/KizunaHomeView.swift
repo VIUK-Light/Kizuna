@@ -107,9 +107,7 @@ struct KizunaHomeView: View {
         case .persona(let character):
             let latestThreadActivity = personaStore.threads
                 .filter { $0.characterID == character.id }
-                .compactMap { thread in
-                    thread.messages.map(\.createdAt).max()
-                }
+                .compactMap { $0.latestMessage?.createdAt }
                 .max()
             return latestThreadActivity ?? character.updatedAt
         case .story(let world):
@@ -554,7 +552,7 @@ struct KizunaHomeView: View {
     private func startConversation(with character: CharacterProfile) {
         let shouldDismissCharacterLibrary = showCharacterLibrary
         if let existing = personaStore.threads.first(where: {
-            $0.characterID == character.id && !$0.messages.isEmpty
+            $0.characterID == character.id && $0.hasMessages
         }) {
             personaStore.refreshCharacterAppearance(
                 for: character.id,

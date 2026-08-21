@@ -6041,6 +6041,125 @@ final class KizunaAITests: XCTestCase {
     }
 
     @MainActor
+    func testPersonaFileStoreMigratesLegacyBlobAndWritesOnlyChangedThread() async throws {
+        let suiteName = "KizunaAITests.PersonaFileStore.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KizunaPersonaHistory-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let first = PersonaThread(
+            personaSnapshot: profile,
+            title: "First",
+            messages: [PersonaMessage(role: .user, text: "first message")]
+        )
+        let second = PersonaThread(
+            personaSnapshot: profile,
+            title: "Second",
+            messages: [PersonaMessage(role: .user, text: "second message")]
+        )
+        defaults.set(
+            try JSONEncoder().encode([first, second]),
+            forKey: "persona.threads.v1"
+        )
+
+        let migrated = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertEqual(migrated.threads.count, 2)
+        XCTAssertNil(defaults.object(forKey: "persona.threads.v1"))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: storageURL.appendingPathComponent("index.json").path
+            )
+        )
+        defaults.set(first.id.uuidString, forKey: "persona.activeThreadID.v1")
+
+        let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        let firstSummary = try XCTUnwrap(reloaded.threads.first(where: { $0.id == first.id }))
+        XCTAssertFalse(firstSummary.isMessageHistoryLoaded)
+        XCTAssertEqual(firstSummary.messageCount, 1)
+        XCTAssertEqual(firstSummary.latestMessage?.text, "first message")
+        XCTAssertEqual(reloaded.activeThread?.messages.map(\.text), ["first message"])
+        let cachedSummary = try XCTUnwrap(reloaded.threads.first(where: { $0.id == first.id }))
+        XCTAssertFalse(cachedSummary.isMessageHistoryLoaded)
+
+        let secondFileURL = storageURL.appendingPathComponent("thread-\(second.id.uuidString).json")
+        let untouchedSecondData = try Data(contentsOf: secondFileURL)
+        XCTAssertTrue(
+            reloaded.appendMessage(
+                PersonaMessage(role: .assistant, text: "reply"),
+                toThread: first.id
+            )
+        )
+        reloaded.flushPendingPersistence()
+        await reloaded.waitForPendingPersistence()
+
+        XCTAssertEqual(try Data(contentsOf: secondFileURL), untouchedSecondData)
+        XCTAssertNil(defaults.object(forKey: "persona.threads.v1"))
+        XCTAssertGreaterThan(reloaded.persistedHistoryByteCount, 0)
+
+        let finalReload = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertEqual(
+            finalReload.thread(id: first.id)?.messages.map(\.text),
+            ["first message", "reply"]
+        )
+    }
+
+    @MainActor
+    func testPersonaFileStoreIsolatesOneCorruptThreadFile() throws {
+        let suiteName = "KizunaAITests.PersonaFileCorrupt.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KizunaPersonaHistory-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let profile = PersonaProfile(
+            name: "Test",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let corruptThread = PersonaThread(
+            personaSnapshot: profile,
+            title: "Corrupt",
+            messages: [PersonaMessage(role: .user, text: "unreadable")]
+        )
+        let validThread = PersonaThread(
+            personaSnapshot: profile,
+            title: "Valid",
+            messages: [PersonaMessage(role: .user, text: "still available")]
+        )
+        defaults.set(
+            try JSONEncoder().encode([corruptThread, validThread]),
+            forKey: "persona.threads.v1"
+        )
+        _ = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+
+        let corruptFileURL = storageURL.appendingPathComponent(
+            "thread-\(corruptThread.id.uuidString).json"
+        )
+        try Data([0x00, 0xFF, 0x10]).write(to: corruptFileURL, options: .atomic)
+
+        let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertEqual(reloaded.threads.count, 2)
+        XCTAssertFalse(reloaded.isPersistenceRecoveryRequired)
+        XCTAssertEqual(
+            reloaded.thread(id: validThread.id)?.messages.map(\.text),
+            ["still available"]
+        )
+        XCTAssertNil(reloaded.thread(id: corruptThread.id))
+        XCTAssertTrue(reloaded.isPartialRecoveryRequired)
+        XCTAssertEqual(reloaded.partialRecoveryInvalidCount, 1)
+    }
+
+    @MainActor
     func testPersonaStorePreservesCorruptRawBlobAcrossCRUDAndFinalize() {
         let suiteName = "KizunaAITests.PersonaCorrupt.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

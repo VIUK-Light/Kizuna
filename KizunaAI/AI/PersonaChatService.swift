@@ -845,7 +845,7 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         // ── 4) PromptBuilder ──
         let recent = await MainActor.run { () -> [PersonaMessage] in
-            (store.threads.first(where: { $0.id == threadID })?.messages ?? [])
+            (store.thread(id: threadID)?.messages ?? [])
                 .filter { !($0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text)) }
                 .suffix(6)
                 .map { $0 }

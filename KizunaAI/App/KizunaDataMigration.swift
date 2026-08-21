@@ -63,6 +63,17 @@ enum KizunaDataMigration {
             .appendingPathComponent("LocalModels", isDirectory: true)
     }()
 
+    /// Persona conversations are durable user data, not preferences. Keep
+    /// their per-thread files beside the other Application Support stores and
+    /// leave UserDefaults for the active thread ID and small settings only.
+    nonisolated static let personaHistoryURL: URL = {
+        guard let applicationSupportURL else { return unavailableStorageURL }
+        return applicationSupportURL
+            .appendingPathComponent("VIUK", isDirectory: true)
+            .appendingPathComponent("KizunaAI", isDirectory: true)
+            .appendingPathComponent("PersonaHistory", isDirectory: true)
+    }()
+
     // v2 は、v1で「ディレクトリが存在するだけ」の移行先を有効と判定して
     // しまったMacを一度だけ再確認する。既存ファイルを上書きしないため、
     // すでにKizuna側で作成されたデータは保持される。

@@ -107,7 +107,7 @@ private struct KizunaMigrationGateView: View {
         .onChange(of: scenePhase) { _, phase in
             // iPhoneでアプリを離れたまま1GB級のモデルとKVキャッシュを保持しない。
             // 次回の端末内生成では必要時に再初期化する。
-            guard phase == .background else { return }
+            guard phase == .background, isReady else { return }
             PersonaChatStore.shared.flushPendingPersistence()
             PersonaChatService.shared.cancel()
             StorySessionService.cancelAllActiveGenerations()

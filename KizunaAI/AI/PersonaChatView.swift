@@ -192,7 +192,7 @@ struct PersonaChatView: View {
                     // this character before falling back to a draft/new thread.
                     // This keeps the relationship continuous across entry points.
                     if let existing = store.threads.first(where: {
-                        $0.characterID == character.id && !$0.messages.isEmpty
+                        $0.characterID == character.id && $0.hasMessages
                     }) {
                         store.refreshCharacterAppearance(
                             for: character.id,
@@ -1119,9 +1119,8 @@ struct PersonaChatView: View {
         let unreadCount = unreadPersonaMessageCounts[thread.id] ?? 0
         let displayProfile = avatarProfile(for: thread)
         let style = PersonaAvatarStyle(profile: displayProfile)
-        let previewText = thread.messages.last {
-            !($0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text))
-        }?.text ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation")
+        let previewText = thread.latestDisplayableMessage?.text
+            ?? KizunaCopy.text(japanese: "新しい会話", english: "New conversation")
         return Button {
             if showsOnlyContinuations {
                 continuationPresentedThread = thread
@@ -1397,9 +1396,11 @@ struct PersonaChatView: View {
 
     private func synchronizePersonaUnreadState(_ threads: [PersonaThread]) {
         previousMessageIDsByThread = Dictionary(
-            uniqueKeysWithValues: threads.map { thread in
-                (thread.id, Set(thread.messages.map(\.id)))
-            }
+            uniqueKeysWithValues: threads.lazy
+                .filter(\.isMessageHistoryLoaded)
+                .map { thread in
+                    (thread.id, Set(thread.messages.map(\.id)))
+                }
         )
         unreadPersonaMessageCounts = [:]
     }
@@ -1409,7 +1410,7 @@ struct PersonaChatView: View {
         var nextMessageIDs: [UUID: Set<UUID>] = [:]
         var nextUnreadCounts = unreadPersonaMessageCounts
 
-        for thread in threads {
+        for thread in threads where thread.isMessageHistoryLoaded {
             let currentMessageIDs = Set(thread.messages.map(\.id))
             if let previousMessageIDs = previousMessageIDsByThread[thread.id] {
                 let newAssistantCount = thread.messages.reduce(into: 0) { count, message in
@@ -1428,7 +1429,7 @@ struct PersonaChatView: View {
             nextMessageIDs[thread.id] = currentMessageIDs
         }
 
-        let knownThreadIDs = Set(nextMessageIDs.keys)
+        let knownThreadIDs = Set(threads.map(\.id))
         nextUnreadCounts = nextUnreadCounts.filter { knownThreadIDs.contains($0.key) && $0.value > 0 }
         previousMessageIDsByThread = nextMessageIDs
         unreadPersonaMessageCounts = nextUnreadCounts

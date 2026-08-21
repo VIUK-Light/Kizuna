@@ -97,6 +97,13 @@ struct KizunaPersonaDataManagementView: View {
                     english: "\(store.threads.count)"
                 )
             )
+            LabeledContent(
+                KizunaCopy.text(japanese: "履歴の保存サイズ", english: "History storage"),
+                value: ByteCountFormatter.string(
+                    fromByteCount: store.persistedHistoryByteCount,
+                    countStyle: .file
+                )
+            )
             if store.isPersistenceRecoveryRequired {
                 Label {
                     Text(KizunaCopy.text(
@@ -172,8 +179,8 @@ struct KizunaPersonaDataManagementView: View {
             Text(KizunaCopy.text(japanese: "書き出し", english: "Export"))
         } footer: {
             Text(KizunaCopy.text(
-                japanese: "JSONは再利用しやすい形式、テキストは読み返しやすい形式です。保存データの書き出しは元の値をそのまま残します。",
-                english: "JSON is structured for reuse. Text is easier to read. Raw export preserves the stored value as-is."
+                japanese: "JSONは再利用しやすい形式、テキストは読み返しやすい形式です。書き出しても端末内の履歴は変更されません。",
+                english: "JSON is structured for reuse. Text is easier to read. Exporting does not modify the history on this device."
             ))
         }
     }
