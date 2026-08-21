@@ -614,6 +614,14 @@ final class StorySessionService: ObservableObject {
         return cappedSelectedIDs
     }
 
+    static func usesRemoteAIConfiguration(
+        _ configuration: AIModelConfiguration?,
+        legacyGenerationModel: StoryGenerationModel
+    ) -> Bool {
+        configuration.map { $0.identity.providerID != .localRuntime }
+            ?? (legacyGenerationModel == .b31)
+    }
+
     private static func canonicalStorageURL(_ url: URL) -> URL {
         url.standardizedFileURL.resolvingSymlinksInPath()
     }
@@ -2064,6 +2072,23 @@ final class StorySessionService: ObservableObject {
             storyState: promptStoryState
         )
 
+        let storyConfigurations = AIModelRegistry.shared.configurations(for: .story)
+        let legacyStoryProvider: AIProviderID = generationModel == .b31
+            ? .googleGenerativeLanguage
+            : .localRuntime
+        let resolvedStoryConfigurationID = AIModelTuningStore.shared.configurationIDForCurrentMode(
+            for: .story,
+            configurations: storyConfigurations,
+            fallbackProviderID: legacyStoryProvider
+        )
+        let resolvedStoryConfiguration = resolvedStoryConfigurationID.flatMap { configurationID in
+            storyConfigurations.first(where: { $0.id == configurationID })
+        }
+        let usesRemoteStoryRoute = Self.usesRemoteAIConfiguration(
+            resolvedStoryConfiguration,
+            legacyGenerationModel: generationModel
+        )
+
         // 7) StoryPromptBuilder
         streamingStatusText = statusText("物語コンテキストを構築中", "Building story context")
         let contentMessages = Array(storyContentMessages(from: session.messages).suffix(96))
@@ -2090,7 +2115,7 @@ final class StorySessionService: ObservableObject {
         // StoryStateとしてモデルへ渡す。本文ログは保持したまま、生成入力だけを
         // 現在の世界に整合させる。
         let prompt: String
-        if generationModel == .b31 {
+        if usesRemoteStoryRoute {
             prompt = promptBuilder.build(
                 world: promptWorld,
                 scene: scene,
@@ -2139,13 +2164,27 @@ final class StorySessionService: ObservableObject {
             session: session,
             generationID: generationID,
             generationModel: generationModel,
+            usesRemoteStoryRoute: usesRemoteStoryRoute,
             userMessageID: userMessageID
         )
-        streamingStatusText = generationModel == .b31
-            ? statusText("Gemma4 31Bで発話生成中", "Generating with Gemma4 31B")
-            : statusText("ローカルモデルで発話生成中", "Generating on device")
+        if usesRemoteStoryRoute {
+            let remoteName = resolvedStoryConfiguration?.identity.displayName ?? "Remote model"
+            streamingStatusText = statusText(
+                remoteName + "で発話生成中",
+                "Generating with " + remoteName
+            )
+        } else {
+            streamingStatusText = statusText("ローカルモデルで発話生成中", "Generating on device")
+        }
         let localModelManager = LocalAssistantModelManager.shared
-        let selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
+        let selectedModelURL: URL?
+        if resolvedStoryConfiguration?.identity.providerID == .localRuntime {
+            selectedModelURL = localModelManager.modelURL(
+                forArtifactID: resolvedStoryConfiguration?.identity.artifactID
+            )
+        } else {
+            selectedModelURL = generationModel.installedModelURL ?? localModelManager.installedModelURL
+        }
         let modelGenerationStartedAt = Date()
 
         func generateStoryReply(systemPrompt: String) async -> (
@@ -2155,35 +2194,22 @@ final class StorySessionService: ObservableObject {
             retryWhenLocalReady: Bool,
             modelIdentity: String?
         ) {
-            if generationModel == .b31 {
-                if StoryGemma31BAPIService.shared.hasAPIKey {
-                    let generatedAPI = await generateWithGemma31BAPI(
-                        systemPrompt: systemPrompt,
-                        userPrompt: effectiveUserText,
-                        generationID: generationID,
-                        seedOverride: seedOverride
-                    )
-                    let reply = generatedAPI.reply
-                    let isNotice = isGemma31BRuntimeNotice(reply)
-                    return (
-                        reply: reply,
-                        runtimeNotice: isNotice,
-                        backend: isNotice ? "Gemma4 31B API失敗" : "Gemma4 31B API",
-                        retryWhenLocalReady: false,
-                        modelIdentity: isNotice ? nil : generatedAPI.modelIdentity
-                    )
-                }
-
-                streamingStatusText = statusText("NAGI APIキー未設定", "NAGI API key is not set")
+            if usesRemoteStoryRoute {
+                let generatedRemote = await generateWithConfiguredRemoteProvider(
+                    systemPrompt: systemPrompt,
+                    userPrompt: effectiveUserText,
+                    generationID: generationID,
+                    preferredConfigurationID: resolvedStoryConfigurationID,
+                    seedOverride: seedOverride
+                )
+                let reply = generatedRemote.reply
+                let isNotice = isGemma31BRuntimeNotice(reply)
                 return (
-                    reply: localizedNotice(
-                        "NAGI の Gemma4 31B APIキーが未設定です。モデル詳細からAPIキーを設定してから続けてください。",
-                        "NAGI's Gemma4 31B API key is not set. Add it in Model details before continuing."
-                    ),
-                    runtimeNotice: true,
-                    backend: "Gemma4 31B API未設定",
+                    reply: reply,
+                    runtimeNotice: isNotice,
+                    backend: isNotice ? "Remote AI provider failed" : "Remote AI provider",
                     retryWhenLocalReady: false,
-                    modelIdentity: nil
+                    modelIdentity: isNotice ? nil : generatedRemote.modelIdentity
                 )
             }
 
@@ -2231,9 +2257,11 @@ final class StorySessionService: ObservableObject {
                 availability: availability,
                 selectedModelURL: availableModelURL
             )
-            let localConfiguration = AIModelRegistry.shared
-                .configurations(for: .story)
-                .first(where: { $0.identity.providerID == .localRuntime })
+            let localConfiguration = resolvedStoryConfiguration?.identity.providerID == .localRuntime
+                ? resolvedStoryConfiguration
+                : AIModelRegistry.shared
+                    .configurations(for: .story)
+                    .first(where: { $0.identity.providerID == .localRuntime })
                 ?? AIModelConfiguration(
                     identity: AIModelIdentity(
                         providerID: .localRuntime,
@@ -2343,7 +2371,7 @@ final class StorySessionService: ObservableObject {
                     firstMessages.count
                 )
                 let retryInstruction = "再生成指示: 直前のNPCやナレーションと同じ本文を返さない。今回のユーザー発言へ直接反応し、別の短い台詞を1行で返す。場面が変わっていない限りナレーションは追加しない。"
-                generationPrompt = generationModel == .e4b
+                generationPrompt = usesRemoteStoryRoute == false
                     ? localRetrySystemPrompt(base: prompt, instruction: retryInstruction)
                     : "\(retryInstruction)\n\n\(prompt)"
                 lastVisibleText = ""
@@ -2354,6 +2382,7 @@ final class StorySessionService: ObservableObject {
                     session: session,
                     generationID: generationID,
                     generationModel: generationModel,
+                    usesRemoteStoryRoute: usesRemoteStoryRoute,
                     userMessageID: userMessageID
                 )
                 generated = await generateStoryReply(systemPrompt: generationPrompt)
@@ -3572,16 +3601,17 @@ final class StorySessionService: ObservableObject {
 
     // MARK: - Stream handling
 
-    private func generateWithGemma31BAPI(
+    private func generateWithConfiguredRemoteProvider(
         systemPrompt: String,
         userPrompt: String,
         generationID: UUID,
+        preferredConfigurationID: UUID?,
         seedOverride: UInt32?
     ) async -> (reply: String?, modelIdentity: String?) {
         await MainActor.run {
             guard self.activeGenerationID == generationID else { return }
-            self.streamingSpeakerName = "NAGI"
-            self.streamingStatusText = self.statusText("Gemma4 31Bで発話生成中", "Generating with Gemma4 31B")
+            self.streamingSpeakerName = nil
+            self.streamingStatusText = self.statusText("リモートモデルで発話生成中", "Generating with remote model")
             self.streamingResponse = self.localizedNotice(
                 "ナレーション: NAGIが場面と会話履歴を読み込んでいます。",
                 "Narration: NAGI is reading the scene and conversation history."
@@ -3589,12 +3619,6 @@ final class StorySessionService: ObservableObject {
         }
 
         do {
-            let storyConfigurations = AIModelRegistry.shared.configurations(for: .story)
-            let preferred = AIModelTuningStore.shared.configurationIDForCurrentMode(
-                for: .story,
-                configurations: storyConfigurations,
-                fallbackProviderID: .googleGenerativeLanguage
-            )
             let response = try await AIModelRouter.shared.generate(
                 request: AIGenerationRequest(
                     systemPrompt: systemPrompt,
@@ -3622,7 +3646,7 @@ final class StorySessionService: ObservableObject {
                     }
                 ),
                 role: .story,
-                preferredConfigurationID: preferred,
+                preferredConfigurationID: preferredConfigurationID,
                 allowsFallback: false
             )
             let text = response.text
@@ -3677,6 +3701,7 @@ final class StorySessionService: ObservableObject {
         session: StorySession,
         generationID: UUID,
         generationModel: StoryGenerationModel,
+        usesRemoteStoryRoute: Bool,
         userMessageID: UUID
     ) {
         Task { @MainActor [weak self] in
@@ -3739,27 +3764,36 @@ final class StorySessionService: ObservableObject {
             self.activeTurnAttempt = nil
             self.activeUserMessageID = nil
             self.activeUserText = ""
-            if generationModel == .e4b {
+            if !usesRemoteStoryRoute {
                 LocalAssistantRuntimeBridge.shared.cancelActiveGeneration(generationID: generationID)
             }
             let notice: String
             let backendName: String
             let backend: StoryGenerationBackend
-            switch generationModel {
-            case .e4b:
+            if usesRemoteStoryRoute {
+                notice = self.localizedNotice(
+                    "選択したリモートAIの生成が時間内に完了しませんでした。本文は保存していません。もう一度試してください。",
+                    "The selected remote AI did not finish in time. The response was not saved. Try again."
+                )
+                backendName = "Remote AI timeout"
+                backend = .gemmaAPI
+            } else {
+                switch generationModel {
+                case .e4b:
                 notice = self.localizedNotice(
                     "iori ローカル生成の待機上限を超えたため停止しました。モデル本文は保存していません。もう一度試すか、NAGIで続けられます。",
                     "iori reached its wait limit and stopped. The model response was not saved. Try again or continue with NAGI."
                 )
                 backendName = "iori ローカル・タイムアウト"
                 backend = .local
-            case .b31:
+                case .b31:
                 notice = self.localizedNotice(
                     "Gemma4 31B APIの生成が時間内に完了しませんでした。本文は保存していません。もう一度試してください。",
                     "Gemma4 31B API did not finish in time. The response was not saved. Try again."
                 )
                 backendName = "Gemma4 31B API・タイムアウト"
                 backend = .gemmaAPI
+                }
             }
             self.streamingResponse = notice
             self.streamingSpeakerName = "システム"

@@ -7226,6 +7226,51 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(evaluated.action, .block)
     }
 
+    func testStoryCurrentConfigurationWinsOverLegacyGenerationFamily() {
+        let localConfiguration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Local"
+            ),
+            roles: [.story]
+        )
+        let remoteConfiguration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "remote-model",
+                displayName: "Remote"
+            ),
+            roles: [.story],
+            endpoint: "https://example.invalid/v1"
+        )
+
+        XCTAssertFalse(
+            StorySessionService.usesRemoteAIConfiguration(
+                localConfiguration,
+                legacyGenerationModel: .b31
+            )
+        )
+        XCTAssertTrue(
+            StorySessionService.usesRemoteAIConfiguration(
+                remoteConfiguration,
+                legacyGenerationModel: .e4b
+            )
+        )
+        XCTAssertTrue(
+            StorySessionService.usesRemoteAIConfiguration(
+                nil,
+                legacyGenerationModel: .b31
+            )
+        )
+        XCTAssertFalse(
+            StorySessionService.usesRemoteAIConfiguration(
+                nil,
+                legacyGenerationModel: .e4b
+            )
+        )
+    }
+
     func testSafetyPipelineRejectsRewriteLessSoftening() async {
         let pipeline = SafetyPipeline(
             policyProvider: { EffectiveSafetyPolicy.make(for: .selfDeclared(.adult)) }
