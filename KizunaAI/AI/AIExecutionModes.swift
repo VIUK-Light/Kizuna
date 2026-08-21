@@ -1216,6 +1216,9 @@ final class AIModelRouter {
         guard let configuration = registry.configuration(id: configurationID) else {
             throw AIProviderError.invalidResponse
         }
+        if let role, !configuration.roles.contains(role) {
+            throw AIProviderError.noProviderForRole(role)
+        }
         guard configuration.isEnabled else {
             throw AIProviderError.configurationDisabled
         }

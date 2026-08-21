@@ -688,7 +688,23 @@ final class PersonaChatService: ObservableObject {
         activeRequestText = trimmed
         let generationID = UUID()
         let selectedGenerationModel = thread.preferredGenerationModel ?? generationModel
-        let selectedConfigurationID = thread.preferredGenerationConfigurationID
+        var selectedConfigurationID = thread.preferredGenerationConfigurationID
+        if let configurationID = selectedConfigurationID {
+            let isUsable = AIModelRegistry.shared.configuration(id: configurationID).map {
+                $0.isEnabled && $0.roles.contains(.persona)
+            } == true
+            if !isUsable {
+                // Registry deletion/Role edits can race with an already
+                // persisted Thread override. Self-heal the Thread before
+                // starting generation so UI and execution share the default.
+                _ = store.setPreferredGenerationModel(
+                    thread.preferredGenerationModel,
+                    configurationID: nil,
+                    forThread: thread.id
+                )
+                selectedConfigurationID = nil
+            }
+        }
         activeGenerationID = generationID
         activeThreadID = thread.id
         activeAssistantMessageID = assistantMessageID
