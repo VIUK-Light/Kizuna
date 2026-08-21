@@ -1096,12 +1096,13 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private func modelArtifactValidationCacheKey(
         for modelURL: URL,
         expectedBytes: Int64?,
-        trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?
+        trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?,
+        customDigest: String? = nil
     ) -> String {
         let expected = expectedBytes.map { String($0) } ?? "unknown"
         let artifactIdentity = trustedArtifact.map {
             "\($0.fileName)|\($0.byteCount)|\($0.sha256)"
-        } ?? "untrusted"
+        } ?? "custom|\(customDigest ?? "missing")"
         let depth = trustedArtifact == nil ? "strict" : "quick"
         return "\(automaticRuntimeCheckKey(for: modelURL))|\(expected)|\(artifactIdentity)|\(depth)"
     }
@@ -1392,13 +1393,18 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
             if trimmed.isEmpty {
-                resolvedCustomDigest = nil
+                applyFailure(message: "カスタムモデルURLではSHA-256の指定が必要です。配布元のdigestを入力してください。")
+                return
             } else if trimmed.count == 64, trimmed.allSatisfy(\.isHexDigit) {
                 resolvedCustomDigest = trimmed
             } else {
                 applyFailure(message: "SHA-256は64桁の16進数で入力するか、空にしてください。")
                 return
             }
+        }
+        if !isUsingDefaultSource, resolvedCustomDigest == nil {
+            applyFailure(message: "カスタムモデルURLではSHA-256の指定が必要です。配布元のdigestを入力してください。")
+            return
         }
 
         invalidateModelArtifactValidationCache()
@@ -1959,10 +1965,15 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
     private func isValidModelFile(at url: URL, expectedBytes: Int64? = nil) -> Bool {
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
         let trustedArtifact = trustedArtifactForStoredModel(at: url)
+        let customDigest = customDigestForStoredModel(at: url)
+        if isCustomStoredModel(at: url), customDigest == nil {
+            return false
+        }
         let cacheKey = modelArtifactValidationCacheKey(
             for: url,
             expectedBytes: expectedBytes,
-            trustedArtifact: trustedArtifact
+            trustedArtifact: trustedArtifact,
+            customDigest: customDigest
         )
         if let cached = modelArtifactValidationCache[cacheKey] {
             return cached
@@ -1975,6 +1986,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
                 fileName: url.lastPathComponent,
                 expectedBytes: expectedBytes,
                 trustedArtifact: trustedArtifact,
+                customExpectedSHA256: customDigest,
                 requireExactByteCount: false,
                 validateLiteRTLMMetadata: false,
                 validationDepth: trustedArtifact == nil ? .strict : .quick
@@ -1996,11 +2008,31 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
         return LocalAssistantModelProfile.trustedArtifact(for: state.sourceURL)
     }
 
+    private func customDigestForStoredModel(at url: URL) -> String? {
+        guard let state = persistedDownloadState,
+              state.status == .completed,
+              stateReferencedFileName(for: state) == url.lastPathComponent,
+              LocalAssistantModelProfile.trustedArtifact(for: state.sourceURL) == nil else {
+            return nil
+        }
+        return state.expectedSHA256
+    }
+
+    private func isCustomStoredModel(at url: URL) -> Bool {
+        guard let state = persistedDownloadState,
+              state.status == .completed,
+              stateReferencedFileName(for: state) == url.lastPathComponent else {
+            return false
+        }
+        return LocalAssistantModelProfile.trustedArtifact(for: state.sourceURL) == nil
+    }
+
     private func validateModelArtifact(
         at url: URL,
         fileName: String,
         expectedBytes: Int64?,
         trustedArtifact: LocalAssistantModelProfile.TrustedArtifact?,
+        customExpectedSHA256: String? = nil,
         requireExactByteCount: Bool,
         validateLiteRTLMMetadata: Bool,
         validationDepth: LocalAssistantModelArtifactValidator.ValidationDepth
@@ -2019,7 +2051,7 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             // 2.6–5.3 GB model on the main queue. Standard artifacts already
             // tied to a completed state use a fast header check; unknown files
             // still receive strict structural parsing before they are adopted.
-            expectedSHA256: nil,
+            expectedSHA256: trustedArtifact?.sha256 ?? customExpectedSHA256,
             minimumByteCount: LocalAssistantModelProfile.minimumAcceptedModelSizeBytes,
             requireExactByteCount: requireExactByteCount,
             validationDepth: validationDepth
@@ -2556,7 +2588,8 @@ final class LocalAssistantModelManager: NSObject, ObservableObject {
             let validationCacheKey = modelArtifactValidationCacheKey(
                 for: destinationURL,
                 expectedBytes: expectedBytesForCompletedModel(at: destinationURL),
-                trustedArtifact: trustedArtifact
+                trustedArtifact: trustedArtifact,
+                customDigest: candidate.expectedSHA256
             )
             // The candidate passed strict background validation before this
             // replacement, so the first post-install refresh need not parse it
