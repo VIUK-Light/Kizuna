@@ -7454,6 +7454,28 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(stagingFailure.isRetryable)
     }
 
+    func testCharacterDeletionMarkersCompactOldTombstonesAndIndexPendingIDs() {
+        let suiteName = "KizunaCharacterDeletionMarkers.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let marker = CharacterDeletionCleanupMarker(defaults: defaults)
+        let oldID = UUID()
+        let recentID = UUID()
+        let pendingID = UUID()
+        let now = Date().timeIntervalSince1970
+
+        defaults.set(now - 100, forKey: "kizuna.characterDeletion.tombstone.\(oldID.uuidString)")
+        defaults.set(now, forKey: "kizuna.characterDeletion.tombstone.\(recentID.uuidString)")
+        marker.insert(pendingID)
+
+        XCTAssertEqual(marker.pendingIDs(), [pendingID])
+        XCTAssertTrue(marker.contains(oldID))
+        XCTAssertEqual(marker.compactTombstones(olderThan: 10), 1)
+        XCTAssertFalse(marker.contains(oldID))
+        XCTAssertTrue(marker.contains(recentID))
+        XCTAssertTrue(marker.containsPending(pendingID))
+    }
+
     func testStoryWorldAgeAvailabilityUsesAllWorldCharacters() {
         let general = CharacterProfile(
             name: "General",

@@ -41,50 +41,85 @@ final class CharacterDeletionCleanupMarker: @unchecked Sendable {
     nonisolated static let shared = CharacterDeletionCleanupMarker()
 
     private let lock = NSLock()
-    private let keyPrefix = "kizuna.characterDeletion.cleanupPending."
-    private let tombstoneKeyPrefix = "kizuna.characterDeletion.tombstone."
+    private nonisolated let defaults: UserDefaults
+    private nonisolated let keyPrefix = "kizuna.characterDeletion.cleanupPending."
+    private nonisolated let tombstoneKeyPrefix = "kizuna.characterDeletion.tombstone."
+    private nonisolated let pendingIDsIndexKey = "kizuna.characterDeletion.cleanupPending.ids.v1"
+    private nonisolated let pendingIDsIndexInitializedKey = "kizuna.characterDeletion.cleanupPending.idsInitialized.v1"
+    private nonisolated let tombstoneRetention: TimeInterval = 30 * 24 * 60 * 60
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     nonisolated func contains(_ id: UUID) -> Bool {
         withLock {
-            UserDefaults.standard.bool(forKey: key(for: id))
-                || UserDefaults.standard.bool(forKey: tombstoneKey(for: id))
+            defaults.bool(forKey: key(for: id)) || hasTombstoneUnlocked(id)
         }
     }
 
     nonisolated func containsPending(_ id: UUID) -> Bool {
-        withLock { UserDefaults.standard.bool(forKey: key(for: id)) }
+        withLock { defaults.bool(forKey: key(for: id)) }
     }
 
     nonisolated func insert(_ id: UUID) {
-        withLock { UserDefaults.standard.set(true, forKey: key(for: id)) }
+        withLock {
+            defaults.set(true, forKey: key(for: id))
+            var IDs = pendingIDsUnlocked()
+            if !IDs.contains(id) { IDs.append(id) }
+            savePendingIDsUnlocked(IDs)
+        }
     }
 
     nonisolated func remove(_ id: UUID) {
-        withLock { UserDefaults.standard.removeObject(forKey: key(for: id)) }
+        withLock {
+            defaults.removeObject(forKey: key(for: id))
+            savePendingIDsUnlocked(pendingIDsUnlocked().filter { $0 != id })
+        }
     }
 
     /// A deleted character ID must remain blocked after cleanup completes.
     /// Otherwise late Persona memory writes can recreate data for the deleted
     /// profile after the temporary cleanup marker has been cleared.
     nonisolated func insertTombstone(_ id: UUID) {
-        withLock { UserDefaults.standard.set(true, forKey: tombstoneKey(for: id)) }
+        withLock { defaults.set(Date().timeIntervalSince1970, forKey: tombstoneKey(for: id)) }
     }
 
     /// Atomically moves an ID from the resumable deletion marker to its
     /// permanent tombstone. Writers must never observe a gap between the two.
     nonisolated func finish(_ id: UUID) {
         withLock {
-            UserDefaults.standard.removeObject(forKey: key(for: id))
-            UserDefaults.standard.set(true, forKey: tombstoneKey(for: id))
+            defaults.removeObject(forKey: key(for: id))
+            savePendingIDsUnlocked(pendingIDsUnlocked().filter { $0 != id })
+            defaults.set(Date().timeIntervalSince1970, forKey: tombstoneKey(for: id))
         }
     }
 
     nonisolated func pendingIDs() -> [UUID] {
+        withLock { pendingIDsUnlocked() }
+    }
+
+    /// Remove only tombstones older than the explicit retention window. A
+    /// profile that currently exists is protected from compaction so a
+    /// malformed or restored data set is never made writable by cleanup.
+    @discardableResult
+    nonisolated func compactTombstones(
+        olderThan retention: TimeInterval? = nil,
+        protectedIDs: Set<UUID> = []
+    ) -> Int {
         withLock {
-            UserDefaults.standard.dictionaryRepresentation().keys.compactMap { key in
-                guard key.hasPrefix(keyPrefix) else { return nil }
-                return UUID(uuidString: String(key.dropFirst(keyPrefix.count)))
+            let threshold = Date().timeIntervalSince1970 - (retention ?? tombstoneRetention)
+            var removedCount = 0
+            for rawKey in defaults.dictionaryRepresentation().keys where rawKey.hasPrefix(tombstoneKeyPrefix) {
+                let rawID = String(rawKey.dropFirst(tombstoneKeyPrefix.count))
+                guard let id = UUID(uuidString: rawID), !protectedIDs.contains(id) else { continue }
+                guard let object = defaults.object(forKey: rawKey), !(object is Bool) else { continue }
+                let timestamp = defaults.double(forKey: rawKey)
+                guard timestamp > 0, timestamp < threshold else { continue }
+                defaults.removeObject(forKey: rawKey)
+                removedCount += 1
             }
+            return removedCount
         }
     }
 
@@ -94,6 +129,31 @@ final class CharacterDeletionCleanupMarker: @unchecked Sendable {
 
     nonisolated private func tombstoneKey(for id: UUID) -> String {
         "\(tombstoneKeyPrefix)\(id.uuidString)"
+    }
+
+    nonisolated private func hasTombstoneUnlocked(_ id: UUID) -> Bool {
+        let rawKey = tombstoneKey(for: id)
+        guard let object = defaults.object(forKey: rawKey) else { return false }
+        if object is Bool { return defaults.bool(forKey: rawKey) }
+        return defaults.double(forKey: rawKey) > 0
+    }
+
+    nonisolated private func pendingIDsUnlocked() -> [UUID] {
+        if defaults.bool(forKey: pendingIDsIndexInitializedKey) {
+            return (defaults.stringArray(forKey: pendingIDsIndexKey) ?? []).compactMap(UUID.init)
+        }
+        let IDs = defaults.dictionaryRepresentation().keys.compactMap { rawKey -> UUID? in
+            guard rawKey.hasPrefix(keyPrefix) else { return nil }
+            return UUID(uuidString: String(rawKey.dropFirst(keyPrefix.count)))
+        }
+        savePendingIDsUnlocked(IDs)
+        defaults.set(true, forKey: pendingIDsIndexInitializedKey)
+        return IDs
+    }
+
+    nonisolated private func savePendingIDsUnlocked(_ IDs: [UUID]) {
+        defaults.set(IDs.map(\.uuidString), forKey: pendingIDsIndexKey)
+        defaults.set(true, forKey: pendingIDsIndexInitializedKey)
     }
 
     nonisolated private func withLock<Result>(_ body: () -> Result) -> Result {
@@ -136,6 +196,9 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
 
     func fetchCharacters() async throws -> [CharacterProfile] {
         let all = try await charStore.loadRecoveringCorruptRecords()
+        _ = CharacterDeletionCleanupMarker.shared.compactTombstones(
+            protectedIDs: Set(all.map(\.id))
+        )
         return deduplicatedCharacters(all).sorted { $0.updatedAt > $1.updatedAt }
     }
 
