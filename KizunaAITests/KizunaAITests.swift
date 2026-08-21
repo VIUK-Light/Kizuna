@@ -6774,6 +6774,41 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testAuxiliaryModelSelectionIsStoredPerRole() throws {
+        let suiteName = "KizunaAIAuxiliaryRouteTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let memoryModel = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "memory-model",
+                displayName: "Memory model"
+            ),
+            roles: [.memoryExtraction],
+            endpoint: "https://example.invalid/v1"
+        )
+        let sceneModel = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "scene-model",
+                displayName: "Scene model"
+            ),
+            roles: [.sceneSummary]
+        )
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertTrue(store.setPreferredConfigurationID(memoryModel.id, for: .memoryExtraction))
+        XCTAssertTrue(store.setPreferredConfigurationID(sceneModel.id, for: .sceneSummary))
+
+        XCTAssertEqual(store.preferredConfigurationID(for: .memoryExtraction), memoryModel.id)
+        XCTAssertEqual(store.preferredConfigurationID(for: .sceneSummary), sceneModel.id)
+        XCTAssertNotEqual(
+            store.preferredConfigurationID(for: .memoryExtraction),
+            store.preferredConfigurationID(for: .sceneSummary)
+        )
+    }
+
     func testAIModelTuningNormalizesAndDropsUnsupportedProviderValues() throws {
         let suiteName = "KizunaAIModelTuningTests.Capabilities.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

@@ -1433,7 +1433,11 @@ private struct AIAdvancedModelSettingsView: View {
             Section {
                 ForEach(AIModelTuningScope.allCases, id: \.self) { scope in
                     NavigationLink {
-                        AIAdvancedScopeSettingsView(scope: scope)
+                        if scope == .auxiliary {
+                            AIAdvancedAuxiliaryModelSettingsView()
+                        } else {
+                            AIAdvancedScopeSettingsView(scope: scope)
+                        }
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(scopeName(scope))
@@ -1492,6 +1496,116 @@ private struct AIAdvancedModelSettingsView: View {
             return KizunaCopy.text(japanese: "物語本文と雛形生成", english: "Story turns and template generation")
         case .auxiliary:
             return KizunaCopy.text(japanese: "分類・記憶・Scene補助", english: "Classification, memory, and scene helpers")
+        }
+    }
+}
+
+private struct AIAdvancedAuxiliaryModelSettingsView: View {
+    @State private var resetMessage: String?
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(AIModelRole.auxiliaryCases, id: \.self) { role in
+                    AIAuxiliaryRoleModelSelectionRow(role: role)
+                }
+            } header: {
+                Text(KizunaCopy.text(
+                    japanese: "補助AIの用途別モデル",
+                    english: "Models by auxiliary role"
+                ))
+            } footer: {
+                Text(KizunaCopy.text(
+                    japanese: "Memory、Scene、Safetyなどは、それぞれのRoleに登録されたモデルから選びます。未指定なら優先度順のおまかせです。",
+                    english: "Memory, Scene, and Safety roles choose from their own registered models. Unset roles use automatic priority order."
+                ))
+            }
+
+            Section {
+                Button {
+                    for role in AIModelRole.auxiliaryCases {
+                        _ = AIModelTuningStore.shared.setPreferredConfigurationID(nil, for: role)
+                    }
+                    resetMessage = KizunaCopy.text(
+                        japanese: "補助AIのモデル選択をおまかせに戻しました。",
+                        english: "Auxiliary model selections were restored to automatic."
+                    )
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "補助AIをおまかせに戻す", english: "Restore auxiliary automatic routing"),
+                        systemImage: "arrow.counterclockwise"
+                    )
+                }
+                if let resetMessage {
+                    Text(resetMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle(KizunaCopy.text(japanese: "補助AIモデル", english: "Auxiliary models"))
+    }
+}
+
+private struct AIAuxiliaryRoleModelSelectionRow: View {
+    let role: AIModelRole
+    private let candidateConfigurations: [AIModelConfiguration]
+    @State private var selectedConfigurationID: UUID?
+
+    init(role: AIModelRole) {
+        self.role = role
+        let candidates = AIModelRegistry.shared.configurations(for: role)
+        candidateConfigurations = candidates
+        let stored = AIModelTuningStore.shared.preferredConfigurationID(for: role)
+        _selectedConfigurationID = State(
+            initialValue: candidates.contains(where: { $0.id == stored }) ? stored : nil
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Picker(roleName, selection: $selectedConfigurationID) {
+                Text(KizunaCopy.text(japanese: "自動（優先度順）", english: "Automatic (priority order)"))
+                    .tag(Optional<UUID>.none)
+                ForEach(candidateConfigurations) { configuration in
+                    Text("\(configuration.identity.displayName) · \(providerName(configuration.identity.providerID))")
+                        .tag(Optional(configuration.id))
+                }
+            }
+            .onChange(of: selectedConfigurationID) { _, newValue in
+                _ = AIModelTuningStore.shared.setPreferredConfigurationID(newValue, for: role)
+            }
+            if candidateConfigurations.isEmpty {
+                Text(KizunaCopy.text(
+                    japanese: "このRoleに登録されたモデルはありません。",
+                    english: "No model is registered for this role."
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var roleName: String {
+        switch role {
+        case .classifier: return "Classifier"
+        case .memoryExtraction: return "Memory extraction"
+        case .memoryRetrieval: return "Memory retrieval"
+        case .sceneCharacterSelection: return "Scene character selection"
+        case .sceneSummary: return "Scene summary"
+        case .nextSceneSuggestion: return "Next scene suggestion"
+        case .safety: return "Safety"
+        case .persona, .story: return role.rawValue
+        }
+    }
+
+    private func providerName(_ provider: AIProviderID) -> String {
+        switch provider {
+        case .localRuntime: return "Local"
+        case .googleGenerativeLanguage: return "Google"
+        case .openAICompatible: return "OpenAI-compatible"
+        case .anthropic: return "Anthropic"
         }
     }
 }

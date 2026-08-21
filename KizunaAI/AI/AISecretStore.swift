@@ -26,6 +26,16 @@ enum AIModelRole: String, Codable, CaseIterable, Hashable, Sendable {
     case sceneSummary
     case nextSceneSuggestion
     case safety
+
+    static let auxiliaryCases: [AIModelRole] = [
+        .classifier,
+        .memoryExtraction,
+        .memoryRetrieval,
+        .sceneCharacterSelection,
+        .sceneSummary,
+        .nextSceneSuggestion,
+        .safety
+    ]
 }
 
 enum AIEndpointPolicy {
@@ -273,6 +283,16 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
         preferredConfigurationIDs[scope.rawValue]
     }
 
+    func preferredConfigurationID(for role: AIModelRole) -> UUID? {
+        let roleKey = role == .persona || role == .story
+            ? AIModelTuningScope(role: role).rawValue
+            : "role.\(role.rawValue)"
+        return preferredConfigurationIDs[roleKey]
+            ?? (AIModelTuningScope(role: role) == .auxiliary
+                ? preferredConfigurationIDs[AIModelTuningScope.auxiliary.rawValue]
+                : nil)
+    }
+
     func simplePreferredConfigurationID(
         for role: AIModelRole,
         configurations: [AIModelConfiguration]
@@ -296,7 +316,7 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
     ) -> UUID? {
         switch mode {
         case .advanced:
-            if let preferred = preferredConfigurationID(for: AIModelTuningScope(role: role)),
+            if let preferred = preferredConfigurationID(for: role),
                configurations.contains(where: { $0.id == preferred }) {
                 return preferred
             }
@@ -316,6 +336,17 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
             preferredConfigurationIDs[scope.rawValue] = id
         } else {
             preferredConfigurationIDs[scope.rawValue] = nil
+        }
+    }
+
+    mutating func setPreferredConfigurationID(_ id: UUID?, for role: AIModelRole) {
+        let roleKey = role == .persona || role == .story
+            ? AIModelTuningScope(role: role).rawValue
+            : "role.\(role.rawValue)"
+        if let id {
+            preferredConfigurationIDs[roleKey] = id
+        } else {
+            preferredConfigurationIDs[roleKey] = nil
         }
     }
 
@@ -367,6 +398,10 @@ final class AIModelTuningStore: @unchecked Sendable {
         preferences.preferredConfigurationID(for: scope)
     }
 
+    func preferredConfigurationID(for role: AIModelRole) -> UUID? {
+        preferences.preferredConfigurationID(for: role)
+    }
+
     func simplePreferredConfigurationID(
         for role: AIModelRole,
         configurations: [AIModelConfiguration]
@@ -389,6 +424,11 @@ final class AIModelTuningStore: @unchecked Sendable {
     @discardableResult
     func setPreferredConfigurationID(_ id: UUID?, for scope: AIModelTuningScope) -> Bool {
         update { $0.setPreferredConfigurationID(id, for: scope) }
+    }
+
+    @discardableResult
+    func setPreferredConfigurationID(_ id: UUID?, for role: AIModelRole) -> Bool {
+        update { $0.setPreferredConfigurationID(id, for: role) }
     }
 
     @discardableResult
