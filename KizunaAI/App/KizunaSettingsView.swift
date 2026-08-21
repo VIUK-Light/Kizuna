@@ -804,6 +804,9 @@ struct KizunaSettingsView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+            .onChange(of: languageRawValue) { _, _ in
+                KizunaCopy.notifyLanguageDidChange()
+            }
             .navigationTitle(KizunaCopy.text(japanese: "設定", english: "Settings"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

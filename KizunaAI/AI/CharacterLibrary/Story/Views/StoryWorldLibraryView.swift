@@ -20,6 +20,7 @@ struct StoryWorldLibraryView: View {
     @State private var showCreate = false
     @State private var editing: StoryWorld? = nil
     @State private var selected: StoryWorld? = nil
+    @State private var languageRevision = 0
 
     private var storyCoverHeight: CGFloat {
         dynamicTypeSize.isAccessibilitySize ? 320 : 230
@@ -85,6 +86,9 @@ struct StoryWorldLibraryView: View {
         }
         .background(Color.appCanvasBackground.ignoresSafeArea())
         .accessibilityElement(children: .contain)
+        .onReceive(NotificationCenter.default.publisher(for: KizunaCopy.languageDidChangeNotification)) { _ in
+            languageRevision &+= 1
+        }
         .task { await vm.bootstrap() }
         .sheet(isPresented: $showCreate) {
             StoryWorldCreateView(onSaved: { _ in

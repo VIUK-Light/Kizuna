@@ -9,6 +9,7 @@ struct KizunaUserProfileView: View {
     @State private var ageContext: UserAgeSafetyContext
     @State private var isLoadingPhoto = false
     @State private var saveError: String?
+    @State private var languageRevision = 0
 
     init(store: KizunaUserProfileStore) {
         self.store = store
@@ -134,6 +135,9 @@ struct KizunaUserProfileView: View {
                     .disabled(isLoadingPhoto)
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: KizunaCopy.languageDidChangeNotification)) { _ in
+            languageRevision &+= 1
         }
     }
 }
