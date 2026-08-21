@@ -818,7 +818,8 @@ final class StoryWorldCreateViewModel: ObservableObject {
                     maxOutputTokens: 8_192
                 ),
                 role: .story,
-                preferredConfigurationID: preferred?.id
+                preferredConfigurationID: preferred?.id,
+                allowsFallback: false
             )
             reply = response.text
             generationStatus = KizunaCopy.text(
@@ -1313,6 +1314,8 @@ final class StoryWorldCreateViewModel: ObservableObject {
         let wantsEnsemble = generatedMultipleCharacters || templateRequestsEnsemble || briefRequestsEnsemble
         draft.castMode = wantsEnsemble ? .ensemble : .solo
         let generatedCharacters = template.characters.prefix(wantsEnsemble ? 4 : 1)
+        var generatedCharactersByName: [String: Set<UUID>] = [:]
+        var generatedOpeningCharacterIDs: [UUID] = []
         for generated in generatedCharacters {
             let profile = CharacterProfile(
                 name: generated.name,
@@ -1338,23 +1341,33 @@ final class StoryWorldCreateViewModel: ObservableObject {
             // キャラクターライブラリーへ残ってしまう。
             addCharacter(profile)
             pendingGeneratedCharacters[profile.id] = profile
+            generatedCharactersByName[profile.visibleName, default: []].insert(profile.id)
+            generatedCharactersByName[profile.name, default: []].insert(profile.id)
             setRole(Self.castRole(from: generated.storyRole), for: profile.id)
             setIntroductionTiming(generated.activeInInitialScene ? .opening : Self.introductionTiming(from: generated.introductionTiming), for: profile.id)
             setImportance(generated.importance, for: profile.id)
             setStoryRelationshipToUser(generated.storyRelationshipToUser, for: profile.id)
             setActiveInOpeningScene(generated.activeInInitialScene, for: profile.id)
+            if generated.activeInInitialScene {
+                generatedOpeningCharacterIDs.append(profile.id)
+            }
         }
 
-        var charactersByName: [String: Set<UUID>] = [:]
-        for character in availableCharacters {
-            charactersByName[character.visibleName, default: []].insert(character.id)
-            charactersByName[character.name, default: []].insert(character.id)
-        }
+        // `addCharacter` keeps the interactive editor usable by inserting a
+        // first cast member into the opening scene. A generated template is a
+        // complete structured result, so apply its declared active set only
+        // after all members have been added; otherwise a leading `false` is
+        // rejected by the editor's "keep one member" guard.
+        let activeLimit = wantsEnsemble ? StoryConstants.maxActiveCharacters : StoryConstants.soloActiveCharacters
+        sceneDraft.activeCharacterIds = Array(generatedOpeningCharacterIDs.prefix(activeLimit))
+
         for relationship in template.relationships {
-            guard let fromIDs = charactersByName[relationship.from], fromIDs.count == 1,
-                  let toIDs = charactersByName[relationship.to], toIDs.count == 1 else {
-                // 同名キャラを辞書の最後/最初へ暗黙に結びつけない。テンプレート側で
-                // displayNameを一意にするか、作成後にユーザーが関係を設定する。
+            guard let fromIDs = generatedCharactersByName[relationship.from], fromIDs.count == 1,
+                  let toIDs = generatedCharactersByName[relationship.to], toIDs.count == 1 else {
+                // Relationships in an AI template refer to the generated
+                // cast, not arbitrary profiles already in Character Library.
+                // Keep ambiguous generated names unresolved instead of
+                // silently linking an unrelated existing character.
                 continue
             }
             guard let fromID = fromIDs.first, let toID = toIDs.first else { continue }
@@ -2587,7 +2600,11 @@ final class StorySessionViewModel: ObservableObject {
                 throw StoryTurnPersistenceError.sessionNotFound
             }
             let scenes = try await sceneRepo.fetchScenes(storyWorldId: world.id)
-            guard let updatedScene = scenes.first(where: { $0.id == scene.id }) else {
+            // A committed turn may have advanced the session to a different
+            // catalog scene. Resolve the scene from the refreshed session
+            // snapshot instead of pinning the view to the pre-turn ID.
+            let updatedSceneID = updatedSession.currentSceneId ?? scene.id
+            guard let updatedScene = scenes.first(where: { $0.id == updatedSceneID }) else {
                 throw StoryTurnPersistenceError.turnNotUndoable
             }
             self.session = updatedSession

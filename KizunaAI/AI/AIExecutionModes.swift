@@ -1036,7 +1036,8 @@ final class AIModelRouter {
     func generate(
         request: AIGenerationRequest,
         role: AIModelRole,
-        preferredConfigurationID: UUID? = nil
+        preferredConfigurationID: UUID? = nil,
+        allowsFallback: Bool = true
     ) async throws -> AIGenerationResponse {
         var configurations = registry.configurations(for: role)
         if let preferredConfigurationID,
@@ -1046,6 +1047,14 @@ final class AIModelRouter {
         }
         guard !configurations.isEmpty else {
             throw AIProviderError.noProviderForRole(role)
+        }
+
+        if !allowsFallback {
+            guard let preferredConfigurationID,
+                  configurations.contains(where: { $0.id == preferredConfigurationID }) else {
+                throw AIProviderError.noProviderForRole(role)
+            }
+            return try await generate(request: request, configurationID: preferredConfigurationID)
         }
 
         var lastError: Error?

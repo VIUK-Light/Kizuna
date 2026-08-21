@@ -65,7 +65,9 @@ struct KizunaContinuationView: View {
                 .background(Color.orange.opacity(0.10))
             }
 
-            if items.isEmpty {
+            if viewModel.loadError != nil && items.isEmpty {
+                loadErrorState
+            } else if items.isEmpty {
                 emptyState
             } else {
                 ScrollView {
@@ -133,7 +135,7 @@ struct KizunaContinuationView: View {
                         .font(.callout.weight(.semibold))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
-                        .frame(minHeight: 36)
+                        .frame(minWidth: 44, minHeight: 44)
                         .background(
                             Capsule().fill(
                                 selectedFilter == filter
@@ -144,6 +146,7 @@ struct KizunaContinuationView: View {
                         .foregroundStyle(selectedFilter == filter ? Color.accentColor : .secondary)
                 }
                 .buttonStyle(.plain)
+                .contentShape(Rectangle())
                 .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
             }
             Spacer(minLength: 0)
@@ -166,6 +169,32 @@ struct KizunaContinuationView: View {
             .font(.subheadline)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(32)
+    }
+
+    private var loadErrorState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(.orange)
+            Text(KizunaCopy.text(
+                japanese: "続きの履歴を表示できません。",
+                english: "Your continuation history could not be displayed."
+            ))
+                .font(.headline)
+            Text(KizunaCopy.text(
+                japanese: "データが存在しないのではなく、読み込みに失敗しています。",
+                english: "This may be a loading problem, not an empty history."
+            ))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(KizunaCopy.text(japanese: "再読み込み", english: "Reload")) {
+                reload()
+            }
+            .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(32)

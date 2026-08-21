@@ -42,6 +42,12 @@ Kizunaは、キャラクターとの継続的な会話・関係・物語を楽�
 
 Kizunaは現在開発中です。機能提案、バグ報告、ドキュメント改善、Pull Requestを歓迎します。
 
+## 対応プラットフォームと導入
+
+現在の公式クライアントはiOSとmacOSです。Windows、Linux、Android、Web向けのクライアントや事前ビルド済みの一般配布版は、現時点では提供していません。
+
+一般ユーザー向けのダウンロード版がない間は、対応するmacOS環境でソースからビルドして試せます。開発環境の準備が目的でない場合は、[公開Roadmap](ROADMAP.md)で今後の配布・Web対応方針を確認してください。
+
 | 項目 | 内容 |
 | --- | --- |
 | 開発環境 | Xcode 26.1以降 / XcodeGen |
@@ -95,6 +101,8 @@ KizunaAI/
 
 ## コントリビューション
 
+[CONTRIBUTING.md](CONTRIBUTING.md) と [公開Roadmap](ROADMAP.md) を確認してからIssueやPull Requestを作成してください。小さな入口Issueは [good first issue](https://github.com/VIUK-Light/Kizuna/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) と [help wanted](https://github.com/VIUK-Light/Kizuna/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) から探せます。
+
 IssueやPull Requestでは、可能な範囲で次の情報を含めてください。
 
 - 再現手順、期待した結果、実際の結果
@@ -107,6 +115,8 @@ IssueやPull Requestでは、可能な範囲で次の情報を含めてくださ
 ## ライセンスと第三者コンポーネント
 
 Kizunaのソフトウェア部分（Swiftコード、テスト、スクリプト、プロジェクト設定、文書）は、[Apache License 2.0](LICENSE) のもとで提供されます。原版はVIUK-Lightが開発しました。再配布時の帰属表示については [NOTICE](NOTICE) を参照してください。
+
+ライセンスの対象範囲と再配布時の差し替えが必要な素材は [LICENSES.md](LICENSES.md) に整理しています。
 
 次のコンテンツはApache License 2.0の対象外です。別途明示的な許諾がない限り、VIUK-Light contributorsが権利を留保します。
 

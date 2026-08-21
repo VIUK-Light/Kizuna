@@ -1,5 +1,7 @@
 # Contributing to Kizuna
 
+[English](CONTRIBUTING.en.md)
+
 Kizunaへの関心と貢献ありがとうございます。小さな修正、ドキュメント改善、再現手順の提供、設計提案も歓迎します。
 
 ## 行動の基本
@@ -87,3 +89,11 @@ UI文言の追加・変更は [docs/i18n.md](docs/i18n.md) の方針に従って
 ## ライセンス
 
 提出した変更は、このリポジトリのライセンス条件で配布できるものとします。第三者のコード、画像、モデル、データを追加する場合は、利用条件と出典を明示してください。
+
+## 入口Issueと現在の方向性
+
+- [good first issue](https://github.com/VIUK-Light/Kizuna/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+- [help wanted](https://github.com/VIUK-Light/Kizuna/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+- [公開Roadmap](ROADMAP.md)
+
+ラベルが付いたIssueでも、着手前に完了条件と現在の方針を確認してください。大きな変更、永続化、Security、AI runtime、Web/別プラットフォーム対応は、実装前にIssueで相談してください。

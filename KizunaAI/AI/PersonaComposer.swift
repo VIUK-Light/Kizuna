@@ -36,11 +36,43 @@ struct PersonaComposer: View {
         return activeThreadID != thread.id
     }
 
+    private var generatingThread: PersonaThread? {
+        guard let activeThreadID = service.activeGenerationThreadID,
+              service.phase == .thinking else { return nil }
+        return store.thread(id: activeThreadID)
+    }
+
+    private var selectedRegistryConfiguration: AIModelConfiguration? {
+        guard let configurationID = store.thread(id: thread.id)?.preferredGenerationConfigurationID else {
+            return nil
+        }
+        return AIModelRegistry.shared.configuration(id: configurationID)
+    }
+
+    private var customRegistryConfigurations: [AIModelConfiguration] {
+        AIModelRegistry.shared.configurations
+            .filter { configuration in
+                configuration.roles.contains(.persona)
+                    && [.openAICompatible, .anthropic].contains(configuration.identity.providerID)
+            }
+            .sorted {
+                if $0.priority != $1.priority { return $0.priority < $1.priority }
+                return $0.identity.displayName.localizedStandardCompare($1.identity.displayName) == .orderedAscending
+            }
+    }
+
+    private var selectedGenerationModel: PersonaGenerationModel {
+        guard selectedRegistryConfiguration == nil else { return service.generationModel }
+        return store.thread(id: thread.id)?.preferredGenerationModel ?? service.generationModel
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: service.generationModel == .local ? "desktopcomputer" : "cloud")
-                Text(service.generationModel.localizedDisplayName)
+                Image(systemName: selectedRegistryConfiguration == nil && selectedGenerationModel == .local
+                      ? "desktopcomputer"
+                      : "cloud")
+                Text(selectedRegistryConfiguration?.identity.displayName ?? selectedGenerationModel.localizedDisplayName)
                     .font(.caption.weight(.semibold))
                 Text("·")
                     .foregroundStyle(.tertiary)
@@ -59,16 +91,37 @@ struct PersonaComposer: View {
             .accessibilityElement(children: .combine)
 
             if isGeneratingAnotherThread {
-                HStack(spacing: 7) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(KizunaCopy.text(
-                        japanese: "別のスレッドで生成中です。完了するまで送信できません。",
-                        english: "Another thread is generating. You can send after it finishes."
-                    ))
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 7) {
+                        ProgressView()
+                            .controlSize(.small)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(KizunaCopy.text(
+                                japanese: "別のスレッドで生成中です",
+                                english: "Another thread is generating"
+                            ))
+                                .font(.body.weight(.medium))
+                            if let generatingThread {
+                                Text("「\(generatingThread.title)」")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    HStack(spacing: 8) {
+                        if let generatingThread {
+                            Button(KizunaCopy.text(japanese: "会話へ戻る", english: "Return to conversation")) {
+                                store.selectThread(id: generatingThread.id)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        Button(KizunaCopy.text(japanese: "生成を停止", english: "Stop generation"), role: .destructive) {
+                            service.cancel()
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
                 .padding(.horizontal, 14)
                 .accessibilityElement(children: .combine)
@@ -85,21 +138,52 @@ struct PersonaComposer: View {
                 .help(KizunaCopy.appName)
 
                 Menu {
+                    Button {
+                        store.setPreferredGenerationModel(nil, configurationID: nil, forThread: thread.id)
+                    } label: {
+                        Label(
+                            KizunaCopy.text(japanese: "アプリ既定（\(service.generationModel.localizedDisplayName)）", english: "App default (\(service.generationModel.localizedDisplayName))"),
+                            systemImage: selectedRegistryConfiguration == nil
+                                && store.thread(id: thread.id)?.preferredGenerationModel == nil
+                                ? "checkmark"
+                                : "arrow.uturn.backward"
+                        )
+                    }
+                    Divider()
                     ForEach(PersonaGenerationModel.allCases) { model in
                         Button {
-                            service.generationModel = model
+                            store.setPreferredGenerationModel(model, configurationID: nil, forThread: thread.id)
                         } label: {
                             Label(
                                 "\(model.localizedDisplayName) · \(model.isAvailable ? KizunaCopy.text(japanese: "利用可能", english: "Available") : KizunaCopy.text(japanese: "未準備", english: "Not ready"))",
-                                systemImage: service.generationModel == model ? "checkmark" : "cpu"
+                                systemImage: selectedRegistryConfiguration == nil && selectedGenerationModel == model ? "checkmark" : "cpu"
                             )
                         }
                         .disabled(!model.isAvailable || isGeneratingThisThread)
                     }
+                    if !customRegistryConfigurations.isEmpty {
+                        Divider()
+                        ForEach(customRegistryConfigurations) { configuration in
+                            Button {
+                                store.setPreferredGenerationModel(
+                                    nil,
+                                    configurationID: configuration.id,
+                                    forThread: thread.id
+                                )
+                            } label: {
+                                Label(
+                                    "\(configuration.identity.displayName) · \(registryProviderDisplayName(configuration.identity.providerID)) · \(registryAvailabilityText(configuration))",
+                                    systemImage: selectedRegistryConfiguration?.id == configuration.id ? "checkmark" : "cloud"
+                                )
+                            }
+                            .disabled(!registryConfigurationIsSelectable(configuration) || isGeneratingThisThread)
+                        }
+                    }
                 } label: {
                     Image(systemName: "cpu")
                         .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(KizunaCopy.text(japanese: "Personaの生成モデル", english: "Persona generation model"))
@@ -161,7 +245,10 @@ struct PersonaComposer: View {
     }
 
     private var modelAvailabilityText: String {
-        switch service.generationModel {
+        if let selectedRegistryConfiguration {
+            return registryAvailabilityText(selectedRegistryConfiguration)
+        }
+        switch selectedGenerationModel {
         case .local:
             switch LocalAssistantModelManager.shared.runtimeAvailability {
             case .executable: return KizunaCopy.text(japanese: "利用可能", english: "Ready")
@@ -181,6 +268,38 @@ struct PersonaComposer: View {
             case .unavailable: return KizunaCopy.text(japanese: "接続不可", english: "Unavailable")
             case .notConfigured: return KizunaCopy.text(japanese: "未設定", english: "Not configured")
             }
+        }
+    }
+
+    private func registryConfigurationIsSelectable(_ configuration: AIModelConfiguration) -> Bool {
+        guard configuration.isEnabled else { return false }
+        switch configuration.identity.providerID {
+        case .localRuntime:
+            return LocalAssistantModelManager.shared.runtimeAvailability == .executable
+        case .googleGenerativeLanguage:
+            return AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
+                || AISecretStore.shared.configuredGemmaWebReaderAPIKey() != nil
+        case .openAICompatible, .anthropic:
+            return AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
+        }
+    }
+
+    private func registryAvailabilityText(_ configuration: AIModelConfiguration) -> String {
+        guard configuration.isEnabled else {
+            return KizunaCopy.text(japanese: "無効", english: "Disabled")
+        }
+        guard registryConfigurationIsSelectable(configuration) else {
+            return KizunaCopy.text(japanese: "未準備", english: "Not ready")
+        }
+        return KizunaCopy.text(japanese: "利用可能", english: "Available")
+    }
+
+    private func registryProviderDisplayName(_ provider: AIProviderID) -> String {
+        switch provider {
+        case .localRuntime: return "Local"
+        case .googleGenerativeLanguage: return "Google"
+        case .openAICompatible: return "OpenAI-compatible"
+        case .anthropic: return "Anthropic"
         }
     }
 

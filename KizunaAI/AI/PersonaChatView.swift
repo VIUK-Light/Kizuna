@@ -42,8 +42,8 @@ struct PersonaChatView: View {
     /// 未完了のロードを置き去りにせず、古い結果を次の一覧へ適用しない。
     @State private var storyHistoryReloadID = UUID()
     @State private var isPersonaChatNearBottom = true
-    @State private var unreadPersonaMessageCount = 0
-    @State private var previousMessageIDs: Set<UUID> = []
+    @State private var unreadPersonaMessageCounts: [UUID: Int] = [:]
+    @State private var previousMessageIDsByThread: [UUID: Set<UUID>] = [:]
     @State private var targetGenerationThreadID: UUID?
     @State private var targetAssistantMessageID: UUID?
     @State private var pendingThreadDeletion: PersonaThread?
@@ -60,6 +60,7 @@ struct PersonaChatView: View {
     /// Character Libraryの現在値を優先する。スレッドごとの古い画像を表示しない。
     @State private var currentCharacterProfiles: [UUID: CharacterProfile] = [:]
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(\.dismiss) private var dismiss
 
@@ -95,6 +96,9 @@ struct PersonaChatView: View {
         }
         if store.isPersistenceRecoveryRequired {
             personaRecoveryBanner
+            Divider()
+        } else if store.isPartialRecoveryRequired {
+            personaPartialRecoveryBanner
             Divider()
         } else if personaRecoveryExportItem != nil
                     || personaRecoveryCleanupWarningMessage != nil {
@@ -158,6 +162,9 @@ struct PersonaChatView: View {
         .background(Color.appCanvasBackground.ignoresSafeArea())
         .onAppear {
             retryPendingPersonaRecoveryCleanup()
+            if previousMessageIDsByThread.isEmpty {
+                synchronizePersonaUnreadState(store.threads)
+            }
         }
         .onDisappear {
             retryPendingPersonaRecoveryCleanup()
@@ -210,15 +217,13 @@ struct PersonaChatView: View {
                             // instead of failing silently behind the sheet.
                             showLibrary = false
                             isShowingPersonaRecoveryResetConfirmation = true
+                        } else if store.isPartialRecoveryRequired {
+                            // Keep the readable conversations available and
+                            // expose the partial-recovery banner after the
+                            // library sheet closes.
+                            showLibrary = false
                         }
                         return
-                    }
-                    // 初回メッセージがあればアシスタント発として入れておく。
-                    if thread.messages.isEmpty, !character.firstMessage.isEmpty {
-                        store.appendMessage(
-                            PersonaMessage(role: .assistant, text: character.firstMessage),
-                            toThread: thread.id
-                        )
                     }
                     if horizontalSizeClass == .compact {
                         compactShowsChat = true
@@ -324,14 +329,16 @@ struct PersonaChatView: View {
         .onReceive(NotificationCenter.default.publisher(for: .characterLibraryDidChange)) { _ in
             Task { await refreshCurrentCharacterProfiles() }
         }
-        .onChange(of: store.activeThreadID) { _, _ in
+        .onChange(of: store.activeThreadID) { _, newThreadID in
             isPersonaChatNearBottom = true
-            unreadPersonaMessageCount = 0
-            if let activeThread = store.activeThread {
-                previousMessageIDs = Set(activeThread.messages.map(\.id))
+            if let newThreadID {
+                markPersonaThreadRead(newThreadID)
             } else {
-                previousMessageIDs = []
+                unreadPersonaMessageCounts.removeAll()
             }
+        }
+        .onReceive(store.$threads) { threads in
+            updatePersonaUnreadState(threads)
         }
         .onChange(of: service.activeGenerationThreadID) { _, newThreadID in
             if newThreadID != nil {
@@ -484,6 +491,74 @@ struct PersonaChatView: View {
         .accessibilityElement(children: .contain)
     }
 
+    private var personaPartialRecoveryBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text(KizunaCopy.text(
+                    japanese: "Persona履歴を部分的に復旧しました（読めないThread: \(store.partialRecoveryInvalidCount)件）",
+                    english: "Persona history was partially recovered (unreadable threads: \(store.partialRecoveryInvalidCount))."
+                ))
+                .font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+
+            Text(KizunaCopy.text(
+                japanese: "読み込めた会話は表示しています。元の保存データは上書きせず、修復前にバックアップを作成します。",
+                english: "Readable conversations remain available. The original data will not be overwritten, and a backup is created before repair."
+            ))
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    exportPersonaRecoveryData()
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "バックアップを書き出す", english: "Export backup"),
+                        systemImage: "arrow.down.doc"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+
+                if let personaRecoveryExportItem {
+                    ShareLink(
+                        item: personaRecoveryExportItem,
+                        preview: SharePreview(personaRecoveryExportItem.fileName)
+                    ) {
+                        Label(
+                            KizunaCopy.text(japanese: "共有／保存", english: "Share / Save"),
+                            systemImage: "square.and.arrow.up"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                }
+
+                Button {
+                    repairPartialPersonaRecovery()
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "読み込めた履歴で修復して続ける", english: "Repair with readable history"),
+                        systemImage: "checkmark.shield"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: 44, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.10))
+        .accessibilityElement(children: .contain)
+    }
+
     private var personaRecoveryPostResetBanner: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let personaRecoveryExportItem {
@@ -575,6 +650,30 @@ struct PersonaChatView: View {
         } catch {
             personaRecoveryErrorMessage = error.localizedDescription
             return
+        }
+    }
+
+    private func repairPartialPersonaRecovery() {
+        do {
+            let backupURL = try store.exportCorruptPersistedThreads()
+            let backupItem = try loadPersonaRecoveryExportItem(from: backupURL)
+            guard store.repairPartiallyRecoveredThreads() else {
+                if !removePersonaRecoveryExportFile(at: backupURL) {
+                    rememberPersonaRecoveryCleanupURL(backupURL)
+                }
+                personaRecoveryErrorMessage = KizunaCopy.text(
+                    japanese: "部分復旧を確定できませんでした。元データは変更していません。",
+                    english: "The partial recovery could not be committed. The original data was not changed."
+                )
+                return
+            }
+            if !removePersonaRecoveryExportFile(at: backupURL) {
+                rememberPersonaRecoveryCleanupURL(backupURL)
+            }
+            personaRecoveryExportItem = backupItem
+            personaRecoveryErrorMessage = nil
+        } catch {
+            personaRecoveryErrorMessage = error.localizedDescription
         }
     }
 
@@ -1017,6 +1116,7 @@ struct PersonaChatView: View {
 
     private func threadRow(_ thread: PersonaThread) -> some View {
         let isActive = store.activeThreadID == thread.id
+        let unreadCount = unreadPersonaMessageCounts[thread.id] ?? 0
         let displayProfile = avatarProfile(for: thread)
         let style = PersonaAvatarStyle(profile: displayProfile)
         let previewText = thread.messages.last {
@@ -1045,6 +1145,19 @@ struct PersonaChatView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                if unreadCount > 0 {
+                    Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 24, minHeight: 24)
+                        .background(Capsule().fill(Color.accentColor))
+                        .accessibilityLabel(
+                            KizunaCopy.text(
+                                japanese: "\(unreadCount)件の新しいメッセージ",
+                                english: "\(unreadCount) new messages"
+                            )
+                        )
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
@@ -1059,6 +1172,14 @@ struct PersonaChatView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityValue(
+            Text(unreadCount > 0
+                ? KizunaCopy.text(
+                    japanese: "\(unreadCount)件の未読メッセージ",
+                    english: "\(unreadCount) unread messages"
+                )
+                : "")
+        )
         .contextMenu {
             Button {
                 threadRenameText = thread.title
@@ -1274,6 +1395,54 @@ struct PersonaChatView: View {
         )
     }
 
+    private func synchronizePersonaUnreadState(_ threads: [PersonaThread]) {
+        previousMessageIDsByThread = Dictionary(
+            uniqueKeysWithValues: threads.map { thread in
+                (thread.id, Set(thread.messages.map(\.id)))
+            }
+        )
+        unreadPersonaMessageCounts = [:]
+    }
+
+    private func updatePersonaUnreadState(_ threads: [PersonaThread]) {
+        let activeThreadID = store.activeThreadID
+        var nextMessageIDs: [UUID: Set<UUID>] = [:]
+        var nextUnreadCounts = unreadPersonaMessageCounts
+
+        for thread in threads {
+            let currentMessageIDs = Set(thread.messages.map(\.id))
+            if let previousMessageIDs = previousMessageIDsByThread[thread.id] {
+                let newAssistantCount = thread.messages.reduce(into: 0) { count, message in
+                    guard !previousMessageIDs.contains(message.id), message.role == .assistant else { return }
+                    count += 1
+                }
+                let shouldCountAsUnread = thread.id != activeThreadID || !isPersonaChatNearBottom
+                if shouldCountAsUnread, newAssistantCount > 0 {
+                    nextUnreadCounts[thread.id, default: 0] += newAssistantCount
+                } else if thread.id == activeThreadID && isPersonaChatNearBottom {
+                    nextUnreadCounts.removeValue(forKey: thread.id)
+                }
+            } else if thread.id == activeThreadID {
+                nextUnreadCounts.removeValue(forKey: thread.id)
+            }
+            nextMessageIDs[thread.id] = currentMessageIDs
+        }
+
+        let knownThreadIDs = Set(nextMessageIDs.keys)
+        nextUnreadCounts = nextUnreadCounts.filter { knownThreadIDs.contains($0.key) && $0.value > 0 }
+        previousMessageIDsByThread = nextMessageIDs
+        unreadPersonaMessageCounts = nextUnreadCounts
+    }
+
+    private func markPersonaThreadRead(_ threadID: UUID) {
+        unreadPersonaMessageCounts.removeValue(forKey: threadID)
+        if let thread = store.thread(id: threadID) {
+            previousMessageIDsByThread[threadID] = Set(thread.messages.map(\.id))
+        } else {
+            previousMessageIDsByThread.removeValue(forKey: threadID)
+        }
+    }
+
     @Environment(\.colorScheme) private var colorScheme
 
     private var personaChatBackground: some View {
@@ -1347,6 +1516,7 @@ struct PersonaChatView: View {
             && service.phase == .thinking
         let generationFailure = service.generationFailure(for: thread.id)
         let cancelledRequest = service.cancelledRequest(for: thread.id)
+        let unreadCount = unreadPersonaMessageCounts[thread.id] ?? 0
         let displayProfile = avatarProfile(for: thread)
         let visibleMessages = thread.messages.filter { msg in
             return !(msg.role == .assistant && PersonaMessage.isPendingAssistantText(msg.text))
@@ -1387,30 +1557,15 @@ struct PersonaChatView: View {
                 } action: { _, nearBottom in
                     isPersonaChatNearBottom = nearBottom
                     if nearBottom {
-                        unreadPersonaMessageCount = 0
+                        markPersonaThreadRead(thread.id)
                     }
                 }
                 .onChange(of: thread.messages.count) { _, _ in
-                    let currentMessageIDs = Set(thread.messages.map(\.id))
                     if isPersonaChatNearBottom {
                         withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.2)) {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
-                    } else {
-                        let newMessageIDs = currentMessageIDs.subtracting(previousMessageIDs)
-                        let newAssistantMessages = thread.messages.filter { msg in
-                            newMessageIDs.contains(msg.id) && msg.role == .assistant
-                        }
-                        if !newAssistantMessages.isEmpty {
-                            withAnimation(accessibilityReduceMotion ? nil : .snappy) {
-                                unreadPersonaMessageCount += newAssistantMessages.count
-                            }
-                        }
                     }
-                    // Replies received while the user was at the latest position
-                    // are already seen. Keep the baseline current in both paths
-                    // so a later off-bottom reply cannot recount them.
-                    previousMessageIDs = currentMessageIDs
                 }
                 .onChange(of: service.streamingResponse) { _, _ in
                     guard isGeneratingThisThread, isPersonaChatNearBottom else { return }
@@ -1424,10 +1579,7 @@ struct PersonaChatView: View {
                     guard !Task.isCancelled, store.activeThreadID == thread.id else { return }
                     proxy.scrollTo("bottom", anchor: .bottom)
                     isPersonaChatNearBottom = true
-                    unreadPersonaMessageCount = 0
-                    previousMessageIDs = Set(
-                        (store.activeThread?.messages ?? thread.messages).map(\.id)
-                    )
+                    markPersonaThreadRead(thread.id)
                 }
 
                 if !isPersonaChatNearBottom {
@@ -1436,18 +1588,18 @@ struct PersonaChatView: View {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                         isPersonaChatNearBottom = true
-                        unreadPersonaMessageCount = 0
+                        markPersonaThreadRead(thread.id)
                     } label: {
                         Label {
                             HStack(spacing: 3) {
-                                if unreadPersonaMessageCount > 0 {
-                                    Text("\(unreadPersonaMessageCount)")
+                                if unreadCount > 0 {
+                                    Text("\(unreadCount)")
                                         .contentTransition(.numericText())
                                     Text(KizunaCopy.pluralText(
                                         japanese: "新しいメッセージ",
                                         englishSingular: "new message",
                                         englishPlural: "new messages",
-                                        count: unreadPersonaMessageCount
+                                        count: unreadCount
                                     ))
                                 } else {
                                     Text(KizunaCopy.text(japanese: "最新へ", english: "Latest"))
@@ -1467,12 +1619,12 @@ struct PersonaChatView: View {
                     .padding(.trailing, 16)
                     .padding(.bottom, 14)
                     .accessibilityLabel(
-                        unreadPersonaMessageCount > 0
+                        unreadCount > 0
                         ? KizunaCopy.pluralText(
-                            japanese: "\(unreadPersonaMessageCount)件の新しいメッセージへ移動",
-                            englishSingular: "Jump to \(unreadPersonaMessageCount) new message",
-                            englishPlural: "Jump to \(unreadPersonaMessageCount) new messages",
-                            count: unreadPersonaMessageCount
+                            japanese: "\(unreadCount)件の新しいメッセージへ移動",
+                            englishSingular: "Jump to \(unreadCount) new message",
+                            englishPlural: "Jump to \(unreadCount) new messages",
+                            count: unreadCount
                           )
                         : KizunaCopy.text(japanese: "最新のメッセージへ移動", english: "Jump to the latest message")
                     )
@@ -1543,21 +1695,7 @@ struct PersonaChatView: View {
                 ))
                     .font(.callout)
                     .foregroundStyle(.tertiary)
-                HStack(spacing: 8) {
-                    Button(KizunaCopy.text(japanese: "同じ内容を再送信", english: "Try again")) {
-                        service.retryLastMessage(for: threadID)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .frame(minHeight: 44)
-                    .disabled(service.phase == .thinking)
-                    Button(KizunaCopy.text(japanese: "閉じる", english: "Dismiss")) {
-                        service.dismissError(for: threadID)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .frame(minHeight: 44)
-                }
+                generationErrorActions(threadID: threadID)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1570,6 +1708,7 @@ struct PersonaChatView: View {
     }
 
     private func cancelledGenerationNotice(threadID: UUID, requestText: String) -> some View {
+        let preview = cancelledRequestPreview(requestText)
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: "pause.circle.fill")
                 .foregroundStyle(.orange)
@@ -1580,27 +1719,15 @@ struct PersonaChatView: View {
                 ))
                     .font(.headline.weight(.bold))
                 Text(KizunaCopy.text(
-                    japanese: "「\(requestText)」への返信はまだありません。",
-                    english: "There is no reply yet for “\(requestText)”."
+                    japanese: "「\(preview)」への返信はまだありません。",
+                    english: "There is no reply yet for “\(preview)”."
                 ))
                     .font(.body)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    Button(KizunaCopy.text(japanese: "同じ発言から再試行", english: "Retry this message")) {
-                        service.retryCancelledMessage(for: threadID)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .frame(minHeight: 44)
-                    .disabled(service.phase == .thinking)
-                    Button(KizunaCopy.text(japanese: "発言を取り消す", english: "Remove message")) {
-                        service.discardCancelledMessage(for: threadID)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .frame(minHeight: 44)
-                }
+                cancelledGenerationActions(threadID: threadID)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1610,6 +1737,103 @@ struct PersonaChatView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.orange.opacity(0.22), lineWidth: 1)
         }
+    }
+
+    @ViewBuilder
+    private func generationErrorActions(threadID: UUID) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                generationRetryButton(threadID: threadID)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                generationDismissButton(threadID: threadID)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    generationRetryButton(threadID: threadID)
+                    generationDismissButton(threadID: threadID)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    generationRetryButton(threadID: threadID)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    generationDismissButton(threadID: threadID)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func generationRetryButton(threadID: UUID) -> some View {
+        Button(KizunaCopy.text(japanese: "同じ内容を再送信", english: "Try again")) {
+            service.retryLastMessage(for: threadID)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .frame(minHeight: 44)
+        .disabled(service.phase == .thinking)
+    }
+
+    private func generationDismissButton(threadID: UUID) -> some View {
+        Button(KizunaCopy.text(japanese: "閉じる", english: "Dismiss")) {
+            service.dismissError(for: threadID)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .frame(minHeight: 44)
+    }
+
+    @ViewBuilder
+    private func cancelledGenerationActions(threadID: UUID) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                cancelledRetryButton(threadID: threadID)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                cancelledDiscardButton(threadID: threadID)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    cancelledRetryButton(threadID: threadID)
+                    cancelledDiscardButton(threadID: threadID)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    cancelledRetryButton(threadID: threadID)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    cancelledDiscardButton(threadID: threadID)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func cancelledRetryButton(threadID: UUID) -> some View {
+        Button(KizunaCopy.text(japanese: "同じ発言から再試行", english: "Retry this message")) {
+            service.retryCancelledMessage(for: threadID)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .frame(minHeight: 44)
+        .disabled(service.phase == .thinking)
+    }
+
+    private func cancelledDiscardButton(threadID: UUID) -> some View {
+        Button(KizunaCopy.text(japanese: "発言を取り消す", english: "Remove message")) {
+            service.discardCancelledMessage(for: threadID)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .frame(minHeight: 44)
+    }
+
+    private func cancelledRequestPreview(_ requestText: String) -> String {
+        let normalized = requestText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        let limit = 96
+        guard normalized.count > limit else { return normalized }
+        return String(normalized.prefix(limit)) + "…"
     }
 
 }

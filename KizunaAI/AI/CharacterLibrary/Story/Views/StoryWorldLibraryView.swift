@@ -135,150 +135,215 @@ struct StoryWorldLibraryView: View {
     }
 
     private var header: some View {
-        HStack {
-            if showsDismissButton {
-                Button { dismiss() } label: {
-                    Image(systemName: "chevron.down")
-                        .frame(minWidth: 44, minHeight: 44)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        dismissButton
+                        headerTitle
+                        Spacer(minLength: 0)
+                    }
+                    createStoryButton
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(KizunaCopy.text(japanese: "閉じる", english: "Close"))
+            } else {
+                HStack {
+                    dismissButton
+                    headerTitle
+                    Spacer()
+                    createStoryButton
+                }
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(KizunaCopy.text(japanese: "ストーリーライブラリー", english: "Story library"))
-                    .font(.headline.weight(.semibold))
-                    .accessibilityIdentifier("workspace.story.heading")
-                Text(vm.isBootstrapping && vm.worlds.isEmpty
-                     ? KizunaCopy.text(japanese: "初期ストーリーを準備中…", english: "Preparing stories…")
-                     : KizunaCopy.language == .english
-                        ? "Choose a world · \(vm.worlds.count)"
-                        : "世界観から選ぶ ・ \(vm.worlds.count) 件")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button {
-                showCreate = true
-            } label: {
-                Label(KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story"), systemImage: "plus")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(minWidth: 44, minHeight: 44)
-            }
-            .buttonStyle(.borderedProminent)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.thinMaterial)
     }
 
-    private var filterBar: some View {
-        HStack(spacing: 8) {
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField(KizunaCopy.text(japanese: "ストーリー・世界観・タグ検索", english: "Search stories, worlds, or tags"), text: $vm.searchText)
-                    .textFieldStyle(.plain)
+    @ViewBuilder
+    private var dismissButton: some View {
+        if showsDismissButton {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.down")
+                    .frame(minWidth: 44, minHeight: 44)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+            .buttonStyle(.plain)
+            .accessibilityLabel(KizunaCopy.text(japanese: "閉じる", english: "Close"))
+        }
+    }
 
-            Menu {
-                Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.groupFilter = nil }
-                Divider()
-                ForEach(CategoryGroup.allCases) { g in
-                    Button { vm.groupFilter = g } label: {
-                        Label(g.localizedDisplayName, systemImage: g.iconName)
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "square.grid.2x2").font(.system(size: 10))
-                    Text(vm.groupFilter?.localizedDisplayName ?? KizunaCopy.text(japanese: "グループ", english: "Group"))
-                        .font(.caption.weight(.semibold))
-                    Image(systemName: "chevron.down").font(.system(size: 8))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+    private var headerTitle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(KizunaCopy.text(japanese: "ストーリーライブラリー", english: "Story library"))
+                .font(.headline.weight(.semibold))
+                .accessibilityIdentifier("workspace.story.heading")
+            Text(vm.isBootstrapping && vm.worlds.isEmpty
+                 ? KizunaCopy.text(japanese: "初期ストーリーを準備中…", english: "Preparing stories…")
+                 : KizunaCopy.language == .english
+                    ? "Choose a world · \(vm.worlds.count)"
+                    : "世界観から選ぶ ・ \(vm.worlds.count) 件")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var createStoryButton: some View {
+        Button {
+            showCreate = true
+        } label: {
+            Label(KizunaCopy.text(japanese: "ストーリーを作る", english: "Create a story"), systemImage: "plus")
+                .font(.subheadline.weight(.semibold))
                 .frame(minWidth: 44, minHeight: 44)
-                .background(Capsule().fill(Color.primary.opacity(0.06)))
+        }
+        .buttonStyle(.borderedProminent)
+    }
+
+    private var filterBar: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    searchField
+                    groupMenu
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    searchField
+                    groupMenu
+                }
             }
-            .menuStyle(.borderlessButton)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+    }
+
+    private var searchField: some View {
+        HStack {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(
+                KizunaCopy.text(japanese: "ストーリー・世界観・タグ検索", english: "Search stories, worlds, or tags"),
+                text: $vm.searchText
+            )
+                .textFieldStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(minHeight: 44)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+    }
+
+    private var groupMenu: some View {
+        Menu {
+            Button(KizunaCopy.text(japanese: "すべて", english: "All")) { vm.groupFilter = nil }
+            Divider()
+            ForEach(CategoryGroup.allCases) { g in
+                Button { vm.groupFilter = g } label: {
+                    Label(g.localizedDisplayName, systemImage: g.iconName)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "square.grid.2x2").font(.system(size: 10))
+                Text(vm.groupFilter?.localizedDisplayName ?? KizunaCopy.text(japanese: "グループ", english: "Group"))
+                    .font(.caption.weight(.semibold))
+                Image(systemName: "chevron.down").font(.system(size: 8))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .frame(minWidth: 44, minHeight: 44)
+            .background(Capsule().fill(Color.primary.opacity(0.06)))
+        }
+        .menuStyle(.borderlessButton)
     }
 
     private var seedErrorBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(KizunaCopy.text(japanese: "一部の初期ストーリーを読み込めませんでした", english: "Some starter stories could not be loaded"))
-                    .font(.caption.weight(.semibold))
-                if let error = vm.seedError {
-                    Text(LocalizedStringKey(error.messageKey))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-            Spacer(minLength: 8)
-            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
+        adaptiveErrorBanner(
+            icon: "exclamationmark.triangle.fill",
+            title: KizunaCopy.text(japanese: "一部の初期ストーリーを読み込めませんでした", english: "Some starter stories could not be loaded"),
+            detail: LocalizedStringKey(vm.seedError?.messageKey ?? "ストーリーの初期データを確認して再試行してください。"),
+            retryLabel: KizunaCopy.text(japanese: "再試行", english: "Retry")
+        ) {
                 Task { await vm.retryBootstrap() }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .frame(minHeight: 44)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.10))
     }
 
     private var loadErrorBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "externaldrive.badge.exclamationmark")
-                .foregroundStyle(.orange)
-            Text(KizunaCopy.text(
+        adaptiveErrorBanner(
+            icon: "externaldrive.badge.exclamationmark",
+            title: KizunaCopy.text(
                 japanese: "最新のストーリー一覧を読み込めませんでした。表示中の一覧は削除されていません。",
                 english: "The latest story list could not be loaded. The displayed list was not deleted."
-            ))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
-                Task { await vm.retryBootstrap() }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .frame(minHeight: 44)
-            .disabled(vm.isBootstrapping)
+            ),
+            detail: LocalizedStringKey(vm.loadError?.messageKey ?? "保存データを確認して再試行してください。"),
+            retryLabel: KizunaCopy.text(japanese: "再試行", english: "Retry"),
+            retryDisabled: vm.isBootstrapping
+        ) {
+            Task { await vm.retryBootstrap() }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.10))
     }
 
     private var migrationErrorBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
-                .foregroundStyle(.orange)
-            Text(vm.migrationError ?? KizunaCopy.text(
+        adaptiveErrorBanner(
+            icon: "arrow.triangle.2.circlepath.circle.fill",
+            title: vm.migrationError ?? KizunaCopy.text(
                 japanese: "保存データの整理を完了できませんでした。",
                 english: "Saved-data cleanup could not be completed."
-            ))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            Button(KizunaCopy.text(japanese: "再試行", english: "Retry")) {
-                Task { await vm.retryBootstrap() }
+            ),
+            detail: LocalizedStringKey("保存データを確認して再試行してください。"),
+            retryLabel: KizunaCopy.text(japanese: "再試行", english: "Retry"),
+            retryDisabled: vm.isBootstrapping
+        ) {
+            Task { await vm.retryBootstrap() }
+        }
+    }
+
+    @ViewBuilder
+    private func adaptiveErrorBanner(
+        icon: String,
+        title: String,
+        detail: LocalizedStringKey,
+        retryLabel: String,
+        retryDisabled: Bool = false,
+        retry: @escaping () -> Void
+    ) -> some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: icon)
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(title)
+                                .font(.caption.weight(.semibold))
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Button(retryLabel, action: retry)
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
+                        .disabled(retryDisabled)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .font(.caption.weight(.semibold))
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 8)
+                    Button(retryLabel, action: retry)
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
+                        .disabled(retryDisabled)
+                }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .frame(minHeight: 44)
-            .disabled(vm.isBootstrapping)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

@@ -98,6 +98,82 @@ struct StoryTurnCommitRetry: Equatable {
     let userText: String
 }
 
+/// A catalog Scene advances only after the model explicitly resolves the
+/// current objective. Ordinary location/mood updates stay in StoryState and
+/// do not move the session between catalog records.
+enum StorySceneTransitionPolicy {
+    static func shouldAdvance(
+        completedScene: StoryScene,
+        session: StorySession,
+        acceptedStatePatch: StoryStatePatch?
+    ) -> Bool {
+        guard acceptedStatePatch?.activeGoals?.isEmpty == true else { return false }
+        let sceneGoal = completedScene.sceneGoal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessionGoal = session.currentObjective?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !sceneGoal.isEmpty || !sessionGoal.isEmpty
+    }
+
+    static func nextScene(
+        from scenes: [StoryScene],
+        current: StoryScene,
+        suggestions: [NextSceneSuggestion]
+    ) -> StoryScene? {
+        let ordered = scenes
+            .filter { $0.storyWorldId == current.storyWorldId }
+            .sorted {
+                if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+        guard ordered.count > 1 else { return nil }
+
+        let remaining: ArraySlice<StoryScene>
+        if let index = ordered.firstIndex(where: { $0.id == current.id }) {
+            remaining = ordered[(ordered.index(after: index))...]
+        } else {
+            remaining = ordered[...]
+        }
+        guard !remaining.isEmpty else { return nil }
+
+        // Prefer a catalog scene that the auxiliary suggester can identify.
+        // The suggester is advisory: if it is unavailable or returns no
+        // catalog match, deterministic creation order still advances the
+        // user's explicitly authored multi-scene story.
+        for suggestion in suggestions {
+            if let matched = remaining.max(by: { score($0, against: suggestion) < score($1, against: suggestion) }),
+               score(matched, against: suggestion) > 0 {
+                return matched
+            }
+        }
+        return remaining.first
+    }
+
+    private static func score(_ scene: StoryScene, against suggestion: NextSceneSuggestion) -> Int {
+        let sceneValues = [scene.title, scene.location, scene.mood, scene.sceneGoal]
+            .map(normalized)
+            .filter { !$0.isEmpty }
+        let suggestionValues = [suggestion.title, suggestion.location, suggestion.mood, suggestion.sceneGoal]
+            .map(normalized)
+            .filter { !$0.isEmpty }
+        var score = 0
+        for sceneValue in sceneValues {
+            for suggestionValue in suggestionValues {
+                if sceneValue == suggestionValue {
+                    score += 3
+                } else if sceneValue.contains(suggestionValue) || suggestionValue.contains(sceneValue) {
+                    score += 1
+                }
+            }
+        }
+        return score
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    }
+}
+
 /// A commit can throw after the journal has already made the session/scene
 /// snapshot durable. Only treat that recovery as successful when the Session
 /// identifies the exact generated turn and the catalog Scene still exists in
@@ -365,6 +441,33 @@ extension StoryRuntimeNotice {
 }
 
 @MainActor
+private final class StorySessionServiceRegistry {
+    static let shared = StorySessionServiceRegistry()
+
+    private var services: [ObjectIdentifier: WeakStorySessionServiceReference] = [:]
+
+    func register(_ service: StorySessionService) {
+        services[ObjectIdentifier(service)] = WeakStorySessionServiceReference(service)
+    }
+
+    func cancelAll() {
+        services = services.filter { _, reference in
+            guard let service = reference.value else { return false }
+            service.cancel()
+            return true
+        }
+    }
+}
+
+private final class WeakStorySessionServiceReference {
+    weak var value: StorySessionService?
+
+    init(_ value: StorySessionService) {
+        self.value = value
+    }
+}
+
+@MainActor
 final class StorySessionService: ObservableObject {
     enum Phase: Equatable {
         case idle
@@ -600,6 +703,13 @@ final class StorySessionService: ObservableObject {
             self.pendingStoryMemoryRetries[retry.turnID] = retry
             self.pendingStoryMemoryRetryOrder.append(retry.turnID)
         }
+        StorySessionServiceRegistry.shared.register(self)
+    }
+
+    /// App lifecycle cancellation must update every active Story service, not
+    /// only the runtime. This preserves the cancelled checkpoint and retry UI.
+    static func cancelAllActiveGenerations() {
+        StorySessionServiceRegistry.shared.cancelAll()
     }
 
     @discardableResult
@@ -2680,6 +2790,14 @@ final class StorySessionService: ObservableObject {
                 assistantMessageIDs: turnMessages.map(\.id),
                 memoryRetries: pendingMemoryRetry.map { [$0] } ?? []
             )
+            if let transitioned = await advanceSceneIfNeeded(
+                session: session,
+                world: world,
+                completedScene: scene,
+                acceptedStatePatch: acceptedStatePatch
+            ) {
+                session = transitioned
+            }
             lastCommittedSession = session
         } catch {
             AppLog.error("[StorySession] turn commit failed: %@", error.localizedDescription)
@@ -3448,7 +3566,8 @@ final class StorySessionService: ObservableObject {
                     }
                 ),
                 role: .story,
-                preferredConfigurationID: preferred?.id
+                preferredConfigurationID: preferred?.id,
+                allowsFallback: false
             )
             let text = response.text
             await MainActor.run {
@@ -4427,6 +4546,80 @@ final class StorySessionService: ObservableObject {
     }
 
     // MARK: - Scene helpers (UI からも使う)
+
+    /// Advances a completed catalog scene after the turn itself is durable.
+    /// StoryState remains the source of truth for ordinary location changes;
+    /// only an explicit empty `activeGoals` patch can trigger this policy.
+    /// If the auxiliary suggester is unavailable, the next authored catalog
+    /// scene is used so a multi-scene story never remains a dead path.
+    private func advanceSceneIfNeeded(
+        session: StorySession,
+        world: StoryWorld,
+        completedScene: StoryScene,
+        acceptedStatePatch: StoryStatePatch?
+    ) async -> StorySession? {
+        guard StorySceneTransitionPolicy.shouldAdvance(
+            completedScene: completedScene,
+            session: session,
+            acceptedStatePatch: acceptedStatePatch
+        ) else { return nil }
+
+        do {
+            let scenes = try await sceneRepo.fetchScenes(storyWorldId: world.id)
+            guard scenes.contains(where: { $0.id == completedScene.id }) else { return nil }
+            let suggestions = await suggestNextScenes(world: world, completedScene: completedScene)
+            guard let next = StorySceneTransitionPolicy.nextScene(
+                from: scenes,
+                current: completedScene,
+                suggestions: suggestions
+            ) else { return nil }
+
+            var transitioned = session
+            transitioned.currentSceneId = next.id
+            transitioned.activeCharacterIds = Array(
+                next.activeCharacterIds.prefix(StoryConstants.maxActiveCharacters)
+            )
+            transitioned.currentObjective = next.sceneGoal.nonEmpty ?? world.storyGoal.nonEmpty
+            transitioned.lastSceneSummary = next.summary.nonEmpty ?? world.openingScene.nonEmpty
+
+            var nextState = transitioned.storyState ?? StoryState()
+            if let location = next.location.nonEmpty { nextState.location = location }
+            if let timeOfDay = next.timeOfDay.nonEmpty { nextState.timeOfDay = timeOfDay }
+            if let mood = next.mood.nonEmpty { nextState.mood = mood }
+            nextState.activeGoals = next.sceneGoal.nonEmpty.map { [$0] } ?? []
+            nextState.updatedAt = Date()
+            transitioned.storyState = nextState
+            transitioned.unresolvedHooks = Self.unresolvedHooks(
+                world: world,
+                scene: next,
+                previous: nil,
+                storyState: nextState
+            )
+            transitioned.persistenceRevision = session.effectivePersistenceRevision + 1
+            transitioned.updatedAt = Date()
+
+            // saveSession performs a revision-checked read-modify-write. A
+            // failed transition therefore leaves the committed conversation
+            // on the old scene instead of producing a partially moved state.
+            try await sessionRepo.saveSession(transitioned)
+            AppLog.note(
+                "[StorySession] advanced scene session=%@ from=%@ to=%@ suggestions=%ld",
+                session.id.uuidString,
+                completedScene.id.uuidString,
+                next.id.uuidString,
+                suggestions.count
+            )
+            return transitioned
+        } catch {
+            AppLog.note(
+                "[StorySession] scene transition deferred session=%@ scene=%@: %@",
+                session.id.uuidString,
+                completedScene.id.uuidString,
+                error.localizedDescription
+            )
+            return nil
+        }
+    }
 
     func suggestNextScenes(world: StoryWorld, completedScene: StoryScene) async -> [NextSceneSuggestion] {
         let cast = (try? await castRepo.fetchCast(storyWorldId: world.id)) ?? []

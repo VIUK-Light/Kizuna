@@ -1,0 +1,20 @@
+name: Question
+description: Ask a general project, contribution, or design question.
+title: "[Question]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For sensitive security reports, follow SECURITY.md instead. Do not post secrets or private conversation data.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to understand or decide?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Add links, versions, or attempted approaches that help others answer.

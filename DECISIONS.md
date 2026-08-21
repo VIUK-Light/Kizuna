@@ -53,6 +53,17 @@
 
 ## Collaboration
 
+The rules below are split by scope. Public contribution rules apply to
+external contributors; maintainer automation is an internal implementation
+detail and does not restrict normal Fork -> branch -> Pull Request workflows.
+
+- Large changes should be discussed in an Issue before implementation.
+- One Pull Request should have one primary purpose.
+- Never commit secrets, private conversation data, or unauthorized external
+  evaluation artifacts.
+
+### Maintainer internal automation
+
 - Work sequentially in one PR branch to avoid merge conflicts.
 - Codex prepares and pushes changes as `VIUK-Codex-Bot`; VIUK-XV reviews and
   performs the merge.

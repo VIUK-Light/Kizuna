@@ -573,7 +573,7 @@ struct KizunaHomeView: View {
 
         let persona = PersonaProfile(character: character)
         guard let thread = personaStore.createThread(with: persona, characterID: character.id) else {
-            if personaStore.isPersistenceRecoveryRequired {
+            if personaStore.isPersistenceRecoveryRequired || personaStore.isPartialRecoveryRequired {
                 if shouldDismissCharacterLibrary {
                     pendingPersonaRecovery = true
                     showCharacterLibrary = false
@@ -582,12 +582,6 @@ struct KizunaHomeView: View {
                 }
             }
             return
-        }
-        if thread.messages.isEmpty, !character.firstMessage.isEmpty {
-            personaStore.appendMessage(
-                PersonaMessage(role: .assistant, text: character.firstMessage),
-                toThread: thread.id
-            )
         }
         pendingPersonaThread = personaStore.thread(id: thread.id) ?? thread
         if shouldDismissCharacterLibrary {

@@ -1,0 +1,27 @@
+name: Documentation
+description: Report missing, incorrect, or unclear documentation.
+title: "[Docs]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include API keys, private URLs, personal conversation history, or other secrets.
+  - type: input
+    id: location
+    attributes:
+      label: Documentation location
+      description: File path or URL.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What should be changed?
+      description: Explain what is missing, incorrect, or difficult to follow.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested wording or improvement
+      description: Optional proposed text, links, or examples.

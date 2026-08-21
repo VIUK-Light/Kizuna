@@ -22,20 +22,26 @@ enum StoryCharacterReferenceCleaner {
         let worlds = try await worldRepo.fetchWorlds()
         for var world in worlds {
             var worldChanged = false
+            let cast = try await castRepo.fetchCast(storyWorldId: world.id)
             let filteredIDs = world.characterIds.filter { $0 != characterID }
             if filteredIDs != world.characterIds {
                 world.characterIds = filteredIDs
                 worldChanged = true
             }
             if world.mainCharacterId == characterID {
-                world.mainCharacterId = filteredIDs.first
+                // `characterIds` is storage order, not a cast-role contract.
+                // Preserve an explicitly designated remaining main character;
+                // otherwise leave the world without a main character so the
+                // user can choose one instead of silently promoting a support.
+                world.mainCharacterId = cast
+                    .first(where: { $0.characterId != characterID && $0.roleInStory == .main })?
+                    .characterId
                 worldChanged = true
             }
             if worldChanged {
                 try await worldRepo.saveWorld(world)
             }
 
-            let cast = try await castRepo.fetchCast(storyWorldId: world.id)
             for var member in cast {
                 if member.characterId == characterID {
                     try await castRepo.deleteCast(id: member.id)
@@ -123,6 +129,10 @@ enum StoryCharacterReferenceCleaner {
 }
 
 // MARK: - Protocols
+
+enum StoryWorldRepositoryError: Error, Equatable {
+    case deletionInProgress(UUID)
+}
 
 protocol StoryWorldRepository: AnyObject {
     func fetchWorlds() async throws -> [StoryWorld]
@@ -279,6 +289,9 @@ final class LocalJSONStoryWorldRepository: StoryWorldRepository {
         // load→appendOrReplace では、同一IDをシード／修復が更新した直後に
         // 古い編集スナップショットで保護状態を上書きできてしまう。
         try await store.mutate { items in
+            guard !StoryWorldDeletionJournal.pendingIDs.contains(world.id) else {
+                throw StoryWorldRepositoryError.deletionInProgress(world.id)
+            }
             var updated = world.normalizedForPersistence
             if items.contains(where: { $0.id == world.id && $0.isSystemProtected == true }) {
                 updated.isSystemProtected = true
@@ -319,7 +332,16 @@ final class LocalJSONCastRepository: CastRepository {
         try await store.loadRecoveringCorruptRecords().filter { $0.storyWorldId == storyWorldId }
     }
     func saveCast(_ cast: CastMember) async throws {
-        try await store.appendOrReplace(cast, idEquals: { $0.id == $1.id })
+        try await store.mutate { values in
+            guard !StoryWorldDeletionJournal.pendingIDs.contains(cast.storyWorldId) else {
+                throw StoryWorldRepositoryError.deletionInProgress(cast.storyWorldId)
+            }
+            if let index = values.firstIndex(where: { $0.id == cast.id }) {
+                values[index] = cast
+            } else {
+                values.append(cast)
+            }
+        }
     }
     func replaceCast(_ cast: [CastMember], storyWorldId: UUID) async throws {
         var replacement = cast
@@ -329,6 +351,9 @@ final class LocalJSONCastRepository: CastRepository {
             return member
         }
         try await store.mutate { values in
+            guard !StoryWorldDeletionJournal.pendingIDs.contains(storyWorldId) else {
+                throw StoryWorldRepositoryError.deletionInProgress(storyWorldId)
+            }
             values.removeAll { $0.storyWorldId == storyWorldId }
             values.append(contentsOf: replacement)
         }
@@ -359,6 +384,9 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
     func saveScene(_ scene: StoryScene) async throws {
         let storageURL = self.storageURL
         try await store.mutate { scenes in
+            guard !StoryWorldDeletionJournal.pendingIDs.contains(scene.storyWorldId) else {
+                throw StoryWorldRepositoryError.deletionInProgress(scene.storyWorldId)
+            }
             let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
             try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                 recordID: scene.id,
@@ -385,6 +413,9 @@ final class LocalJSONStorySceneRepository: StorySceneRepository {
         var repaired = false
         let storageURL = self.storageURL
         try await store.mutate { scenes in
+            guard !StoryWorldDeletionJournal.pendingIDs.contains(storyWorldId) else {
+                throw StoryWorldRepositoryError.deletionInProgress(storyWorldId)
+            }
             let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
             try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                 recordID: sceneId,
@@ -500,6 +531,9 @@ final class LocalJSONStorySessionRepository: StorySessionRepository {
         try await StoryTurnJournal.recoverIfNeededAsync(baseURL: storageURL)
         try await LocalJSONStoreTransaction.performOnFileIO {
             try LocalJSONStoreTransaction.withSharedLock {
+                guard !StoryWorldDeletionJournal.pendingIDs.contains(session.storyWorldId) else {
+                    throw StoryWorldRepositoryError.deletionInProgress(session.storyWorldId)
+                }
                 let tombstones = try StoryTurnJournal.loadTombstonesUnlocked(baseURL: storageURL)
                 try StoryTurnJournal.ensureRecordIsNotDeletedUnlocked(
                     recordID: session.id,

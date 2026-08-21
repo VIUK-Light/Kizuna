@@ -20,31 +20,44 @@ private final class KizunaDataMigrationLock: @unchecked Sendable {
 enum KizunaDataMigration {
     nonisolated private static let migrationLock = KizunaDataMigrationLock()
 
-    nonisolated private static let applicationSupportURL: URL = {
+    /// A temporary directory is never a valid persistence fallback. If the
+    /// system cannot provide Application Support, the migration gate must
+    /// stop before any repository can create data.
+    nonisolated private static let applicationSupportURL: URL? = {
 #if DEBUG || KIZUNA_INTERNAL_CANARY
         if let acceptanceRoot = ProcessInfo.processInfo.environment["KIZUNA_ACCEPTANCE_STORAGE_ROOT"],
            !acceptanceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return URL(fileURLWithPath: acceptanceRoot, isDirectory: true)
         }
 #endif
-        let support = (try? FileManager.default.url(
+        return try? FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
-        )) ?? FileManager.default.temporaryDirectory
-        return support
+        )
     }()
 
+    /// This is only a non-writable sentinel for APIs that still require a
+    /// non-optional URL. The launch gate refuses to enter the workspace while
+    /// this sentinel is active, so user data cannot be written there.
+    nonisolated private static let unavailableStorageURL = URL(fileURLWithPath: "/dev/null", isDirectory: true)
+
+    nonisolated static var isStorageAvailable: Bool {
+        applicationSupportURL != nil
+    }
+
     nonisolated static let characterLibraryURL: URL = {
-        applicationSupportURL
+        guard let applicationSupportURL else { return unavailableStorageURL }
+        return applicationSupportURL
             .appendingPathComponent("VIUK", isDirectory: true)
             .appendingPathComponent("KizunaAI", isDirectory: true)
             .appendingPathComponent("CharacterLibrary", isDirectory: true)
     }()
 
     nonisolated static let localModelsURL: URL = {
-        applicationSupportURL
+        guard let applicationSupportURL else { return unavailableStorageURL }
+        return applicationSupportURL
             .appendingPathComponent("VIUK", isDirectory: true)
             .appendingPathComponent("KizunaAI", isDirectory: true)
             .appendingPathComponent("LocalModels", isDirectory: true)
@@ -66,10 +79,15 @@ enum KizunaDataMigration {
         "VIUK-app.SafeKids-Search3-1"
     ]
 
-    nonisolated static func performIfNeeded() {
+    @discardableResult
+    nonisolated static func performIfNeeded() -> Bool {
         migrationLock.withLock {
+            guard isStorageAvailable else {
+                AppLog.error("[KizunaDataMigration] Application Support URL is unavailable")
+                return false
+            }
             let defaults = UserDefaults.standard
-            guard !defaults.bool(forKey: migrationMarker) else { return }
+            guard !defaults.bool(forKey: migrationMarker) else { return true }
 
             let didMigrateCharacters = migrateCharacterLibraryIfAvailable()
             let didMigrateModels = migrateLocalModelsIfAvailable()
@@ -77,6 +95,7 @@ enum KizunaDataMigration {
             if didMigrateCharacters && didMigrateModels {
                 defaults.set(true, forKey: migrationMarker)
             }
+            return didMigrateCharacters && didMigrateModels
         }
     }
 
@@ -124,13 +143,13 @@ enum KizunaDataMigration {
                     // 同じディレクトリへ退避してから原子的に復元する。
                     let backupURL = invalidBackupURL(for: destination)
                     try fileManager.copyItem(at: destination, to: backupURL)
-                    LocalJSONStoreFileProtection.apply(to: backupURL)
+                    try LocalJSONStoreFileProtection.apply(to: backupURL)
                     AppLog.error("[KizunaDataMigration] backed up invalid destination %@ to %@", fileName, backupURL.lastPathComponent)
                 }
 
                 let data = try Data(contentsOf: source)
                 try data.write(to: destination, options: LocalJSONStoreFileProtection.atomicWriteOptions)
-                LocalJSONStoreFileProtection.apply(to: destination)
+                try LocalJSONStoreFileProtection.apply(to: destination)
                 AppLog.note("[KizunaDataMigration] restored %@ from legacy CharacterLibrary", fileName)
             }
             return true
@@ -165,6 +184,7 @@ enum KizunaDataMigration {
     @discardableResult
     nonisolated private static func migrateLocalModelsIfAvailable() -> Bool {
         let fileManager = FileManager.default
+        guard let applicationSupportURL else { return false }
         let legacyURL = applicationSupportURL
             .appendingPathComponent("VIUK One", isDirectory: true)
             .appendingPathComponent("LocalModels", isDirectory: true)

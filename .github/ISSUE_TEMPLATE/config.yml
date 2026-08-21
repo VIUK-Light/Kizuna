@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Contribution guide
+    url: https://github.com/VIUK-Light/Kizuna/blob/main/CONTRIBUTING.md
+    about: Read the contribution rules and choose a good first issue before opening a request.
+  - name: Security policy
+    url: https://github.com/VIUK-Light/Kizuna/blob/main/SECURITY.md
+    about: Follow the private reporting guidance for security vulnerabilities.

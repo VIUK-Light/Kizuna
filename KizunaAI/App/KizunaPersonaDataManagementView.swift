@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 struct KizunaPersonaDataManagementView: View {
     @ObservedObject private var store = PersonaChatStore.shared
+    @ObservedObject private var service = PersonaChatService.shared
     @Environment(\.dismiss) private var dismiss
     @State private var exportedShareItem: KizunaPersonaExportShareItem?
     @State private var pendingExportCleanupURLs: [URL] = []
@@ -274,7 +275,7 @@ struct KizunaPersonaDataManagementView: View {
     }
 
     private func deleteAllThreads() {
-        guard store.deleteAllThreads() else {
+        guard service.deleteAllConversations() else {
             errorMessage = KizunaCopy.text(
                 japanese: "履歴を削除できませんでした。復旧が必要な場合は、先に保存データを確認してください。",
                 english: "The history could not be deleted. If recovery is required, inspect the stored data first."

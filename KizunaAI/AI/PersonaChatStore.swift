@@ -26,8 +26,8 @@ enum PersonaThreadOrdering {
     }
 }
 
-struct PersonaMessage: Codable, Hashable, Identifiable {
-    enum Role: String, Codable { case user, assistant, narrator }
+struct PersonaMessage: Codable, Hashable, Identifiable, Sendable {
+    enum Role: String, Codable, Sendable { case user, assistant, narrator }
 
     var id: UUID
     var role: Role
@@ -53,7 +53,7 @@ enum PersonaAssistantCommitResult: Equatable {
     case rejected
 }
 
-struct PersonaThread: Codable, Hashable, Identifiable {
+struct PersonaThread: Codable, Hashable, Identifiable, Sendable {
     var id: UUID
     /// スレッド作成時の PersonaProfile スナップショット。会話途中で persona 設定を変えても
     /// このスレッドは固定された人格で続けられるようにする。
@@ -66,6 +66,12 @@ struct PersonaThread: Codable, Hashable, Identifiable {
     /// Stable identity reported by the runtime that produced the latest
     /// assistant response. Optional for backward-compatible thread JSON.
     var lastUsedModelIdentity: String?
+    /// A nil value follows PersonaChatService's app-wide default. A non-nil
+    /// value is an explicit model choice for this conversation only.
+    var preferredGenerationModel: PersonaGenerationModel?
+    /// Optional registry selection for this conversation. When present it
+    /// takes precedence over the family-level preference above.
+    var preferredGenerationConfigurationID: UUID?
     var createdAt: Date
     var updatedAt: Date
 
@@ -76,6 +82,8 @@ struct PersonaThread: Codable, Hashable, Identifiable {
         title: String,
         messages: [PersonaMessage] = [],
         lastUsedModelIdentity: String? = nil,
+        preferredGenerationModel: PersonaGenerationModel? = nil,
+        preferredGenerationConfigurationID: UUID? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -85,13 +93,15 @@ struct PersonaThread: Codable, Hashable, Identifiable {
         self.title = title
         self.messages = messages
         self.lastUsedModelIdentity = lastUsedModelIdentity
+        self.preferredGenerationModel = preferredGenerationModel
+        self.preferredGenerationConfigurationID = preferredGenerationConfigurationID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     // Codable: 既存保存データに characterID が無くてもデコード可能にする
     private enum CodingKeys: String, CodingKey {
-        case id, personaSnapshot, characterID, title, messages, lastUsedModelIdentity, createdAt, updatedAt
+        case id, personaSnapshot, characterID, title, messages, lastUsedModelIdentity, preferredGenerationModel, preferredGenerationConfigurationID, createdAt, updatedAt
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -101,6 +111,8 @@ struct PersonaThread: Codable, Hashable, Identifiable {
         self.title = try c.decode(String.self, forKey: .title)
         self.messages = try c.decode([PersonaMessage].self, forKey: .messages)
         self.lastUsedModelIdentity = try c.decodeIfPresent(String.self, forKey: .lastUsedModelIdentity)
+        self.preferredGenerationModel = try c.decodeIfPresent(PersonaGenerationModel.self, forKey: .preferredGenerationModel)
+        self.preferredGenerationConfigurationID = try c.decodeIfPresent(UUID.self, forKey: .preferredGenerationConfigurationID)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
         self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }
@@ -139,6 +151,32 @@ enum PersonaChatRecoveryError: LocalizedError {
     }
 }
 
+private final class PersonaUserDefaultsBox: @unchecked Sendable {
+    let defaults: UserDefaults
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+    }
+}
+
+/// Serializes and writes Persona history away from the MainActor. The store
+/// still owns the in-memory model and coalesces bursts of message mutations;
+/// this actor owns the slow JSON encode/UserDefaults write boundary.
+private actor PersonaChatPersistenceWriter {
+    private let defaultsBox: PersonaUserDefaultsBox
+    private let key: String
+
+    init(defaults: UserDefaults, key: String) {
+        self.defaultsBox = PersonaUserDefaultsBox(defaults: defaults)
+        self.key = key
+    }
+
+    func write(_ threads: [PersonaThread]) throws {
+        let data = try JSONEncoder().encode(threads)
+        defaultsBox.defaults.set(data, forKey: key)
+    }
+}
+
 @MainActor
 final class PersonaChatStore: ObservableObject {
     static let shared = PersonaChatStore(defaults: UserDefaults.standard)
@@ -156,9 +194,14 @@ final class PersonaChatStore: ObservableObject {
     /// 破損データを上書きすると、復旧可能な履歴まで失われるため、明示的な
     /// リセット/再保存が行われるまで現在のファイルを保持する。
     private var didFailToLoadPersistedThreads = false
+    /// Thread単位の部分復旧が発生した場合、読めた履歴は表示するが、
+    /// 明示的な修復までは元のUserDefaults blobを上書きしない。
+    @Published private(set) var partialRecoveryInvalidCount = 0
+    private let persistenceWriter: PersonaChatPersistenceWriter
+    private var pendingPersistTask: Task<Void, Never>?
     @Published private(set) var activeThreadID: UUID? {
         didSet {
-            guard !didFailToLoadPersistedThreads else {
+            guard !hasRecoveryState else {
                 AppLog.note("[PersonaChatStore] skipped active thread write while recovery is required")
                 return
             }
@@ -183,6 +226,10 @@ final class PersonaChatStore: ObservableObject {
     /// 本番は `shared` から同じUserDefaults.standardを使う。
     init(defaults: UserDefaults = UserDefaults.standard) {
         self.defaults = defaults
+        self.persistenceWriter = PersonaChatPersistenceWriter(
+            defaults: defaults,
+            key: Key.threads
+        )
         KizunaPersonaExportFileLifecycle.cleanupOrphanedFiles()
         load()
         guard !didFailToLoadPersistedThreads else {
@@ -224,18 +271,79 @@ final class PersonaChatStore: ObservableObject {
             let decoded = try JSONDecoder().decode([PersonaThread].self, from: data)
             self.threads = PersonaThreadOrdering.mostRecentFirst(decoded)
         } catch {
-            didFailToLoadPersistedThreads = true
-            AppLog.error("[PersonaChatStore] failed to decode saved threads: %@", error.localizedDescription)
+            guard let partial = recoverThreads(from: data), partial.invalidCount > 0 else {
+                didFailToLoadPersistedThreads = true
+                AppLog.error("[PersonaChatStore] failed to decode saved threads: %@", error.localizedDescription)
+                return
+            }
+            self.threads = PersonaThreadOrdering.mostRecentFirst(partial.threads)
+            self.partialRecoveryInvalidCount = partial.invalidCount
+            AppLog.error(
+                "[PersonaChatStore] partially recovered saved threads: %ld valid, %ld invalid",
+                partial.threads.count,
+                partial.invalidCount
+            )
         }
     }
 
+    private func recoverThreads(
+        from data: Data
+    ) -> (threads: [PersonaThread], invalidCount: Int)? {
+        guard let rawItems = try? JSONSerialization.jsonObject(
+            with: data,
+            options: [.fragmentsAllowed]
+        ) as? [Any] else {
+            return nil
+        }
+
+        let decoder = JSONDecoder()
+        var validThreads: [PersonaThread] = []
+        var invalidCount = 0
+        for (index, rawItem) in rawItems.enumerated() {
+            do {
+                let itemData = try JSONSerialization.data(
+                    withJSONObject: rawItem,
+                    options: [.fragmentsAllowed]
+                )
+                validThreads.append(try decoder.decode(PersonaThread.self, from: itemData))
+            } catch {
+                invalidCount += 1
+                AppLog.note(
+                    "[PersonaChatStore] skipped invalid thread at index %ld during recovery: %@",
+                    index,
+                    String(describing: error)
+                )
+            }
+        }
+        return (validThreads, invalidCount)
+    }
+
+    private var hasRecoveryState: Bool {
+        didFailToLoadPersistedThreads || partialRecoveryInvalidCount > 0
+    }
+
     private func persist() {
-        guard !didFailToLoadPersistedThreads else {
+        guard !hasRecoveryState else {
             AppLog.note("[PersonaChatStore] skipped thread persist while recovery is required")
             return
         }
-        if let data = try? JSONEncoder().encode(threads) {
-            defaults.set(data, forKey: Key.threads)
+        pendingPersistTask?.cancel()
+        let snapshot = threads
+        let writer = persistenceWriter
+        pendingPersistTask = Task.detached(priority: .utility) {
+            do {
+                // Coalesce the user-message + assistant-completion pair and
+                // other quick metadata mutations into one write.
+                try await Task.sleep(nanoseconds: 120_000_000)
+                try await writer.write(snapshot)
+            } catch is CancellationError {
+                return
+            } catch {
+                AppLog.error(
+                    "[PersonaChatStore] failed to persist threads off-main: %@",
+                    error.localizedDescription
+                )
+            }
         }
     }
 
@@ -251,14 +359,37 @@ final class PersonaChatStore: ObservableObject {
         defaults.removeObject(forKey: Key.threads)
         defaults.removeObject(forKey: Key.activeThreadID)
         didFailToLoadPersistedThreads = false
+        partialRecoveryInvalidCount = 0
         threads = []
         activeThreadID = nil
         persist()
         return true
     }
 
+    /// Explicitly repair a partially recovered blob. The original raw value
+    /// is retained under the existing recovery backup key before the valid
+    /// threads are written back, so the skipped records remain recoverable.
+    @discardableResult
+    func repairPartiallyRecoveredThreads() -> Bool {
+        guard partialRecoveryInvalidCount > 0,
+              defaults.object(forKey: Key.threads) != nil else {
+            return false
+        }
+        if let rawValue = defaults.object(forKey: Key.threads) {
+            defaults.set(rawValue, forKey: Key.corruptThreadsBackup)
+        }
+        partialRecoveryInvalidCount = 0
+        threads = PersonaThreadOrdering.mostRecentFirst(threads)
+        persist()
+        return true
+    }
+
     var isPersistenceRecoveryRequired: Bool {
         didFailToLoadPersistedThreads
+    }
+
+    var isPartialRecoveryRequired: Bool {
+        partialRecoveryInvalidCount > 0
     }
 
     /// `true` when the original UserDefaults value exists, including when it
@@ -295,7 +426,7 @@ final class PersonaChatStore: ObservableObject {
     /// Export valid decoded history as a versioned machine-readable document.
     /// A recovery-required store must not export its empty in-memory fallback.
     func exportPersistedThreadsJSON() throws -> URL {
-        guard !didFailToLoadPersistedThreads else {
+        guard !hasRecoveryState else {
             throw PersonaChatRecoveryError.persistenceRecoveryRequired
         }
 
@@ -385,7 +516,7 @@ final class PersonaChatStore: ObservableObject {
     /// その他の UserDefaults のプロパティリスト値も内容を失わない形式で保存する。
     /// この操作は保存値を変更せず、復旧が必要な状態でのみ実行できる。
     func exportCorruptPersistedThreads() throws -> URL {
-        guard didFailToLoadPersistedThreads,
+        guard hasRecoveryState,
               defaults.object(forKey: Key.threads) != nil else {
             throw PersonaChatRecoveryError.noCorruptPersistedValue
         }
@@ -444,7 +575,7 @@ final class PersonaChatStore: ObservableObject {
     /// 破損した保存値を自動的に空状態で上書きしないための共通ガード。
     /// 復旧操作以外の公開ミューテーションは、メモリ上の状態も変更しない。
     private func canMutatePersistedState() -> Bool {
-        guard !didFailToLoadPersistedThreads else {
+        guard !hasRecoveryState else {
             AppLog.note("[PersonaChatStore] skipped mutation while recovery is required")
             return false
         }
@@ -618,6 +749,28 @@ final class PersonaChatStore: ObservableObject {
         return true
     }
 
+    /// Store a thread-local model override without changing conversation
+    /// ordering. Nil restores the app-wide Persona default.
+    @discardableResult
+    func setPreferredGenerationModel(
+        _ model: PersonaGenerationModel?,
+        configurationID: UUID? = nil,
+        forThread threadID: UUID
+    ) -> Bool {
+        guard canMutatePersistedState(),
+              let index = threads.firstIndex(where: { $0.id == threadID }) else {
+            return false
+        }
+        guard threads[index].preferredGenerationModel != model
+                || threads[index].preferredGenerationConfigurationID != configurationID else {
+            return true
+        }
+        threads[index].preferredGenerationModel = model
+        threads[index].preferredGenerationConfigurationID = configurationID
+        persist()
+        return true
+    }
+
     // MARK: - Messages
 
     @discardableResult
@@ -753,6 +906,26 @@ final class PersonaChatStore: ObservableObject {
     private func persistAfterActivityUpdate() {
         threads = PersonaThreadOrdering.mostRecentFirst(threads)
         persist()
+    }
+
+    /// Finish the latest coalesced snapshot when the scene is backgrounded.
+    /// The write remains off the MainActor, but is no longer delayed by the
+    /// normal debounce window.
+    func flushPendingPersistence() {
+        guard !hasRecoveryState else { return }
+        pendingPersistTask?.cancel()
+        let snapshot = threads
+        let writer = persistenceWriter
+        pendingPersistTask = Task.detached(priority: .utility) {
+            do {
+                try await writer.write(snapshot)
+            } catch {
+                AppLog.error(
+                    "[PersonaChatStore] failed to flush threads: %@",
+                    error.localizedDescription
+                )
+            }
+        }
     }
 
     private func isPendingAssistantText(_ text: String) -> Bool {

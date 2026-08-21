@@ -4,7 +4,9 @@
 
 公開Issueには、悪用可能な手順、秘密情報、個人データ、未修正の重大な脆弱性の詳細を投稿しないでください。
 
-GitHubのPrivate vulnerability reportingが有効な場合は、リポジトリの **Security** タブから非公開で報告してください。有効でない場合は、再現に必要な最小限の情報だけをIssueで知らせ、詳細の公開はメンテナーの案内を待ってください。
+第一経路は、リポジトリの **Security** タブにある **Report a vulnerability** からの非公開報告です。公開Issueを脆弱性報告のfallbackに使わないでください。MaintainerはGitHubのPrivate vulnerability reportingを常時有効にし、Securityタブから非公開フォームが利用できることを確認してください。
+
+Securityタブに非公開報告ボタンが表示されない場合は、詳細を公開せず、メンテナーへ非公開の連絡経路を確認してください。連絡経路が用意されていない状態は受付設定の不備であり、公開Issueへ詳細を書く代替にはなりません。
 
 報告には可能な範囲で次を含めてください。
 
