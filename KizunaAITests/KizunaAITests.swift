@@ -6162,6 +6162,53 @@ final class KizunaAITests: XCTestCase {
     }
 
     @MainActor
+    func testPersonaFileStoreRecoversValidThreadFilesMissingFromIndex() async throws {
+        let suiteName = "KizunaAITests.PersonaOrphanRecovery." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KizunaPersonaOrphanRecovery-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let profile = PersonaProfile(
+            name: "Recoverable",
+            personality: "Calm",
+            tone: .calm,
+            relation: .friend
+        )
+        let first = PersonaThread(
+            personaSnapshot: profile,
+            title: "First",
+            messages: [PersonaMessage(role: .user, text: "first")]
+        )
+        let second = PersonaThread(
+            personaSnapshot: profile,
+            title: "Recovered",
+            messages: [PersonaMessage(role: .user, text: "recovered")]
+        )
+        defaults.set(
+            try JSONEncoder().encode([first]),
+            forKey: "persona.threads.v1"
+        )
+        let store = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        store.flushPendingPersistence()
+        await store.waitForPendingPersistence()
+
+        let secondURL = storageURL.appendingPathComponent("thread-\(second.id.uuidString).json")
+        try JSONEncoder().encode(second).write(to: secondURL, options: .atomic)
+        try FileManager.default.removeItem(at: storageURL.appendingPathComponent("index.json"))
+
+        let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)
+        XCTAssertEqual(reloaded.threads.count, 2)
+        XCTAssertEqual(reloaded.thread(id: second.id)?.messages.map(\.text), ["recovered"])
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: storageURL.appendingPathComponent("index.json").path
+            )
+        )
+    }
+
+    @MainActor
     func testPersonaFileStoreIsolatesOneCorruptThreadFile() throws {
         let suiteName = "KizunaAITests.PersonaFileCorrupt.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

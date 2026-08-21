@@ -372,13 +372,38 @@ private enum PersonaThreadFilePersistence {
     nonisolated static func loadIndex(at directoryURL: URL) throws -> ([PersonaThread], Int64)? {
         try LocalJSONStoreFileLock.shared.withLock {
             let url = indexURL(in: directoryURL)
-            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-            let data = try Data(contentsOf: url)
-            let entries = try LocalJSONStoreCoding.makeDecoder().decode(
-                [PersonaThreadIndexEntry].self,
-                from: data
+            var entries: [PersonaThreadIndexEntry] = []
+            if FileManager.default.fileExists(atPath: url.path) {
+                let data = try Data(contentsOf: url)
+                entries = try LocalJSONStoreCoding.makeDecoder().decode(
+                    [PersonaThreadIndexEntry].self,
+                    from: data
+                )
+            }
+            let pendingDeletionIDs = recoverPendingDeletions(at: directoryURL)
+            let liveIDs = Set(entries.map(\.id))
+            let recoveredEntries = recoverOrphanThreadEntries(
+                liveIDs: liveIDs,
+                excludedIDs: pendingDeletionIDs,
+                at: directoryURL
             )
-            recoverPendingDeletions(at: directoryURL)
+            if !recoveredEntries.isEmpty {
+                entries.append(contentsOf: recoveredEntries)
+                do {
+                    let recoveredIndexData = try LocalJSONStoreCoding.makeEncoder().encode(entries)
+                    try recoveredIndexData.write(
+                        to: url,
+                        options: LocalJSONStoreFileProtection.atomicWriteOptions
+                    )
+                    try LocalJSONStoreFileProtection.apply(to: url)
+                } catch {
+                    AppLog.error(
+                        "[PersonaChatStore] failed to persist recovered thread index: %@",
+                        error.localizedDescription
+                    )
+                }
+            }
+            guard !entries.isEmpty else { return nil }
             var seen = Set<UUID>()
             let threads = try entries.map { entry -> PersonaThread in
                 guard seen.insert(entry.id).inserted else {
@@ -498,12 +523,14 @@ private enum PersonaThreadFilePersistence {
     /// Retry only deletion IDs explicitly requested by the user. The journal
     /// remains on disk when a file cannot be removed, so a later launch does
     /// not silently lose the deletion intent.
-    nonisolated private static func recoverPendingDeletions(at directoryURL: URL) {
+    nonisolated private static func recoverPendingDeletions(at directoryURL: URL) -> Set<UUID> {
         let journalURL = directoryURL.appendingPathComponent(deletionJournalFileName)
-        guard FileManager.default.fileExists(atPath: journalURL.path) else { return }
+        guard FileManager.default.fileExists(atPath: journalURL.path) else { return [] }
+        var journalIDs = Set<UUID>()
         do {
             let data = try Data(contentsOf: journalURL)
             let IDs = try LocalJSONStoreCoding.makeDecoder().decode([UUID].self, from: data)
+            journalIDs = Set(IDs)
             var unresolved = false
             for id in IDs {
                 let url = threadURL(for: id, in: directoryURL)
@@ -527,7 +554,51 @@ private enum PersonaThreadFilePersistence {
                 "[PersonaChatStore] failed to recover deletion journal: %@",
                 error.localizedDescription
             )
+            return []
         }
+        return journalIDs
+    }
+
+    nonisolated private static func recoverOrphanThreadEntries(
+        liveIDs: Set<UUID>,
+        excludedIDs: Set<UUID>,
+        at directoryURL: URL
+    ) -> [PersonaThreadIndexEntry] {
+        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+        var recovered: [PersonaThreadIndexEntry] = []
+        for fileURL in fileURLs {
+            guard let id = threadID(from: fileURL),
+                  !liveIDs.contains(id),
+                  !excludedIDs.contains(id) else { continue }
+            do {
+                let data = try Data(contentsOf: fileURL)
+                let thread = try LocalJSONStoreCoding.makeDecoder().decode(PersonaThread.self, from: data)
+                guard thread.id == id else {
+                    throw PersonaThreadFilePersistenceError.mismatchedThread(
+                        expected: id,
+                        actual: thread.id
+                    )
+                }
+                recovered.append(PersonaThreadIndexEntry(thread: thread))
+                AppLog.note(
+                    "[PersonaChatStore] recovered orphan Persona thread %@ into index",
+                    id.uuidString
+                )
+            } catch {
+                AppLog.error(
+                    "[PersonaChatStore] orphan Persona thread %@ could not be recovered: %@",
+                    id.uuidString,
+                    error.localizedDescription
+                )
+            }
+        }
+        return recovered
     }
 
     nonisolated private static func writeDeletionJournal(
