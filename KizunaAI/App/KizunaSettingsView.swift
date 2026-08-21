@@ -2066,6 +2066,7 @@ private struct AIModelRegistryEditorView: View {
             return
         }
 
+        let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasExistingAPIKey = AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
         if Self.requiresAPIKey(for: provider, endpoint: trimmedEndpoint)
             && apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2077,7 +2078,6 @@ private struct AIModelRegistryEditorView: View {
             return
         }
 
-        let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let compatibility = disabledCompatibilityParameters.isEmpty
             ? nil
             : AIModelCompatibilitySettings(

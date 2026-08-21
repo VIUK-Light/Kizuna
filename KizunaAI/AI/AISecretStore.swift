@@ -414,7 +414,7 @@ final class AIModelTuningStore: @unchecked Sendable {
     }
 }
 
-enum AIModelTuningParameter: String, CaseIterable, Hashable, Sendable {
+enum AIModelTuningParameter: String, Codable, CaseIterable, Hashable, Sendable {
     case temperature
     case topP
     case topK
