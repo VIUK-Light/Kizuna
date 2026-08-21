@@ -768,7 +768,9 @@ final class AIModelRegistry: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         var items = loadUnlocked()
-        guard let removed = items.first(where: { $0.id == id }) else { return true }
+        guard let removed = items.first(where: { $0.id == id }) else {
+            return tuningStore.clearPreferredConfigurationID(id)
+        }
         items.removeAll { $0.id == id }
         guard saveUnlocked(items) else { return false }
         guard tuningStore.clearPreferredConfigurationID(id) else {

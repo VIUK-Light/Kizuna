@@ -6731,6 +6731,16 @@ final class KizunaAITests: XCTestCase {
 
         let tuningStore = AIModelTuningStore(defaults: tuningDefaults)
         let registry = AIModelRegistry(defaults: registryDefaults, tuningStore: tuningStore)
+        let missingConfigurationID = UUID()
+        XCTAssertTrue(
+            tuningStore.setPreferredConfigurationID(
+                missingConfigurationID,
+                for: AIModelRole.story
+            )
+        )
+        XCTAssertTrue(registry.remove(id: missingConfigurationID))
+        XCTAssertNil(tuningStore.preferredConfigurationID(for: AIModelRole.story))
+
         let configuration = AIModelConfiguration(
             identity: AIModelIdentity(
                 providerID: .openAICompatible,
