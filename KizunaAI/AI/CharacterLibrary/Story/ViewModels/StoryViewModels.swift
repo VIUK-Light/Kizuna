@@ -822,7 +822,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 ),
                 role: .story,
                 preferredConfigurationID: preferred,
-                allowsFallback: false
+                allowsFallback: AIModelTuningStore.shared.allowsFallbackForCurrentMode
             )
             reply = response.text
             generationStatus = KizunaCopy.text(

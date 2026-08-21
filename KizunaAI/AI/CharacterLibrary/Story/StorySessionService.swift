@@ -2200,6 +2200,7 @@ final class StorySessionService: ObservableObject {
                     userPrompt: effectiveUserText,
                     generationID: generationID,
                     preferredConfigurationID: resolvedStoryConfigurationID,
+                    allowsFallback: AIModelTuningStore.shared.allowsFallbackForCurrentMode,
                     seedOverride: seedOverride
                 )
                 let reply = generatedRemote.reply
@@ -3606,6 +3607,7 @@ final class StorySessionService: ObservableObject {
         userPrompt: String,
         generationID: UUID,
         preferredConfigurationID: UUID?,
+        allowsFallback: Bool,
         seedOverride: UInt32?
     ) async -> (reply: String?, modelIdentity: String?) {
         await MainActor.run {
@@ -3647,7 +3649,7 @@ final class StorySessionService: ObservableObject {
                 ),
                 role: .story,
                 preferredConfigurationID: preferredConfigurationID,
-                allowsFallback: false
+                allowsFallback: allowsFallback
             )
             let text = response.text
             await MainActor.run {

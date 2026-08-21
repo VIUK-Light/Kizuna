@@ -6869,6 +6869,17 @@ final class KizunaAITests: XCTestCase {
             ),
             online.id
         )
+        XCTAssertEqual(
+            store.orderedConfigurationsForCurrentMode(
+                for: .persona,
+                configurations: [local, online],
+                fallbackProviderID: .localRuntime
+            ).map(\.id),
+            [online.id, local.id]
+        )
+        XCTAssertTrue(store.allowsFallbackForCurrentMode)
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertFalse(store.allowsFallbackForCurrentMode)
     }
 
     func testAuxiliaryModelSelectionIsStoredPerRole() throws {
@@ -7348,12 +7359,12 @@ final class KizunaAITests: XCTestCase {
         let store = AIModelTuningStore(defaults: defaults)
 
         XCTAssertFalse(
-            LocalAssistantRuntimeBridge.preservesAdvancedProviderBoundary(store.preferences)
+            LocalAssistantRuntimeBridge.preservesConfiguredProviderBoundary(store.preferences)
         )
         XCTAssertTrue(store.setMode(.advanced))
         XCTAssertTrue(store.setPreferredConfigurationID(UUID(), for: .persona))
         XCTAssertTrue(
-            LocalAssistantRuntimeBridge.preservesAdvancedProviderBoundary(store.preferences)
+            LocalAssistantRuntimeBridge.preservesConfiguredProviderBoundary(store.preferences)
         )
     }
 

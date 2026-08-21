@@ -1231,7 +1231,11 @@ final class AIModelRouter {
         preferredConfigurationID: UUID? = nil,
         allowsFallback: Bool = true
     ) async throws -> AIGenerationResponse {
-        var configurations = registry.configurations(for: role)
+        var configurations = tuningStore.orderedConfigurationsForCurrentMode(
+            for: role,
+            configurations: registry.configurations(for: role),
+            fallbackProviderID: nil
+        )
         let storedPreferredConfigurationID = preferredConfigurationID
             ?? tuningStore.configurationIDForCurrentMode(
                 for: role,

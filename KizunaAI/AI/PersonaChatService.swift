@@ -207,7 +207,7 @@ extension PersonaReplyGenerating {
         model: PersonaGenerationModel,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
     ) async -> LocalAssistantGenerationResult {
-        let preservesAdvancedProviderBoundary = Self.preservesAdvancedProviderBoundary(
+        let preservesConfiguredProviderBoundary = Self.preservesConfiguredProviderBoundary(
             AIModelTuningStore.shared.preferences
         )
         func generateThroughRegistry() async -> LocalAssistantGenerationResult? {
@@ -242,7 +242,7 @@ extension PersonaReplyGenerating {
                 request: request,
                 role: .persona,
                 preferredConfigurationID: preferred,
-                allowsFallback: false
+                allowsFallback: AIModelTuningStore.shared.allowsFallbackForCurrentMode
             ) else {
                 return nil
             }
@@ -255,7 +255,7 @@ extension PersonaReplyGenerating {
         if let routed = await generateThroughRegistry() {
             return routed
         }
-        if preservesAdvancedProviderBoundary {
+        if preservesConfiguredProviderBoundary {
             // An Advanced UUID is an explicit provider boundary. A failed
             // registry request must not cross back into the legacy local/NAGI
             // family switch and silently change where the prompt is sent.
@@ -312,11 +312,13 @@ extension PersonaReplyGenerating {
         }
     }
 
-    static func preservesAdvancedProviderBoundary(
+    static func preservesConfiguredProviderBoundary(
         _ preferences: AIModelTuningPreferences
     ) -> Bool {
-        preferences.mode == .advanced
-            && preferences.preferredConfigurationID(for: .persona) != nil
+        if preferences.mode == .advanced {
+            return preferences.preferredConfigurationID(for: .persona) != nil
+        }
+        return preferences.simpleModelRoute != .automatic
     }
 
     func generatePersonaReplyResult(

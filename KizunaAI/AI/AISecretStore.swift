@@ -331,6 +331,51 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
         }
     }
 
+    func orderedConfigurationsForCurrentMode(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration],
+        fallbackProviderID: AIProviderID?
+    ) -> [AIModelConfiguration] {
+        let preferredID = configurationIDForCurrentMode(
+            for: role,
+            configurations: configurations,
+            fallbackProviderID: fallbackProviderID
+        )
+        var ordered = configurations
+        if let preferredID,
+           let index = ordered.firstIndex(where: { $0.id == preferredID }) {
+            let preferred = ordered.remove(at: index)
+            ordered.insert(preferred, at: 0)
+        }
+
+        guard mode == .simple else { return ordered }
+        switch simpleModelRoute {
+        case .automatic:
+            return ordered
+        case .onDevice:
+            return preferredFirst(
+                ordered,
+                where: { $0.identity.providerID == .localRuntime }
+            )
+        case .online:
+            return preferredFirst(
+                ordered,
+                where: { $0.identity.providerID != .localRuntime }
+            )
+        }
+    }
+
+    var allowsFallbackForCurrentMode: Bool {
+        mode == .simple
+    }
+
+    private func preferredFirst(
+        _ configurations: [AIModelConfiguration],
+        where predicate: (AIModelConfiguration) -> Bool
+    ) -> [AIModelConfiguration] {
+        configurations.filter(predicate) + configurations.filter { !predicate($0) }
+    }
+
     mutating func setPreferredConfigurationID(_ id: UUID?, for scope: AIModelTuningScope) {
         if let id {
             preferredConfigurationIDs[scope.rawValue] = id
@@ -419,6 +464,22 @@ final class AIModelTuningStore: @unchecked Sendable {
             configurations: configurations,
             fallbackProviderID: fallbackProviderID
         )
+    }
+
+    func orderedConfigurationsForCurrentMode(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration],
+        fallbackProviderID: AIProviderID?
+    ) -> [AIModelConfiguration] {
+        preferences.orderedConfigurationsForCurrentMode(
+            for: role,
+            configurations: configurations,
+            fallbackProviderID: fallbackProviderID
+        )
+    }
+
+    var allowsFallbackForCurrentMode: Bool {
+        preferences.allowsFallbackForCurrentMode
     }
 
     @discardableResult
