@@ -1439,10 +1439,12 @@ final class PersonaChatStore: ObservableObject {
         )
         let fileName = "\(prefix)-\(UUID().uuidString).\(fileExtension)"
         let exportURL = exportDirectory.appendingPathComponent(fileName)
-        try data.write(
-            to: exportURL,
-            options: [.atomic, .completeFileProtection]
-        )
+        #if os(iOS)
+        let writeOptions: Data.WritingOptions = [.atomic, .completeFileProtection]
+        #else
+        let writeOptions: Data.WritingOptions = [.atomic]
+        #endif
+        try data.write(to: exportURL, options: writeOptions)
         return exportURL
     }
 
