@@ -201,33 +201,35 @@ struct CharacterCreateView: View {
 
     @ViewBuilder
     private var header: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 8) {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { requestDismiss() }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .disabled(isFormLocked)
+                        Spacer()
+                    }
+                    Text(existing == nil
+                         ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")
+                         : KizunaCopy.text(japanese: "キャラを編集", english: "Edit character"))
+                        .font(.system(size: 15, weight: .semibold))
+                }
+            } else {
                 HStack {
                     Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { requestDismiss() }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                         .disabled(isFormLocked)
                     Spacer()
+                    Text(existing == nil
+                         ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")
+                         : KizunaCopy.text(japanese: "キャラを編集", english: "Edit character"))
+                        .font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                    Color.clear.frame(width: 80, height: 1)
                 }
-                Text(existing == nil
-                     ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")
-                     : KizunaCopy.text(japanese: "キャラを編集", english: "Edit character"))
-                    .font(.system(size: 15, weight: .semibold))
-            }
-        } else {
-            HStack {
-                Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel")) { requestDismiss() }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .disabled(isFormLocked)
-                Spacer()
-                Text(existing == nil
-                     ? KizunaCopy.text(japanese: "キャラを作る", english: "Create character")
-                     : KizunaCopy.text(japanese: "キャラを編集", english: "Edit character"))
-                    .font(.system(size: 15, weight: .semibold))
-                Spacer()
-                Color.clear.frame(width: 80, height: 1)
             }
         }
         .padding(.horizontal, 16)
@@ -802,3 +804,4 @@ struct CharacterCreateView: View {
         )
     }
 }
+

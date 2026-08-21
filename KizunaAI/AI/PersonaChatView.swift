@@ -1710,7 +1710,7 @@ struct PersonaChatView: View {
 
     private func cancelledGenerationNotice(threadID: UUID, requestText: String) -> some View {
         let preview = cancelledRequestPreview(requestText)
-        HStack(alignment: .top, spacing: 9) {
+        return HStack(alignment: .top, spacing: 9) {
             Image(systemName: "pause.circle.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 5) {
@@ -1856,3 +1856,4 @@ private extension String {
         isEmpty ? nil : self
     }
 }
+
