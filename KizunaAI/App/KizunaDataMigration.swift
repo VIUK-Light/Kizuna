@@ -1,5 +1,66 @@
 import Foundation
 
+enum KizunaDataMigrationFailureReason: String, Equatable, Sendable {
+    case storageUnavailable
+    case invalidJSON
+    case copyFailed
+    case stagingCleanupFailed
+    case destinationVerificationFailed
+}
+
+enum KizunaDataMigrationFailure: Equatable, LocalizedError, Sendable {
+    case characterLibrary(fileName: String, reason: KizunaDataMigrationFailureReason)
+    case localModels(reason: KizunaDataMigrationFailureReason)
+
+    var isRetryable: Bool {
+        switch self {
+        case let .characterLibrary(_, reason):
+            return reason != .invalidJSON
+        case let .localModels(reason):
+            return reason != .invalidJSON
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case let .characterLibrary(fileName, reason):
+            return KizunaCopy.text(
+                japanese: "キャラクター移行の\(fileName)で失敗しました（\(reason.displayName)）。",
+                english: "Character migration failed for \(fileName) (\(reason.displayName))."
+            )
+        case let .localModels(reason):
+            return KizunaCopy.text(
+                japanese: "ローカルモデル移行に失敗しました（\(reason.displayName)）。",
+                english: "Local model migration failed (\(reason.displayName))."
+            )
+        }
+    }
+}
+
+extension KizunaDataMigrationFailureReason {
+    var displayName: String {
+        switch self {
+        case .storageUnavailable:
+            return KizunaCopy.text(japanese: "保存領域が利用できません", english: "storage unavailable")
+        case .invalidJSON:
+            return KizunaCopy.text(japanese: "JSONが壊れています", english: "invalid JSON")
+        case .copyFailed:
+            return KizunaCopy.text(japanese: "コピーに失敗しました", english: "copy failed")
+        case .stagingCleanupFailed:
+            return KizunaCopy.text(japanese: "stagingの整理に失敗しました", english: "staging cleanup failed")
+        case .destinationVerificationFailed:
+            return KizunaCopy.text(japanese: "移行先の確認に失敗しました", english: "destination verification failed")
+        }
+    }
+}
+
+struct KizunaDataMigrationResult: Equatable, Sendable {
+    let failure: KizunaDataMigrationFailure?
+
+    nonisolated var succeeded: Bool { failure == nil }
+    nonisolated var isRetryable: Bool { failure?.isRetryable ?? false }
+}
+
 /// WindowGroupの複数シーンから同時に呼ばれても、移行先とステージングを
 /// 共有したまま操作しないためのプロセス内ロック。移行は同一プロセスの
 /// ファイル操作なので、actorをまたぐ非同期処理ではなく短い同期区間で直列化する。
@@ -91,27 +152,44 @@ enum KizunaDataMigration {
     ]
 
     @discardableResult
-    nonisolated static func performIfNeeded() -> Bool {
+    nonisolated static func performIfNeededResult() -> KizunaDataMigrationResult {
         migrationLock.withLock {
             guard isStorageAvailable else {
                 AppLog.error("[KizunaDataMigration] Application Support URL is unavailable")
-                return false
+                return KizunaDataMigrationResult(
+                    failure: .localModels(reason: .storageUnavailable)
+                )
             }
             let defaults = UserDefaults.standard
-            guard !defaults.bool(forKey: migrationMarker) else { return true }
-
-            let didMigrateCharacters = migrateCharacterLibraryIfAvailable()
-            let didMigrateModels = migrateLocalModelsIfAvailable()
-            migratePersonaDefaultsIfAvailable(into: defaults)
-            if didMigrateCharacters && didMigrateModels {
-                defaults.set(true, forKey: migrationMarker)
+            guard !defaults.bool(forKey: migrationMarker) else {
+                return KizunaDataMigrationResult(failure: nil)
             }
-            return didMigrateCharacters && didMigrateModels
+
+            switch migrateCharacterLibraryIfAvailable() {
+            case .success:
+                break
+            case let .failure(failure):
+                return KizunaDataMigrationResult(failure: failure)
+            }
+            switch migrateLocalModelsIfAvailable() {
+            case .success:
+                break
+            case let .failure(failure):
+                return KizunaDataMigrationResult(failure: failure)
+            }
+            migratePersonaDefaultsIfAvailable(into: defaults)
+            defaults.set(true, forKey: migrationMarker)
+            return KizunaDataMigrationResult(failure: nil)
         }
     }
 
     @discardableResult
-    nonisolated private static func migrateCharacterLibraryIfAvailable() -> Bool {
+    nonisolated static func performIfNeeded() -> Bool {
+        performIfNeededResult().succeeded
+    }
+
+    @discardableResult
+    nonisolated private static func migrateCharacterLibraryIfAvailable() -> Result<Void, KizunaDataMigrationFailure> {
         let fileManager = FileManager.default
         let legacyURL = characterLibraryURL
             .deletingLastPathComponent()
@@ -120,7 +198,7 @@ enum KizunaDataMigration {
 
         do {
             try fileManager.createDirectory(at: characterLibraryURL, withIntermediateDirectories: true)
-            guard fileManager.fileExists(atPath: legacyURL.path) else { return true }
+            guard fileManager.fileExists(atPath: legacyURL.path) else { return .success(()) }
 
             let fileNames = [
                 "characters.json", "lorebooks.json", "memories.json", "reports.json", "templates.json",
@@ -137,7 +215,7 @@ enum KizunaDataMigration {
                     // 壊れた旧ファイルを有効な移行元として扱わない。内容を
                     // 推測して上書きせず、次回起動でも再確認できるよう失敗を返す。
                     AppLog.error("[KizunaDataMigration] legacy file is invalid JSON: %@", source.path)
-                    return false
+                    return .failure(.characterLibrary(fileName: fileName, reason: .invalidJSON))
                 case .validArray:
                     break
                 }
@@ -163,10 +241,10 @@ enum KizunaDataMigration {
                 try LocalJSONStoreFileProtection.apply(to: destination)
                 AppLog.note("[KizunaDataMigration] restored %@ from legacy CharacterLibrary", fileName)
             }
-            return true
+            return .success(())
         } catch {
             AppLog.error("[KizunaDataMigration] character library migration failed: %@", String(describing: error))
-            return false
+            return .failure(.characterLibrary(fileName: "CharacterLibrary", reason: .copyFailed))
         }
     }
 
@@ -193,9 +271,11 @@ enum KizunaDataMigration {
     }
 
     @discardableResult
-    nonisolated private static func migrateLocalModelsIfAvailable() -> Bool {
+    nonisolated private static func migrateLocalModelsIfAvailable() -> Result<Void, KizunaDataMigrationFailure> {
         let fileManager = FileManager.default
-        guard let applicationSupportURL else { return false }
+        guard let applicationSupportURL else {
+            return .failure(.localModels(reason: .storageUnavailable))
+        }
         let legacyURL = applicationSupportURL
             .appendingPathComponent("VIUK One", isDirectory: true)
             .appendingPathComponent("LocalModels", isDirectory: true)
@@ -217,25 +297,39 @@ enum KizunaDataMigration {
                 if !destinationHasArtifact {
                     try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
                 }
-                return true
+                return .success(())
             }
 
             // Stage the complete legacy tree before touching the destination. A
             // failed copy leaves no migration marker and can be retried safely.
-            if fileManager.fileExists(atPath: stagingURL.path) {
-                try fileManager.removeItem(at: stagingURL)
+            let reusableStaging = fileManager.fileExists(atPath: stagingURL.path)
+                && containsModelArtifact(in: stagingURL)
+            if !reusableStaging {
+                if fileManager.fileExists(atPath: stagingURL.path) {
+                    try fileManager.removeItem(at: stagingURL)
+                }
+                try fileManager.copyItem(at: legacyURL, to: stagingURL)
             }
-            try fileManager.copyItem(at: legacyURL, to: stagingURL)
             try fileManager.createDirectory(at: localModelsURL, withIntermediateDirectories: true)
             try mergeModelDirectoryContents(from: stagingURL, to: localModelsURL)
-            try fileManager.removeItem(at: stagingURL)
+            do {
+                try fileManager.removeItem(at: stagingURL)
+            } catch {
+                AppLog.error("[KizunaDataMigration] local model staging cleanup failed: %@", String(describing: error))
+                return .failure(.localModels(reason: .stagingCleanupFailed))
+            }
 
             // Verify the post-merge destination, not merely the directory.
             return containsModelArtifact(in: localModelsURL)
+                ? .success(())
+                : .failure(.localModels(reason: .destinationVerificationFailed))
         } catch {
-            try? fileManager.removeItem(at: stagingURL)
-            AppLog.error("[KizunaDataMigration] local model migration failed: %@", String(describing: error))
-            return false
+            if !fileManager.fileExists(atPath: stagingURL.path) {
+                AppLog.error("[KizunaDataMigration] local model migration failed: %@", String(describing: error))
+            } else {
+                AppLog.error("[KizunaDataMigration] local model migration remains staged for retry: %@", String(describing: error))
+            }
+            return .failure(.localModels(reason: .copyFailed))
         }
     }
 

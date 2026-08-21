@@ -90,13 +90,13 @@ private struct KizunaMigrationGateView: View {
         }
         .task(id: migrationAttempt) {
             guard !isReady else { return }
-            let didSucceed = await Task.detached(priority: .userInitiated) {
-                KizunaDataMigration.performIfNeeded()
+            let result = await Task.detached(priority: .userInitiated) {
+                KizunaDataMigration.performIfNeededResult()
             }.value
-            guard didSucceed else {
+            guard result.succeeded else {
                 migrationError = KizunaCopy.text(
-                    japanese: "移行または保存先の準備に失敗しました。データ保護のためWorkspaceを開いていません。保存領域を確認して再試行してください。",
-                    english: "Migration or storage preparation failed. The workspace is blocked to protect your data. Check the storage location and try again."
+                    japanese: "移行に失敗しました。データ保護のためWorkspaceを開いていません。\(result.failure?.localizedDescription ?? "原因を特定できませんでした")",
+                    english: "Migration failed. The workspace is blocked to protect your data. \(result.failure?.localizedDescription ?? "The cause could not be identified.")"
                 )
                 return
             }
@@ -125,4 +125,3 @@ private struct KizunaMigrationGateView: View {
         }
     }
 }
-

@@ -7440,6 +7440,20 @@ final class KizunaAITests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: "kizuna.userProfile.v1"))
     }
 
+    func testDataMigrationResultDistinguishesFailureReasonsAndRetryability() {
+        let invalidJSON = KizunaDataMigrationResult(
+            failure: .characterLibrary(fileName: "characters.json", reason: .invalidJSON)
+        )
+        let stagingFailure = KizunaDataMigrationResult(
+            failure: .localModels(reason: .stagingCleanupFailed)
+        )
+
+        XCTAssertFalse(invalidJSON.succeeded)
+        XCTAssertFalse(invalidJSON.isRetryable)
+        XCTAssertTrue(invalidJSON.failure?.localizedDescription.contains("characters.json") == true)
+        XCTAssertTrue(stagingFailure.isRetryable)
+    }
+
     func testStoryWorldAgeAvailabilityUsesAllWorldCharacters() {
         let general = CharacterProfile(
             name: "General",
