@@ -42,7 +42,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
-          model: opencode/deepseek-v4-flash-free
+          model: opencode/mimo-v2.5-free
           use_github_token: true
           mentions: "/summary,/sum"
           share: false
@@ -139,7 +139,7 @@ jobs:
             --arg body "${ISSUE_BODY:-}" \
             --arg index "$ISSUE_INDEX" \
             '{
-              model: "deepseek-v4-flash-free",
+              model: "mimo-v2.5-free",
               messages: [
                 {role: "system", content: $system},
                 {role: "user", content: ("NEW ISSUE\nTitle: " + $title + "\nBody:\n" + $body + "\n\nEXISTING ISSUES JSON:\n" + $index)}
@@ -222,7 +222,7 @@ jobs:
             --arg body "${ISSUE_BODY:-}" \
             --arg details "$DETAILS" \
             '{
-              model: "deepseek-v4-flash-free",
+              model: "mimo-v2.5-free",
               messages: [
                 {role: "system", content: $system},
                 {role: "user", content: ("NEW ISSUE\nTitle: " + $title + "\nBody:\n" + $body + "\n\nCANDIDATE ISSUES JSON:\n" + $details)}
