@@ -22,6 +22,10 @@ fileprivate enum SafetyKeywords {
     static let minorRomance = ["小学生", "幼児", "中学生"]
     static let personalInfo = ["住所", "電話番号", "本名", "口座", "パスワード"]
     static let harassment = ["殺す", "死ね", "クズ", "消えろ"]
+    static let violence = ["殴る", "蹴る", "刺す", "撃つ", "暴力", "血まみれ", "殴打", "punch", "stab", "shoot", "violence"]
+    static let medical = ["診断", "処方", "薬", "病気", "症状", "medical", "diagnosis", "prescription"]
+    static let financial = ["送金", "投資", "株", "暗号資産", "クレジット", "financial", "bank account", "money transfer"]
+    static let legal = ["逮捕", "訴訟", "裁判", "弁護士", "法律", "legal", "lawsuit", "arrest", "lawyer"]
 }
 
 // MARK: - Character
@@ -180,6 +184,19 @@ final class MockOutputSafetyChecker: OutputSafetyChecking {
         var action: SafetyAction = .allow
         var rewritten: String? = nil
 
+        func appendDomain(
+            _ domain: SafetyDomain,
+            japanese: String,
+            english: String,
+            action requiredAction: SafetyAction = .warn
+        ) {
+            guard !domains.contains(domain) else { return }
+            reasons.append(safetyCopy(japanese: japanese, english: english))
+            domains.append(domain)
+            if severity == .info { severity = .warning }
+            action = max(action, requiredAction)
+        }
+
         if SafetyKeywords.crimeHowTo.contains(where: text.contains) {
             reasons.append(safetyCopy(japanese: "出力に犯罪手順が含まれています。", english: "The response contains criminal instructions."))
             domains.append(.crime)
@@ -193,6 +210,63 @@ final class MockOutputSafetyChecker: OutputSafetyChecking {
             domains.append(.sexual)
             severity = .warning
             action = max(action, .soften)
+        }
+
+        if SafetyKeywords.violence.contains(where: text.contains) {
+            appendDomain(
+                .violence,
+                japanese: "出力に暴力表現が含まれています。",
+                english: "The response contains violence-related content."
+            )
+        }
+        if SafetyKeywords.harassment.contains(where: text.contains) {
+            appendDomain(
+                .harassment,
+                japanese: "出力に攻撃的・嫌がらせの表現が含まれています。",
+                english: "The response contains harassment or abusive language."
+            )
+        }
+        if SafetyKeywords.selfHarm.contains(where: text.contains) {
+            appendDomain(
+                .selfHarm,
+                japanese: "出力に自傷に関する表現が含まれています。",
+                english: "The response contains self-harm-related content."
+            )
+        }
+        if SafetyKeywords.personalInfo.contains(where: text.contains) {
+            appendDomain(
+                .personalInfo,
+                japanese: "出力に個人情報に関する表現が含まれています。",
+                english: "The response contains personal-information content."
+            )
+        }
+        if SafetyKeywords.medical.contains(where: text.contains) {
+            appendDomain(
+                .medical,
+                japanese: "出力に医療に関する表現が含まれています。",
+                english: "The response contains medical content."
+            )
+        }
+        if SafetyKeywords.financial.contains(where: text.contains) {
+            appendDomain(
+                .financial,
+                japanese: "出力に金融に関する表現が含まれています。",
+                english: "The response contains financial content."
+            )
+        }
+        if SafetyKeywords.legal.contains(where: text.contains) {
+            appendDomain(
+                .legal,
+                japanese: "出力に法務に関する表現が含まれています。",
+                english: "The response contains legal content."
+            )
+        }
+        if SafetyKeywords.minorRomance.contains(where: text.contains) {
+            appendDomain(
+                .minors,
+                japanese: "出力に未成年に関する表現が含まれています。",
+                english: "The response contains minor-related content."
+            )
         }
 
         return SafetyDecision(

@@ -7273,6 +7273,29 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(evaluated.action, .block)
     }
 
+    func testOutputSafetyCheckerEmitsPolicyDomains() async {
+        let character = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+        let decision = await MockOutputSafetyChecker().evaluate(
+            "殴る。死ね。自殺。住所。診断。送金。逮捕。小学生。",
+            character: character
+        )
+        let domains = Set(decision.riskDomains)
+        XCTAssertTrue(domains.contains(.violence))
+        XCTAssertTrue(domains.contains(.harassment))
+        XCTAssertTrue(domains.contains(.selfHarm))
+        XCTAssertTrue(domains.contains(.personalInfo))
+        XCTAssertTrue(domains.contains(.medical))
+        XCTAssertTrue(domains.contains(.financial))
+        XCTAssertTrue(domains.contains(.legal))
+        XCTAssertTrue(domains.contains(.minors))
+    }
+
     func testStoryCurrentConfigurationWinsOverLegacyGenerationFamily() {
         let localConfiguration = AIModelConfiguration(
             identity: AIModelIdentity(
