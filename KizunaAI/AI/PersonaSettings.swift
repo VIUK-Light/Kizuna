@@ -158,6 +158,9 @@ struct PersonaProfile: Codable, Hashable, Identifiable, Sendable {
     var tone: PersonaTone
     var relation: PersonaRelation
     var freeFormAddendum: String  // ユーザー自由記述
+    /// Immutable safety classification captured when a Character becomes a
+    /// Persona thread. It survives Character deletion and reference detaching.
+    var safetyRating: SafetyRating
     /// アバター表示スタイルの解決ID（アセット名と共通）。名前の変更・翻訳・
     /// 複製でも見た目が維持されるよう、UIはこれを優先してスタイルを引く。
     /// nilの場合は旧データとして名前ベースのフォールバック解決を行う。
@@ -173,6 +176,7 @@ struct PersonaProfile: Codable, Hashable, Identifiable, Sendable {
         tone: PersonaTone,
         relation: PersonaRelation,
         freeFormAddendum: String = "",
+        safetyRating: SafetyRating = .general,
         avatarStyleID: String? = nil,
         avatarImageData: Data? = nil
     ) {
@@ -183,6 +187,7 @@ struct PersonaProfile: Codable, Hashable, Identifiable, Sendable {
         self.tone = tone
         self.relation = relation
         self.freeFormAddendum = freeFormAddendum
+        self.safetyRating = safetyRating
         self.avatarStyleID = avatarStyleID
         self.avatarImageData = avatarImageData
     }
@@ -204,6 +209,7 @@ struct PersonaProfile: Codable, Hashable, Identifiable, Sendable {
             ]
                 .filter { !$0.isEmpty }
                 .joined(separator: " / "),
+            safetyRating: character.safetyRating,
             avatarStyleID: character.imageKey,
             avatarImageData: character.avatarImageData
         )
@@ -211,7 +217,7 @@ struct PersonaProfile: Codable, Hashable, Identifiable, Sendable {
 
     // Codable: 既存保存データに追加フィールドが無くてもデコード可能にする
     private enum CodingKeys: String, CodingKey {
-        case id, name, age, personality, tone, relation, freeFormAddendum, avatarStyleID, avatarImageData
+        case id, name, age, personality, tone, relation, freeFormAddendum, safetyRating, avatarStyleID, avatarImageData
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -222,6 +228,7 @@ struct PersonaProfile: Codable, Hashable, Identifiable, Sendable {
         self.tone = try c.decode(PersonaTone.self, forKey: .tone)
         self.relation = try c.decode(PersonaRelation.self, forKey: .relation)
         self.freeFormAddendum = try c.decode(String.self, forKey: .freeFormAddendum)
+        self.safetyRating = try c.decodeIfPresent(SafetyRating.self, forKey: .safetyRating) ?? .general
         self.avatarStyleID = try c.decodeIfPresent(String.self, forKey: .avatarStyleID)
         self.avatarImageData = try c.decodeIfPresent(Data.self, forKey: .avatarImageData)
     }

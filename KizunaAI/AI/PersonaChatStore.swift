@@ -202,6 +202,7 @@ private struct PersonaThreadIndexProfile: Codable, Sendable {
     let age: Int?
     let tone: PersonaTone
     let relation: PersonaRelation
+    let safetyRating: SafetyRating
     let avatarStyleID: String?
 
     nonisolated init(profile: PersonaProfile) {
@@ -210,6 +211,7 @@ private struct PersonaThreadIndexProfile: Codable, Sendable {
         age = profile.age
         tone = profile.tone
         relation = profile.relation
+        safetyRating = profile.safetyRating
         avatarStyleID = profile.avatarStyleID
     }
 
@@ -221,6 +223,7 @@ private struct PersonaThreadIndexProfile: Codable, Sendable {
             personality: "",
             tone: tone,
             relation: relation,
+            safetyRating: safetyRating,
             avatarStyleID: avatarStyleID
         )
     }

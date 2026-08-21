@@ -7229,6 +7229,24 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testPersonaProfilePreservesCharacterSafetyRating() throws {
+        let character = CharacterProfile(
+            name: "Sensitive character",
+            displayName: "Sensitive character",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+        let profile = PersonaProfile(character: character)
+        XCTAssertEqual(profile.safetyRating, .sensitive)
+
+        let reloaded = try JSONDecoder().decode(
+            PersonaProfile.self,
+            from: JSONEncoder().encode(profile)
+        )
+        XCTAssertEqual(reloaded.safetyRating, .sensitive)
+    }
+
     func testAgePolicyBlocksBeforeLocalAndRemotePersonaRouting() async throws {
         let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
         let character = CharacterProfile(

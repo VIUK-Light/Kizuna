@@ -1420,9 +1420,9 @@ final class PersonaChatService: ObservableObject {
         lastErrorThreadID = nil
     }
 
-    /// Adapt a legacy PersonaProfile to the CharacterProfile context required
-    /// by the shared input/output pipeline. Legacy profiles have no independent
-    /// safety-rating field, so they use the existing general-audience default.
+    /// Adapt a PersonaProfile to the CharacterProfile context required by the
+    /// shared input/output pipeline. The captured rating survives a detached
+    /// Character reference; old profiles decode with the general default.
     private func safetyCharacter(for profile: PersonaProfile) -> CharacterProfile {
         CharacterProfile(
             id: profile.id,
@@ -1432,7 +1432,7 @@ final class PersonaChatService: ObservableObject {
             relationshipGenre: .none,
             personality: profile.personality,
             scenario: profile.freeFormAddendum,
-            safetyRating: .general
+            safetyRating: profile.safetyRating
         )
     }
 
