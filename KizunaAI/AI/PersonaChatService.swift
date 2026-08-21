@@ -619,8 +619,39 @@ final class PersonaChatService: ObservableObject {
             }
             return
         }
-        let composedPrompt = buildPrompt(forThread: thread, latestUser: userText)
-        let personaPrompt = legacyPersonaSystemPrompt(for: thread.personaSnapshot)
+        let legacySafetyCharacter = safetyCharacter(for: thread.personaSnapshot)
+        let inSafety = await safetyPipeline.evaluateInput(
+            userText,
+            character: legacySafetyCharacter
+        )
+        guard isGenerationActive(generationID) else { return }
+        if inSafety.action == .block {
+            let polite = PersonaOutputSafetyPolicy.sanitizedRewrite(inSafety.rewrittenText)
+                ?? KizunaCopy.text(
+                    japanese: "その話題には答えられません。別の話にしましょう。",
+                    english: "I can't continue with that topic. Let's talk about something else."
+                )
+            await MainActor.run {
+                self.finalize(
+                    reply: polite,
+                    threadID: threadID,
+                    generationID: generationID,
+                    outputSafety: .allow
+                )
+            }
+            return
+        }
+
+        let effectiveUserText = inSafety.rewrittenText ?? userText
+        var promptThread = thread
+        if let latestUserIndex = promptThread.messages.lastIndex(where: { $0.role == .user }) {
+            promptThread.messages[latestUserIndex].text = effectiveUserText
+        }
+        let composedPrompt = buildPrompt(forThread: promptThread, latestUser: effectiveUserText)
+        let personaPrompt = legacyPersonaSystemPrompt(
+            for: thread.personaSnapshot,
+            safetyPolicyRules: inSafety.addedPromptRules
+        )
         let advanced = voiceOptimizedAdvancedSettings
         let onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = { @MainActor [weak self] update in
             self?.handleStreamUpdate(update, generationID: generationID)
@@ -674,7 +705,7 @@ final class PersonaChatService: ObservableObject {
         guard isGenerationActive(generationID) else { return }
         let outputSafety = await safetyPipeline.evaluateOutput(
             rawFinalText,
-            character: safetyCharacter(for: thread.personaSnapshot)
+            character: legacySafetyCharacter
         )
         await MainActor.run {
             self.finalize(
@@ -845,11 +876,14 @@ final class PersonaChatService: ObservableObject {
 
         guard isGenerationActive(generationID) else { return }
         // ── 4) PromptBuilder ──
-        let recent = await MainActor.run { () -> [PersonaMessage] in
+        var recent = await MainActor.run { () -> [PersonaMessage] in
             (store.thread(id: threadID)?.messages ?? [])
                 .filter { !($0.role == .assistant && PersonaMessage.isPendingAssistantText($0.text)) }
                 .suffix(6)
                 .map { $0 }
+        }
+        if let latestUserIndex = recent.lastIndex(where: { $0.role == .user }) {
+            recent[latestUserIndex].text = effectiveUserText
         }
         guard isGenerationActive(generationID) else { return }
         let systemPrompt = promptBuilder.build(
@@ -1370,7 +1404,7 @@ final class PersonaChatService: ObservableObject {
     }
 
     /// Adapt a legacy PersonaProfile to the CharacterProfile context required
-    /// by the shared output checker. Legacy profiles have no independent
+    /// by the shared input/output pipeline. Legacy profiles have no independent
     /// safety-rating field, so they use the existing general-audience default.
     private func safetyCharacter(for profile: PersonaProfile) -> CharacterProfile {
         CharacterProfile(
@@ -1444,7 +1478,10 @@ final class PersonaChatService: ObservableObject {
         return lines.joined(separator: "\n")
     }
 
-    private func legacyPersonaSystemPrompt(for profile: PersonaProfile) -> String {
+    private func legacyPersonaSystemPrompt(
+        for profile: PersonaProfile,
+        safetyPolicyRules: [String]
+    ) -> String {
         let persona = profile.promptText.trimmingCharacters(in: .whitespacesAndNewlines)
         let languageInstruction = KizunaCopy.text(
             japanese: "次の設定を守り、相手へ自然な日本語で返してください。",
@@ -1458,11 +1495,24 @@ final class PersonaChatService: ObservableObject {
             japanese: "危険・違法・露骨な性的内容・自傷助長には、人格を崩さず安全な方向へ寄せてください。",
             english: "For dangerous, illegal, explicit sexual, or self-harm content, stay in character while steering toward a safe alternative."
         )
+        let policyBlock: String = {
+            var seen = Set<String>()
+            let rules = safetyPolicyRules.compactMap { rule -> String? in
+                let trimmed = rule.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { return nil }
+                return "- " + trimmed
+            }
+            guard !rules.isEmpty else { return "" }
+            return "\n" + KizunaCopy.text(
+                japanese: "現在の安全ポリシー:",
+                english: "Current safety policy:"
+            ) + "\n" + rules.joined(separator: "\n")
+        }()
         return """
         \(KizunaCopy.text(japanese: "あなたは\(KizunaCopy.appName)の会話相手です。", english: "You are the user's \(KizunaCopy.appName) conversation partner.")) \(languageInstruction)
         \(persona)
         \(outputRules)
-        \(safetyRules)
+        \(safetyRules)\(policyBlock)
         """
     }
 

@@ -85,7 +85,8 @@ struct KizunaUserProfile: Codable, Equatable {
     }
 
     /// AIへ渡すのは利用者が設定した名前と会話の長さだけ。画像データや
-    /// 画面上の選択肢はプロンプトへ混ぜない。
+    /// 画面上の選択肢、年齢Tierはプロンプトへ混ぜない。年齢Tierは
+    /// SafetyPipeline内で抽象化されたpolicy ruleへ変換する。
     var promptText: String {
         let name = visibleName
         guard !name.isEmpty
@@ -132,6 +133,7 @@ final class KizunaUserProfileStore: ObservableObject {
 
     func reset() {
         profile = KizunaUserProfile()
+        UserAgeSafetyStore.shared.reset()
         persist()
         primeBridge()
     }

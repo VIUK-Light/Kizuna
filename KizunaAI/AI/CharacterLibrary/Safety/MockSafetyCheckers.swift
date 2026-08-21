@@ -205,20 +205,3 @@ final class MockOutputSafetyChecker: OutputSafetyChecking {
         )
     }
 }
-
-// MARK: - SafetyAction 大小比較 (deciding the strictest)
-
-extension SafetyAction: Comparable {
-    private var rank: Int {
-        switch self {
-        case .allow: return 0
-        case .warn: return 1
-        case .soften: return 2
-        case .requireEdit: return 3
-        case .block: return 4
-        }
-    }
-    public static func < (lhs: SafetyAction, rhs: SafetyAction) -> Bool {
-        lhs.rank < rhs.rank
-    }
-}

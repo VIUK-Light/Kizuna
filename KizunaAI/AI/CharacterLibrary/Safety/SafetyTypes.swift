@@ -9,7 +9,7 @@
 import Foundation
 
 /// 公開可能な安全レーティング (CharacterLibrary でフィルタ表示にも使う)。
-enum SafetyRating: String, Codable, CaseIterable, Identifiable, Hashable {
+enum SafetyRating: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
     case general      // 一般向け
     case teen         // ティーン以上
     case sensitive    // 配慮を要する話題を含む
@@ -41,6 +41,127 @@ enum SafetyRating: String, Codable, CaseIterable, Identifiable, Hashable {
         case .sensitive: return "exclamationmark.triangle"
         case .restricted: return "xmark.octagon"
         }
+    }
+}
+
+/// A coarse content-safety tier. It is deliberately not a birth date or a
+/// legal-consent determination; regional/legal gates remain a separate layer.
+enum UserAgeTier: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
+    case unknown
+    case child
+    case teen
+    case adult
+
+    var id: String { rawValue }
+
+    var localizedDisplayName: String {
+        switch self {
+        case .unknown:
+            return KizunaCopy.text(japanese: "未指定", english: "Not specified")
+        case .child:
+            return KizunaCopy.text(japanese: "13歳未満", english: "Under 13")
+        case .teen:
+            return KizunaCopy.text(japanese: "13〜17歳", english: "13–17")
+        case .adult:
+            return KizunaCopy.text(japanese: "18歳以上", english: "18 or older")
+        }
+    }
+}
+
+/// Tracks how the coarse tier was obtained without storing evidence or an
+/// exact date of birth. Self-declaration must never be treated as verification.
+enum AgeAssuranceLevel: String, Codable, Hashable, Sendable {
+    case unknown
+    case selfDeclared
+    case guardianDeclared
+    case platformDeclared
+    case verified
+}
+
+struct UserAgeSafetyContext: Codable, Equatable, Hashable, Sendable {
+    var tier: UserAgeTier
+    var assuranceLevel: AgeAssuranceLevel
+
+    init(
+        tier: UserAgeTier = .unknown,
+        assuranceLevel: AgeAssuranceLevel = .unknown
+    ) {
+        self.tier = tier
+        self.assuranceLevel = tier == .unknown ? .unknown : assuranceLevel
+    }
+
+    static let `default` = UserAgeSafetyContext()
+
+    static func selfDeclared(_ tier: UserAgeTier) -> UserAgeSafetyContext {
+        UserAgeSafetyContext(
+            tier: tier,
+            assuranceLevel: tier == .unknown ? .unknown : .selfDeclared
+        )
+    }
+}
+
+extension Notification.Name {
+    static let userAgeSafetyContextDidChange = Notification.Name(
+        "Kizuna.userAgeSafetyContextDidChange"
+    )
+}
+
+/// Device-local metadata-only persistence. The serialized value contains only
+/// a coarse tier and assurance label; no birth date, evidence, or identity is
+/// collected. Unknown is represented by removing the stored value entirely.
+final class UserAgeSafetyStore: @unchecked Sendable {
+    static let shared = UserAgeSafetyStore()
+
+    private let defaults: UserDefaults
+    private let lock = NSLock()
+    private let storageKey = "kizuna.userAgeSafetyContext.v1"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var context: UserAgeSafetyContext {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let data = defaults.data(forKey: storageKey),
+              let value = try? JSONDecoder().decode(UserAgeSafetyContext.self, from: data) else {
+            return .default
+        }
+        return UserAgeSafetyContext(
+            tier: value.tier,
+            assuranceLevel: value.assuranceLevel
+        )
+    }
+
+    @discardableResult
+    func update(_ value: UserAgeSafetyContext) -> Bool {
+        let normalized = UserAgeSafetyContext(
+            tier: value.tier,
+            assuranceLevel: value.assuranceLevel
+        )
+        lock.lock()
+        let succeeded: Bool
+        if normalized.tier == .unknown {
+            defaults.removeObject(forKey: storageKey)
+            succeeded = true
+        } else if let data = try? JSONEncoder().encode(normalized) {
+            defaults.set(data, forKey: storageKey)
+            succeeded = true
+        } else {
+            succeeded = false
+        }
+        lock.unlock()
+        if succeeded {
+            NotificationCenter.default.post(name: .userAgeSafetyContextDidChange, object: nil)
+        }
+        return succeeded
+    }
+
+    func reset() {
+        lock.lock()
+        defaults.removeObject(forKey: storageKey)
+        lock.unlock()
+        NotificationCenter.default.post(name: .userAgeSafetyContextDidChange, object: nil)
     }
 }
 
@@ -77,12 +198,26 @@ enum CharacterVisibility: String, Codable, CaseIterable, Identifiable, Hashable 
 }
 
 /// 安全性判定の結果として取られるアクション。
-enum SafetyAction: String, Codable, CaseIterable, Hashable {
+enum SafetyAction: String, Codable, CaseIterable, Hashable, Sendable, Comparable {
     case allow         // そのまま
     case warn          // 警告のみ
     case soften        // 緩和書き換え (rewrittenText 提示)
     case block         // 通させない
     case requireEdit   // 修正必須 (保存させない / 出力させない)
+
+    private var rank: Int {
+        switch self {
+        case .allow: return 0
+        case .warn: return 1
+        case .soften: return 2
+        case .requireEdit: return 3
+        case .block: return 4
+        }
+    }
+
+    static func < (lhs: SafetyAction, rhs: SafetyAction) -> Bool {
+        lhs.rank < rhs.rank
+    }
 }
 
 /// Decide which output text is eligible to reach the Story persistence path.
@@ -149,14 +284,14 @@ enum StoryOutputSafetyPolicy {
 }
 
 /// 重要度。
-enum SafetySeverity: String, Codable, CaseIterable, Hashable {
+enum SafetySeverity: String, Codable, CaseIterable, Hashable, Sendable {
     case info
     case warning
     case block
 }
 
 /// 検出されたリスクのドメイン。複数同時にヒットしうる。
-enum SafetyDomain: String, Codable, CaseIterable, Hashable {
+enum SafetyDomain: String, Codable, CaseIterable, Hashable, Sendable {
     case romance
     case family
     case violence
@@ -249,6 +384,155 @@ struct SafetyDecision: Equatable, Hashable {
     /// UI が表示するときだけローカライズする。
     var localizedReasons: [String] {
         reasons.map(SafetyReasonLocalization.localized)
+    }
+}
+
+enum DependencyProtectionLevel: String, Codable, Equatable, Hashable, Sendable {
+    case standard
+    case enhanced
+    case strict
+}
+
+/// One policy is shared by Character Library, Persona, and Story before any
+/// local or remote provider runs. Restricted content and age-independent harm
+/// boundaries remain unavailable for every tier.
+struct EffectiveSafetyPolicy: Equatable, Sendable {
+    let ageContext: UserAgeSafetyContext
+    let allowedRatings: Set<SafetyRating>
+    let domainRules: [SafetyDomain: SafetyAction]
+    let dependencyProtectionLevel: DependencyProtectionLevel
+    let promptRules: [String]
+
+    static var current: EffectiveSafetyPolicy {
+        make(for: UserAgeSafetyStore.shared.context)
+    }
+
+    static func make(for context: UserAgeSafetyContext) -> EffectiveSafetyPolicy {
+        let invariantRules: [SafetyDomain: SafetyAction] = [
+            .crime: .block,
+            .selfHarm: .warn,
+            .personalInfo: .warn,
+            .harassment: .soften,
+            .medical: .warn,
+            .financial: .warn,
+            .legal: .warn
+        ]
+
+        var domainRules = invariantRules
+        let allowedRatings: Set<SafetyRating>
+        let dependencyProtectionLevel: DependencyProtectionLevel
+        let ageRule: String
+
+        switch context.tier {
+        case .unknown:
+            allowedRatings = [.general]
+            dependencyProtectionLevel = .strict
+            domainRules[.sexual] = .block
+            domainRules[.violence] = .soften
+            domainRules[.romance] = .warn
+            ageRule = KizunaCopy.text(
+                japanese: "年齢層が未指定のため、子どもにも適した非明示的な表現に限定する。",
+                english: "The age tier is unknown; keep content non-explicit and suitable for younger users."
+            )
+        case .child:
+            allowedRatings = [.general]
+            dependencyProtectionLevel = .strict
+            domainRules[.sexual] = .block
+            domainRules[.violence] = .soften
+            domainRules[.romance] = .warn
+            ageRule = KizunaCopy.text(
+                japanese: "子ども向けの年齢相応で非明示的な表現に限定する。",
+                english: "Keep content age-appropriate, non-explicit, and suitable for children."
+            )
+        case .teen:
+            allowedRatings = [.general, .teen]
+            dependencyProtectionLevel = .enhanced
+            domainRules[.sexual] = .block
+            domainRules[.violence] = .warn
+            domainRules[.romance] = .allow
+            ageRule = KizunaCopy.text(
+                japanese: "ティーン向けの年齢相応で非明示的な表現に限定する。",
+                english: "Keep content age-appropriate, non-explicit, and suitable for teens."
+            )
+        case .adult:
+            allowedRatings = [.general, .teen, .sensitive]
+            dependencyProtectionLevel = .standard
+            domainRules[.sexual] = .warn
+            domainRules[.violence] = .warn
+            domainRules[.romance] = .allow
+            ageRule = KizunaCopy.text(
+                japanese: "成人向けに許可された創作でも、年齢に依存しない安全境界を維持する。",
+                english: "Maintain age-independent safety boundaries in adult creative content."
+            )
+        }
+
+        let universalRules = [
+            KizunaCopy.text(
+                japanese: "個人を特定する情報を要求・共有しない。",
+                english: "Do not request or share identifying personal information."
+            ),
+            KizunaCopy.text(
+                japanese: "独占、孤立、過度な依存、支配を促さない。",
+                english: "Do not encourage exclusivity, isolation, unhealthy dependency, or control."
+            ),
+            KizunaCopy.text(
+                japanese: "現実の危険行為や違法行為を具体的に支援しない。",
+                english: "Do not provide actionable assistance for real-world danger or illegal activity."
+            )
+        ]
+
+        return EffectiveSafetyPolicy(
+            ageContext: context,
+            allowedRatings: allowedRatings,
+            domainRules: domainRules,
+            dependencyProtectionLevel: dependencyProtectionLevel,
+            promptRules: [ageRule] + universalRules
+        )
+    }
+
+    func allows(_ rating: SafetyRating) -> Bool {
+        rating != .restricted && allowedRatings.contains(rating)
+    }
+
+    func applying(
+        to decision: SafetyDecision,
+        characterRating: SafetyRating
+    ) -> SafetyDecision {
+        var result = decision
+        var policyAction: SafetyAction = allows(characterRating) ? .allow : .block
+        for domain in decision.riskDomains {
+            policyAction = max(policyAction, domainRules[domain] ?? .allow)
+        }
+
+        let previousAction = result.action
+        result.action = max(result.action, policyAction)
+        if result.action > previousAction {
+            result.reasons.append(
+                allows(characterRating)
+                    ? KizunaCopy.text(
+                        japanese: "年齢に合わせた安全設定を適用しました。",
+                        english: "Age-appropriate safety settings were applied."
+                    )
+                    : KizunaCopy.text(
+                        japanese: "現在の年齢層ではこのキャラクターを利用できません。",
+                        english: "This character is unavailable for the current age tier."
+                    )
+            )
+        }
+        switch result.action {
+        case .allow:
+            break
+        case .warn, .soften, .requireEdit:
+            if result.severity == .info { result.severity = .warning }
+        case .block:
+            result.severity = .block
+        }
+
+        var seenRules = Set(result.addedPromptRules)
+        for rule in promptRules where seenRules.insert(rule).inserted {
+            result.addedPromptRules.append(rule)
+        }
+        return result
     }
 }
 

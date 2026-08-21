@@ -136,7 +136,12 @@ struct KizunaSettingsView: View {
                             isShowingProfile = true
                         }
                     }
-                    if profileStore.profile.hasUsefulContent {
+                    LabeledContent(
+                        KizunaCopy.text(japanese: "年齢に合わせた安全設定", english: "Age-appropriate safety"),
+                        value: UserAgeSafetyStore.shared.context.tier.localizedDisplayName
+                    )
+                    if profileStore.profile.hasUsefulContent
+                        || UserAgeSafetyStore.shared.context.tier != .unknown {
                         Button(KizunaCopy.text(japanese: "プロフィールを消去", english: "Clear profile"), role: .destructive) {
                             showClearProfileAlert = true
                         }
@@ -773,8 +778,8 @@ struct KizunaSettingsView: View {
             Button(KizunaCopy.text(japanese: "キャンセル", english: "Cancel"), role: .cancel) {}
         } message: {
             Text(KizunaCopy.text(
-                japanese: "名前、プロフィール画像、標準アバターの選択、会話設定が消去されます。この操作は取り消せません。",
-                english: "Your name, profile photo, standard avatar selection, and conversation preference will be reset. This cannot be undone."
+                japanese: "名前、プロフィール画像、標準アバターの選択、会話設定、年齢に合わせた安全設定が消去されます。この操作は取り消せません。",
+                english: "Your name, profile photo, standard avatar selection, conversation preference, and age-appropriate safety setting will be reset. This cannot be undone."
             ))
         }
         .alert(

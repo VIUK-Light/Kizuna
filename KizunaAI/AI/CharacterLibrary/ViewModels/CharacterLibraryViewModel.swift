@@ -58,15 +58,26 @@ final class CharacterLibraryViewModel: ObservableObject {
     private let characterRepo: CharacterRepository
     private let templateRepo: TemplateRepository
     private let memoryRepo: MemoryRepository
+    private let ageSafetyPolicyProvider: () -> EffectiveSafetyPolicy
+    private var ageSafetyContextSubscription: AnyCancellable? = nil
 
     init(
         characterRepo: CharacterRepository? = nil,
         templateRepo: TemplateRepository? = nil,
-        memoryRepo: MemoryRepository? = nil
+        memoryRepo: MemoryRepository? = nil,
+        ageSafetyPolicyProvider: @escaping () -> EffectiveSafetyPolicy = { .current }
     ) {
         self.characterRepo = characterRepo ?? LocalJSONCharacterRepository()
         self.templateRepo = templateRepo ?? LocalJSONTemplateRepository()
         self.memoryRepo = memoryRepo ?? LocalJSONMemoryRepository()
+        self.ageSafetyPolicyProvider = ageSafetyPolicyProvider
+        self.ageSafetyContextSubscription = NotificationCenter.default.publisher(
+            for: .userAgeSafetyContextDidChange
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     func bootstrap() async {
@@ -217,7 +228,10 @@ final class CharacterLibraryViewModel: ObservableObject {
     }
 
     var filtered: [CharacterProfile] {
-        var result = allCharacters
+        let ageSafetyPolicy = ageSafetyPolicyProvider()
+        var result = allCharacters.filter {
+            ageSafetyPolicy.allows($0.safetyRating)
+        }
         if let g = groupFilter { result = result.filter { $0.category.group == g } }
         if let c = categoryFilter { result = result.filter { $0.category == c } }
         if let r = genreFilter { result = result.filter { $0.relationshipGenre == r } }

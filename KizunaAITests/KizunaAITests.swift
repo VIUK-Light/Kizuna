@@ -6831,6 +6831,202 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(preview, "stub response")
     }
 
+    func testUserAgeSafetyStorePersistsOnlyCoarseTierAndAssurance() throws {
+        let suiteName = "KizunaUserAgeSafetyTests.Persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = UserAgeSafetyStore(defaults: defaults)
+        XCTAssertEqual(store.context, .default)
+        XCTAssertTrue(store.update(.selfDeclared(.teen)))
+
+        let reloaded = UserAgeSafetyStore(defaults: defaults)
+        XCTAssertEqual(reloaded.context.tier, .teen)
+        XCTAssertEqual(reloaded.context.assuranceLevel, .selfDeclared)
+        let storedData = try XCTUnwrap(
+            defaults.data(forKey: "kizuna.userAgeSafetyContext.v1")
+        )
+        let storedJSON = try XCTUnwrap(String(data: storedData, encoding: .utf8)).lowercased()
+        XCTAssertFalse(storedJSON.contains("birth"))
+        XCTAssertFalse(storedJSON.contains("date"))
+
+        XCTAssertTrue(store.update(.selfDeclared(.unknown)))
+        XCTAssertNil(defaults.data(forKey: "kizuna.userAgeSafetyContext.v1"))
+        XCTAssertEqual(store.context, .default)
+    }
+
+    func testEffectiveAgeSafetyPolicyRatingMatrixAndUnknownDefault() {
+        let expected: [UserAgeTier: Set<SafetyRating>] = [
+            .unknown: [.general],
+            .child: [.general],
+            .teen: [.general, .teen],
+            .adult: [.general, .teen, .sensitive]
+        ]
+
+        for tier in UserAgeTier.allCases {
+            let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(tier))
+            for rating in SafetyRating.allCases {
+                XCTAssertEqual(
+                    policy.allows(rating),
+                    expected[tier]?.contains(rating) == true,
+                    "Unexpected availability for \(tier.rawValue) × \(rating.rawValue)"
+                )
+            }
+            XCTAssertFalse(policy.allows(.restricted))
+        }
+
+        let unknown = EffectiveSafetyPolicy.make(for: .default)
+        XCTAssertEqual(unknown.ageContext, .default)
+        XCTAssertEqual(unknown.dependencyProtectionLevel, .strict)
+    }
+
+    func testEffectiveAgeSafetyPolicyRatingAndDomainCrossProduct() {
+        let invariantDomainActions: [SafetyDomain: SafetyAction] = [
+            .crime: .block,
+            .selfHarm: .warn,
+            .personalInfo: .warn,
+            .harassment: .soften,
+            .medical: .warn,
+            .financial: .warn,
+            .legal: .warn
+        ]
+        let ageSpecificDomainActions: [UserAgeTier: [SafetyDomain: SafetyAction]] = [
+            .unknown: [.romance: .warn, .violence: .soften, .sexual: .block],
+            .child: [.romance: .warn, .violence: .soften, .sexual: .block],
+            .teen: [.romance: .allow, .violence: .warn, .sexual: .block],
+            .adult: [.romance: .allow, .violence: .warn, .sexual: .warn]
+        ]
+
+        for tier in UserAgeTier.allCases {
+            let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(tier))
+            for rating in SafetyRating.allCases {
+                for domain in SafetyDomain.allCases {
+                    let ratingAction: SafetyAction = policy.allows(rating) ? .allow : .block
+                    let domainAction = ageSpecificDomainActions[tier]?[domain]
+                        ?? invariantDomainActions[domain]
+                        ?? .allow
+                    let decision = policy.applying(
+                        to: SafetyDecision(riskDomains: [domain]),
+                        characterRating: rating
+                    )
+
+                    XCTAssertEqual(
+                        decision.action,
+                        max(ratingAction, domainAction),
+                        "Unexpected action for \(tier.rawValue) × \(rating.rawValue) × \(domain.rawValue)"
+                    )
+                    XCTAssertFalse(decision.addedPromptRules.isEmpty)
+                }
+            }
+        }
+    }
+
+    func testAgeTierChangeFiltersWithoutMutatingCharacterData() {
+        let characters = SafetyRating.allCases.map { rating in
+            CharacterProfile(
+                name: rating.rawValue,
+                displayName: rating.rawValue,
+                category: .chatBuddy,
+                relationshipGenre: .none,
+                safetyRating: rating
+            )
+        }
+        let originalIDs = characters.map(\.id)
+        let childPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.child))
+        let adultPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.adult))
+
+        XCTAssertEqual(characters.filter { childPolicy.allows($0.safetyRating) }.count, 1)
+        XCTAssertEqual(characters.filter { adultPolicy.allows($0.safetyRating) }.count, 3)
+        XCTAssertEqual(characters.map(\.id), originalIDs)
+        XCTAssertEqual(characters.count, 4)
+    }
+
+    func testSafetyPipelineAppliesOneAgePolicyToInputAndOutput() async {
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+        let pipeline = SafetyPipeline(policyProvider: { policy })
+        let character = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+
+        let input = await pipeline.evaluateInput("hello", character: character)
+        let output = await pipeline.evaluateOutput("hello", character: character)
+
+        XCTAssertEqual(input.action, .block)
+        XCTAssertEqual(output.action, .block)
+        XCTAssertEqual(input.addedPromptRules, output.addedPromptRules)
+    }
+
+    func testAgePolicyBlocksBeforeLocalAndRemotePersonaRouting() async throws {
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+        let character = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+
+        for model in PersonaGenerationModel.allCases {
+            let (_, store, thread) = try makePersonaServiceTestContext(character: character)
+            var routedThread = thread
+            routedThread.preferredGenerationModel = model
+            let runtime = PersonaTestRuntime(reply: "must not run")
+            let service = makeCharacterPersonaService(
+                character: character,
+                store: store,
+                runtime: runtime,
+                outputDecision: .allow,
+                policyProvider: { policy }
+            )
+
+            XCTAssertTrue(service.send("hello", to: routedThread))
+            await waitForPersonaService(service) { $0 == .idle }
+            XCTAssertEqual(
+                runtime.generatedRequestCount,
+                0,
+                "Safety boundary ran after provider routing for \(model.rawValue)"
+            )
+            XCTAssertEqual(store.thread(id: thread.id)?.messages.count, 2)
+        }
+    }
+
+    func testAgePolicyAlsoRunsBeforeLegacyPersonaProviderRouting() async throws {
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+        let inputChecker = PersonaTestInputSafetyChecker(
+            decision: SafetyDecision(riskDomains: [.sexual])
+        )
+
+        for model in PersonaGenerationModel.allCases {
+            let (_, store, thread) = try makePersonaServiceTestContext()
+            var routedThread = thread
+            routedThread.preferredGenerationModel = model
+            let runtime = PersonaTestRuntime(reply: "must not run")
+            let service = PersonaChatService(
+                runtime: runtime,
+                store: store,
+                safetyPipeline: SafetyPipeline(
+                    inputChecker: inputChecker,
+                    outputChecker: PersonaTestOutputSafetyChecker(decision: .allow),
+                    policyProvider: { policy }
+                ),
+                watchdogNanoseconds: 1_000_000_000
+            )
+
+            XCTAssertTrue(service.send("hello", to: routedThread))
+            await waitForPersonaService(service) { $0 == .idle }
+            XCTAssertEqual(
+                runtime.generatedRequestCount,
+                0,
+                "Legacy safety boundary ran after provider routing for \(model.rawValue)"
+            )
+            XCTAssertEqual(store.thread(id: thread.id)?.messages.count, 2)
+        }
+    }
+
     func testStorySessionModelPreferenceMigratesFromWorldKey() {
         let defaults = UserDefaults.standard
         let world = StoryWorld(
@@ -7538,13 +7734,15 @@ final class KizunaAITests: XCTestCase {
         runtime: PersonaReplyGenerating,
         outputDecision: SafetyDecision,
         characterRepository: CharacterRepository? = nil,
+        policyProvider: @escaping () -> EffectiveSafetyPolicy = { .current },
         watchdogNanoseconds: UInt64 = 1_000_000_000
     ) -> PersonaChatService {
         PersonaChatService(
             runtime: runtime,
             store: store,
             safetyPipeline: SafetyPipeline(
-                outputChecker: PersonaTestOutputSafetyChecker(decision: outputDecision)
+                outputChecker: PersonaTestOutputSafetyChecker(decision: outputDecision),
+                policyProvider: policyProvider
             ),
             characterRepo: characterRepository ?? PersonaTestCharacterRepository(character: character),
             memoryRepo: PersonaTestMemoryRepository(),
@@ -7722,6 +7920,18 @@ private final class PersonaTestRuntime: PersonaReplyGenerating, @unchecked Senda
 }
 
 private final class PersonaTestOutputSafetyChecker: OutputSafetyChecking, @unchecked Sendable {
+    let decision: SafetyDecision
+
+    init(decision: SafetyDecision) {
+        self.decision = decision
+    }
+
+    func evaluate(_ text: String, character: CharacterProfile) async -> SafetyDecision {
+        decision
+    }
+}
+
+private final class PersonaTestInputSafetyChecker: InputSafetyChecking, @unchecked Sendable {
     let decision: SafetyDecision
 
     init(decision: SafetyDecision) {
