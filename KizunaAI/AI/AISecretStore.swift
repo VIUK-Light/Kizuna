@@ -28,6 +28,36 @@ enum AIModelRole: String, Codable, CaseIterable, Hashable, Sendable {
     case safety
 }
 
+enum AIEndpointPolicy {
+    static func isLocalEndpoint(_ rawValue: String?) -> Bool {
+        guard let rawValue,
+              let url = URL(string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let host = url.host?.lowercased() else {
+            return false
+        }
+        return isLocalHost(host)
+    }
+
+    static func isLocalEndpoint(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return isLocalHost(host)
+    }
+
+    static func requiresAPIKey(providerID: AIProviderID, endpoint: String?) -> Bool {
+        guard providerID == .openAICompatible || providerID == .anthropic else {
+            return false
+        }
+        return !isLocalEndpoint(endpoint)
+    }
+
+    private static func isLocalHost(_ host: String) -> Bool {
+        host == "localhost"
+            || host == "127.0.0.1"
+            || host == "::1"
+            || host.hasSuffix(".localhost")
+    }
+}
+
 /// The default settings surface stays intent-based. Raw sampler/runtime
 /// values are persisted separately and are only used while Advanced mode is
 /// selected.

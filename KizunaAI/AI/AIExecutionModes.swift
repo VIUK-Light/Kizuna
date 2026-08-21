@@ -1466,9 +1466,6 @@ private final class OpenAICompatibleProvider: AIProvider {
         request: AIGenerationRequest,
         configuration: AIModelConfiguration
     ) async throws -> AIGenerationResponse {
-        guard let apiKey = AISecretStore.shared.providerAPIKey(for: configuration.id) else {
-            throw AIProviderError.missingCredential
-        }
         let endpoint = try chatCompletionsURL(configuration.endpoint)
         var payload: [String: Any] = [
             "model": configuration.identity.modelID,
@@ -1481,12 +1478,17 @@ private final class OpenAICompatibleProvider: AIProvider {
         ]
         if let topP = request.topP { payload["top_p"] = topP }
         if let seed = request.seed { payload["seed"] = seed }
+        var headers = [
+            "Content-Type": "application/json"
+        ]
+        if let apiKey = AISecretStore.shared.providerAPIKey(for: configuration.id) {
+            headers["Authorization"] = "Bearer \(apiKey)"
+        } else if !AIEndpointPolicy.isLocalEndpoint(endpoint) {
+            throw AIProviderError.missingCredential
+        }
         let response = try await performJSONRequest(
             endpoint: endpoint,
-            headers: [
-                "Authorization": "Bearer \(apiKey)",
-                "Content-Type": "application/json"
-            ],
+            headers: headers,
             payload: payload,
             configuration: configuration,
             responseParser: Self.parseResponse
@@ -1584,7 +1586,9 @@ private func endpointURL(_ rawEndpoint: String?, defaultValue: String) throws ->
     let raw = (rawEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
         ? rawEndpoint!
         : defaultValue
-    guard let url = URL(string: raw), url.scheme == "https", url.host != nil else {
+    guard let url = URL(string: raw),
+          url.host != nil,
+          url.scheme == "https" || (url.scheme == "http" && AIEndpointPolicy.isLocalEndpoint(url)) else {
         throw AIProviderError.invalidEndpoint
     }
     return url

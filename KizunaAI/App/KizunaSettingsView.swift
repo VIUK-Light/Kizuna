@@ -2016,7 +2016,7 @@ private struct AIModelRegistryEditorView: View {
 
                 Section(KizunaCopy.text(japanese: "認証", english: "Credentials")) {
                     SecureField(
-                        Self.requiresAPIKey(for: provider)
+                        Self.requiresAPIKey(for: provider, endpoint: endpoint)
                             ? KizunaCopy.text(japanese: "APIキー（必須・変更時のみ入力）", english: "API key (required; enter only to change)")
                             : KizunaCopy.text(japanese: "APIキー（変更時のみ入力）", english: "API key (enter only to change)"),
                         text: $apiKey
@@ -2067,7 +2067,7 @@ private struct AIModelRegistryEditorView: View {
         }
 
         let hasExistingAPIKey = AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
-        if Self.requiresAPIKey(for: provider)
+        if Self.requiresAPIKey(for: provider, endpoint: trimmedEndpoint)
             && apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !hasExistingAPIKey {
             validationMessage = KizunaCopy.text(
@@ -2157,8 +2157,8 @@ private struct AIModelRegistryEditorView: View {
         }
     }
 
-    private static func requiresAPIKey(for provider: AIProviderID) -> Bool {
-        provider == .openAICompatible || provider == .anthropic
+    private static func requiresAPIKey(for provider: AIProviderID, endpoint: String) -> Bool {
+        AIEndpointPolicy.requiresAPIKey(providerID: provider, endpoint: endpoint)
     }
 }
 

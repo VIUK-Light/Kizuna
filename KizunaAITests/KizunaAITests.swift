@@ -6659,6 +6659,24 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testLocalCompatibleEndpointCanOmitCredentialSafely() {
+        XCTAssertTrue(AIEndpointPolicy.isLocalEndpoint("http://127.0.0.1:1234/v1"))
+        XCTAssertTrue(AIEndpointPolicy.isLocalEndpoint("https://model.localhost/v1"))
+        XCTAssertFalse(AIEndpointPolicy.isLocalEndpoint("http://remote.example/v1"))
+        XCTAssertFalse(
+            AIEndpointPolicy.requiresAPIKey(
+                providerID: .openAICompatible,
+                endpoint: "http://localhost:1234/v1"
+            )
+        )
+        XCTAssertTrue(
+            AIEndpointPolicy.requiresAPIKey(
+                providerID: .openAICompatible,
+                endpoint: "https://api.example/v1"
+            )
+        )
+    }
+
     func testAIModelTuningDefaultsToSimpleAutomaticAndPersistsSelection() throws {
         let suiteName = "KizunaAIModelTuningTests.Defaults.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
