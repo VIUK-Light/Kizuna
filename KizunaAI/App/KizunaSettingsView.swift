@@ -48,6 +48,8 @@ struct KizunaSettingsView: View {
     @State private var showUnsavedChangesAlert = false
     @State private var isShowingProfile = false
     @State private var isImportingLocalModel = false
+    @State private var modelSettingsMode = AIModelTuningStore.shared.preferences.mode
+    @State private var simpleModelPreset = AIModelTuningStore.shared.preferences.simplePreset
     @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
 #if DEBUG
     @AppStorage("kizuna.debug.restSuggestion.enabled") private var debugRestSuggestionEnabled = false
@@ -143,6 +145,69 @@ struct KizunaSettingsView: View {
                     Text(KizunaCopy.text(japanese: "プロフィール", english: "Profile"))
                 }
 
+                Section(KizunaCopy.text(japanese: "AIの動作", english: "AI behavior")) {
+                    if modelSettingsMode == .simple {
+                        Picker(
+                            KizunaCopy.text(japanese: "使い方", english: "Preference"),
+                            selection: $simpleModelPreset
+                        ) {
+                            ForEach(AISimpleModelPreset.allCases, id: \.self) { preset in
+                                Text(simplePresetName(preset)).tag(preset)
+                            }
+                        }
+                        .onChange(of: simpleModelPreset) { _, newValue in
+                            _ = AIModelTuningStore.shared.setSimplePreset(newValue)
+                        }
+
+                        Text(simplePresetDetail(simpleModelPreset))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Button {
+                            modelSettingsMode = .advanced
+                            _ = AIModelTuningStore.shared.setMode(.advanced)
+                        } label: {
+                            Label(
+                                KizunaCopy.text(japanese: "詳細なモデル設定を開く", english: "Open advanced model settings"),
+                                systemImage: "slider.horizontal.3"
+                            )
+                        }
+                    } else {
+                        LabeledContent(
+                            KizunaCopy.text(japanese: "モード", english: "Mode"),
+                            value: KizunaCopy.text(japanese: "詳細設定", english: "Advanced")
+                        )
+                        NavigationLink {
+                            AIAdvancedModelSettingsView()
+                        } label: {
+                            Label(
+                                KizunaCopy.text(japanese: "用途別の生成・実行設定", english: "Generation and runtime by use case"),
+                                systemImage: "slider.horizontal.3"
+                            )
+                        }
+                        Button {
+                            modelSettingsMode = .simple
+                            _ = AIModelTuningStore.shared.setMode(.simple)
+                        } label: {
+                            Label(
+                                KizunaCopy.text(japanese: "かんたん設定に戻る", english: "Return to simple settings"),
+                                systemImage: "wand.and.stars"
+                            )
+                        }
+                        Button {
+                            _ = AIModelTuningStore.shared.resetToRecommended()
+                            modelSettingsMode = .simple
+                            simpleModelPreset = .automatic
+                        } label: {
+                            Label(
+                                KizunaCopy.text(japanese: "Kizuna推奨設定に戻す", english: "Restore Kizuna recommendations"),
+                                systemImage: "arrow.counterclockwise"
+                            )
+                        }
+                    }
+                }
+
+                if modelSettingsMode == .advanced {
                 Section(KizunaCopy.text(japanese: "NAGI（Gemma4 31B API）", english: "NAGI (Gemma4 31B API)")) {
                     SecureField(KizunaCopy.text(japanese: "Google AI APIキー", english: "Google AI API key"), text: $nagiAPIKey)
                         .textContentType(.password)
@@ -578,6 +643,7 @@ struct KizunaSettingsView: View {
                     }
 
                     }
+                }
 
 #if DEBUG
                 Section(KizunaCopy.text(japanese: "デバッグ", english: "Debug")) {
@@ -788,6 +854,9 @@ struct KizunaSettingsView: View {
             .viukAdaptiveSheetSizing(minWidth: 560, minHeight: 640)
         }
         .onAppear {
+            let tuningPreferences = AIModelTuningStore.shared.preferences
+            modelSettingsMode = tuningPreferences.mode
+            simpleModelPreset = tuningPreferences.simplePreset
             nagiAPIKey = AISecretStore.shared.string(for: .gemmaWebReaderAPIKey) ?? ""
             nagiAvailability = StoryGemma31BAPIService.shared.availability
             registryConfigurations = AIModelRegistry.shared.configurations
@@ -1256,6 +1325,459 @@ struct KizunaSettingsView: View {
 
     private var selectedStandardModelRequiresToken: Bool {
         selectedStandardModelURL.contains("google/gemma-3n")
+    }
+
+    private func simplePresetName(_ preset: AISimpleModelPreset) -> String {
+        switch preset {
+        case .automatic:
+            return KizunaCopy.text(japanese: "おまかせ", english: "Automatic")
+        case .stable:
+            return KizunaCopy.text(japanese: "安定", english: "Stable")
+        case .balanced:
+            return KizunaCopy.text(japanese: "バランス", english: "Balanced")
+        case .creative:
+            return KizunaCopy.text(japanese: "自由", english: "Creative")
+        case .fast:
+            return KizunaCopy.text(japanese: "高速", english: "Fast")
+        }
+    }
+
+    private func simplePresetDetail(_ preset: AISimpleModelPreset) -> String {
+        switch preset {
+        case .automatic:
+            return KizunaCopy.text(
+                japanese: "端末・モデル・用途に合わせてKizunaが推奨値を選びます。",
+                english: "Kizuna chooses recommended values for the device, model, and use case."
+            )
+        case .stable:
+            return KizunaCopy.text(
+                japanese: "回答の揺らぎを抑え、安定性を優先します。",
+                english: "Reduces variation and prioritizes consistent replies."
+            )
+        case .balanced:
+            return KizunaCopy.text(
+                japanese: "安定性と表現の幅を両立します。",
+                english: "Balances consistency with expressive range."
+            )
+        case .creative:
+            return KizunaCopy.text(
+                japanese: "表現の幅と意外性を広げます。",
+                english: "Allows broader and less predictable expression."
+            )
+        case .fast:
+            return KizunaCopy.text(
+                japanese: "短めの応答と軽い設定で速度を優先します。",
+                english: "Prioritizes speed with shorter replies and lighter settings."
+            )
+        }
+    }
+}
+
+private struct AIAdvancedModelSettingsView: View {
+    @State private var resetMessage: String? = nil
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(AIModelTuningScope.allCases, id: \.self) { scope in
+                    NavigationLink {
+                        AIAdvancedScopeSettingsView(scope: scope)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(scopeName(scope))
+                            Text(scopeDetail(scope))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } header: {
+                Text(KizunaCopy.text(japanese: "用途別設定", english: "Settings by use case"))
+            } footer: {
+                Text(KizunaCopy.text(
+                    japanese: "未指定の値はKizunaの安全な内蔵Presetを継承します。モデルを切り替えても用途別設定は保持され、非対応の値は送信されません。",
+                    english: "Unset values inherit Kizuna's built-in recommendations. Use-case settings survive model changes, and unsupported values are not sent."
+                ))
+            }
+
+            Section {
+                Button {
+                    _ = AIModelTuningStore.shared.resetAdvancedOverrides()
+                    resetMessage = KizunaCopy.text(
+                        japanese: "すべての詳細設定をKizuna推奨値へ戻しました。",
+                        english: "All advanced overrides were restored to Kizuna recommendations."
+                    )
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "Kizuna推奨設定に戻す", english: "Restore Kizuna recommendations"),
+                        systemImage: "arrow.counterclockwise"
+                    )
+                }
+                if let resetMessage {
+                    Text(resetMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle(KizunaCopy.text(japanese: "詳細なモデル設定", english: "Advanced model settings"))
+    }
+
+    private func scopeName(_ scope: AIModelTuningScope) -> String {
+        switch scope {
+        case .persona: return "Persona"
+        case .story: return "Story"
+        case .auxiliary: return KizunaCopy.text(japanese: "補助AI / Memory", english: "Auxiliary / Memory")
+        }
+    }
+
+    private func scopeDetail(_ scope: AIModelTuningScope) -> String {
+        switch scope {
+        case .persona:
+            return KizunaCopy.text(japanese: "キャラクター会話", english: "Character conversations")
+        case .story:
+            return KizunaCopy.text(japanese: "物語本文と雛形生成", english: "Story turns and template generation")
+        case .auxiliary:
+            return KizunaCopy.text(japanese: "分類・記憶・Scene補助", english: "Classification, memory, and scene helpers")
+        }
+    }
+}
+
+private struct AIAdvancedScopeSettingsView: View {
+    let scope: AIModelTuningScope
+    private let configuration: AIModelConfiguration?
+    @State private var overrides: AIGenerationOverrides
+
+    init(scope: AIModelTuningScope) {
+        self.scope = scope
+        let configurations = AIModelRegistry.shared.configurations(for: scope.routingRole)
+        if let first = configurations.first {
+            configuration = first
+        } else {
+            configuration = Self.fallbackConfiguration(for: scope)
+        }
+        _overrides = State(
+            initialValue: AIModelTuningStore.shared.preferences.overrides(for: scope)
+        )
+    }
+
+    private var providerID: AIProviderID {
+        configuration?.identity.providerID ?? .localRuntime
+    }
+
+    private var capabilities: AIProviderParameterCapabilities {
+        .capabilities(for: providerID)
+    }
+
+    private var temperatureMaximum: Double {
+        providerID == .anthropic ? 1.0 : 2.0
+    }
+
+    var body: some View {
+        Form {
+            Section(KizunaCopy.text(japanese: "現在の経路", english: "Current route")) {
+                LabeledContent(
+                    KizunaCopy.text(japanese: "用途", english: "Use case"),
+                    value: scopeDisplayName
+                )
+                if let configuration {
+                    LabeledContent("Provider", value: providerDisplayName(configuration.identity.providerID))
+                    LabeledContent(
+                        KizunaCopy.text(japanese: "モデル", english: "Model"),
+                        value: configuration.identity.displayName
+                    )
+                } else {
+                    Text(KizunaCopy.text(
+                        japanese: "この用途に有効なモデルがありません。先にAI model registryで追加してください。",
+                        english: "No enabled model is configured for this use case. Add one in the AI model registry first."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
+                parameterToggle(
+                    KizunaCopy.text(japanese: "Temperatureを上書き", english: "Override temperature"),
+                    parameter: .temperature,
+                    isOn: optionalEnabled(\.temperature, defaultValue: 0.72)
+                )
+                if overrides.temperature != nil {
+                    Slider(
+                        value: optionalValue(\.temperature, defaultValue: 0.72),
+                        in: 0...temperatureMaximum,
+                        step: 0.05
+                    )
+                    LabeledContent("Temperature", value: String(format: "%.2f", overrides.temperature ?? 0.72))
+                }
+
+                if capabilities.supports(.topP) {
+                    parameterToggle("Top P", parameter: .topP, isOn: optionalEnabled(\.topP, defaultValue: 0.92))
+                    if overrides.topP != nil {
+                        Slider(value: optionalValue(\.topP, defaultValue: 0.92), in: 0...1, step: 0.01)
+                        LabeledContent("Top P", value: String(format: "%.2f", overrides.topP ?? 0.92))
+                    }
+                } else {
+                    unsupportedRow("Top P")
+                }
+
+                if capabilities.supports(.topK) {
+                    parameterToggle("Top K", parameter: .topK, isOn: optionalEnabled(\.topK, defaultValue: 40))
+                    if overrides.topK != nil {
+                        Stepper(value: optionalValue(\.topK, defaultValue: 40), in: 1...200) {
+                            LabeledContent("Top K", value: "\(overrides.topK ?? 40)")
+                        }
+                    }
+                } else {
+                    unsupportedRow("Top K")
+                }
+
+                parameterToggle(
+                    KizunaCopy.text(japanese: "最大出力Token", english: "Maximum output tokens"),
+                    parameter: .maxOutputTokens,
+                    isOn: optionalEnabled(\.maxOutputTokens, defaultValue: 1_024)
+                )
+                if overrides.maxOutputTokens != nil {
+                    Stepper(
+                        value: optionalValue(\.maxOutputTokens, defaultValue: 1_024),
+                        in: 64...32_768,
+                        step: 64
+                    ) {
+                        LabeledContent(
+                            KizunaCopy.text(japanese: "最大出力", english: "Maximum output"),
+                            value: "\(overrides.maxOutputTokens ?? 1_024)"
+                        )
+                    }
+                }
+
+                if capabilities.supports(.seed) {
+                    parameterToggle("Seed", parameter: .seed, isOn: optionalEnabled(\.seed, defaultValue: 24))
+                    if overrides.seed != nil {
+                        Stepper(value: optionalValue(\.seed, defaultValue: 24), in: 0...999_999) {
+                            LabeledContent("Seed", value: "\(overrides.seed ?? 24)")
+                        }
+                    }
+                } else {
+                    unsupportedRow("Seed")
+                }
+            } header: {
+                Text(KizunaCopy.text(japanese: "生成", english: "Generation"))
+            } footer: {
+                Text(KizunaCopy.text(
+                    japanese: "上書きをOFFにすると、その用途に合わせた内蔵値へ戻ります。",
+                    english: "Turn an override off to inherit the built-in value for that use case."
+                ))
+            }
+
+            if providerID == .localRuntime {
+                Section {
+                    runtimeParameterToggle(
+                        KizunaCopy.text(japanese: "Context sizeを上書き", english: "Override context size"),
+                        parameter: .contextSize,
+                        isOn: runtimeEnabled(\.contextSize, defaultValue: 8_192)
+                    )
+                    if overrides.localRuntime?.contextSize != nil {
+                        Stepper(
+                            value: runtimeValue(\.contextSize, defaultValue: 8_192),
+                            in: 1_024...131_072,
+                            step: 1_024
+                        ) {
+                            LabeledContent("Context", value: "\(overrides.localRuntime?.contextSize ?? 8_192)")
+                        }
+                    }
+
+                    runtimeParameterToggle(
+                        KizunaCopy.text(japanese: "Batch sizeを上書き", english: "Override batch size"),
+                        parameter: .batchSize,
+                        isOn: runtimeEnabled(\.batchSize, defaultValue: 128)
+                    )
+                    if overrides.localRuntime?.batchSize != nil {
+                        Stepper(
+                            value: runtimeValue(\.batchSize, defaultValue: 128),
+                            in: 1...2_048,
+                            step: 16
+                        ) {
+                            LabeledContent("Batch", value: "\(overrides.localRuntime?.batchSize ?? 128)")
+                        }
+                    }
+
+                    runtimeParameterToggle(
+                        KizunaCopy.text(japanese: "Threadsを上書き", english: "Override threads"),
+                        parameter: .threads,
+                        isOn: runtimeEnabled(\.threadCount, defaultValue: 4)
+                    )
+                    if overrides.localRuntime?.threadCount != nil {
+                        Stepper(value: runtimeValue(\.threadCount, defaultValue: 4), in: 1...64) {
+                            LabeledContent("Threads", value: "\(overrides.localRuntime?.threadCount ?? 4)")
+                        }
+                    }
+
+                    runtimeParameterToggle(
+                        KizunaCopy.text(japanese: "GPU layersを上書き", english: "Override GPU layers"),
+                        parameter: .gpuLayers,
+                        isOn: runtimeEnabled(\.gpuLayers, defaultValue: 24)
+                    )
+                    if overrides.localRuntime?.gpuLayers != nil {
+                        Stepper(value: runtimeValue(\.gpuLayers, defaultValue: 24), in: 0...999) {
+                            LabeledContent("GPU layers", value: "\(overrides.localRuntime?.gpuLayers ?? 24)")
+                        }
+                    }
+
+                    runtimeParameterToggle(
+                        KizunaCopy.text(japanese: "Flash Attentionを上書き", english: "Override Flash Attention"),
+                        parameter: .flashAttention,
+                        isOn: runtimeEnabled(\.flashAttentionEnabled, defaultValue: true)
+                    )
+                    if overrides.localRuntime?.flashAttentionEnabled != nil {
+                        Toggle(
+                            "Flash Attention",
+                            isOn: runtimeValue(\.flashAttentionEnabled, defaultValue: true)
+                        )
+                    }
+                } header: {
+                    Text(KizunaCopy.text(japanese: "ローカル実行", english: "Local runtime"))
+                } footer: {
+                    Text(KizunaCopy.text(
+                        japanese: "Context / Batch / Threads / GPU設定は、選択中のローカルエンジンが対応する場合だけ適用されます。LiteRT-LMなど非対応の項目は安全に無視されます。",
+                        english: "Context, batch, thread, and GPU values apply only when the selected local engine supports them. Unsupported fields, including some LiteRT-LM options, are safely ignored."
+                    ))
+                }
+            }
+
+            Section {
+                Button {
+                    overrides = AIGenerationOverrides()
+                    _ = AIModelTuningStore.shared.setOverrides(overrides, for: scope)
+                } label: {
+                    Label(
+                        KizunaCopy.text(japanese: "この用途をKizuna推奨値に戻す", english: "Restore recommendations for this use case"),
+                        systemImage: "arrow.counterclockwise"
+                    )
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle(scopeDisplayName)
+        .onChange(of: overrides) { _, newValue in
+            _ = AIModelTuningStore.shared.setOverrides(newValue, for: scope)
+        }
+    }
+
+    @ViewBuilder
+    private func parameterToggle(
+        _ title: String,
+        parameter: AIModelTuningParameter,
+        isOn: Binding<Bool>
+    ) -> some View {
+        Toggle(title, isOn: isOn)
+            .disabled(!capabilities.supports(parameter))
+    }
+
+    @ViewBuilder
+    private func runtimeParameterToggle(
+        _ title: String,
+        parameter: AIModelTuningParameter,
+        isOn: Binding<Bool>
+    ) -> some View {
+        Toggle(title, isOn: isOn)
+            .disabled(!capabilities.supports(parameter))
+    }
+
+    @ViewBuilder
+    private func unsupportedRow(_ name: String) -> some View {
+        LabeledContent(
+            name,
+            value: KizunaCopy.text(japanese: "このProviderでは非対応", english: "Not supported by this provider")
+        )
+            .foregroundStyle(.secondary)
+    }
+
+    private func optionalEnabled<Value>(
+        _ keyPath: WritableKeyPath<AIGenerationOverrides, Value?>,
+        defaultValue: Value
+    ) -> Binding<Bool> {
+        Binding(
+            get: { overrides[keyPath: keyPath] != nil },
+            set: { enabled in
+                overrides[keyPath: keyPath] = enabled ? defaultValue : nil
+            }
+        )
+    }
+
+    private func optionalValue<Value>(
+        _ keyPath: WritableKeyPath<AIGenerationOverrides, Value?>,
+        defaultValue: Value
+    ) -> Binding<Value> {
+        Binding(
+            get: { overrides[keyPath: keyPath] ?? defaultValue },
+            set: { overrides[keyPath: keyPath] = $0 }
+        )
+    }
+
+    private func runtimeEnabled<Value>(
+        _ keyPath: WritableKeyPath<AILocalRuntimeOverrides, Value?>,
+        defaultValue: Value
+    ) -> Binding<Bool> {
+        Binding(
+            get: {
+                guard let runtime = overrides.localRuntime else { return false }
+                return runtime[keyPath: keyPath] != nil
+            },
+            set: { enabled in
+                var runtime = overrides.localRuntime ?? AILocalRuntimeOverrides()
+                runtime[keyPath: keyPath] = enabled ? defaultValue : nil
+                overrides.localRuntime = runtime.isEmpty ? nil : runtime
+            }
+        )
+    }
+
+    private func runtimeValue<Value>(
+        _ keyPath: WritableKeyPath<AILocalRuntimeOverrides, Value?>,
+        defaultValue: Value
+    ) -> Binding<Value> {
+        Binding(
+            get: {
+                guard let runtime = overrides.localRuntime else { return defaultValue }
+                return runtime[keyPath: keyPath] ?? defaultValue
+            },
+            set: { value in
+                var runtime = overrides.localRuntime ?? AILocalRuntimeOverrides()
+                runtime[keyPath: keyPath] = value
+                overrides.localRuntime = runtime
+            }
+        )
+    }
+
+    private var scopeDisplayName: String {
+        switch scope {
+        case .persona: return "Persona"
+        case .story: return "Story"
+        case .auxiliary: return KizunaCopy.text(japanese: "補助AI / Memory", english: "Auxiliary / Memory")
+        }
+    }
+
+    private func providerDisplayName(_ provider: AIProviderID) -> String {
+        switch provider {
+        case .localRuntime: return "Local runtime"
+        case .googleGenerativeLanguage: return "Google Generative Language"
+        case .openAICompatible: return "OpenAI-compatible"
+        case .anthropic: return "Anthropic"
+        }
+    }
+
+    private static func fallbackConfiguration(for scope: AIModelTuningScope) -> AIModelConfiguration? {
+        let registry = AIModelRegistry.shared
+        switch scope {
+        case .persona:
+            return registry.configurations(for: .persona).first
+        case .story:
+            return registry.configurations(for: .story).first
+        case .auxiliary:
+            return registry.configurations(for: .memoryExtraction).first
+                ?? registry.configurations(for: .sceneSummary).first
+                ?? registry.configurations(for: .safety).first
+        }
     }
 }
 

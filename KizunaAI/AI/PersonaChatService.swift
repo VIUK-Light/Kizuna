@@ -351,7 +351,8 @@ extension PersonaReplyGenerating {
         )
         guard let response = try? await AIModelRouter.shared.generate(
             request: request,
-            configurationID: configurationID
+            configurationID: configurationID,
+            role: .persona
         ) else {
             return LocalAssistantGenerationResult(text: nil, modelIdentity: nil)
         }

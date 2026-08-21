@@ -2213,6 +2213,28 @@ final class StorySessionService: ObservableObject {
                 availability: availability,
                 selectedModelURL: availableModelURL
             )
+            let localConfiguration = AIModelRegistry.shared
+                .configurations(for: .story)
+                .first(where: { $0.identity.providerID == .localRuntime })
+                ?? AIModelConfiguration(
+                    identity: AIModelIdentity(
+                        providerID: .localRuntime,
+                        modelID: "local-artifact",
+                        displayName: "Local runtime"
+                    ),
+                    roles: [.story]
+                )
+            let tunedRequest = AIModelTuningStore.shared.resolvedRequest(
+                AIGenerationRequest(
+                    systemPrompt: systemPrompt,
+                    userPrompt: effectiveUserText,
+                    temperature: 0.72,
+                    maxOutputTokens: 1_024,
+                    seed: seedOverride.map(Int.init)
+                ),
+                role: .story,
+                configuration: localConfiguration
+            )
             let generation = await LocalAssistantRuntimeBridge.shared.generateReply(
                 prompt: effectiveUserText,
                 contextPrompt: nil,
@@ -2226,7 +2248,12 @@ final class StorySessionService: ObservableObject {
                 overrideSystemPrompt: systemPrompt,
                 initialMessages: localConversationHistory,
                 overrideModelURL: availableModelURL,
-                seedOverride: seedOverride,
+                temperatureOverride: tunedRequest.localSamplerOverrides?.temperature.map(Float.init),
+                topPOverride: tunedRequest.localSamplerOverrides?.topP.map(Float.init),
+                topKOverride: tunedRequest.localSamplerOverrides?.topK,
+                maxOutputTokensOverride: tunedRequest.localSamplerOverrides?.maxOutputTokens,
+                seedOverride: tunedRequest.seed.map(UInt32.init),
+                runtimeOverrides: tunedRequest.localRuntimeOverrides,
                 generationID: generationID,
                 onUpdate: { @MainActor [weak self] update in
                     self?.handleStreamUpdate(update, generationID: generationID)

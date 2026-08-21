@@ -185,6 +185,8 @@ final class StoryGemma31BAPIService {
         systemPrompt: String,
         userPrompt: String,
         temperature: Double = 0.72,
+        topP: Double = 0.92,
+        topK: Int? = nil,
         maxOutputTokens: Int = 4096,
         seed: Int? = nil,
         apiKey overrideAPIKey: String? = nil
@@ -196,6 +198,8 @@ final class StoryGemma31BAPIService {
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
             temperature: temperature,
+            topP: topP,
+            topK: topK,
             maxOutputTokens: maxOutputTokens,
             thinkingLevel: "high",
             seed: seed
@@ -231,6 +235,8 @@ final class StoryGemma31BAPIService {
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
             temperature: temperature,
+            topP: topP,
+            topK: topK,
             maxOutputTokens: max(maxOutputTokens, 1_536),
             thinkingLevel: "minimal",
             seed: seed
@@ -271,6 +277,8 @@ final class StoryGemma31BAPIService {
         systemPrompt: String,
         userPrompt: String,
         temperature: Double = 0.72,
+        topP: Double = 0.92,
+        topK: Int? = nil,
         maxOutputTokens: Int = 4096,
         seed: Int? = nil,
         apiKey overrideAPIKey: String? = nil,
@@ -284,6 +292,8 @@ final class StoryGemma31BAPIService {
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
             temperature: temperature,
+            topP: topP,
+            topK: topK,
             maxOutputTokens: maxOutputTokens,
             thinkingLevel: "high",
             seed: seed
@@ -330,6 +340,8 @@ final class StoryGemma31BAPIService {
         systemPrompt: String,
         userPrompt: String,
         temperature: Double,
+        topP: Double,
+        topK: Int?,
         maxOutputTokens: Int,
         thinkingLevel: String,
         seed: Int?
@@ -341,6 +353,8 @@ final class StoryGemma31BAPIService {
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
             temperature: temperature,
+            topP: topP,
+            topK: topK,
             maxOutputTokens: maxOutputTokens,
             thinkingLevel: thinkingLevel,
             seed: seed

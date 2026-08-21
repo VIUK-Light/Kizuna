@@ -908,6 +908,34 @@ struct ThoughtStep: Identifiable, Codable, Hashable {
 
 // MARK: - Provider-neutral generation contract
 
+/// Values explicitly selected for the local sampler. Keeping these optional
+/// prevents Automatic mode from replacing the model's built-in role preset.
+struct AILocalSamplerOverrides: Equatable, Sendable {
+    let temperature: Double?
+    let topP: Double?
+    let topK: Int?
+    let maxOutputTokens: Int?
+
+    init(
+        temperature: Double? = nil,
+        topP: Double? = nil,
+        topK: Int? = nil,
+        maxOutputTokens: Int? = nil
+    ) {
+        self.temperature = temperature
+        self.topP = topP
+        self.topK = topK
+        self.maxOutputTokens = maxOutputTokens
+    }
+
+    var isEmpty: Bool {
+        temperature == nil
+            && topP == nil
+            && topK == nil
+            && maxOutputTokens == nil
+    }
+}
+
 /// A provider-neutral request used by the model router. Feature-specific
 /// prompt builders remain outside this type; providers only receive the
 /// final system/user boundary and generation controls.
@@ -915,8 +943,14 @@ struct AIGenerationRequest: Sendable {
     let systemPrompt: String
     let userPrompt: String
     let temperature: Double
+    let topP: Double?
+    let topK: Int?
     let maxOutputTokens: Int
     let seed: Int?
+    /// Only values explicitly selected by the user are forwarded here. This
+    /// keeps Automatic mode on the local model's built-in per-use-case preset.
+    let localSamplerOverrides: AILocalSamplerOverrides?
+    let localRuntimeOverrides: AILocalRuntimeOverrides?
     let onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)?
     let onModelResolved: (@MainActor @Sendable (AIModelIdentity) -> Void)?
 
@@ -924,18 +958,167 @@ struct AIGenerationRequest: Sendable {
         systemPrompt: String,
         userPrompt: String,
         temperature: Double = 0.72,
+        topP: Double? = nil,
+        topK: Int? = nil,
         maxOutputTokens: Int = 1024,
         seed: Int? = nil,
+        localSamplerOverrides: AILocalSamplerOverrides? = nil,
+        localRuntimeOverrides: AILocalRuntimeOverrides? = nil,
         onUpdate: (@MainActor @Sendable (LocalAssistantStructuredTurnUpdate) -> Void)? = nil,
         onModelResolved: (@MainActor @Sendable (AIModelIdentity) -> Void)? = nil
     ) {
         self.systemPrompt = systemPrompt
         self.userPrompt = userPrompt
         self.temperature = temperature
+        self.topP = topP
+        self.topK = topK
         self.maxOutputTokens = max(1, maxOutputTokens)
         self.seed = seed
+        self.localSamplerOverrides = localSamplerOverrides
+        self.localRuntimeOverrides = localRuntimeOverrides
         self.onUpdate = onUpdate
         self.onModelResolved = onModelResolved
+    }
+}
+
+extension AIModelTuningStore {
+    /// Resolve built-in request defaults through the selected simple preset or
+    /// per-use-case advanced overrides, then remove fields unsupported by the
+    /// provider selected for this turn.
+    func resolvedRequest(
+        _ request: AIGenerationRequest,
+        role: AIModelRole,
+        configuration: AIModelConfiguration
+    ) -> AIGenerationRequest {
+        let stored = preferences
+        let overrides: AIGenerationOverrides
+        switch stored.mode {
+        case .simple:
+            overrides = Self.simpleOverrides(for: stored.simplePreset, request: request)
+        case .advanced:
+            overrides = stored.overrides(for: AIModelTuningScope(role: role))
+        }
+
+        let providerID = configuration.identity.providerID
+        let capabilities = AIProviderParameterCapabilities.capabilities(for: providerID)
+        let temperatureMax = providerID == .anthropic ? 1.0 : 2.0
+        let temperature = capabilities.supports(.temperature)
+            ? min(max(overrides.temperature ?? request.temperature, 0), temperatureMax)
+            : request.temperature
+        let topP = capabilities.supports(.topP)
+            ? (overrides.topP ?? request.topP).map { min(max($0, 0), 1) }
+            : nil
+        let topK = capabilities.supports(.topK)
+            ? (overrides.topK ?? request.topK).map { min(max($0, 1), 200) }
+            : nil
+        let maxOutputTokens = capabilities.supports(.maxOutputTokens)
+            ? min(max(overrides.maxOutputTokens ?? request.maxOutputTokens, 1), 32_768)
+            : request.maxOutputTokens
+        let seed = capabilities.supports(.seed)
+            ? (overrides.seed ?? request.seed).map { min(max($0, 0), Int(UInt32.max)) }
+            : nil
+        let runtimeSource = overrides.localRuntime ?? request.localRuntimeOverrides
+        let localSamplerOverrides = providerID == .localRuntime
+            ? Self.localSamplerOverrides(
+                inherited: request.localSamplerOverrides,
+                userOverrides: overrides,
+                temperature: temperature,
+                topP: topP,
+                topK: topK,
+                maxOutputTokens: maxOutputTokens
+            )
+            : nil
+        let localRuntimeOverrides = providerID == .localRuntime
+            ? Self.normalizedRuntimeOverrides(runtimeSource)
+            : nil
+
+        return AIGenerationRequest(
+            systemPrompt: request.systemPrompt,
+            userPrompt: request.userPrompt,
+            temperature: temperature,
+            topP: topP,
+            topK: topK,
+            maxOutputTokens: maxOutputTokens,
+            seed: seed,
+            localSamplerOverrides: localSamplerOverrides,
+            localRuntimeOverrides: localRuntimeOverrides,
+            onUpdate: request.onUpdate,
+            onModelResolved: request.onModelResolved
+        )
+    }
+
+    private static func localSamplerOverrides(
+        inherited: AILocalSamplerOverrides?,
+        userOverrides: AIGenerationOverrides,
+        temperature: Double,
+        topP: Double?,
+        topK: Int?,
+        maxOutputTokens: Int
+    ) -> AILocalSamplerOverrides? {
+        let value = AILocalSamplerOverrides(
+            temperature: userOverrides.temperature == nil ? inherited?.temperature : temperature,
+            topP: userOverrides.topP == nil ? inherited?.topP : topP,
+            topK: userOverrides.topK == nil ? inherited?.topK : topK,
+            maxOutputTokens: userOverrides.maxOutputTokens == nil
+                ? inherited?.maxOutputTokens
+                : maxOutputTokens
+        )
+        return value.isEmpty ? nil : value
+    }
+
+    private static func simpleOverrides(
+        for preset: AISimpleModelPreset,
+        request: AIGenerationRequest
+    ) -> AIGenerationOverrides {
+        switch preset {
+        case .automatic:
+            return AIGenerationOverrides()
+        case .stable:
+            return AIGenerationOverrides(
+                temperature: min(request.temperature, 0.35),
+                topP: 0.85,
+                topK: 24
+            )
+        case .balanced:
+            return AIGenerationOverrides(
+                temperature: 0.65,
+                topP: 0.92,
+                topK: 40
+            )
+        case .creative:
+            return AIGenerationOverrides(
+                temperature: 0.95,
+                topP: 0.98,
+                topK: 64
+            )
+        case .fast:
+            return AIGenerationOverrides(
+                temperature: min(request.temperature, 0.25),
+                topP: 0.80,
+                topK: 16,
+                maxOutputTokens: min(request.maxOutputTokens, 512),
+                localRuntime: AILocalRuntimeOverrides(contextSize: 4_096)
+            )
+        }
+    }
+
+    private static func normalizedRuntimeOverrides(
+        _ source: AILocalRuntimeOverrides?
+    ) -> AILocalRuntimeOverrides? {
+        guard let source else { return nil }
+        let batchSize = source.batchSize.map { min(max($0, 1), 2_048) }
+        let microBatchLimit = batchSize ?? 2_048
+        let value = AILocalRuntimeOverrides(
+            contextSize: source.contextSize.map { min(max($0, 1_024), 131_072) },
+            batchSize: batchSize,
+            microBatchSize: source.microBatchSize.map { min(max($0, 1), microBatchLimit) },
+            threadCount: source.threadCount.map { min(max($0, 1), 64) },
+            batchThreadCount: source.batchThreadCount.map { min(max($0, 1), 64) },
+            gpuLayers: source.gpuLayers.map { min(max($0, 0), 999) },
+            flashAttentionEnabled: source.flashAttentionEnabled,
+            disableKVOffload: source.disableKVOffload
+        )
+        return value.isEmpty ? nil : value
     }
 }
 
@@ -1002,10 +1185,15 @@ final class AIModelRouter {
     static let shared = AIModelRouter()
 
     private let registry: AIModelRegistry
+    private let tuningStore: AIModelTuningStore
     private var providers: [AIProviderID: AIProvider]
 
-    init(registry: AIModelRegistry = .shared) {
+    init(
+        registry: AIModelRegistry = .shared,
+        tuningStore: AIModelTuningStore = .shared
+    ) {
         self.registry = registry
+        self.tuningStore = tuningStore
         self.providers = [:]
         register(LocalAIProvider())
         register(GoogleGenerativeLanguageProvider())
@@ -1019,7 +1207,8 @@ final class AIModelRouter {
 
     func generate(
         request: AIGenerationRequest,
-        configurationID: UUID
+        configurationID: UUID,
+        role: AIModelRole? = nil
     ) async throws -> AIGenerationResponse {
         guard let configuration = registry.configuration(id: configurationID) else {
             throw AIProviderError.invalidResponse
@@ -1030,7 +1219,10 @@ final class AIModelRouter {
         guard let provider = providers[configuration.identity.providerID] else {
             throw AIProviderError.invalidResponse
         }
-        return try await provider.generate(request: request, configuration: configuration)
+        let effectiveRequest = role.map {
+            tuningStore.resolvedRequest(request, role: $0, configuration: configuration)
+        } ?? request
+        return try await provider.generate(request: effectiveRequest, configuration: configuration)
     }
 
     func generate(
@@ -1054,13 +1246,21 @@ final class AIModelRouter {
                   configurations.contains(where: { $0.id == preferredConfigurationID }) else {
                 throw AIProviderError.noProviderForRole(role)
             }
-            return try await generate(request: request, configurationID: preferredConfigurationID)
+            return try await generate(
+                request: request,
+                configurationID: preferredConfigurationID,
+                role: role
+            )
         }
 
         var lastError: Error?
         for configuration in configurations {
             do {
-                return try await generate(request: request, configurationID: configuration.id)
+                return try await generate(
+                    request: request,
+                    configurationID: configuration.id,
+                    role: role
+                )
             } catch {
                 lastError = error
                 AppLog.note(
@@ -1102,7 +1302,12 @@ private final class LocalAIProvider: AIProvider {
             advancedSettings: GemmaAdvancedSettings.default,
             overrideSystemPrompt: request.systemPrompt,
             overrideModelURL: selectedModelURL,
+            temperatureOverride: request.localSamplerOverrides?.temperature.map(Float.init),
+            topPOverride: request.localSamplerOverrides?.topP.map(Float.init),
+            topKOverride: request.localSamplerOverrides?.topK,
+            maxOutputTokensOverride: request.localSamplerOverrides?.maxOutputTokens,
             seedOverride: request.seed.map(UInt32.init),
+            runtimeOverrides: request.localRuntimeOverrides,
             onUpdate: request.onUpdate
         )
         guard let text = result.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
@@ -1150,6 +1355,8 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                     systemPrompt: request.systemPrompt,
                     userPrompt: request.userPrompt,
                     temperature: request.temperature,
+                    topP: request.topP ?? 0.92,
+                    topK: request.topK,
                     maxOutputTokens: request.maxOutputTokens,
                     seed: request.seed,
                     apiKey: apiKey,
@@ -1185,6 +1392,8 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                     systemPrompt: request.systemPrompt,
                     userPrompt: request.userPrompt,
                     temperature: request.temperature,
+                    topP: request.topP ?? 0.92,
+                    topK: request.topK,
                     maxOutputTokens: request.maxOutputTokens,
                     seed: request.seed,
                     apiKey: apiKey
@@ -1196,6 +1405,8 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                     systemPrompt: request.systemPrompt,
                     userPrompt: request.userPrompt,
                     temperature: request.temperature,
+                    topP: request.topP ?? 0.92,
+                    topK: request.topK,
                     maxOutputTokens: request.maxOutputTokens,
                     seed: request.seed,
                     apiKey: apiKey
@@ -1246,6 +1457,7 @@ private final class OpenAICompatibleProvider: AIProvider {
             "temperature": request.temperature,
             "max_tokens": request.maxOutputTokens
         ]
+        if let topP = request.topP { payload["top_p"] = topP }
         if let seed = request.seed { payload["seed"] = seed }
         let response = try await performJSONRequest(
             endpoint: endpoint,
@@ -1294,13 +1506,15 @@ private final class AnthropicProvider: AIProvider {
             throw AIProviderError.missingCredential
         }
         let endpoint = try endpointURL(configuration.endpoint, defaultValue: "https://api.anthropic.com/v1/messages")
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "model": configuration.identity.modelID,
             "system": request.systemPrompt,
             "messages": [["role": "user", "content": request.userPrompt]],
             "temperature": request.temperature,
             "max_tokens": request.maxOutputTokens
         ]
+        if let topP = request.topP { payload["top_p"] = topP }
+        if let topK = request.topK { payload["top_k"] = topK }
         let response = try await performJSONRequest(
             endpoint: endpoint,
             headers: [

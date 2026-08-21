@@ -6622,6 +6622,166 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
     }
 
+    func testAIModelTuningDefaultsToSimpleAutomaticAndPersistsSelection() throws {
+        let suiteName = "KizunaAIModelTuningTests.Defaults.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertEqual(store.preferences.mode, .simple)
+        XCTAssertEqual(store.preferences.simplePreset, .automatic)
+
+        XCTAssertTrue(store.setSimplePreset(.stable))
+        XCTAssertTrue(store.setMode(.advanced))
+
+        let reloaded = AIModelTuningStore(defaults: defaults)
+        XCTAssertEqual(reloaded.preferences.mode, .advanced)
+        XCTAssertEqual(reloaded.preferences.simplePreset, .stable)
+    }
+
+    func testAIModelTuningNormalizesAndDropsUnsupportedProviderValues() throws {
+        let suiteName = "KizunaAIModelTuningTests.Capabilities.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertTrue(store.setOverrides(
+            AIGenerationOverrides(
+                temperature: 9,
+                topP: -1,
+                topK: 999,
+                maxOutputTokens: 99_999,
+                seed: -4,
+                localRuntime: AILocalRuntimeOverrides(
+                    contextSize: 999_999,
+                    batchSize: 9_999,
+                    microBatchSize: 9_999,
+                    threadCount: 999,
+                    gpuLayers: 9_999
+                )
+            ),
+            for: .persona
+        ))
+        let request = AIGenerationRequest(
+            systemPrompt: "system",
+            userPrompt: "user",
+            temperature: 0.72,
+            maxOutputTokens: 1_024,
+            seed: 24
+        )
+        let openAIConfiguration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "test",
+                displayName: "Test"
+            ),
+            roles: [.persona]
+        )
+
+        let remote = store.resolvedRequest(
+            request,
+            role: .persona,
+            configuration: openAIConfiguration
+        )
+        XCTAssertEqual(remote.temperature, 2, accuracy: 0.0001)
+        XCTAssertEqual(remote.topP, 0)
+        XCTAssertNil(remote.topK)
+        XCTAssertEqual(remote.maxOutputTokens, 32_768)
+        XCTAssertEqual(remote.seed, 0)
+        XCTAssertNil(remote.localRuntimeOverrides)
+
+        let localConfiguration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Local"
+            ),
+            roles: [.persona]
+        )
+        let local = store.resolvedRequest(
+            request,
+            role: .persona,
+            configuration: localConfiguration
+        )
+        XCTAssertEqual(local.topK, 200)
+        XCTAssertEqual(local.localRuntimeOverrides?.contextSize, 131_072)
+        XCTAssertEqual(local.localRuntimeOverrides?.batchSize, 2_048)
+        XCTAssertEqual(local.localRuntimeOverrides?.microBatchSize, 2_048)
+        XCTAssertEqual(local.localRuntimeOverrides?.threadCount, 64)
+        XCTAssertEqual(local.localRuntimeOverrides?.gpuLayers, 999)
+        XCTAssertEqual(local.localSamplerOverrides?.temperature, 2)
+        XCTAssertEqual(local.localSamplerOverrides?.topP, 0)
+        XCTAssertEqual(local.localSamplerOverrides?.topK, 200)
+        XCTAssertEqual(local.localSamplerOverrides?.maxOutputTokens, 32_768)
+    }
+
+    func testAIModelTuningAutomaticLeavesLocalSamplerPresetUntouched() throws {
+        let suiteName = "KizunaAIModelTuningTests.Automatic.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Local"
+            ),
+            roles: [.story]
+        )
+        let resolved = store.resolvedRequest(
+            AIGenerationRequest(
+                systemPrompt: "system",
+                userPrompt: "story",
+                temperature: 0.72,
+                maxOutputTokens: 1_024
+            ),
+            role: .story,
+            configuration: configuration
+        )
+
+        XCTAssertNil(resolved.localSamplerOverrides)
+        XCTAssertNil(resolved.localRuntimeOverrides)
+    }
+
+    func testAIModelTuningFastPresetResolvesIntentToSafeValues() throws {
+        let suiteName = "KizunaAIModelTuningTests.Fast.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(store.setSimplePreset(.fast))
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Local"
+            ),
+            roles: [.story]
+        )
+        let resolved = store.resolvedRequest(
+            AIGenerationRequest(
+                systemPrompt: "system",
+                userPrompt: "story",
+                temperature: 0.72,
+                maxOutputTokens: 1_024
+            ),
+            role: .story,
+            configuration: configuration
+        )
+
+        XCTAssertEqual(resolved.temperature, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(resolved.topP, 0.8)
+        XCTAssertEqual(resolved.topK, 16)
+        XCTAssertEqual(resolved.maxOutputTokens, 512)
+        XCTAssertEqual(resolved.localRuntimeOverrides?.contextSize, 4_096)
+        XCTAssertEqual(resolved.localSamplerOverrides?.temperature, 0.25)
+        XCTAssertEqual(resolved.localSamplerOverrides?.topP, 0.8)
+        XCTAssertEqual(resolved.localSamplerOverrides?.topK, 16)
+        XCTAssertEqual(resolved.localSamplerOverrides?.maxOutputTokens, 512)
+    }
+
     func testAIModelRouterUsesPreferredConfigurationAndProvider() async throws {
         let suiteName = "KizunaAIModelRouterTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -6640,7 +6800,10 @@ final class KizunaAITests: XCTestCase {
         )
         XCTAssertTrue(registry.register(configuration))
 
-        let router = AIModelRouter(registry: registry)
+        let router = AIModelRouter(
+            registry: registry,
+            tuningStore: AIModelTuningStore(defaults: defaults)
+        )
         router.register(RegistryTestProvider())
         var resolvedIdentity: AIModelIdentity?
         var preview = ""
