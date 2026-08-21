@@ -7250,6 +7250,37 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(characters.count, 4)
     }
 
+    func testCharacterLibraryMetadataUsesAgeVisibleCharacters() {
+        let general = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            tags: ["shared"],
+            safetyRating: .general
+        )
+        let sensitive = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            tags: ["adult-only"],
+            safetyRating: .sensitive
+        )
+        let characters = [general, sensitive]
+        let teenPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+
+        let visible = CharacterLibraryViewModel.ageVisibleCharacters(
+            from: characters,
+            policy: teenPolicy
+        )
+        let tags = CharacterLibraryViewModel.availableTags(from: visible)
+
+        XCTAssertEqual(visible.map(\.id), [general.id])
+        XCTAssertEqual(tags, ["shared"])
+        XCTAssertEqual(characters.count, 2)
+    }
+
     func testSafetyPipelineAppliesOneAgePolicyToInputAndOutput() async {
         let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
         let pipeline = SafetyPipeline(policyProvider: { policy })
