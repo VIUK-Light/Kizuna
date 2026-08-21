@@ -40,15 +40,17 @@ and other project spaces operated for Kizuna.
 管理者は報告を確認し、必要に応じて内容の削除、会話のロック、参加制限、
 警告、またはその他の比例した対応を行い、対応後に報告を解決済みとして記録します。
 
-Reported contentが表示されない場合は、行動問題の詳細を公開しないでください。
-GitHubのCommunity GuidelinesまたはTerms of Serviceへの違反、脅迫、個人情報の
-公開などは、[GitHub Supportの非公開Report abuseフォーム](https://support.github.com/contact/report-abuse?category=report-abuse&report=other&report_type=unspecified)
-へ報告してください。リポジトリ管理者自身が関係者の場合も、同じくGitHub Supportへ
-報告し、管理者が自分の報告を処理しないようにしてください。
+Reported contentが表示されない場合も、行動問題の詳細を公開しないでください。
+次の[GitHub Supportの非公開Report abuseフォーム](https://support.github.com/contact/report-abuse?category=report-abuse&report=other&report_type=unspecified)
+を、設定に依存しないfallbackとして使用できます。フォームにはKizunaのリポジトリ、
+対象のIssue / Pull Request / Discussion / コメントのURLと、Code of Conductに反する
+事実関係を記載してください。GitHub Supportは、Community GuidelinesまたはTerms of
+Serviceに関係する報告を非公開で受け付け、必要な対応を判断します。
 
-Maintainerは、Reported contentを常時有効にし、報告を受け取れる管理者を確認します。
-この非公開報告経路が停止している場合、公開Issueを代替経路にせず、設定を復旧してから
-プロジェクト固有の報告を受け付けます。
+リポジトリ管理者は、Reported contentが利用できる環境では常時有効にし、報告を受け取れる
+管理者を確認します。管理者自身が関係者の場合、またはReported contentが表示されない場合は、
+GitHub Supportへ報告して管理者が自分の報告を処理しないようにしてください。どの場合も、
+公開Issueを行動問題の詳細報告に使ってはいけません。
 
 ## 対応方針
 
@@ -105,15 +107,17 @@ the moderation work is complete.
 
 If **Report to repository admins** is unavailable, do not publish the conduct
 details. Use the [private GitHub Support Report abuse form](https://support.github.com/contact/report-abuse?category=report-abuse&report=other&report_type=unspecified)
-for conduct that violates GitHub's Community Guidelines or Terms of Service,
-including threats or exposure of private information. If a repository
-administrator is involved, use GitHub Support instead of asking that person to
-handle the report.
+as the private fallback. Include the Kizuna repository URL, the affected Issue,
+Pull Request, Discussion, or comment URL, and the facts that may violate this
+Code of Conduct. GitHub Support can privately receive reports involving
+GitHub's Community Guidelines or Terms of Service and decide the appropriate
+action.
 
-Maintainers must keep Reported content enabled and ensure that administrators
-can review incoming reports. A disabled reporting route is an operational
-failure, not a reason to require a public Issue; maintainers must restore the
-private route before accepting project-specific conduct reports.
+Maintainers should keep Reported content enabled whenever GitHub exposes that
+setting, so repository administrators can review reports directly. If the
+setting is unavailable, or if a repository administrator is involved, use
+GitHub Support instead of asking that person to handle the report. Never use a
+public Issue as a substitute for a private conduct report.
 
 ## Enforcement
 
