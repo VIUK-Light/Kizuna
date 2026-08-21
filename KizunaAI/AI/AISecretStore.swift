@@ -397,6 +397,20 @@ enum AIModelTuningParameter: String, CaseIterable, Hashable, Sendable {
     case flashAttention
 }
 
+struct AIModelCompatibilitySettings: Codable, Equatable, Hashable, Sendable {
+    var disabledParameters: Set<AIModelTuningParameter>
+
+    init(disabledParameters: Set<AIModelTuningParameter> = []) {
+        self.disabledParameters = disabledParameters
+    }
+
+    static let automatic = AIModelCompatibilitySettings()
+
+    func disables(_ parameter: AIModelTuningParameter) -> Bool {
+        disabledParameters.contains(parameter)
+    }
+}
+
 struct AIProviderParameterCapabilities: Sendable {
     let supportedParameters: Set<AIModelTuningParameter>
 
@@ -421,6 +435,16 @@ struct AIProviderParameterCapabilities: Sendable {
                 supportedParameters: [.temperature, .topP, .topK, .maxOutputTokens]
             )
         }
+    }
+
+    static func capabilities(for configuration: AIModelConfiguration) -> AIProviderParameterCapabilities {
+        let automatic = capabilities(for: configuration.identity.providerID)
+        guard let compatibility = configuration.compatibility else {
+            return automatic
+        }
+        return AIProviderParameterCapabilities(
+            supportedParameters: automatic.supportedParameters.subtracting(compatibility.disabledParameters)
+        )
     }
 }
 
@@ -458,6 +482,9 @@ struct AIModelConfiguration: Codable, Equatable, Hashable, Identifiable, Sendabl
     var endpoint: String?
     var priority: Int
     var isEnabled: Bool
+    /// Optional per-model compatibility overrides. `nil` preserves the
+    /// provider's automatic capability profile for older registry entries.
+    var compatibility: AIModelCompatibilitySettings?
 
     init(
         id: UUID = UUID(),
@@ -465,7 +492,8 @@ struct AIModelConfiguration: Codable, Equatable, Hashable, Identifiable, Sendabl
         roles: Set<AIModelRole>,
         endpoint: String? = nil,
         priority: Int = 0,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        compatibility: AIModelCompatibilitySettings? = nil
     ) {
         self.id = id
         self.identity = identity
@@ -473,6 +501,7 @@ struct AIModelConfiguration: Codable, Equatable, Hashable, Identifiable, Sendabl
         self.endpoint = endpoint
         self.priority = priority
         self.isEnabled = isEnabled
+        self.compatibility = compatibility
     }
 }
 

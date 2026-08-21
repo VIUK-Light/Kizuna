@@ -6790,6 +6790,19 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(remote.seed, 0)
         XCTAssertNil(remote.localRuntimeOverrides)
 
+        var compatibilityLimitedConfiguration = openAIConfiguration
+        compatibilityLimitedConfiguration.compatibility = AIModelCompatibilitySettings(
+            disabledParameters: [.temperature, .seed]
+        )
+        let compatibilityLimited = store.resolvedRequest(
+            request,
+            role: .persona,
+            configuration: compatibilityLimitedConfiguration
+        )
+        XCTAssertEqual(compatibilityLimited.temperature, request.temperature, accuracy: 0.0001)
+        XCTAssertNil(compatibilityLimited.seed)
+        XCTAssertEqual(compatibilityLimited.topP, 0)
+
         let localConfiguration = AIModelConfiguration(
             identity: AIModelIdentity(
                 providerID: .localRuntime,

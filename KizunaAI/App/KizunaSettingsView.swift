@@ -1532,7 +1532,10 @@ private struct AIAdvancedScopeSettingsView: View {
     }
 
     private var capabilities: AIProviderParameterCapabilities {
-        .capabilities(for: providerID)
+        if let configuration {
+            return .capabilities(for: configuration)
+        }
+        return .capabilities(for: providerID)
     }
 
     private var temperatureMaximum: Double {
@@ -1883,6 +1886,7 @@ private struct AIModelRegistryEditorView: View {
     @State private var roles: Set<AIModelRole>
     @State private var priority: Int
     @State private var isEnabled: Bool
+    @State private var disabledCompatibilityParameters: Set<AIModelTuningParameter>
     @State private var validationMessage: String?
 
     init(
@@ -1899,6 +1903,9 @@ private struct AIModelRegistryEditorView: View {
         _roles = State(initialValue: configuration.roles)
         _priority = State(initialValue: configuration.priority)
         _isEnabled = State(initialValue: configuration.isEnabled)
+        _disabledCompatibilityParameters = State(
+            initialValue: configuration.compatibility?.disabledParameters ?? []
+        )
     }
 
     var body: some View {
@@ -1918,6 +1925,7 @@ private struct AIModelRegistryEditorView: View {
                         if currentEndpoint.isEmpty || currentEndpoint == Self.defaultEndpoint(for: oldProvider) {
                             endpoint = Self.defaultEndpoint(for: newProvider)
                         }
+                        disabledCompatibilityParameters.removeAll()
                     }
                     TextField(
                         KizunaCopy.text(japanese: "Model ID", english: "Model ID"),
@@ -1942,6 +1950,36 @@ private struct AIModelRegistryEditorView: View {
                         )
                         .textContentType(.URL)
                         .autocorrectionDisabled()
+                    }
+                }
+
+                Section(KizunaCopy.text(japanese: "互換性", english: "Compatibility")) {
+                    Text(KizunaCopy.text(
+                        japanese: "モデルが受け付けない任意パラメータをOFFにすると、その値をリクエストから除外できます。",
+                        english: "Turn off optional parameters that this model rejects to omit them from requests."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(
+                        AIModelTuningParameter.allCases.filter {
+                            AIProviderParameterCapabilities.capabilities(for: provider).supports($0)
+                        },
+                        id: \.self
+                    ) { parameter in
+                        Toggle(
+                            Self.compatibilityParameterName(parameter),
+                            isOn: Binding(
+                                get: { !disabledCompatibilityParameters.contains(parameter) },
+                                set: { enabled in
+                                    if enabled {
+                                        disabledCompatibilityParameters.remove(parameter)
+                                    } else {
+                                        disabledCompatibilityParameters.insert(parameter)
+                                    }
+                                }
+                            )
+                        )
                     }
                 }
 
@@ -2040,6 +2078,11 @@ private struct AIModelRegistryEditorView: View {
         }
 
         let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let compatibility = disabledCompatibilityParameters.isEmpty
+            ? nil
+            : AIModelCompatibilitySettings(
+                disabledParameters: disabledCompatibilityParameters
+            )
         let updated = AIModelConfiguration(
             id: configuration.id,
             identity: AIModelIdentity(
@@ -2053,7 +2096,8 @@ private struct AIModelRegistryEditorView: View {
             roles: roles,
             endpoint: provider == .localRuntime || trimmedEndpoint.isEmpty ? nil : trimmedEndpoint,
             priority: priority,
-            isEnabled: isEnabled
+            isEnabled: isEnabled,
+            compatibility: compatibility
         )
         if let error = onSave(updated, apiKey) {
             validationMessage = error
@@ -2068,6 +2112,21 @@ private struct AIModelRegistryEditorView: View {
         case .googleGenerativeLanguage: return "Google Generative Language"
         case .openAICompatible: return "OpenAI-compatible"
         case .anthropic: return "Anthropic"
+        }
+    }
+
+    private static func compatibilityParameterName(_ parameter: AIModelTuningParameter) -> String {
+        switch parameter {
+        case .temperature: return "Temperature"
+        case .topP: return "Top P"
+        case .topK: return "Top K"
+        case .maxOutputTokens: return KizunaCopy.text(japanese: "最大出力Token", english: "Maximum output tokens")
+        case .seed: return "Seed"
+        case .contextSize: return KizunaCopy.text(japanese: "Context size", english: "Context size")
+        case .batchSize: return "Batch size"
+        case .threads: return "Threads"
+        case .gpuLayers: return "GPU layers"
+        case .flashAttention: return "Flash Attention"
         }
     }
 

@@ -1000,7 +1000,7 @@ extension AIModelTuningStore {
         }
 
         let providerID = configuration.identity.providerID
-        let capabilities = AIProviderParameterCapabilities.capabilities(for: providerID)
+        let capabilities = AIProviderParameterCapabilities.capabilities(for: configuration)
         let temperatureMax = providerID == .anthropic ? 1.0 : 2.0
         let temperature = capabilities.supports(.temperature)
             ? min(max(overrides.temperature ?? request.temperature, 0), temperatureMax)
