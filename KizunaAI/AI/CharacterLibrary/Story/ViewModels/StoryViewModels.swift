@@ -807,9 +807,12 @@ final class StoryWorldCreateViewModel: ObservableObject {
             let providerID: AIProviderID = generationModel == .b31
                 ? .googleGenerativeLanguage
                 : .localRuntime
-            let preferred = AIModelRegistry.shared
-                .configurations(for: .story)
-                .first(where: { $0.identity.providerID == providerID })
+            let storyConfigurations = AIModelRegistry.shared.configurations(for: .story)
+            let preferred = AIModelTuningStore.shared.configurationIDForCurrentMode(
+                for: .story,
+                configurations: storyConfigurations,
+                fallbackProviderID: providerID
+            )
             let response = try await AIModelRouter.shared.generate(
                 request: AIGenerationRequest(
                     systemPrompt: systemPrompt,
@@ -818,7 +821,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
                     maxOutputTokens: 8_192
                 ),
                 role: .story,
-                preferredConfigurationID: preferred?.id,
+                preferredConfigurationID: preferred,
                 allowsFallback: false
             )
             reply = response.text

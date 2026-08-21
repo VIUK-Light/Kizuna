@@ -215,9 +215,12 @@ extension PersonaReplyGenerating {
             let providerID: AIProviderID = model == .nagi
                 ? .googleGenerativeLanguage
                 : .localRuntime
-            let preferred = AIModelRegistry.shared
-                .configurations(for: .persona)
-                .first(where: { $0.identity.providerID == providerID })
+            let personaConfigurations = AIModelRegistry.shared.configurations(for: .persona)
+            let preferred = AIModelTuningStore.shared.configurationIDForCurrentMode(
+                for: .persona,
+                configurations: personaConfigurations,
+                fallbackProviderID: providerID
+            )
             let combinedPrompt: String
             if let contextPrompt,
                !contextPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -235,7 +238,7 @@ extension PersonaReplyGenerating {
             guard let response = try? await AIModelRouter.shared.generate(
                 request: request,
                 role: .persona,
-                preferredConfigurationID: preferred?.id,
+                preferredConfigurationID: preferred,
                 allowsFallback: false
             ) else {
                 return nil

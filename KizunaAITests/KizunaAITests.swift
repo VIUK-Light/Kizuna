@@ -6622,6 +6622,61 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
     }
 
+    func testGoogleRegistryRouteUsesConfiguredModelAndEndpoint() throws {
+        let streamingURL = try XCTUnwrap(
+            StoryGemma31BAPIEndpoint.url(
+                baseURL: "https://example.invalid/v1beta/",
+                modelName: "custom-gemma",
+                operation: .streamGenerateContent
+            )
+        )
+        XCTAssertEqual(streamingURL.host, "example.invalid")
+        XCTAssertEqual(streamingURL.path, "/v1beta/models/custom-gemma:streamGenerateContent")
+        XCTAssertEqual(streamingURL.query, "alt=sse")
+
+        let candidates = StoryGemma31BAPIEndpoint.modelCandidates(
+            primaryModelName: " custom-gemma ",
+            fallbackModelNames: []
+        )
+        XCTAssertEqual(candidates, ["custom-gemma"])
+
+        XCTAssertEqual(
+            StoryGemma31BAPIEndpoint.modelCandidates(
+                primaryModelName: StoryGemma31BAPIEndpoint.defaultPrimaryModelName,
+                fallbackModelNames: nil
+            ),
+            [
+                StoryGemma31BAPIEndpoint.defaultPrimaryModelName,
+                "gemma-4-26b-a4b-it"
+            ]
+        )
+        XCTAssertNil(
+            StoryGemma31BAPIEndpoint.url(
+                baseURL: "http://example.invalid/v1beta",
+                modelName: "custom-gemma",
+                operation: .generateContent
+            )
+        )
+    }
+
+    func testLocalCompatibleEndpointCanOmitCredentialSafely() {
+        XCTAssertTrue(AIEndpointPolicy.isLocalEndpoint("http://127.0.0.1:1234/v1"))
+        XCTAssertTrue(AIEndpointPolicy.isLocalEndpoint("https://model.localhost/v1"))
+        XCTAssertFalse(AIEndpointPolicy.isLocalEndpoint("http://remote.example/v1"))
+        XCTAssertFalse(
+            AIEndpointPolicy.requiresAPIKey(
+                providerID: .openAICompatible,
+                endpoint: "http://localhost:1234/v1"
+            )
+        )
+        XCTAssertTrue(
+            AIEndpointPolicy.requiresAPIKey(
+                providerID: .openAICompatible,
+                endpoint: "https://api.example/v1"
+            )
+        )
+    }
+
     func testAIModelTuningDefaultsToSimpleAutomaticAndPersistsSelection() throws {
         let suiteName = "KizunaAIModelTuningTests.Defaults.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -6632,11 +6687,73 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(store.preferences.simplePreset, .automatic)
 
         XCTAssertTrue(store.setSimplePreset(.stable))
+        XCTAssertTrue(store.setSimpleModelRoute(.onDevice))
         XCTAssertTrue(store.setMode(.advanced))
+
+        let selectedConfigurationID = UUID()
+        XCTAssertTrue(store.setPreferredConfigurationID(selectedConfigurationID, for: .story))
 
         let reloaded = AIModelTuningStore(defaults: defaults)
         XCTAssertEqual(reloaded.preferences.mode, .advanced)
         XCTAssertEqual(reloaded.preferences.simplePreset, .stable)
+        XCTAssertEqual(reloaded.preferences.simpleModelRoute, .onDevice)
+        XCTAssertEqual(
+            reloaded.preferredConfigurationID(for: .story),
+            selectedConfigurationID
+        )
+    }
+
+    func testSimpleModelRouteChoosesHumanReadableProviderPreference() throws {
+        let suiteName = "KizunaAIModelRouteTests.Simple." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let local = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "On-device"
+            ),
+            roles: [.persona],
+            priority: 0
+        )
+        let online = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "online-model",
+                displayName: "Online model"
+            ),
+            roles: [.persona],
+            endpoint: "https://example.invalid/v1",
+            priority: 10
+        )
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(store.setSimpleModelRoute(.onDevice))
+        XCTAssertEqual(
+            store.simplePreferredConfigurationID(for: .persona, configurations: [local, online]),
+            local.id
+        )
+        XCTAssertEqual(
+            store.configurationIDForCurrentMode(
+                for: .persona,
+                configurations: [local, online],
+                fallbackProviderID: .openAICompatible
+            ),
+            local.id
+        )
+        XCTAssertTrue(store.setSimpleModelRoute(.online))
+        XCTAssertEqual(
+            store.simplePreferredConfigurationID(for: .persona, configurations: [local, online]),
+            online.id
+        )
+        XCTAssertEqual(
+            store.configurationIDForCurrentMode(
+                for: .persona,
+                configurations: [local, online],
+                fallbackProviderID: .localRuntime
+            ),
+            online.id
+        )
     }
 
     func testAIModelTuningNormalizesAndDropsUnsupportedProviderValues() throws {
@@ -6690,6 +6807,19 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(remote.maxOutputTokens, 32_768)
         XCTAssertEqual(remote.seed, 0)
         XCTAssertNil(remote.localRuntimeOverrides)
+
+        var compatibilityLimitedConfiguration = openAIConfiguration
+        compatibilityLimitedConfiguration.compatibility = AIModelCompatibilitySettings(
+            disabledParameters: [.temperature, .seed]
+        )
+        let compatibilityLimited = store.resolvedRequest(
+            request,
+            role: .persona,
+            configuration: compatibilityLimitedConfiguration
+        )
+        XCTAssertEqual(compatibilityLimited.temperature, request.temperature, accuracy: 0.0001)
+        XCTAssertNil(compatibilityLimited.seed)
+        XCTAssertEqual(compatibilityLimited.topP, 0)
 
         let localConfiguration = AIModelConfiguration(
             identity: AIModelIdentity(
@@ -6800,10 +6930,18 @@ final class KizunaAITests: XCTestCase {
         )
         XCTAssertTrue(registry.register(configuration))
 
-        let router = AIModelRouter(
-            registry: registry,
-            tuningStore: AIModelTuningStore(defaults: defaults)
+        let tuningStore = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(tuningStore.setMode(.advanced))
+        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: .persona))
+        XCTAssertEqual(
+            tuningStore.configurationIDForCurrentMode(
+                for: .persona,
+                configurations: registry.configurations(for: .persona),
+                fallbackProviderID: .localRuntime
+            ),
+            configuration.id
         )
+        let router = AIModelRouter(registry: registry, tuningStore: tuningStore)
         router.register(RegistryTestProvider())
         var resolvedIdentity: AIModelIdentity?
         var preview = ""
@@ -6821,7 +6959,7 @@ final class KizunaAITests: XCTestCase {
                 }
             ),
             role: .persona,
-            preferredConfigurationID: configuration.id
+            preferredConfigurationID: nil
         )
 
         XCTAssertEqual(response.text, "stub response")

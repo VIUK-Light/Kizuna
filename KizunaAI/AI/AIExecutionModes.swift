@@ -1000,7 +1000,7 @@ extension AIModelTuningStore {
         }
 
         let providerID = configuration.identity.providerID
-        let capabilities = AIProviderParameterCapabilities.capabilities(for: providerID)
+        let capabilities = AIProviderParameterCapabilities.capabilities(for: configuration)
         let temperatureMax = providerID == .anthropic ? 1.0 : 2.0
         let temperature = capabilities.supports(.temperature)
             ? min(max(overrides.temperature ?? request.temperature, 0), temperatureMax)
@@ -1232,8 +1232,14 @@ final class AIModelRouter {
         allowsFallback: Bool = true
     ) async throws -> AIGenerationResponse {
         var configurations = registry.configurations(for: role)
-        if let preferredConfigurationID,
-           let index = configurations.firstIndex(where: { $0.id == preferredConfigurationID }) {
+        let storedPreferredConfigurationID = preferredConfigurationID
+            ?? tuningStore.configurationIDForCurrentMode(
+                for: role,
+                configurations: configurations,
+                fallbackProviderID: nil
+            )
+        if let storedPreferredConfigurationID,
+           let index = configurations.firstIndex(where: { $0.id == storedPreferredConfigurationID }) {
             let preferred = configurations.remove(at: index)
             configurations.insert(preferred, at: 0)
         }
@@ -1242,13 +1248,13 @@ final class AIModelRouter {
         }
 
         if !allowsFallback {
-            guard let preferredConfigurationID,
-                  configurations.contains(where: { $0.id == preferredConfigurationID }) else {
+            guard let storedPreferredConfigurationID,
+                  configurations.contains(where: { $0.id == storedPreferredConfigurationID }) else {
                 throw AIProviderError.noProviderForRole(role)
             }
             return try await generate(
                 request: request,
-                configurationID: preferredConfigurationID,
+                configurationID: storedPreferredConfigurationID,
                 role: role
             )
         }
@@ -1360,6 +1366,9 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                     maxOutputTokens: request.maxOutputTokens,
                     seed: request.seed,
                     apiKey: apiKey,
+                    modelName: configuration.identity.modelID,
+                    baseURL: configuration.endpoint,
+                    fallbackModelNames: googleFallbackModelNames(for: configuration),
                     onTextDelta: { delta in
                         let visible = accumulator.append(delta)
                         Task { @MainActor in
@@ -1396,7 +1405,10 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                     topK: request.topK,
                     maxOutputTokens: request.maxOutputTokens,
                     seed: request.seed,
-                    apiKey: apiKey
+                    apiKey: apiKey,
+                    modelName: configuration.identity.modelID,
+                    baseURL: configuration.endpoint,
+                    fallbackModelNames: googleFallbackModelNames(for: configuration)
                 )
             }
         } else {
@@ -1409,7 +1421,10 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                     topK: request.topK,
                     maxOutputTokens: request.maxOutputTokens,
                     seed: request.seed,
-                    apiKey: apiKey
+                    apiKey: apiKey,
+                    modelName: configuration.identity.modelID,
+                    baseURL: configuration.endpoint,
+                    fallbackModelNames: googleFallbackModelNames(for: configuration)
                 )
             } catch let error as StoryGemma31BAPIError {
                 if case let .truncated(reason) = error {
@@ -1435,6 +1450,13 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
         request.onUpdate?(.visiblePreview(response.text))
         return response
     }
+
+    private func googleFallbackModelNames(for configuration: AIModelConfiguration) -> [String]? {
+        configuration.identity.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            == StoryGemma31BAPIEndpoint.defaultPrimaryModelName
+            ? nil
+            : []
+    }
 }
 
 private final class OpenAICompatibleProvider: AIProvider {
@@ -1444,9 +1466,6 @@ private final class OpenAICompatibleProvider: AIProvider {
         request: AIGenerationRequest,
         configuration: AIModelConfiguration
     ) async throws -> AIGenerationResponse {
-        guard let apiKey = AISecretStore.shared.providerAPIKey(for: configuration.id) else {
-            throw AIProviderError.missingCredential
-        }
         let endpoint = try chatCompletionsURL(configuration.endpoint)
         var payload: [String: Any] = [
             "model": configuration.identity.modelID,
@@ -1459,12 +1478,17 @@ private final class OpenAICompatibleProvider: AIProvider {
         ]
         if let topP = request.topP { payload["top_p"] = topP }
         if let seed = request.seed { payload["seed"] = seed }
+        var headers = [
+            "Content-Type": "application/json"
+        ]
+        if let apiKey = AISecretStore.shared.providerAPIKey(for: configuration.id) {
+            headers["Authorization"] = "Bearer \(apiKey)"
+        } else if !AIEndpointPolicy.isLocalEndpoint(endpoint) {
+            throw AIProviderError.missingCredential
+        }
         let response = try await performJSONRequest(
             endpoint: endpoint,
-            headers: [
-                "Authorization": "Bearer \(apiKey)",
-                "Content-Type": "application/json"
-            ],
+            headers: headers,
             payload: payload,
             configuration: configuration,
             responseParser: Self.parseResponse
@@ -1562,7 +1586,9 @@ private func endpointURL(_ rawEndpoint: String?, defaultValue: String) throws ->
     let raw = (rawEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
         ? rawEndpoint!
         : defaultValue
-    guard let url = URL(string: raw), url.scheme == "https", url.host != nil else {
+    guard let url = URL(string: raw),
+          url.host != nil,
+          url.scheme == "https" || (url.scheme == "http" && AIEndpointPolicy.isLocalEndpoint(url)) else {
         throw AIProviderError.invalidEndpoint
     }
     return url

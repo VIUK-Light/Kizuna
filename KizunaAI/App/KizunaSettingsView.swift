@@ -50,6 +50,7 @@ struct KizunaSettingsView: View {
     @State private var isImportingLocalModel = false
     @State private var modelSettingsMode = AIModelTuningStore.shared.preferences.mode
     @State private var simpleModelPreset = AIModelTuningStore.shared.preferences.simplePreset
+    @State private var simpleModelRoute = AIModelTuningStore.shared.preferences.simpleModelRoute
     @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
 #if DEBUG
     @AppStorage("kizuna.debug.restSuggestion.enabled") private var debugRestSuggestionEnabled = false
@@ -168,6 +169,22 @@ struct KizunaSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
+                        Picker(
+                            KizunaCopy.text(japanese: "AIの選び方", english: "How to choose AI"),
+                            selection: $simpleModelRoute
+                        ) {
+                            ForEach(AISimpleModelRoute.allCases, id: \.self) { route in
+                                Text(simpleModelRouteName(route)).tag(route)
+                            }
+                        }
+                        .onChange(of: simpleModelRoute) { _, newValue in
+                            _ = AIModelTuningStore.shared.setSimpleModelRoute(newValue)
+                        }
+
+                        Text(simpleModelRouteDetail(simpleModelRoute))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
                         Button {
                             modelSettingsMode = .advanced
                             _ = AIModelTuningStore.shared.setMode(.advanced)
@@ -203,6 +220,7 @@ struct KizunaSettingsView: View {
                             _ = AIModelTuningStore.shared.resetToRecommended()
                             modelSettingsMode = .simple
                             simpleModelPreset = .automatic
+                            simpleModelRoute = .automatic
                         } label: {
                             Label(
                                 KizunaCopy.text(japanese: "Kizuna推奨設定に戻す", english: "Restore Kizuna recommendations"),
@@ -1376,6 +1394,37 @@ struct KizunaSettingsView: View {
             )
         }
     }
+
+    private func simpleModelRouteName(_ route: AISimpleModelRoute) -> String {
+        switch route {
+        case .automatic:
+            return KizunaCopy.text(japanese: "おまかせ", english: "Automatic")
+        case .onDevice:
+            return KizunaCopy.text(japanese: "端末内を優先", english: "Prefer on-device")
+        case .online:
+            return KizunaCopy.text(japanese: "オンラインを優先", english: "Prefer online")
+        }
+    }
+
+    private func simpleModelRouteDetail(_ route: AISimpleModelRoute) -> String {
+        switch route {
+        case .automatic:
+            return KizunaCopy.text(
+                japanese: "用途と利用可能なモデルから、Kizunaが互換性の高い経路を選びます。",
+                english: "Kizuna chooses a compatible route from the use case and available models."
+            )
+        case .onDevice:
+            return KizunaCopy.text(
+                japanese: "会話データを端末内で処理できるモデルを優先します。",
+                english: "Prefer a model that can process the conversation on this device."
+            )
+        case .online:
+            return KizunaCopy.text(
+                japanese: "オンラインProviderを優先します。利用できない場合は安全にfallbackします。",
+                english: "Prefer an online provider and fall back safely when it is unavailable."
+            )
+        }
+    }
 }
 
 private struct AIAdvancedModelSettingsView: View {
@@ -1451,20 +1500,31 @@ private struct AIAdvancedModelSettingsView: View {
 
 private struct AIAdvancedScopeSettingsView: View {
     let scope: AIModelTuningScope
-    private let configuration: AIModelConfiguration?
+    private let candidateConfigurations: [AIModelConfiguration]
+    @State private var selectedConfigurationID: UUID?
     @State private var overrides: AIGenerationOverrides
 
     init(scope: AIModelTuningScope) {
         self.scope = scope
         let configurations = AIModelRegistry.shared.configurations(for: scope.routingRole)
-        if let first = configurations.first {
-            configuration = first
-        } else {
-            configuration = Self.fallbackConfiguration(for: scope)
-        }
+        candidateConfigurations = configurations
+        let storedSelection = AIModelTuningStore.shared.preferredConfigurationID(for: scope)
+        _selectedConfigurationID = State(
+            initialValue: configurations.contains(where: { $0.id == storedSelection })
+                ? storedSelection
+                : nil
+        )
         _overrides = State(
             initialValue: AIModelTuningStore.shared.preferences.overrides(for: scope)
         )
+    }
+
+    private var configuration: AIModelConfiguration? {
+        if let selectedConfigurationID,
+           let selected = candidateConfigurations.first(where: { $0.id == selectedConfigurationID }) {
+            return selected
+        }
+        return candidateConfigurations.first
     }
 
     private var providerID: AIProviderID {
@@ -1472,7 +1532,10 @@ private struct AIAdvancedScopeSettingsView: View {
     }
 
     private var capabilities: AIProviderParameterCapabilities {
-        .capabilities(for: providerID)
+        if let configuration {
+            return .capabilities(for: configuration)
+        }
+        return .capabilities(for: providerID)
     }
 
     private var temperatureMaximum: Double {
@@ -1486,6 +1549,25 @@ private struct AIAdvancedScopeSettingsView: View {
                     KizunaCopy.text(japanese: "用途", english: "Use case"),
                     value: scopeDisplayName
                 )
+                if !candidateConfigurations.isEmpty {
+                    Picker(
+                        KizunaCopy.text(japanese: "使用モデル", english: "Selected model"),
+                        selection: $selectedConfigurationID
+                    ) {
+                        Text(KizunaCopy.text(
+                            japanese: "自動（優先度順）",
+                            english: "Automatic (priority order)"
+                        ))
+                            .tag(Optional<UUID>.none)
+                        ForEach(candidateConfigurations) { candidate in
+                            Text(modelSelectionLabel(candidate))
+                                .tag(Optional(candidate.id))
+                        }
+                    }
+                    .onChange(of: selectedConfigurationID) { _, newValue in
+                        _ = AIModelTuningStore.shared.setPreferredConfigurationID(newValue, for: scope)
+                    }
+                }
                 if let configuration {
                     LabeledContent("Provider", value: providerDisplayName(configuration.identity.providerID))
                     LabeledContent(
@@ -1771,6 +1853,11 @@ private struct AIAdvancedScopeSettingsView: View {
         }
     }
 
+    private func modelSelectionLabel(_ configuration: AIModelConfiguration) -> String {
+        let provider = providerDisplayName(configuration.identity.providerID)
+        return "\(configuration.identity.displayName) · \(provider)"
+    }
+
     private static func fallbackConfiguration(for scope: AIModelTuningScope) -> AIModelConfiguration? {
         let registry = AIModelRegistry.shared
         switch scope {
@@ -1799,6 +1886,7 @@ private struct AIModelRegistryEditorView: View {
     @State private var roles: Set<AIModelRole>
     @State private var priority: Int
     @State private var isEnabled: Bool
+    @State private var disabledCompatibilityParameters: Set<AIModelTuningParameter>
     @State private var validationMessage: String?
 
     init(
@@ -1815,6 +1903,9 @@ private struct AIModelRegistryEditorView: View {
         _roles = State(initialValue: configuration.roles)
         _priority = State(initialValue: configuration.priority)
         _isEnabled = State(initialValue: configuration.isEnabled)
+        _disabledCompatibilityParameters = State(
+            initialValue: configuration.compatibility?.disabledParameters ?? []
+        )
     }
 
     var body: some View {
@@ -1834,6 +1925,7 @@ private struct AIModelRegistryEditorView: View {
                         if currentEndpoint.isEmpty || currentEndpoint == Self.defaultEndpoint(for: oldProvider) {
                             endpoint = Self.defaultEndpoint(for: newProvider)
                         }
+                        disabledCompatibilityParameters.removeAll()
                     }
                     TextField(
                         KizunaCopy.text(japanese: "Model ID", english: "Model ID"),
@@ -1858,6 +1950,36 @@ private struct AIModelRegistryEditorView: View {
                         )
                         .textContentType(.URL)
                         .autocorrectionDisabled()
+                    }
+                }
+
+                Section(KizunaCopy.text(japanese: "互換性", english: "Compatibility")) {
+                    Text(KizunaCopy.text(
+                        japanese: "モデルが受け付けない任意パラメータをOFFにすると、その値をリクエストから除外できます。",
+                        english: "Turn off optional parameters that this model rejects to omit them from requests."
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(
+                        AIModelTuningParameter.allCases.filter {
+                            AIProviderParameterCapabilities.capabilities(for: provider).supports($0)
+                        },
+                        id: \.self
+                    ) { parameter in
+                        Toggle(
+                            Self.compatibilityParameterName(parameter),
+                            isOn: Binding(
+                                get: { !disabledCompatibilityParameters.contains(parameter) },
+                                set: { enabled in
+                                    if enabled {
+                                        disabledCompatibilityParameters.remove(parameter)
+                                    } else {
+                                        disabledCompatibilityParameters.insert(parameter)
+                                    }
+                                }
+                            )
+                        )
                     }
                 }
 
@@ -1894,7 +2016,7 @@ private struct AIModelRegistryEditorView: View {
 
                 Section(KizunaCopy.text(japanese: "認証", english: "Credentials")) {
                     SecureField(
-                        Self.requiresAPIKey(for: provider)
+                        Self.requiresAPIKey(for: provider, endpoint: endpoint)
                             ? KizunaCopy.text(japanese: "APIキー（必須・変更時のみ入力）", english: "API key (required; enter only to change)")
                             : KizunaCopy.text(japanese: "APIキー（変更時のみ入力）", english: "API key (enter only to change)"),
                         text: $apiKey
@@ -1944,8 +2066,9 @@ private struct AIModelRegistryEditorView: View {
             return
         }
 
+        let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasExistingAPIKey = AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
-        if Self.requiresAPIKey(for: provider)
+        if Self.requiresAPIKey(for: provider, endpoint: trimmedEndpoint)
             && apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !hasExistingAPIKey {
             validationMessage = KizunaCopy.text(
@@ -1955,7 +2078,11 @@ private struct AIModelRegistryEditorView: View {
             return
         }
 
-        let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let compatibility = disabledCompatibilityParameters.isEmpty
+            ? nil
+            : AIModelCompatibilitySettings(
+                disabledParameters: disabledCompatibilityParameters
+            )
         let updated = AIModelConfiguration(
             id: configuration.id,
             identity: AIModelIdentity(
@@ -1969,7 +2096,8 @@ private struct AIModelRegistryEditorView: View {
             roles: roles,
             endpoint: provider == .localRuntime || trimmedEndpoint.isEmpty ? nil : trimmedEndpoint,
             priority: priority,
-            isEnabled: isEnabled
+            isEnabled: isEnabled,
+            compatibility: compatibility
         )
         if let error = onSave(updated, apiKey) {
             validationMessage = error
@@ -1984,6 +2112,21 @@ private struct AIModelRegistryEditorView: View {
         case .googleGenerativeLanguage: return "Google Generative Language"
         case .openAICompatible: return "OpenAI-compatible"
         case .anthropic: return "Anthropic"
+        }
+    }
+
+    private static func compatibilityParameterName(_ parameter: AIModelTuningParameter) -> String {
+        switch parameter {
+        case .temperature: return "Temperature"
+        case .topP: return "Top P"
+        case .topK: return "Top K"
+        case .maxOutputTokens: return KizunaCopy.text(japanese: "最大出力Token", english: "Maximum output tokens")
+        case .seed: return "Seed"
+        case .contextSize: return KizunaCopy.text(japanese: "Context size", english: "Context size")
+        case .batchSize: return "Batch size"
+        case .threads: return "Threads"
+        case .gpuLayers: return "GPU layers"
+        case .flashAttention: return "Flash Attention"
         }
     }
 
@@ -2014,8 +2157,8 @@ private struct AIModelRegistryEditorView: View {
         }
     }
 
-    private static func requiresAPIKey(for provider: AIProviderID) -> Bool {
-        provider == .openAICompatible || provider == .anthropic
+    private static func requiresAPIKey(for provider: AIProviderID, endpoint: String) -> Bool {
+        AIEndpointPolicy.requiresAPIKey(providerID: provider, endpoint: endpoint)
     }
 }
 

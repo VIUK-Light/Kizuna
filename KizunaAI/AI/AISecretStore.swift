@@ -28,6 +28,36 @@ enum AIModelRole: String, Codable, CaseIterable, Hashable, Sendable {
     case safety
 }
 
+enum AIEndpointPolicy {
+    static func isLocalEndpoint(_ rawValue: String?) -> Bool {
+        guard let rawValue,
+              let url = URL(string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let host = url.host?.lowercased() else {
+            return false
+        }
+        return isLocalHost(host)
+    }
+
+    static func isLocalEndpoint(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return isLocalHost(host)
+    }
+
+    static func requiresAPIKey(providerID: AIProviderID, endpoint: String?) -> Bool {
+        guard providerID == .openAICompatible || providerID == .anthropic else {
+            return false
+        }
+        return !isLocalEndpoint(endpoint)
+    }
+
+    private static func isLocalHost(_ host: String) -> Bool {
+        host == "localhost"
+            || host == "127.0.0.1"
+            || host == "::1"
+            || host.hasSuffix(".localhost")
+    }
+}
+
 /// The default settings surface stays intent-based. Raw sampler/runtime
 /// values are persisted separately and are only used while Advanced mode is
 /// selected.
@@ -42,6 +72,15 @@ enum AISimpleModelPreset: String, Codable, CaseIterable, Hashable, Sendable {
     case balanced
     case creative
     case fast
+}
+
+/// Friendly routing choices for users who do not want to compare parameter
+/// counts or provider names. Advanced mode can still pin a different model
+/// for each use case.
+enum AISimpleModelRoute: String, Codable, CaseIterable, Hashable, Sendable {
+    case automatic
+    case onDevice
+    case online
 }
 
 /// Advanced overrides are grouped by product use case instead of being tied
@@ -152,19 +191,59 @@ struct AIGenerationOverrides: Codable, Equatable, Hashable, Sendable {
 struct AIModelTuningPreferences: Codable, Equatable, Sendable {
     var mode: AIModelSettingsMode
     var simplePreset: AISimpleModelPreset
+    var simpleModelRoute: AISimpleModelRoute
     private var scopeOverrides: [String: AIGenerationOverrides]
+    private var preferredConfigurationIDs: [String: UUID]
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+        case simplePreset
+        case simpleModelRoute
+        case scopeOverrides
+        case preferredConfigurationIDs
+    }
 
     init(
         mode: AIModelSettingsMode = .simple,
         simplePreset: AISimpleModelPreset = .automatic,
-        scopeOverrides: [String: AIGenerationOverrides] = [:]
+        simpleModelRoute: AISimpleModelRoute = .automatic,
+        scopeOverrides: [String: AIGenerationOverrides] = [:],
+        preferredConfigurationIDs: [String: UUID] = [:]
     ) {
         self.mode = mode
         self.simplePreset = simplePreset
+        self.simpleModelRoute = simpleModelRoute
         self.scopeOverrides = scopeOverrides
+        self.preferredConfigurationIDs = preferredConfigurationIDs
     }
 
     static let `default` = AIModelTuningPreferences()
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decodeIfPresent(AIModelSettingsMode.self, forKey: .mode) ?? .simple
+        simplePreset = try container.decodeIfPresent(AISimpleModelPreset.self, forKey: .simplePreset) ?? .automatic
+        simpleModelRoute = try container.decodeIfPresent(AISimpleModelRoute.self, forKey: .simpleModelRoute) ?? .automatic
+        scopeOverrides = try container.decodeIfPresent(
+            [String: AIGenerationOverrides].self,
+            forKey: .scopeOverrides
+        ) ?? [:]
+        // This field was added after v1. Existing users keep their tuning
+        // values instead of falling back to the complete default object.
+        preferredConfigurationIDs = try container.decodeIfPresent(
+            [String: UUID].self,
+            forKey: .preferredConfigurationIDs
+        ) ?? [:]
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(simplePreset, forKey: .simplePreset)
+        try container.encode(simpleModelRoute, forKey: .simpleModelRoute)
+        try container.encode(scopeOverrides, forKey: .scopeOverrides)
+        try container.encode(preferredConfigurationIDs, forKey: .preferredConfigurationIDs)
+    }
 
     func overrides(for scope: AIModelTuningScope) -> AIGenerationOverrides {
         scopeOverrides[scope.rawValue] ?? AIGenerationOverrides()
@@ -175,6 +254,56 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
             scopeOverrides[scope.rawValue] = nil
         } else {
             scopeOverrides[scope.rawValue] = overrides
+        }
+    }
+
+    func preferredConfigurationID(for scope: AIModelTuningScope) -> UUID? {
+        preferredConfigurationIDs[scope.rawValue]
+    }
+
+    func simplePreferredConfigurationID(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration]
+    ) -> UUID? {
+        switch simpleModelRoute {
+        case .automatic:
+            return nil
+        case .onDevice:
+            return configurations.first(where: { $0.identity.providerID == .localRuntime })?.id
+        case .online:
+            return configurations.first(where: { $0.identity.providerID != .localRuntime })?.id
+        }
+    }
+
+    /// Resolve the model selected by the current settings surface while
+    /// retaining the legacy provider choice when Simple mode is Automatic.
+    func configurationIDForCurrentMode(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration],
+        fallbackProviderID: AIProviderID?
+    ) -> UUID? {
+        switch mode {
+        case .advanced:
+            if let preferred = preferredConfigurationID(for: AIModelTuningScope(role: role)),
+               configurations.contains(where: { $0.id == preferred }) {
+                return preferred
+            }
+        case .simple:
+            if let simple = simplePreferredConfigurationID(for: role, configurations: configurations) {
+                return simple
+            }
+        }
+
+        return fallbackProviderID.flatMap { providerID in
+            configurations.first(where: { $0.identity.providerID == providerID })?.id
+        }
+    }
+
+    mutating func setPreferredConfigurationID(_ id: UUID?, for scope: AIModelTuningScope) {
+        if let id {
+            preferredConfigurationIDs[scope.rawValue] = id
+        } else {
+            preferredConfigurationIDs[scope.rawValue] = nil
         }
     }
 
@@ -213,8 +342,41 @@ final class AIModelTuningStore: @unchecked Sendable {
     }
 
     @discardableResult
+    func setSimpleModelRoute(_ route: AISimpleModelRoute) -> Bool {
+        update { $0.simpleModelRoute = route }
+    }
+
+    @discardableResult
     func setOverrides(_ overrides: AIGenerationOverrides, for scope: AIModelTuningScope) -> Bool {
         update { $0.setOverrides(overrides, for: scope) }
+    }
+
+    func preferredConfigurationID(for scope: AIModelTuningScope) -> UUID? {
+        preferences.preferredConfigurationID(for: scope)
+    }
+
+    func simplePreferredConfigurationID(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration]
+    ) -> UUID? {
+        preferences.simplePreferredConfigurationID(for: role, configurations: configurations)
+    }
+
+    func configurationIDForCurrentMode(
+        for role: AIModelRole,
+        configurations: [AIModelConfiguration],
+        fallbackProviderID: AIProviderID?
+    ) -> UUID? {
+        preferences.configurationIDForCurrentMode(
+            for: role,
+            configurations: configurations,
+            fallbackProviderID: fallbackProviderID
+        )
+    }
+
+    @discardableResult
+    func setPreferredConfigurationID(_ id: UUID?, for scope: AIModelTuningScope) -> Bool {
+        update { $0.setPreferredConfigurationID(id, for: scope) }
     }
 
     @discardableResult
@@ -252,7 +414,7 @@ final class AIModelTuningStore: @unchecked Sendable {
     }
 }
 
-enum AIModelTuningParameter: String, CaseIterable, Hashable, Sendable {
+enum AIModelTuningParameter: String, Codable, CaseIterable, Hashable, Sendable {
     case temperature
     case topP
     case topK
@@ -263,6 +425,20 @@ enum AIModelTuningParameter: String, CaseIterable, Hashable, Sendable {
     case threads
     case gpuLayers
     case flashAttention
+}
+
+struct AIModelCompatibilitySettings: Codable, Equatable, Hashable, Sendable {
+    var disabledParameters: Set<AIModelTuningParameter>
+
+    init(disabledParameters: Set<AIModelTuningParameter> = []) {
+        self.disabledParameters = disabledParameters
+    }
+
+    static let automatic = AIModelCompatibilitySettings()
+
+    func disables(_ parameter: AIModelTuningParameter) -> Bool {
+        disabledParameters.contains(parameter)
+    }
 }
 
 struct AIProviderParameterCapabilities: Sendable {
@@ -289,6 +465,16 @@ struct AIProviderParameterCapabilities: Sendable {
                 supportedParameters: [.temperature, .topP, .topK, .maxOutputTokens]
             )
         }
+    }
+
+    static func capabilities(for configuration: AIModelConfiguration) -> AIProviderParameterCapabilities {
+        let automatic = capabilities(for: configuration.identity.providerID)
+        guard let compatibility = configuration.compatibility else {
+            return automatic
+        }
+        return AIProviderParameterCapabilities(
+            supportedParameters: automatic.supportedParameters.subtracting(compatibility.disabledParameters)
+        )
     }
 }
 
@@ -326,6 +512,9 @@ struct AIModelConfiguration: Codable, Equatable, Hashable, Identifiable, Sendabl
     var endpoint: String?
     var priority: Int
     var isEnabled: Bool
+    /// Optional per-model compatibility overrides. `nil` preserves the
+    /// provider's automatic capability profile for older registry entries.
+    var compatibility: AIModelCompatibilitySettings?
 
     init(
         id: UUID = UUID(),
@@ -333,7 +522,8 @@ struct AIModelConfiguration: Codable, Equatable, Hashable, Identifiable, Sendabl
         roles: Set<AIModelRole>,
         endpoint: String? = nil,
         priority: Int = 0,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        compatibility: AIModelCompatibilitySettings? = nil
     ) {
         self.id = id
         self.identity = identity
@@ -341,6 +531,7 @@ struct AIModelConfiguration: Codable, Equatable, Hashable, Identifiable, Sendabl
         self.endpoint = endpoint
         self.priority = priority
         self.isEnabled = isEnabled
+        self.compatibility = compatibility
     }
 }
 

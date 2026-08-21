@@ -88,6 +88,85 @@ struct StoryGemma31BGenerationResult {
     }
 }
 
+/// Google Generative Language API's model and endpoint parts are kept in one
+/// testable helper so registry configurations can use custom deployments
+/// without duplicating URL construction in streaming and non-streaming paths.
+enum StoryGemma31BAPIEndpoint {
+    enum Operation: String, Equatable, Sendable {
+        case model
+        case generateContent
+        case streamGenerateContent
+    }
+
+    static let defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta"
+    static let defaultPrimaryModelName = "gemma-4-31b-it"
+    static let defaultFallbackModelNames = ["gemma-4-26b-a4b-it"]
+
+    static func modelCandidates(
+        primaryModelName: String?,
+        fallbackModelNames: [String]?
+    ) -> [String] {
+        let primary = normalizedModelName(primaryModelName) ?? defaultPrimaryModelName
+        let fallbacks: [String]
+        if let fallbackModelNames {
+            fallbacks = fallbackModelNames.compactMap(normalizedModelName)
+        } else if primary == defaultPrimaryModelName {
+            fallbacks = defaultFallbackModelNames
+        } else {
+            // A custom registry model must not silently fall through to an
+            // unrelated built-in model when its own endpoint rejects it.
+            fallbacks = []
+        }
+        return unique([primary] + fallbacks)
+    }
+
+    static func url(
+        baseURL: String?,
+        modelName: String,
+        operation: Operation
+    ) -> URL? {
+        let rawBaseURL = baseURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = rawBaseURL?.isEmpty == false ? rawBaseURL! : defaultBaseURL
+        guard var components = URLComponents(string: base),
+              components.scheme?.lowercased() == "https",
+              components.host?.isEmpty == false,
+              let normalizedModelName = normalizedModelName(modelName) else {
+            return nil
+        }
+
+        let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let escapedModelName = normalizedModelName.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed
+        ) ?? normalizedModelName
+        let suffix = "models/\(escapedModelName):\(operation.rawValue)"
+        components.path = "/" + ([basePath, suffix].filter { !$0.isEmpty }.joined(separator: "/"))
+        components.queryItems = operation == .streamGenerateContent
+            ? [URLQueryItem(name: "alt", value: "sse")]
+            : nil
+        components.fragment = nil
+        return components.url
+    }
+
+    private static func normalizedModelName(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+              !normalized.contains("/"),
+              !normalized.contains("?") else {
+            return nil
+        }
+        return normalized
+    }
+
+    private static func unique(_ values: [String]) -> [String] {
+        var result: [String] = []
+        for value in values where !result.contains(value) {
+            result.append(value)
+        }
+        return result
+    }
+}
+
 final class StoryGemma31BStreamAccumulator: @unchecked Sendable {
     private let lock = NSLock()
     private var value = ""
@@ -103,8 +182,8 @@ final class StoryGemma31BStreamAccumulator: @unchecked Sendable {
 final class StoryGemma31BAPIService {
     static let shared = StoryGemma31BAPIService()
 
-    private let primaryModelName = "gemma-4-31b-it"
-    private let fallbackModelNames = ["gemma-4-26b-a4b-it"]
+    private let primaryModelName = StoryGemma31BAPIEndpoint.defaultPrimaryModelName
+    private let fallbackModelNames = StoryGemma31BAPIEndpoint.defaultFallbackModelNames
     private let secretStore = AISecretStore.shared
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
@@ -141,7 +220,11 @@ final class StoryGemma31BAPIService {
             return .notConfigured
         }
         updateAvailability(.checking)
-        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(primaryModelName)") else {
+        guard let url = StoryGemma31BAPIEndpoint.url(
+            baseURL: nil,
+            modelName: primaryModelName,
+            operation: .model
+        ) else {
             updateAvailability(.unavailable)
             return .unavailable
         }
@@ -189,7 +272,10 @@ final class StoryGemma31BAPIService {
         topK: Int? = nil,
         maxOutputTokens: Int = 4096,
         seed: Int? = nil,
-        apiKey overrideAPIKey: String? = nil
+        apiKey overrideAPIKey: String? = nil,
+        modelName configuredModelName: String? = nil,
+        baseURL configuredBaseURL: String? = nil,
+        fallbackModelNames configuredFallbackModelNames: [String]? = nil
     ) async throws -> StoryGemma31BGenerationResult {
         guard let apiKey = resolvedAPIKey(overrideAPIKey) else {
             throw StoryGemma31BAPIError.missingAPIKey
@@ -204,11 +290,17 @@ final class StoryGemma31BAPIService {
             thinkingLevel: "high",
             seed: seed
         )
+        let modelNames = StoryGemma31BAPIEndpoint.modelCandidates(
+            primaryModelName: configuredModelName ?? primaryModelName,
+            fallbackModelNames: configuredFallbackModelNames
+                ?? (configuredModelName == nil ? fallbackModelNames : [])
+        )
 
         let generation = try await performRequestWithRetry(
             apiKey: apiKey,
             body: body,
-            modelNames: [primaryModelName] + fallbackModelNames
+            baseURL: configuredBaseURL,
+            modelNames: modelNames
         )
 
         let decoded = try decoder.decode(StoryGemma31BGenerateContentResponse.self, from: generation.data)
@@ -244,7 +336,8 @@ final class StoryGemma31BAPIService {
         let fallbackGeneration = try await performRequestWithRetry(
             apiKey: apiKey,
             body: fallbackBody,
-            modelNames: [primaryModelName] + fallbackModelNames
+            baseURL: configuredBaseURL,
+            modelNames: modelNames
         )
         let fallbackResponse = try decoder.decode(
             StoryGemma31BGenerateContentResponse.self,
@@ -282,6 +375,9 @@ final class StoryGemma31BAPIService {
         maxOutputTokens: Int = 4096,
         seed: Int? = nil,
         apiKey overrideAPIKey: String? = nil,
+        modelName configuredModelName: String? = nil,
+        baseURL configuredBaseURL: String? = nil,
+        fallbackModelNames configuredFallbackModelNames: [String]? = nil,
         onTextDelta: @escaping @Sendable (String) -> Void,
         onModelResolved: (@Sendable (String) -> Void)? = nil
     ) async throws -> StoryGemma31BGenerationResult {
@@ -298,13 +394,19 @@ final class StoryGemma31BAPIService {
             thinkingLevel: "high",
             seed: seed
         )
+        let modelNames = StoryGemma31BAPIEndpoint.modelCandidates(
+            primaryModelName: configuredModelName ?? primaryModelName,
+            fallbackModelNames: configuredFallbackModelNames
+                ?? (configuredModelName == nil ? fallbackModelNames : [])
+        )
 
         var lastFailure: StoryGemma31BAPIError?
-        for modelName in [primaryModelName] + fallbackModelNames {
+        for modelName in modelNames {
             do {
                 return try await streamSingleRequest(
                     apiKey: apiKey,
                     body: body,
+                    baseURL: configuredBaseURL,
                     modelName: modelName,
                     onTextDelta: onTextDelta,
                     onModelResolved: onModelResolved
@@ -390,11 +492,16 @@ final class StoryGemma31BAPIService {
     private func streamSingleRequest(
         apiKey: String,
         body: Data,
+        baseURL: String?,
         modelName: String,
         onTextDelta: @escaping @Sendable (String) -> Void,
         onModelResolved: (@Sendable (String) -> Void)?
     ) async throws -> StoryGemma31BGenerationResult {
-        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelName):streamGenerateContent?alt=sse") else {
+        guard let url = StoryGemma31BAPIEndpoint.url(
+            baseURL: baseURL,
+            modelName: modelName,
+            operation: .streamGenerateContent
+        ) else {
             throw StoryGemma31BAPIError.invalidURL
         }
         var request = URLRequest(url: url)
@@ -472,12 +579,17 @@ final class StoryGemma31BAPIService {
     private func performRequestWithRetry(
         apiKey: String,
         body: Data,
+        baseURL: String?,
         modelNames: [String]
     ) async throws -> (data: Data, modelName: String) {
         var lastFailure: StoryGemma31BAPIError?
         let maxAttemptsPerModel = 5
         for modelName in modelNames {
-            guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelName):generateContent") else {
+            guard let url = StoryGemma31BAPIEndpoint.url(
+                baseURL: baseURL,
+                modelName: modelName,
+                operation: .generateContent
+            ) else {
                 throw StoryGemma31BAPIError.invalidURL
             }
 
