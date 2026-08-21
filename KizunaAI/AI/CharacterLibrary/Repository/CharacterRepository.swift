@@ -70,6 +70,15 @@ final class CharacterDeletionCleanupMarker: @unchecked Sendable {
         withLock { UserDefaults.standard.set(true, forKey: tombstoneKey(for: id)) }
     }
 
+    /// Atomically moves an ID from the resumable deletion marker to its
+    /// permanent tombstone. Writers must never observe a gap between the two.
+    nonisolated func finish(_ id: UUID) {
+        withLock {
+            UserDefaults.standard.removeObject(forKey: key(for: id))
+            UserDefaults.standard.set(true, forKey: tombstoneKey(for: id))
+        }
+    }
+
     nonisolated func pendingIDs() -> [UUID] {
         withLock {
             UserDefaults.standard.dictionaryRepresentation().keys.compactMap { key in
@@ -278,8 +287,7 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
         // tombstone after that point so late writes for this UUID remain
         // rejected even after the resumable cleanup marker is cleared.
         try await loreStore.delete(matching: { $0.characterId == id })
-        CharacterDeletionCleanupMarker.shared.remove(id)
-        CharacterDeletionCleanupMarker.shared.insertTombstone(id)
+        CharacterDeletionCleanupMarker.shared.finish(id)
     }
 
     func fetchLorebook(characterId: UUID) async throws -> CharacterLorebook? {
@@ -288,6 +296,18 @@ final class LocalJSONCharacterRepository: BatchCharacterRepository {
     }
 
     func saveLorebook(_ lorebook: CharacterLorebook) async throws {
-        try await loreStore.appendOrReplace(lorebook, idEquals: { $0.characterId == $1.characterId })
+        guard !CharacterDeletionCleanupMarker.shared.contains(lorebook.characterId) else {
+            throw CharacterRepositoryError.deletionInProgress(lorebook.characterId)
+        }
+        try await loreStore.mutate { items in
+            guard !CharacterDeletionCleanupMarker.shared.contains(lorebook.characterId) else {
+                throw CharacterRepositoryError.deletionInProgress(lorebook.characterId)
+            }
+            if let index = items.firstIndex(where: { $0.characterId == lorebook.characterId }) {
+                items[index] = lorebook
+            } else {
+                items.append(lorebook)
+            }
+        }
     }
 }
