@@ -385,6 +385,43 @@ struct SafetyDecision: Equatable, Hashable {
     var localizedReasons: [String] {
         reasons.map(SafetyReasonLocalization.localized)
     }
+
+    /// `.soften` is a text transformation contract. A checker or age policy
+    /// that raises the action without supplying rewritten text must not let
+    /// the original text pass through as if it were softened.
+    func enforcingRewriteContract() -> SafetyDecision {
+        guard action == .soften,
+              rewrittenText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
+            return self
+        }
+        var normalized = self
+        normalized.action = .requireEdit
+        normalized.severity = .warning
+        normalized.reasons.append("緩和後の本文を作成できないため、元の表現は通しません。")
+        return normalized
+    }
+}
+
+/// Decide which user input may cross into a generation prompt. Input and
+/// output use the same `.soften` contract: rewrite is required, and an
+/// incomplete decision never falls back to the original text.
+enum SafetyInputPolicy {
+    static func acceptedText(
+        action: SafetyAction,
+        original: String,
+        rewritten: String?
+    ) -> String? {
+        switch action {
+        case .allow, .warn:
+            return original
+        case .soften:
+            guard let rewritten else { return nil }
+            let value = rewritten.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : rewritten
+        case .block, .requireEdit:
+            return nil
+        }
+    }
 }
 
 enum DependencyProtectionLevel: String, Codable, Equatable, Hashable, Sendable {

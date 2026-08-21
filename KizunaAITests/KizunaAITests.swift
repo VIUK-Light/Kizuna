@@ -7201,6 +7201,34 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(input.addedPromptRules, output.addedPromptRules)
     }
 
+    func testSafetyPipelineRejectsRewriteLessSoftening() async {
+        let pipeline = SafetyPipeline(
+            policyProvider: { EffectiveSafetyPolicy.make(for: .selfDeclared(.adult)) }
+        )
+        let character = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+
+        let decision = await pipeline.evaluateInput("死ね", character: character)
+        XCTAssertEqual(decision.action, .requireEdit)
+        XCTAssertNil(decision.rewrittenText)
+        XCTAssertNil(
+            SafetyInputPolicy.acceptedText(
+                action: decision.action,
+                original: "死ね",
+                rewritten: decision.rewrittenText
+            )
+        )
+        XCTAssertEqual(
+            SafetyDecision(action: .soften).enforcingRewriteContract().action,
+            .requireEdit
+        )
+    }
+
     func testAgePolicyBlocksBeforeLocalAndRemotePersonaRouting() async throws {
         let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
         let character = CharacterProfile(

@@ -1687,7 +1687,7 @@ final class StorySessionService: ObservableObject {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
         }
-        if inSafety.action == .block {
+        if inSafety.action == .block || inSafety.action == .requireEdit {
             acceptanceInputSafetyBlocked = true
             let polite = inSafety.rewrittenText ?? localizedNotice(
                 "(ナレーション) その話題はここではそっと脇に置いて、別の場面に進もう。",
@@ -1778,7 +1778,14 @@ final class StorySessionService: ObservableObject {
             }
             return
         }
-        let effectiveUserText = inSafety.rewrittenText ?? userText
+        guard let effectiveUserText = SafetyInputPolicy.acceptedText(
+            action: inSafety.action,
+            original: userText,
+            rewritten: inSafety.rewrittenText
+        ) else {
+            AppLog.error("[StorySession] input safety decision had no accepted text")
+            return
+        }
 
         // 4) 補助モデルが設定されている場合は、シーンに居るキャラを
         //    auxiliary roleへ渡して選定する。

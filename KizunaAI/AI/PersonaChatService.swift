@@ -628,7 +628,7 @@ final class PersonaChatService: ObservableObject {
             character: legacySafetyCharacter
         )
         guard isGenerationActive(generationID) else { return }
-        if inSafety.action == .block {
+        if inSafety.action == .block || inSafety.action == .requireEdit {
             let polite = PersonaOutputSafetyPolicy.sanitizedRewrite(inSafety.rewrittenText)
                 ?? KizunaCopy.text(
                     japanese: "その話題には答えられません。別の話にしましょう。",
@@ -645,7 +645,14 @@ final class PersonaChatService: ObservableObject {
             return
         }
 
-        let effectiveUserText = inSafety.rewrittenText ?? userText
+        guard let effectiveUserText = SafetyInputPolicy.acceptedText(
+            action: inSafety.action,
+            original: userText,
+            rewritten: inSafety.rewrittenText
+        ) else {
+            AppLog.error("[PersonaService] input safety decision had no accepted text")
+            return
+        }
         var promptThread = thread
         if let latestUserIndex = promptThread.messages.lastIndex(where: { $0.role == .user }) {
             promptThread.messages[latestUserIndex].text = effectiveUserText
@@ -806,7 +813,7 @@ final class PersonaChatService: ObservableObject {
         // ── 2) 入力 safety ──
         let inSafety = await safetyPipeline.evaluateInput(userText, character: character)
         guard isGenerationActive(generationID) else { return }
-        if inSafety.action == .block {
+        if inSafety.action == .block || inSafety.action == .requireEdit {
             // ブロックされたらキャラから穏当な拒否メッセージを返して終了
             let polite = PersonaOutputSafetyPolicy.sanitizedRewrite(inSafety.rewrittenText)
                 ?? KizunaCopy.text(
@@ -833,7 +840,14 @@ final class PersonaChatService: ObservableObject {
             }
             return
         }
-        let effectiveUserText = inSafety.rewrittenText ?? userText
+        guard let effectiveUserText = SafetyInputPolicy.acceptedText(
+            action: inSafety.action,
+            original: userText,
+            rewritten: inSafety.rewrittenText
+        ) else {
+            AppLog.error("[PersonaService] character input safety decision had no accepted text")
+            return
+        }
 
         // ── 3) メモリー候補と選別 ──
         let candidates: [CharacterMemory]

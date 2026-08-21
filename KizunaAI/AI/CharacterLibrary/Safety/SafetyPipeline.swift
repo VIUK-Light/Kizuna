@@ -31,15 +31,21 @@ final class SafetyPipeline {
 
     func evaluateCharacter(_ c: CharacterProfile) async -> SafetyDecision {
         let decision = await characterChecker.evaluate(c)
-        return policyProvider().applying(to: decision, characterRating: c.safetyRating)
+        return policyProvider()
+            .applying(to: decision, characterRating: c.safetyRating)
+            .enforcingRewriteContract()
     }
     func evaluateInput(_ text: String, character: CharacterProfile) async -> SafetyDecision {
         let decision = await inputChecker.evaluate(text, character: character)
-        return policyProvider().applying(to: decision, characterRating: character.safetyRating)
+        return policyProvider()
+            .applying(to: decision, characterRating: character.safetyRating)
+            .enforcingRewriteContract()
     }
     func evaluateOutput(_ text: String, character: CharacterProfile) async -> SafetyDecision {
         let decision = await outputChecker.evaluate(text, character: character)
-        return policyProvider().applying(to: decision, characterRating: character.safetyRating)
+        return policyProvider()
+            .applying(to: decision, characterRating: character.safetyRating)
+            .enforcingRewriteContract()
     }
 
     /// 危険な相談の可能性だけを分類する。会話の入力・出力を変更しない。
