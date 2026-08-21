@@ -1663,6 +1663,13 @@ final class StorySessionService: ObservableObject {
                 relationshipGenre: world.relationshipGenre
             )
         }()
+        let participatingSafetyRatings: [SafetyRating] = {
+            let activeCharacters = scene.activeCharacterIds.compactMap { charIndex[$0] }
+            let source = activeCharacters.isEmpty
+                ? cast.compactMap { charIndex[$0.characterId] }
+                : activeCharacters
+            return source.map(\.safetyRating)
+        }()
 
         // 3) 入力 safety
         // 相談分類は入力/出力を変更しない。本文生成と並行するUI用の情報だけを作る。
@@ -1682,7 +1689,11 @@ final class StorySessionService: ObservableObject {
                 safetyConcern.confidence
             )
         }
-        let inSafety = await safetyPipeline.evaluateInput(userText, character: representativeCharacter)
+        let inSafety = await safetyPipeline.evaluateInput(
+            userText,
+            character: representativeCharacter,
+            additionalCharacterRatings: participatingSafetyRatings
+        )
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return
@@ -2434,13 +2445,21 @@ final class StorySessionService: ObservableObject {
         if let statePatchForSafety {
             if let safetyText = statePatchForSafety.safetyEvaluationText() {
                 stateSafetyAction = await safetyPipeline
-                    .evaluateOutput(safetyText, character: representativeCharacter)
+                    .evaluateOutput(
+                        safetyText,
+                        character: representativeCharacter,
+                        additionalCharacterRatings: participatingSafetyRatings
+                    )
                     .action
             } else {
                 AppLog.note("[StorySession] STATE_UPDATE could not be serialized for safety evaluation; dropping patch")
             }
         }
-        let outSafety = await safetyPipeline.evaluateOutput(rawFinal, character: representativeCharacter)
+        let outSafety = await safetyPipeline.evaluateOutput(
+            rawFinal,
+            character: representativeCharacter,
+            additionalCharacterRatings: participatingSafetyRatings
+        )
         guard isGenerationActive(generationID) else {
             await finishCancelledTurn(sessionID: session.id, turnID: turnID, attempt: attempt)
             return

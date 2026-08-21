@@ -535,8 +535,16 @@ struct EffectiveSafetyPolicy: Equatable, Sendable {
         to decision: SafetyDecision,
         characterRating: SafetyRating
     ) -> SafetyDecision {
+        applying(to: decision, characterRatings: [characterRating])
+    }
+
+    func applying(
+        to decision: SafetyDecision,
+        characterRatings: [SafetyRating]
+    ) -> SafetyDecision {
         var result = decision
-        var policyAction: SafetyAction = allows(characterRating) ? .allow : .block
+        let ratings = characterRatings.isEmpty ? [.general] : characterRatings
+        var policyAction: SafetyAction = ratings.allSatisfy(allows) ? .allow : .block
         for domain in decision.riskDomains {
             policyAction = max(policyAction, domainRules[domain] ?? .allow)
         }
@@ -545,7 +553,7 @@ struct EffectiveSafetyPolicy: Equatable, Sendable {
         result.action = max(result.action, policyAction)
         if result.action > previousAction {
             result.reasons.append(
-                allows(characterRating)
+                ratings.allSatisfy(allows)
                     ? KizunaCopy.text(
                         japanese: "年齢に合わせた安全設定を適用しました。",
                         english: "Age-appropriate safety settings were applied."

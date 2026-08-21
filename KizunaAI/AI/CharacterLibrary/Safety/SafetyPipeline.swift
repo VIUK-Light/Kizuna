@@ -36,15 +36,37 @@ final class SafetyPipeline {
             .enforcingRewriteContract()
     }
     func evaluateInput(_ text: String, character: CharacterProfile) async -> SafetyDecision {
+        await evaluateInput(text, character: character, additionalCharacterRatings: [])
+    }
+
+    func evaluateInput(
+        _ text: String,
+        character: CharacterProfile,
+        additionalCharacterRatings: [SafetyRating]
+    ) async -> SafetyDecision {
         let decision = await inputChecker.evaluate(text, character: character)
         return policyProvider()
-            .applying(to: decision, characterRating: character.safetyRating)
+            .applying(
+                to: decision,
+                characterRatings: [character.safetyRating] + additionalCharacterRatings
+            )
             .enforcingRewriteContract()
     }
     func evaluateOutput(_ text: String, character: CharacterProfile) async -> SafetyDecision {
+        await evaluateOutput(text, character: character, additionalCharacterRatings: [])
+    }
+
+    func evaluateOutput(
+        _ text: String,
+        character: CharacterProfile,
+        additionalCharacterRatings: [SafetyRating]
+    ) async -> SafetyDecision {
         let decision = await outputChecker.evaluate(text, character: character)
         return policyProvider()
-            .applying(to: decision, characterRating: character.safetyRating)
+            .applying(
+                to: decision,
+                characterRatings: [character.safetyRating] + additionalCharacterRatings
+            )
             .enforcingRewriteContract()
     }
 
