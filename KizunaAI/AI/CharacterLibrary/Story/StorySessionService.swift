@@ -2258,19 +2258,23 @@ final class StorySessionService: ObservableObject {
                 availability: availability,
                 selectedModelURL: availableModelURL
             )
-            let localConfiguration = resolvedStoryConfiguration?.identity.providerID == .localRuntime
-                ? resolvedStoryConfiguration
-                : AIModelRegistry.shared
+            let localConfiguration: AIModelConfiguration
+            if let resolvedStoryConfiguration,
+               resolvedStoryConfiguration.identity.providerID == .localRuntime {
+                localConfiguration = resolvedStoryConfiguration
+            } else {
+                localConfiguration = AIModelRegistry.shared
                     .configurations(for: .story)
                     .first(where: { $0.identity.providerID == .localRuntime })
-                ?? AIModelConfiguration(
-                    identity: AIModelIdentity(
-                        providerID: .localRuntime,
-                        modelID: "local-artifact",
-                        displayName: "Local runtime"
-                    ),
-                    roles: [.story]
-                )
+                    ?? AIModelConfiguration(
+                        identity: AIModelIdentity(
+                            providerID: .localRuntime,
+                            modelID: "local-artifact",
+                            displayName: "Local runtime"
+                        ),
+                        roles: [.story]
+                    )
+            }
             let tunedRequest = AIModelTuningStore.shared.resolvedRequest(
                 AIGenerationRequest(
                     systemPrompt: systemPrompt,

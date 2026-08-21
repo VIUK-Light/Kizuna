@@ -316,7 +316,7 @@ extension PersonaReplyGenerating {
         _ preferences: AIModelTuningPreferences
     ) -> Bool {
         if preferences.mode == .advanced {
-            return preferences.preferredConfigurationID(for: .persona) != nil
+            return preferences.preferredConfigurationID(for: AIModelRole.persona) != nil
         }
         return preferences.simpleModelRoute != .automatic
     }
