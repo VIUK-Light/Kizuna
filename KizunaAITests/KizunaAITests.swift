@@ -6719,6 +6719,81 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
     }
 
+    func testAIModelRegistryCleansPreferredSelectionsAfterMutation() throws {
+        let registrySuite = "KizunaAIModelRegistryTests.Mutation.\(UUID().uuidString)"
+        let tuningSuite = "KizunaAIModelTuningTests.Mutation.\(UUID().uuidString)"
+        let registryDefaults = try XCTUnwrap(UserDefaults(suiteName: registrySuite))
+        let tuningDefaults = try XCTUnwrap(UserDefaults(suiteName: tuningSuite))
+        defer {
+            registryDefaults.removePersistentDomain(forName: registrySuite)
+            tuningDefaults.removePersistentDomain(forName: tuningSuite)
+        }
+
+        let tuningStore = AIModelTuningStore(defaults: tuningDefaults)
+        let registry = AIModelRegistry(defaults: registryDefaults, tuningStore: tuningStore)
+        let configuration = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "mutation-model",
+                displayName: "Mutation model"
+            ),
+            roles: [.persona, .story],
+            endpoint: "https://example.invalid/v1"
+        )
+        XCTAssertTrue(registry.register(configuration))
+        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: AIModelRole.persona))
+        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: AIModelRole.story))
+
+        let storyOnly = AIModelConfiguration(
+            id: configuration.id,
+            identity: configuration.identity,
+            roles: [.story],
+            endpoint: configuration.endpoint
+        )
+        XCTAssertTrue(registry.register(storyOnly))
+        XCTAssertNil(tuningStore.preferredConfigurationID(for: AIModelRole.persona))
+        XCTAssertEqual(tuningStore.preferredConfigurationID(for: AIModelRole.story), configuration.id)
+
+        let disabled = AIModelConfiguration(
+            id: storyOnly.id,
+            identity: storyOnly.identity,
+            roles: storyOnly.roles,
+            endpoint: storyOnly.endpoint,
+            isEnabled: false
+        )
+        XCTAssertTrue(registry.register(disabled))
+        XCTAssertNil(tuningStore.preferredConfigurationID(for: AIModelRole.story))
+
+        XCTAssertTrue(registry.register(storyOnly))
+        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: AIModelRole.story))
+        XCTAssertTrue(registry.remove(id: configuration.id))
+        XCTAssertNil(tuningStore.preferredConfigurationID(for: AIModelRole.story))
+    }
+
+    func testAIModelTuningResetAdvancedOverridesAlsoClearsModelSelections() throws {
+        let suiteName = "KizunaAIModelTuningTests.FullReset.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AIModelTuningStore(defaults: defaults)
+        let personaID = UUID()
+        let storyID = UUID()
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertTrue(store.setPreferredConfigurationID(personaID, for: AIModelRole.persona))
+        XCTAssertTrue(store.setPreferredConfigurationID(storyID, for: AIModelTuningScope.story))
+        XCTAssertTrue(
+            store.setOverrides(
+                AIGenerationOverrides(temperature: 0.25),
+                for: AIModelTuningScope.story
+            )
+        )
+
+        XCTAssertTrue(store.resetAdvancedOverrides())
+        XCTAssertNil(store.preferredConfigurationID(for: AIModelRole.persona))
+        XCTAssertNil(store.preferredConfigurationID(for: AIModelTuningScope.story))
+        XCTAssertTrue(store.preferences.overrides(for: .story).isEmpty)
+    }
+
     func testGoogleRegistryRouteUsesConfiguredModelAndEndpoint() throws {
         let streamingURL = try XCTUnwrap(
             StoryGemma31BAPIEndpoint.url(

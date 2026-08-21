@@ -395,8 +395,29 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
         }
     }
 
+    mutating func clearPreferredConfigurationID(
+        _ id: UUID,
+        for roles: Set<AIModelRole>? = nil
+    ) {
+        let rolesToClear = roles ?? Set(AIModelRole.allCases)
+        for role in rolesToClear {
+            if preferredConfigurationID(for: role) == id {
+                setPreferredConfigurationID(nil, for: role)
+            }
+            let scope = AIModelTuningScope(role: role)
+            if preferredConfigurationID(for: scope) == id {
+                setPreferredConfigurationID(nil, for: scope)
+            }
+        }
+    }
+
     mutating func resetOverrides() {
         scopeOverrides.removeAll()
+    }
+
+    mutating func resetAdvancedSettings() {
+        resetOverrides()
+        preferredConfigurationIDs.removeAll()
     }
 }
 
@@ -494,7 +515,15 @@ final class AIModelTuningStore: @unchecked Sendable {
 
     @discardableResult
     func resetAdvancedOverrides() -> Bool {
-        update { $0.resetOverrides() }
+        update { $0.resetAdvancedSettings() }
+    }
+
+    @discardableResult
+    func clearPreferredConfigurationID(
+        _ id: UUID,
+        for roles: Set<AIModelRole>? = nil
+    ) -> Bool {
+        update { $0.clearPreferredConfigurationID(id, for: roles) }
     }
 
     @discardableResult
@@ -658,9 +687,14 @@ final class AIModelRegistry: @unchecked Sendable {
     private let defaults: UserDefaults
     private let lock = NSLock()
     private let storageKey = "ai.modelConfigurations.v1"
+    private let tuningStore: AIModelTuningStore
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        tuningStore: AIModelTuningStore = .shared
+    ) {
         self.defaults = defaults
+        self.tuningStore = tuningStore
         if defaults.data(forKey: storageKey) == nil {
             save(Self.legacyDefaultConfigurations)
         }
@@ -690,12 +724,43 @@ final class AIModelRegistry: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         var items = loadUnlocked()
+        let previous: AIModelConfiguration?
         if let index = items.firstIndex(where: { $0.id == configuration.id }) {
+            previous = items[index]
             items[index] = configuration
         } else {
+            previous = nil
             items.append(configuration)
         }
-        return saveUnlocked(items)
+        guard saveUnlocked(items) else { return false }
+
+        var rolesToClear = Set<AIModelRole>()
+        if let previous {
+            rolesToClear.formUnion(previous.roles.subtracting(configuration.roles))
+            if previous.isEnabled && !configuration.isEnabled {
+                rolesToClear.formUnion(previous.roles)
+            }
+        }
+        guard !rolesToClear.isEmpty else {
+            return true
+        }
+        if tuningStore.clearPreferredConfigurationID(
+            configuration.id,
+            for: rolesToClear
+        ) {
+            return true
+        }
+
+        // Keep registry metadata and tuning preferences consistent if the
+        // preference store cannot persist the cleanup.
+        if let previous,
+           let index = items.firstIndex(where: { $0.id == configuration.id }) {
+            items[index] = previous
+        } else {
+            items.removeAll { $0.id == configuration.id }
+        }
+        _ = saveUnlocked(items)
+        return false
     }
 
     @discardableResult
@@ -703,10 +768,15 @@ final class AIModelRegistry: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         var items = loadUnlocked()
-        let originalCount = items.count
+        guard let removed = items.first(where: { $0.id == id }) else { return true }
         items.removeAll { $0.id == id }
-        guard items.count != originalCount else { return true }
-        return saveUnlocked(items)
+        guard saveUnlocked(items) else { return false }
+        guard tuningStore.clearPreferredConfigurationID(id) else {
+            items.append(removed)
+            _ = saveUnlocked(items)
+            return false
+        }
+        return true
     }
 
     /// Resolve or create the local artifact configuration used by auxiliary
