@@ -1360,6 +1360,9 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                     maxOutputTokens: request.maxOutputTokens,
                     seed: request.seed,
                     apiKey: apiKey,
+                    modelName: configuration.identity.modelID,
+                    baseURL: configuration.endpoint,
+                    fallbackModelNames: googleFallbackModelNames(for: configuration),
                     onTextDelta: { delta in
                         let visible = accumulator.append(delta)
                         Task { @MainActor in
@@ -1396,7 +1399,10 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                     topK: request.topK,
                     maxOutputTokens: request.maxOutputTokens,
                     seed: request.seed,
-                    apiKey: apiKey
+                    apiKey: apiKey,
+                    modelName: configuration.identity.modelID,
+                    baseURL: configuration.endpoint,
+                    fallbackModelNames: googleFallbackModelNames(for: configuration)
                 )
             }
         } else {
@@ -1409,7 +1415,10 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
                     topK: request.topK,
                     maxOutputTokens: request.maxOutputTokens,
                     seed: request.seed,
-                    apiKey: apiKey
+                    apiKey: apiKey,
+                    modelName: configuration.identity.modelID,
+                    baseURL: configuration.endpoint,
+                    fallbackModelNames: googleFallbackModelNames(for: configuration)
                 )
             } catch let error as StoryGemma31BAPIError {
                 if case let .truncated(reason) = error {
@@ -1434,6 +1443,13 @@ private final class GoogleGenerativeLanguageProvider: AIProvider {
         request.onModelResolved?(response.identity)
         request.onUpdate?(.visiblePreview(response.text))
         return response
+    }
+
+    private func googleFallbackModelNames(for configuration: AIModelConfiguration) -> [String]? {
+        configuration.identity.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            == StoryGemma31BAPIEndpoint.defaultPrimaryModelName
+            ? nil
+            : []
     }
 }
 

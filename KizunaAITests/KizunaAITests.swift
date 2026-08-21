@@ -6622,6 +6622,43 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(registry.configurations(for: .story).contains { $0.id == configuration.id })
     }
 
+    func testGoogleRegistryRouteUsesConfiguredModelAndEndpoint() throws {
+        let streamingURL = try XCTUnwrap(
+            StoryGemma31BAPIEndpoint.url(
+                baseURL: "https://example.invalid/v1beta/",
+                modelName: "custom-gemma",
+                operation: .streamGenerateContent
+            )
+        )
+        XCTAssertEqual(streamingURL.host, "example.invalid")
+        XCTAssertEqual(streamingURL.path, "/v1beta/models/custom-gemma:streamGenerateContent")
+        XCTAssertEqual(streamingURL.query, "alt=sse")
+
+        let candidates = StoryGemma31BAPIEndpoint.modelCandidates(
+            primaryModelName: " custom-gemma ",
+            fallbackModelNames: []
+        )
+        XCTAssertEqual(candidates, ["custom-gemma"])
+
+        XCTAssertEqual(
+            StoryGemma31BAPIEndpoint.modelCandidates(
+                primaryModelName: StoryGemma31BAPIEndpoint.defaultPrimaryModelName,
+                fallbackModelNames: nil
+            ),
+            [
+                StoryGemma31BAPIEndpoint.defaultPrimaryModelName,
+                "gemma-4-26b-a4b-it"
+            ]
+        )
+        XCTAssertNil(
+            StoryGemma31BAPIEndpoint.url(
+                baseURL: "http://example.invalid/v1beta",
+                modelName: "custom-gemma",
+                operation: .generateContent
+            )
+        )
+    }
+
     func testAIModelTuningDefaultsToSimpleAutomaticAndPersistsSelection() throws {
         let suiteName = "KizunaAIModelTuningTests.Defaults.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
