@@ -7321,6 +7321,31 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testStoryCreateCandidatesRespectAgePolicy() {
+        let general = CharacterProfile(
+            name: "General",
+            displayName: "General",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+        let sensitive = CharacterProfile(
+            name: "Sensitive",
+            displayName: "Sensitive",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .sensitive
+        )
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+
+        let addable = StoryWorldCreateViewModel.addableCharacters(
+            from: [general, sensitive],
+            policy: policy
+        )
+
+        XCTAssertEqual(addable.map(\.id), [general.id])
+    }
+
     func testSafetyPipelineAppliesOneAgePolicyToInputAndOutput() async {
         let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
         let pipeline = SafetyPipeline(policyProvider: { policy })

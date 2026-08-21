@@ -111,7 +111,7 @@ struct StoryWorldCreateView: View {
         }
         .sheet(isPresented: $showCharacterPicker) {
             CharacterPickerForStory(
-                available: vm.availableCharacters,
+                available: vm.addableCharacters,
                 excluded: vm.castDrafts.map(\.characterId),
                 onPick: { profile in
                     vm.addCharacter(profile)

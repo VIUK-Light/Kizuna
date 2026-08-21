@@ -622,10 +622,16 @@ final class StoryWorldCreateViewModel: ObservableObject {
     private let sceneRepo: StorySceneRepository = LocalJSONStorySceneRepository()
     private let lorebookRepo: StoryLorebookRepository = LocalJSONStoryLorebookRepository()
     private let safetyPipeline = SafetyPipeline.shared
+    private let ageSafetyPolicyProvider: () -> EffectiveSafetyPolicy
+    private var ageSafetyContextSubscription: AnyCancellable?
     private var generationTask: Task<Void, Never>? = nil
 
-    init(existing: StoryWorld? = nil) {
+    init(
+        existing: StoryWorld? = nil,
+        ageSafetyPolicyProvider: @escaping () -> EffectiveSafetyPolicy = { .current }
+    ) {
         self.isCreatingNewWorld = existing == nil
+        self.ageSafetyPolicyProvider = ageSafetyPolicyProvider
         self.generationModel = UserDefaults.standard.string(forKey: "storyCreateGenerationModel")
             .flatMap(StoryGenerationModel.init(rawValue:)) ?? .b31
         if let existing {
@@ -646,6 +652,13 @@ final class StoryWorldCreateViewModel: ObservableObject {
             self.draft = world
             self.sceneDraft = StoryScene(storyWorldId: world.id)
         }
+        self.ageSafetyContextSubscription = NotificationCenter.default.publisher(
+            for: .userAgeSafetyContextDidChange
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     var validationIssues: [String] {
@@ -657,6 +670,12 @@ final class StoryWorldCreateViewModel: ObservableObject {
             issues.append(KizunaCopy.text(japanese: "キャラクターを1人以上追加してください。", english: "Add at least one character."))
         }
         let castIDs = Set(castDrafts.map(\.characterId))
+        if !unavailableCastCharacterIDs.isEmpty {
+            issues.append(KizunaCopy.text(
+                japanese: "現在の年齢設定では利用できないキャラクターが含まれています。年齢設定を戻すか、キャストから明示的に外してください。",
+                english: "This cast contains characters unavailable under the current age settings. Restore the age setting or remove them explicitly."
+            ))
+        }
         if sceneDraft.activeCharacterIds.isEmpty || !Set(sceneDraft.activeCharacterIds).isSubset(of: castIDs) {
             issues.append(KizunaCopy.text(
                 japanese: "初期シーンに出すキャラクターを1人以上選択してください。",
@@ -685,6 +704,34 @@ final class StoryWorldCreateViewModel: ObservableObject {
             && !isGeneratingTemplate
             && !isSaving
             && validationIssues.isEmpty
+    }
+
+    var addableCharacters: [CharacterProfile] {
+        Self.addableCharacters(
+            from: availableCharacters,
+            policy: ageSafetyPolicyProvider()
+        )
+    }
+
+    nonisolated static func addableCharacters(
+        from characters: [CharacterProfile],
+        policy: EffectiveSafetyPolicy
+    ) -> [CharacterProfile] {
+        characters.filter { policy.allows($0.safetyRating) }
+    }
+
+    var unavailableCastCharacterIDs: [UUID] {
+        let characterIndex = availableCharacters.reduce(into: [UUID: CharacterProfile]()) {
+            $0[$1.id] = $1
+        }
+        let policy = ageSafetyPolicyProvider()
+        var seen = Set<UUID>()
+        return castDrafts.compactMap { member in
+            guard seen.insert(member.characterId).inserted,
+                  let character = characterIndex[member.characterId],
+                  !policy.allows(character.safetyRating) else { return nil }
+            return member.characterId
+        }
     }
 
     var isGenerationModelAvailable: Bool {
@@ -763,6 +810,13 @@ final class StoryWorldCreateViewModel: ObservableObject {
 
     func addCharacter(_ profile: CharacterProfile) {
         guard !castDrafts.contains(where: { $0.characterId == profile.id }) else { return }
+        guard ageSafetyPolicyProvider().allows(profile.safetyRating) else {
+            saveError = KizunaCopy.text(
+                japanese: "現在の年齢設定ではこのキャラクターをStoryへ追加できません。",
+                english: "This character cannot be added to the Story under the current age settings."
+            )
+            return
+        }
         if !availableCharacters.contains(where: { $0.id == profile.id }) {
             availableCharacters.append(profile)
         }
