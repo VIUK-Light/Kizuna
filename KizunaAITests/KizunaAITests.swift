@@ -6669,6 +6669,7 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(store.preferences.simplePreset, .automatic)
 
         XCTAssertTrue(store.setSimplePreset(.stable))
+        XCTAssertTrue(store.setSimpleModelRoute(.onDevice))
         XCTAssertTrue(store.setMode(.advanced))
 
         let selectedConfigurationID = UUID()
@@ -6677,9 +6678,47 @@ final class KizunaAITests: XCTestCase {
         let reloaded = AIModelTuningStore(defaults: defaults)
         XCTAssertEqual(reloaded.preferences.mode, .advanced)
         XCTAssertEqual(reloaded.preferences.simplePreset, .stable)
+        XCTAssertEqual(reloaded.preferences.simpleModelRoute, .onDevice)
         XCTAssertEqual(
             reloaded.preferredConfigurationID(for: .story),
             selectedConfigurationID
+        )
+    }
+
+    func testSimpleModelRouteChoosesHumanReadableProviderPreference() throws {
+        let suiteName = "KizunaAIModelRouteTests.Simple." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let local = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "On-device"
+            ),
+            roles: [.persona],
+            priority: 0
+        )
+        let online = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .openAICompatible,
+                modelID: "online-model",
+                displayName: "Online model"
+            ),
+            roles: [.persona],
+            endpoint: "https://example.invalid/v1",
+            priority: 10
+        )
+        let store = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(store.setSimpleModelRoute(.onDevice))
+        XCTAssertEqual(
+            store.simplePreferredConfigurationID(for: .persona, configurations: [local, online]),
+            local.id
+        )
+        XCTAssertTrue(store.setSimpleModelRoute(.online))
+        XCTAssertEqual(
+            store.simplePreferredConfigurationID(for: .persona, configurations: [local, online]),
+            online.id
         )
     }
 
@@ -6845,6 +6884,7 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(registry.register(configuration))
 
         let tuningStore = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(tuningStore.setMode(.advanced))
         XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: .persona))
         let router = AIModelRouter(registry: registry, tuningStore: tuningStore)
         router.register(RegistryTestProvider())

@@ -1231,9 +1231,21 @@ final class AIModelRouter {
         preferredConfigurationID: UUID? = nil,
         allowsFallback: Bool = true
     ) async throws -> AIGenerationResponse {
-        let storedPreferredConfigurationID = preferredConfigurationID
-            ?? tuningStore.preferredConfigurationID(for: AIModelTuningScope(role: role))
         var configurations = registry.configurations(for: role)
+        let preferences = tuningStore.preferences
+        let storedPreferredConfigurationID: UUID?
+        if let preferredConfigurationID {
+            storedPreferredConfigurationID = preferredConfigurationID
+        } else if preferences.mode == .advanced {
+            storedPreferredConfigurationID = preferences.preferredConfigurationID(
+                for: AIModelTuningScope(role: role)
+            )
+        } else {
+            storedPreferredConfigurationID = preferences.simplePreferredConfigurationID(
+                for: role,
+                configurations: configurations
+            )
+        }
         if let storedPreferredConfigurationID,
            let index = configurations.firstIndex(where: { $0.id == storedPreferredConfigurationID }) {
             let preferred = configurations.remove(at: index)

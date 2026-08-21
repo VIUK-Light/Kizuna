@@ -50,6 +50,7 @@ struct KizunaSettingsView: View {
     @State private var isImportingLocalModel = false
     @State private var modelSettingsMode = AIModelTuningStore.shared.preferences.mode
     @State private var simpleModelPreset = AIModelTuningStore.shared.preferences.simplePreset
+    @State private var simpleModelRoute = AIModelTuningStore.shared.preferences.simpleModelRoute
     @AppStorage("kizuna.language") private var languageRawValue = KizunaLanguage.japanese.rawValue
 #if DEBUG
     @AppStorage("kizuna.debug.restSuggestion.enabled") private var debugRestSuggestionEnabled = false
@@ -168,6 +169,22 @@ struct KizunaSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
+                        Picker(
+                            KizunaCopy.text(japanese: "AIの選び方", english: "How to choose AI"),
+                            selection: $simpleModelRoute
+                        ) {
+                            ForEach(AISimpleModelRoute.allCases, id: \.self) { route in
+                                Text(simpleModelRouteName(route)).tag(route)
+                            }
+                        }
+                        .onChange(of: simpleModelRoute) { _, newValue in
+                            _ = AIModelTuningStore.shared.setSimpleModelRoute(newValue)
+                        }
+
+                        Text(simpleModelRouteDetail(simpleModelRoute))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
                         Button {
                             modelSettingsMode = .advanced
                             _ = AIModelTuningStore.shared.setMode(.advanced)
@@ -203,6 +220,7 @@ struct KizunaSettingsView: View {
                             _ = AIModelTuningStore.shared.resetToRecommended()
                             modelSettingsMode = .simple
                             simpleModelPreset = .automatic
+                            simpleModelRoute = .automatic
                         } label: {
                             Label(
                                 KizunaCopy.text(japanese: "Kizuna推奨設定に戻す", english: "Restore Kizuna recommendations"),
@@ -1373,6 +1391,37 @@ struct KizunaSettingsView: View {
             return KizunaCopy.text(
                 japanese: "短めの応答と軽い設定で速度を優先します。",
                 english: "Prioritizes speed with shorter replies and lighter settings."
+            )
+        }
+    }
+
+    private func simpleModelRouteName(_ route: AISimpleModelRoute) -> String {
+        switch route {
+        case .automatic:
+            return KizunaCopy.text(japanese: "おまかせ", english: "Automatic")
+        case .onDevice:
+            return KizunaCopy.text(japanese: "端末内を優先", english: "Prefer on-device")
+        case .online:
+            return KizunaCopy.text(japanese: "オンラインを優先", english: "Prefer online")
+        }
+    }
+
+    private func simpleModelRouteDetail(_ route: AISimpleModelRoute) -> String {
+        switch route {
+        case .automatic:
+            return KizunaCopy.text(
+                japanese: "用途と利用可能なモデルから、Kizunaが互換性の高い経路を選びます。",
+                english: "Kizuna chooses a compatible route from the use case and available models."
+            )
+        case .onDevice:
+            return KizunaCopy.text(
+                japanese: "会話データを端末内で処理できるモデルを優先します。",
+                english: "Prefer a model that can process the conversation on this device."
+            )
+        case .online:
+            return KizunaCopy.text(
+                japanese: "オンラインProviderを優先します。利用できない場合は安全にfallbackします。",
+                english: "Prefer an online provider and fall back safely when it is unavailable."
             )
         }
     }
