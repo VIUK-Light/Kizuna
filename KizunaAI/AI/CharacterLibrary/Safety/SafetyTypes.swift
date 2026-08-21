@@ -115,9 +115,17 @@ final class UserAgeSafetyStore: @unchecked Sendable {
     private let defaults: UserDefaults
     private let lock = NSLock()
     private let storageKey = "kizuna.userAgeSafetyContext.v1"
+    private let removeStoredValue: () -> Bool
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        removeStoredValue: (() -> Bool)? = nil
+    ) {
         self.defaults = defaults
+        self.removeStoredValue = removeStoredValue ?? {
+            defaults.removeObject(forKey: "kizuna.userAgeSafetyContext.v1")
+            return true
+        }
     }
 
     var context: UserAgeSafetyContext {
@@ -157,11 +165,15 @@ final class UserAgeSafetyStore: @unchecked Sendable {
         return succeeded
     }
 
-    func reset() {
+    @discardableResult
+    func reset() -> Bool {
         lock.lock()
-        defaults.removeObject(forKey: storageKey)
+        let succeeded = removeStoredValue()
         lock.unlock()
-        NotificationCenter.default.post(name: .userAgeSafetyContextDidChange, object: nil)
+        if succeeded {
+            NotificationCenter.default.post(name: .userAgeSafetyContextDidChange, object: nil)
+        }
+        return succeeded
     }
 }
 

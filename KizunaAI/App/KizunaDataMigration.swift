@@ -3,6 +3,7 @@ import Foundation
 enum KizunaDataMigrationFailureReason: String, Equatable, Sendable {
     case storageUnavailable
     case invalidJSON
+    case backupFailed
     case copyFailed
     case stagingCleanupFailed
     case destinationVerificationFailed
@@ -44,6 +45,8 @@ extension KizunaDataMigrationFailureReason {
             return KizunaCopy.text(japanese: "保存領域が利用できません", english: "storage unavailable")
         case .invalidJSON:
             return KizunaCopy.text(japanese: "JSONが壊れています", english: "invalid JSON")
+        case .backupFailed:
+            return KizunaCopy.text(japanese: "壊れた保存先の退避に失敗しました", english: "backup failed")
         case .copyFailed:
             return KizunaCopy.text(japanese: "コピーに失敗しました", english: "copy failed")
         case .stagingCleanupFailed:
@@ -214,7 +217,7 @@ enum KizunaDataMigration {
                 case .invalid:
                     // 壊れた旧ファイルを有効な移行元として扱わない。内容を
                     // 推測して上書きせず、次回起動でも再確認できるよう失敗を返す。
-                    AppLog.error("[KizunaDataMigration] legacy file is invalid JSON: %@", source.path)
+                    AppLog.error("[KizunaDataMigration] legacy file is invalid JSON: %@", fileName)
                     return .failure(.characterLibrary(fileName: fileName, reason: .invalidJSON))
                 case .validArray:
                     break
@@ -231,7 +234,12 @@ enum KizunaDataMigration {
                     // 既存の壊れた保存先を置き換える場合でも、元ファイルを
                     // 同じディレクトリへ退避してから原子的に復元する。
                     let backupURL = invalidBackupURL(for: destination)
-                    try fileManager.copyItem(at: destination, to: backupURL)
+                    do {
+                        try fileManager.copyItem(at: destination, to: backupURL)
+                    } catch {
+                        AppLog.error("[KizunaDataMigration] invalid destination backup failed: %@", fileName)
+                        return .failure(.characterLibrary(fileName: fileName, reason: .backupFailed))
+                    }
                     try LocalJSONStoreFileProtection.apply(to: backupURL)
                     AppLog.error("[KizunaDataMigration] backed up invalid destination %@ to %@", fileName, backupURL.lastPathComponent)
                 }
@@ -243,7 +251,7 @@ enum KizunaDataMigration {
             }
             return .success(())
         } catch {
-            AppLog.error("[KizunaDataMigration] character library migration failed: %@", String(describing: error))
+            AppLog.error("[KizunaDataMigration] character library migration failed: reason=copyFailed")
             return .failure(.characterLibrary(fileName: "CharacterLibrary", reason: .copyFailed))
         }
     }
@@ -325,9 +333,9 @@ enum KizunaDataMigration {
                 : .failure(.localModels(reason: .destinationVerificationFailed))
         } catch {
             if !fileManager.fileExists(atPath: stagingURL.path) {
-                AppLog.error("[KizunaDataMigration] local model migration failed: %@", String(describing: error))
+                AppLog.error("[KizunaDataMigration] local model migration failed: reason=copyFailed")
             } else {
-                AppLog.error("[KizunaDataMigration] local model migration remains staged for retry: %@", String(describing: error))
+                AppLog.error("[KizunaDataMigration] local model migration remains staged for retry: reason=copyFailed")
             }
             return .failure(.localModels(reason: .copyFailed))
         }

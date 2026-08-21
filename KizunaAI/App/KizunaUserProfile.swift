@@ -106,6 +106,7 @@ enum KizunaUserProfileStoreError: LocalizedError, Equatable {
     case encodingFailed
     case invalidAvatarImage
     case recoveryRequired
+    case ageSafetyResetFailed
 
     var errorDescription: String? {
         switch self {
@@ -124,6 +125,11 @@ enum KizunaUserProfileStoreError: LocalizedError, Equatable {
                 japanese: "壊れたプロフィールを先に復旧またはリセットしてください。",
                 english: "Recover or reset the damaged profile before saving new changes."
             )
+        case .ageSafetyResetFailed:
+            return KizunaCopy.text(
+                japanese: "プロフィールはリセットされましたが、安全設定のリセットに失敗しました。元の状態へ戻して再試行してください。",
+                english: "The profile reset could not reset the safety settings. The previous profile was restored; try again."
+            )
         }
     }
 }
@@ -141,15 +147,18 @@ final class KizunaUserProfileStore: ObservableObject {
     private let storageKey = "kizuna.userProfile.v1"
     private let corruptBackupKey = "kizuna.userProfile.corruptBackup.v1"
     private let encodeProfile: @MainActor (KizunaUserProfile) throws -> Data
+    private let ageSafetyStore: UserAgeSafetyStore
 
     init(
         defaults: UserDefaults = .standard,
         encodeProfile: @escaping @MainActor (KizunaUserProfile) throws -> Data = {
             try JSONEncoder().encode($0)
-        }
+        },
+        ageSafetyStore: UserAgeSafetyStore = .shared
     ) {
         self.defaults = defaults
         self.encodeProfile = encodeProfile
+        self.ageSafetyStore = ageSafetyStore
         self.loadError = nil
         self.persistenceError = nil
         self.recoveryDataAvailable = false
@@ -199,9 +208,18 @@ final class KizunaUserProfileStore: ObservableObject {
 
     @discardableResult
     func reset() -> Result<Void, KizunaUserProfileStoreError> {
+        let previousProfile = profile
+        let previousAgeContext = ageSafetyStore.context
         let empty = KizunaUserProfile()
         guard persist(empty) else {
             let error = KizunaUserProfileStoreError.encodingFailed
+            persistenceError = error.localizedDescription
+            return .failure(error)
+        }
+        guard ageSafetyStore.reset() else {
+            _ = persist(previousProfile)
+            _ = ageSafetyStore.update(previousAgeContext)
+            let error = KizunaUserProfileStoreError.ageSafetyResetFailed
             persistenceError = error.localizedDescription
             return .failure(error)
         }
@@ -210,7 +228,6 @@ final class KizunaUserProfileStore: ObservableObject {
         persistenceError = nil
         recoveryDataAvailable = false
         defaults.removeObject(forKey: corruptBackupKey)
-        UserAgeSafetyStore.shared.reset()
         primeBridge()
         return .success(())
     }

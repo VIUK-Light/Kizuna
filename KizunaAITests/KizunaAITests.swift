@@ -7497,6 +7497,42 @@ final class KizunaAITests: XCTestCase {
     }
 
     @MainActor
+    func testUserProfileResetRollsBackWhenAgeSafetyResetFails() {
+        let profileSuite = "KizunaUserProfileTests.Reset.\(UUID().uuidString)"
+        let ageSuite = "KizunaUserProfileTests.ResetAge.\(UUID().uuidString)"
+        let profileDefaults = UserDefaults(suiteName: profileSuite)!
+        let ageDefaults = UserDefaults(suiteName: ageSuite)!
+        defer {
+            profileDefaults.removePersistentDomain(forName: profileSuite)
+            ageDefaults.removePersistentDomain(forName: ageSuite)
+        }
+        var removed = false
+        let ageStore = UserAgeSafetyStore(
+            defaults: ageDefaults,
+            removeStoredValue: {
+                removed = true
+                return false
+            }
+        )
+        XCTAssertTrue(ageStore.update(.selfDeclared(.teen)))
+        let original = KizunaUserProfile()
+        let store = KizunaUserProfileStore(
+            defaults: profileDefaults,
+            ageSafetyStore: ageStore
+        )
+        guard case .success = store.update(original) else {
+            return XCTFail("Expected the initial profile save to succeed")
+        }
+
+        guard case .failure(.ageSafetyResetFailed) = store.reset() else {
+            return XCTFail("Expected reset to report the safety-store failure")
+        }
+        XCTAssertTrue(removed)
+        XCTAssertEqual(store.profile, original)
+        XCTAssertEqual(ageStore.context.tier, .teen)
+    }
+
+    @MainActor
     func testUserProfileStoreBacksUpCorruptDataBeforeExplicitReset() {
         let suiteName = "KizunaUserProfileTests.Corrupt.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
