@@ -6,3 +6,6 @@ contact_links:
   - name: Security policy
     url: https://github.com/VIUK-Light/Kizuna/blob/main/SECURITY.md
     about: Follow the private reporting guidance for security vulnerabilities.
+  - name: Code of Conduct and private conduct reporting
+    url: https://github.com/VIUK-Light/Kizuna/blob/main/CODE_OF_CONDUCT.md
+    about: Do not post sensitive conduct details publicly; follow the private reporting steps.
