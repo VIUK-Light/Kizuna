@@ -4104,6 +4104,11 @@ final class StorySessionService: ObservableObject {
                     "AI Providerの接続先URLが正しくありません。設定を確認してください。",
                     "The AI provider endpoint is invalid. Check the configuration and try again."
                 )
+            case let .localArtifactUnavailable(artifactID):
+                return localizedNotice(
+                    "選択したローカルモデル(\(artifactID))が見つかりません。別のモデルを選択してください。",
+                    "The selected local model artifact (\(artifactID)) is missing. Choose another model."
+                )
             case .noProviderForRole:
                 return localizedNotice(
                     "Story用のAIモデルが設定されていません。設定からモデルを追加してください。",

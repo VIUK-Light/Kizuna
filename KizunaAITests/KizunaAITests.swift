@@ -6770,6 +6770,31 @@ final class KizunaAITests: XCTestCase {
         XCTAssertNil(tuningStore.preferredConfigurationID(for: AIModelRole.story))
     }
 
+    func testLocalRegistryConfigurationsPreserveDistinctArtifactIdentity() {
+        let first = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Model A",
+                artifactID: "artifact-a"
+            ),
+            roles: [.persona]
+        )
+        let second = AIModelConfiguration(
+            identity: AIModelIdentity(
+                providerID: .localRuntime,
+                modelID: "local-artifact",
+                displayName: "Model B",
+                artifactID: "artifact-b"
+            ),
+            roles: [.story]
+        )
+
+        XCTAssertEqual(first.identity.artifactID, "artifact-a")
+        XCTAssertEqual(second.identity.artifactID, "artifact-b")
+        XCTAssertNotEqual(first.identity.stableID, second.identity.stableID)
+    }
+
     func testAIModelTuningResetAdvancedOverridesAlsoClearsModelSelections() throws {
         let suiteName = "KizunaAIModelTuningTests.FullReset.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

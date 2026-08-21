@@ -26,6 +26,7 @@ struct KizunaSettingsView: View {
     @State private var registryConfigurations: [AIModelConfiguration] = []
     @State private var registryProvider: AIProviderID = .openAICompatible
     @State private var registryModelID = ""
+    @State private var registryArtifactID: String?
     @State private var registryDisplayName = ""
     @State private var registryEndpoint = "https://api.openai.com/v1"
     @State private var registryAPIKey = ""
@@ -328,6 +329,9 @@ struct KizunaSettingsView: View {
                         if currentEndpoint.isEmpty || currentEndpoint == registryDefaultEndpoint(for: oldProvider) {
                             registryEndpoint = registryDefaultEndpoint(for: newProvider)
                         }
+                        if newProvider != .localRuntime {
+                            registryArtifactID = nil
+                        }
                     }
                     TextField(
                         KizunaCopy.text(japanese: "Model ID", english: "Model ID"),
@@ -342,6 +346,26 @@ struct KizunaSettingsView: View {
                         Text(KizunaCopy.text(
                             japanese: "ローカルランタイムではEndpointは必要ありません。",
                             english: "Local runtime does not require an endpoint."
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Picker(
+                            KizunaCopy.text(japanese: "使用するインストール済みモデル", english: "Installed model to use"),
+                            selection: $registryArtifactID
+                        ) {
+                            Text(KizunaCopy.text(
+                                japanese: "現在のアクティブモデルに追従",
+                                english: "Follow active local model"
+                            ))
+                            .tag(Optional<String>.none)
+                            ForEach(modelManager.installedModels) { model in
+                                Text("\(model.displayName) · \(model.fileName)")
+                                    .tag(Optional(model.id))
+                            }
+                        }
+                        Text(KizunaCopy.text(
+                            japanese: "固定モデルを選ぶと、active modelを切り替えてもこの構成は同じartifactを使います。",
+                            english: "A fixed artifact keeps this configuration on the same model when the active model changes."
                         ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -1023,7 +1047,22 @@ struct KizunaSettingsView: View {
     }
 
     private func addRegistryConfiguration() {
-        let modelID = registryModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let enteredModelID = registryModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedArtifact = registryArtifactID.flatMap { artifactID in
+            modelManager.installedModels.first { $0.id == artifactID }
+        }
+        if registryProvider == .localRuntime,
+           registryArtifactID != nil,
+           selectedArtifact == nil {
+            registryMessage = KizunaCopy.text(
+                japanese: "選択したローカルモデルが見つかりません。インストール済みモデルを選び直してください。",
+                english: "The selected local model is missing. Choose an installed model again."
+            )
+            return
+        }
+        let modelID = enteredModelID.isEmpty && registryProvider == .localRuntime
+            ? (selectedArtifact?.id ?? "local-active")
+            : enteredModelID
         let displayName = registryDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !modelID.isEmpty else {
             registryMessage = KizunaCopy.text(japanese: "Model IDを入力してください。", english: "Enter a model ID.")
@@ -1055,7 +1094,10 @@ struct KizunaSettingsView: View {
             identity: AIModelIdentity(
                 providerID: registryProvider,
                 modelID: modelID,
-                displayName: displayName.isEmpty ? modelID : displayName
+                displayName: displayName.isEmpty
+                    ? (selectedArtifact?.displayName ?? modelID)
+                    : displayName,
+                artifactID: registryProvider == .localRuntime ? registryArtifactID : nil
             ),
             roles: registryRoles,
             endpoint: registryProvider == .localRuntime
@@ -1071,6 +1113,7 @@ struct KizunaSettingsView: View {
             return
         }
         registryModelID = ""
+        registryArtifactID = nil
         registryDisplayName = ""
         registryAPIKey = ""
         registryRoles = [.persona]
@@ -1162,6 +1205,10 @@ struct KizunaSettingsView: View {
         }
         switch configuration.identity.providerID {
         case .localRuntime:
+            if let artifactID = configuration.identity.artifactID,
+               LocalAssistantModelManager.shared.modelURL(forArtifactID: artifactID) == nil {
+                return .unavailable
+            }
             return LocalAssistantModelManager.shared.runtimeAvailability == .executable
                 ? .unverified
                 : .unavailable
@@ -1243,7 +1290,7 @@ struct KizunaSettingsView: View {
                     registryConnectionStatuses[configuration.id] = .missingCredential
                 case .invalidEndpoint:
                     registryConnectionStatuses[configuration.id] = .invalidEndpoint
-                case .httpStatus, .invalidResponse, .emptyResponse, .generationTruncated, .noProviderForRole:
+                case .localArtifactUnavailable, .httpStatus, .invalidResponse, .emptyResponse, .generationTruncated, .noProviderForRole:
                     registryConnectionStatuses[configuration.id] = .unavailable
                 }
                 registryMessage = KizunaCopy.text(
@@ -1989,9 +2036,11 @@ private struct AIModelRegistryEditorView: View {
     let configuration: AIModelConfiguration
     let onSave: (AIModelConfiguration, String) -> String?
 
+    @ObservedObject private var modelManager = LocalAssistantModelManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var provider: AIProviderID
     @State private var modelID: String
+    @State private var artifactID: String?
     @State private var displayName: String
     @State private var endpoint: String
     @State private var apiKey = ""
@@ -2010,6 +2059,7 @@ private struct AIModelRegistryEditorView: View {
         let initialProvider = configuration.identity.providerID
         _provider = State(initialValue: initialProvider)
         _modelID = State(initialValue: configuration.identity.modelID)
+        _artifactID = State(initialValue: configuration.identity.artifactID)
         _displayName = State(initialValue: configuration.identity.displayName)
         _endpoint = State(initialValue: configuration.endpoint ?? Self.defaultEndpoint(for: initialProvider))
         _roles = State(initialValue: configuration.roles)
@@ -2037,6 +2087,9 @@ private struct AIModelRegistryEditorView: View {
                         if currentEndpoint.isEmpty || currentEndpoint == Self.defaultEndpoint(for: oldProvider) {
                             endpoint = Self.defaultEndpoint(for: newProvider)
                         }
+                        if newProvider != .localRuntime {
+                            artifactID = nil
+                        }
                         disabledCompatibilityParameters.removeAll()
                     }
                     TextField(
@@ -2055,6 +2108,29 @@ private struct AIModelRegistryEditorView: View {
                         ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Picker(
+                            KizunaCopy.text(japanese: "使用するインストール済みモデル", english: "Installed model to use"),
+                            selection: $artifactID
+                        ) {
+                            Text(KizunaCopy.text(
+                                japanese: "現在のアクティブモデルに追従",
+                                english: "Follow active local model"
+                            ))
+                            .tag(Optional<String>.none)
+                            ForEach(modelManager.installedModels) { model in
+                                Text("\(model.displayName) · \(model.fileName)")
+                                    .tag(Optional(model.id))
+                            }
+                        }
+                        if let artifactID,
+                           !modelManager.installedModels.contains(where: { $0.id == artifactID }) {
+                            Text(KizunaCopy.text(
+                                japanese: "この構成が参照していたモデルは見つかりません。別のモデルを選ぶか、active modelに追従へ変更してください。",
+                                english: "The artifact referenced by this configuration is missing. Choose another model or follow the active model."
+                            ))
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
                     } else {
                         TextField(
                             KizunaCopy.text(japanese: "Endpoint", english: "Endpoint"),
@@ -2179,6 +2255,15 @@ private struct AIModelRegistryEditorView: View {
         }
 
         let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if provider == .localRuntime,
+           let artifactID,
+           !modelManager.installedModels.contains(where: { $0.id == artifactID }) {
+            validationMessage = KizunaCopy.text(
+                japanese: "選択したローカルモデルが見つかりません。別のモデルを選ぶか、active modelに追従へ変更してください。",
+                english: "The selected local model is missing. Choose another model or follow the active model."
+            )
+            return
+        }
         let hasExistingAPIKey = AISecretStore.shared.providerAPIKey(for: configuration.id) != nil
         if Self.requiresAPIKey(for: provider, endpoint: trimmedEndpoint)
             && apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2203,7 +2288,7 @@ private struct AIModelRegistryEditorView: View {
                 displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? trimmedModelID
                     : displayName.trimmingCharacters(in: .whitespacesAndNewlines),
-                artifactID: provider == .localRuntime ? configuration.identity.artifactID : nil
+                artifactID: provider == .localRuntime ? artifactID : nil
             ),
             roles: roles,
             endpoint: provider == .localRuntime || trimmedEndpoint.isEmpty ? nil : trimmedEndpoint,
