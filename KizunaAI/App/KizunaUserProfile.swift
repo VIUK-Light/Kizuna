@@ -102,39 +102,114 @@ struct KizunaUserProfile: Codable, Equatable {
     }
 }
 
+enum KizunaUserProfileStoreError: LocalizedError, Equatable {
+    case encodingFailed
+    case recoveryRequired
+
+    var errorDescription: String? {
+        switch self {
+        case .encodingFailed:
+            return KizunaCopy.text(
+                japanese: "プロフィールを保存できませんでした。変更は反映していません。",
+                english: "The profile could not be saved. Your change was not applied."
+            )
+        case .recoveryRequired:
+            return KizunaCopy.text(
+                japanese: "壊れたプロフィールを先に復旧またはリセットしてください。",
+                english: "Recover or reset the damaged profile before saving new changes."
+            )
+        }
+    }
+}
+
 @MainActor
 final class KizunaUserProfileStore: ObservableObject {
     static let shared = KizunaUserProfileStore()
 
     @Published private(set) var profile: KizunaUserProfile
+    @Published private(set) var loadError: String?
+    @Published private(set) var persistenceError: String?
+    @Published private(set) var recoveryDataAvailable = false
 
     private let defaults: UserDefaults
     private let storageKey = "kizuna.userProfile.v1"
+    private let corruptBackupKey = "kizuna.userProfile.corruptBackup.v1"
+    private let encodeProfile: @MainActor (KizunaUserProfile) throws -> Data
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        encodeProfile: @escaping @MainActor (KizunaUserProfile) throws -> Data = {
+            try JSONEncoder().encode($0)
+        }
+    ) {
         self.defaults = defaults
+        self.encodeProfile = encodeProfile
+        self.loadError = nil
+        self.persistenceError = nil
+        self.recoveryDataAvailable = false
         if let data = defaults.data(forKey: storageKey),
            let decoded = try? JSONDecoder().decode(KizunaUserProfile.self, from: data) {
             self.profile = decoded
         } else {
             self.profile = KizunaUserProfile()
+            if let data = defaults.data(forKey: storageKey) {
+                defaults.set(data, forKey: corruptBackupKey)
+                self.loadError = KizunaCopy.text(
+                    japanese: "保存済みプロフィールを読み込めませんでした。元データを退避したため、リセットするまで上書きしません。",
+                    english: "The saved profile could not be loaded. The original data was backed up and will not be overwritten until you reset it."
+                )
+                self.recoveryDataAvailable = true
+            }
         }
     }
 
-    func update(_ value: KizunaUserProfile) {
+    @discardableResult
+    func update(_ value: KizunaUserProfile) -> Result<Void, KizunaUserProfileStoreError> {
+        guard !recoveryDataAvailable else {
+            let error = KizunaUserProfileStoreError.recoveryRequired
+            persistenceError = error.localizedDescription
+            return .failure(error)
+        }
         var normalized = value
         normalized.displayName = String(normalized.displayName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
         normalized.nickname = String(normalized.nickname.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
         normalized.avatarImageData = KizunaAvatarImage.normalizedStoredData(from: normalized.avatarImageData)
+        guard persist(normalized) else {
+            let error = KizunaUserProfileStoreError.encodingFailed
+            persistenceError = error.localizedDescription
+            return .failure(error)
+        }
         profile = normalized
-        persist()
+        persistenceError = nil
         primeBridge()
+        return .success(())
     }
 
-    func reset() {
-        profile = KizunaUserProfile()
+    @discardableResult
+    func reset() -> Result<Void, KizunaUserProfileStoreError> {
+        let empty = KizunaUserProfile()
+        guard persist(empty) else {
+            let error = KizunaUserProfileStoreError.encodingFailed
+            persistenceError = error.localizedDescription
+            return .failure(error)
+        }
+        profile = empty
+        loadError = nil
+        persistenceError = nil
+        recoveryDataAvailable = false
+        defaults.removeObject(forKey: corruptBackupKey)
         UserAgeSafetyStore.shared.reset()
-        persist()
+        primeBridge()
+        return .success(())
+    }
+
+    func resetCorruptedProfile() {
+        defaults.removeObject(forKey: storageKey)
+        defaults.removeObject(forKey: corruptBackupKey)
+        profile = KizunaUserProfile()
+        loadError = nil
+        persistenceError = nil
+        recoveryDataAvailable = false
         primeBridge()
     }
 
@@ -142,8 +217,9 @@ final class KizunaUserProfileStore: ObservableObject {
         LocalAssistantRuntimeBridge.userProfileAddendum = profile.promptText
     }
 
-    private func persist() {
-        guard let data = try? JSONEncoder().encode(profile) else { return }
+    private func persist(_ value: KizunaUserProfile) -> Bool {
+        guard let data = try? encodeProfile(value) else { return false }
         defaults.set(data, forKey: storageKey)
+        return true
     }
 }

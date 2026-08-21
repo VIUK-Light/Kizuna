@@ -7391,6 +7391,55 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(characters.count, 2)
     }
 
+    @MainActor
+    func testUserProfileStoreKeepsPreviousValueWhenEncodingFails() {
+        let suiteName = "KizunaUserProfileTests.Encoding.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let original = KizunaUserProfile()
+        let persisted = KizunaUserProfileStore(defaults: defaults)
+        guard case .success = persisted.update(original) else {
+            return XCTFail("Expected the initial profile save to succeed")
+        }
+
+        let failing = KizunaUserProfileStore(
+            defaults: defaults,
+            encodeProfile: { _ in
+                throw NSError(domain: "KizunaAITests", code: 1)
+            }
+        )
+        var newValue = original
+        newValue.nickname = "Not persisted"
+        guard case .failure(.encodingFailed) = failing.update(newValue) else {
+            return XCTFail("Expected an explicit profile encoding failure")
+        }
+
+        let reloaded = KizunaUserProfileStore(defaults: defaults)
+        XCTAssertEqual(reloaded.profile, original)
+    }
+
+    @MainActor
+    func testUserProfileStoreBacksUpCorruptDataBeforeExplicitReset() {
+        let suiteName = "KizunaUserProfileTests.Corrupt.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let corruptData = Data("not-json".utf8)
+        defaults.set(corruptData, forKey: "kizuna.userProfile.v1")
+
+        let store = KizunaUserProfileStore(defaults: defaults)
+
+        XCTAssertTrue(store.recoveryDataAvailable)
+        XCTAssertNotNil(store.loadError)
+        XCTAssertEqual(defaults.data(forKey: "kizuna.userProfile.v1"), corruptData)
+        guard case .failure(.recoveryRequired) = store.update(KizunaUserProfile()) else {
+            return XCTFail("Corrupt data must require explicit recovery before update")
+        }
+
+        store.resetCorruptedProfile()
+        XCTAssertFalse(store.recoveryDataAvailable)
+        XCTAssertNil(defaults.data(forKey: "kizuna.userProfile.v1"))
+    }
+
     func testStoryWorldAgeAvailabilityUsesAllWorldCharacters() {
         let general = CharacterProfile(
             name: "General",
