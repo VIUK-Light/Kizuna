@@ -6078,6 +6078,13 @@ final class KizunaAITests: XCTestCase {
                 atPath: storageURL.appendingPathComponent("index.json").path
             )
         )
+        let indexData = try Data(
+            contentsOf: storageURL.appendingPathComponent("index.json")
+        )
+        let indexText = try XCTUnwrap(String(data: indexData, encoding: .utf8))
+        XCTAssertTrue(indexText.contains("personaIndex"))
+        XCTAssertFalse(indexText.contains("avatarImageData"))
+        XCTAssertFalse(indexText.contains("freeFormAddendum"))
         defaults.set(first.id.uuidString, forKey: "persona.activeThreadID.v1")
 
         let reloaded = PersonaChatStore(defaults: defaults, storageURL: storageURL)

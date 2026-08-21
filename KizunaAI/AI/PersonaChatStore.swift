@@ -196,9 +196,39 @@ enum PersonaChatRecoveryError: LocalizedError {
     }
 }
 
+private struct PersonaThreadIndexProfile: Codable, Sendable {
+    let id: UUID
+    let name: String
+    let age: Int?
+    let tone: PersonaTone
+    let relation: PersonaRelation
+    let avatarStyleID: String?
+
+    nonisolated init(profile: PersonaProfile) {
+        id = profile.id
+        name = profile.name
+        age = profile.age
+        tone = profile.tone
+        relation = profile.relation
+        avatarStyleID = profile.avatarStyleID
+    }
+
+    nonisolated func makeProfile() -> PersonaProfile {
+        PersonaProfile(
+            id: id,
+            name: name,
+            age: age,
+            personality: "",
+            tone: tone,
+            relation: relation,
+            avatarStyleID: avatarStyleID
+        )
+    }
+}
+
 private struct PersonaThreadIndexEntry: Codable, Sendable {
     let id: UUID
-    let personaSnapshot: PersonaProfile
+    let personaIndex: PersonaThreadIndexProfile
     let characterID: UUID?
     let title: String
     let lastUsedModelIdentity: String?
@@ -209,9 +239,24 @@ private struct PersonaThreadIndexEntry: Codable, Sendable {
     let messageCount: Int
     let lastMessage: PersonaMessage?
 
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case personaIndex
+        case personaSnapshot
+        case characterID
+        case title
+        case lastUsedModelIdentity
+        case preferredGenerationModel
+        case preferredGenerationConfigurationID
+        case createdAt
+        case updatedAt
+        case messageCount
+        case lastMessage
+    }
+
     nonisolated init(thread: PersonaThread) {
         id = thread.id
-        personaSnapshot = thread.personaSnapshot
+        personaIndex = PersonaThreadIndexProfile(profile: thread.personaSnapshot)
         characterID = thread.characterID
         title = thread.title
         lastUsedModelIdentity = thread.lastUsedModelIdentity
@@ -231,10 +276,33 @@ private struct PersonaThreadIndexEntry: Codable, Sendable {
         }
     }
 
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        if let index = try container.decodeIfPresent(PersonaThreadIndexProfile.self, forKey: .personaIndex) {
+            personaIndex = index
+        } else {
+            // Existing index.json files contain a full PersonaProfile. Read
+            // them once without making the legacy payload the new write shape.
+            personaIndex = PersonaThreadIndexProfile(
+                profile: try container.decode(PersonaProfile.self, forKey: .personaSnapshot)
+            )
+        }
+        characterID = try container.decodeIfPresent(UUID.self, forKey: .characterID)
+        title = try container.decode(String.self, forKey: .title)
+        lastUsedModelIdentity = try container.decodeIfPresent(String.self, forKey: .lastUsedModelIdentity)
+        preferredGenerationModel = try container.decodeIfPresent(PersonaGenerationModel.self, forKey: .preferredGenerationModel)
+        preferredGenerationConfigurationID = try container.decodeIfPresent(UUID.self, forKey: .preferredGenerationConfigurationID)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        messageCount = try container.decode(Int.self, forKey: .messageCount)
+        lastMessage = try container.decodeIfPresent(PersonaMessage.self, forKey: .lastMessage)
+    }
+
     nonisolated func makePlaceholder() -> PersonaThread {
         var thread = PersonaThread(
             id: id,
-            personaSnapshot: personaSnapshot,
+            personaSnapshot: personaIndex.makeProfile(),
             characterID: characterID,
             title: title,
             messages: [],
