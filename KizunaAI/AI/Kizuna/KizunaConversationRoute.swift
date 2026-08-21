@@ -45,6 +45,7 @@ struct KizunaContinuationItem: Identifiable, Hashable {
     let updatedAt: Date
     let personaProfile: PersonaProfile?
     let storyWorld: StoryWorld?
+    let isAgeRestricted: Bool
 
     var id: String { route.id }
 }

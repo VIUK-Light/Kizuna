@@ -7470,6 +7470,32 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(saved.safetyRating, .sensitive)
     }
 
+    func testPersonaContinuationLocksUnavailableThreadWithoutDeletingIt() {
+        let profile = PersonaProfile(
+            name: "Sensitive persona",
+            personality: "Careful",
+            tone: .calm,
+            relation: .friend,
+            safetyRating: .sensitive
+        )
+        let thread = PersonaThread(
+            personaSnapshot: profile,
+            title: "Private conversation"
+        )
+        let teenPolicy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
+
+        XCTAssertTrue(
+            KizunaContinuationViewModel.personaThreadIsAgeRestricted(
+                thread,
+                currentCharacters: [:],
+                characterLoadCompleted: true,
+                characterLoadFailed: false,
+                policy: teenPolicy
+            )
+        )
+        XCTAssertEqual(thread.personaSnapshot.safetyRating, .sensitive)
+    }
+
     func testSafetyPipelineAppliesOneAgePolicyToInputAndOutput() async {
         let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
         let pipeline = SafetyPipeline(policyProvider: { policy })

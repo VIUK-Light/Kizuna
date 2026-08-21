@@ -78,7 +78,10 @@ struct KizunaContinuationView: View {
                                 character: item.storyWorld.flatMap { world in
                                     world.mainCharacterId.flatMap { viewModel.currentCharacters[$0] }
                                 },
-                                onSelect: { selectedRoute = item.route }
+                                onSelect: {
+                                    guard !item.isAgeRestricted else { return }
+                                    selectedRoute = item.route
+                                }
                             )
                         }
                     }
@@ -279,7 +282,7 @@ private struct KizunaContinuationCard: View {
                         .lineLimit(2)
                 }
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.right")
+                Image(systemName: item.isAgeRestricted ? "lock.fill" : "chevron.right")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.tertiary)
             }
@@ -292,8 +295,16 @@ private struct KizunaContinuationCard: View {
             }
         }
         .buttonStyle(.plain)
+        .disabled(item.isAgeRestricted)
         .accessibilityIdentifier("continuation.\(kindTitle.lowercased()).\(item.id)")
-        .accessibilityHint(KizunaCopy.text(japanese: "専用のチャット画面を開きます", english: "Opens the dedicated chat screen"))
+        .accessibilityHint(
+            item.isAgeRestricted
+                ? KizunaCopy.text(
+                    japanese: "現在の安全設定では開けません",
+                    english: "Unavailable under the current safety settings"
+                )
+                : KizunaCopy.text(japanese: "専用のチャット画面を開きます", english: "Opens the dedicated chat screen")
+        )
     }
 
     @ViewBuilder
@@ -303,7 +314,7 @@ private struct KizunaContinuationCard: View {
             if let profile = item.personaProfile {
                 PersonaAvatarView(profile: profile, size: 54)
             } else {
-                Image(systemName: "person.crop.circle")
+                Image(systemName: item.isAgeRestricted ? "lock.circle" : "person.crop.circle")
                     .font(.system(size: 42))
                     .foregroundStyle(.secondary)
                     .frame(width: 54, height: 54)
