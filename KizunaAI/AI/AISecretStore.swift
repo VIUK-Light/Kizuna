@@ -153,18 +153,52 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
     var mode: AIModelSettingsMode
     var simplePreset: AISimpleModelPreset
     private var scopeOverrides: [String: AIGenerationOverrides]
+    private var preferredConfigurationIDs: [String: UUID]
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+        case simplePreset
+        case scopeOverrides
+        case preferredConfigurationIDs
+    }
 
     init(
         mode: AIModelSettingsMode = .simple,
         simplePreset: AISimpleModelPreset = .automatic,
-        scopeOverrides: [String: AIGenerationOverrides] = [:]
+        scopeOverrides: [String: AIGenerationOverrides] = [:],
+        preferredConfigurationIDs: [String: UUID] = [:]
     ) {
         self.mode = mode
         self.simplePreset = simplePreset
         self.scopeOverrides = scopeOverrides
+        self.preferredConfigurationIDs = preferredConfigurationIDs
     }
 
     static let `default` = AIModelTuningPreferences()
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decodeIfPresent(AIModelSettingsMode.self, forKey: .mode) ?? .simple
+        simplePreset = try container.decodeIfPresent(AISimpleModelPreset.self, forKey: .simplePreset) ?? .automatic
+        scopeOverrides = try container.decodeIfPresent(
+            [String: AIGenerationOverrides].self,
+            forKey: .scopeOverrides
+        ) ?? [:]
+        // This field was added after v1. Existing users keep their tuning
+        // values instead of falling back to the complete default object.
+        preferredConfigurationIDs = try container.decodeIfPresent(
+            [String: UUID].self,
+            forKey: .preferredConfigurationIDs
+        ) ?? [:]
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(simplePreset, forKey: .simplePreset)
+        try container.encode(scopeOverrides, forKey: .scopeOverrides)
+        try container.encode(preferredConfigurationIDs, forKey: .preferredConfigurationIDs)
+    }
 
     func overrides(for scope: AIModelTuningScope) -> AIGenerationOverrides {
         scopeOverrides[scope.rawValue] ?? AIGenerationOverrides()
@@ -175,6 +209,18 @@ struct AIModelTuningPreferences: Codable, Equatable, Sendable {
             scopeOverrides[scope.rawValue] = nil
         } else {
             scopeOverrides[scope.rawValue] = overrides
+        }
+    }
+
+    func preferredConfigurationID(for scope: AIModelTuningScope) -> UUID? {
+        preferredConfigurationIDs[scope.rawValue]
+    }
+
+    mutating func setPreferredConfigurationID(_ id: UUID?, for scope: AIModelTuningScope) {
+        if let id {
+            preferredConfigurationIDs[scope.rawValue] = id
+        } else {
+            preferredConfigurationIDs[scope.rawValue] = nil
         }
     }
 
@@ -215,6 +261,15 @@ final class AIModelTuningStore: @unchecked Sendable {
     @discardableResult
     func setOverrides(_ overrides: AIGenerationOverrides, for scope: AIModelTuningScope) -> Bool {
         update { $0.setOverrides(overrides, for: scope) }
+    }
+
+    func preferredConfigurationID(for scope: AIModelTuningScope) -> UUID? {
+        preferences.preferredConfigurationID(for: scope)
+    }
+
+    @discardableResult
+    func setPreferredConfigurationID(_ id: UUID?, for scope: AIModelTuningScope) -> Bool {
+        update { $0.setPreferredConfigurationID(id, for: scope) }
     }
 
     @discardableResult

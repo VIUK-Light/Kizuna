@@ -1231,9 +1231,11 @@ final class AIModelRouter {
         preferredConfigurationID: UUID? = nil,
         allowsFallback: Bool = true
     ) async throws -> AIGenerationResponse {
+        let storedPreferredConfigurationID = preferredConfigurationID
+            ?? tuningStore.preferredConfigurationID(for: AIModelTuningScope(role: role))
         var configurations = registry.configurations(for: role)
-        if let preferredConfigurationID,
-           let index = configurations.firstIndex(where: { $0.id == preferredConfigurationID }) {
+        if let storedPreferredConfigurationID,
+           let index = configurations.firstIndex(where: { $0.id == storedPreferredConfigurationID }) {
             let preferred = configurations.remove(at: index)
             configurations.insert(preferred, at: 0)
         }
@@ -1242,13 +1244,13 @@ final class AIModelRouter {
         }
 
         if !allowsFallback {
-            guard let preferredConfigurationID,
-                  configurations.contains(where: { $0.id == preferredConfigurationID }) else {
+            guard let storedPreferredConfigurationID,
+                  configurations.contains(where: { $0.id == storedPreferredConfigurationID }) else {
                 throw AIProviderError.noProviderForRole(role)
             }
             return try await generate(
                 request: request,
-                configurationID: preferredConfigurationID,
+                configurationID: storedPreferredConfigurationID,
                 role: role
             )
         }

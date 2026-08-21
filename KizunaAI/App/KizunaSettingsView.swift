@@ -1451,20 +1451,31 @@ private struct AIAdvancedModelSettingsView: View {
 
 private struct AIAdvancedScopeSettingsView: View {
     let scope: AIModelTuningScope
-    private let configuration: AIModelConfiguration?
+    private let candidateConfigurations: [AIModelConfiguration]
+    @State private var selectedConfigurationID: UUID?
     @State private var overrides: AIGenerationOverrides
 
     init(scope: AIModelTuningScope) {
         self.scope = scope
         let configurations = AIModelRegistry.shared.configurations(for: scope.routingRole)
-        if let first = configurations.first {
-            configuration = first
-        } else {
-            configuration = Self.fallbackConfiguration(for: scope)
-        }
+        candidateConfigurations = configurations
+        let storedSelection = AIModelTuningStore.shared.preferredConfigurationID(for: scope)
+        _selectedConfigurationID = State(
+            initialValue: configurations.contains(where: { $0.id == storedSelection })
+                ? storedSelection
+                : nil
+        )
         _overrides = State(
             initialValue: AIModelTuningStore.shared.preferences.overrides(for: scope)
         )
+    }
+
+    private var configuration: AIModelConfiguration? {
+        if let selectedConfigurationID,
+           let selected = candidateConfigurations.first(where: { $0.id == selectedConfigurationID }) {
+            return selected
+        }
+        return candidateConfigurations.first
     }
 
     private var providerID: AIProviderID {
@@ -1486,6 +1497,25 @@ private struct AIAdvancedScopeSettingsView: View {
                     KizunaCopy.text(japanese: "用途", english: "Use case"),
                     value: scopeDisplayName
                 )
+                if !candidateConfigurations.isEmpty {
+                    Picker(
+                        KizunaCopy.text(japanese: "使用モデル", english: "Selected model"),
+                        selection: $selectedConfigurationID
+                    ) {
+                        Text(KizunaCopy.text(
+                            japanese: "自動（優先度順）",
+                            english: "Automatic (priority order)"
+                        ))
+                            .tag(Optional<UUID>.none)
+                        ForEach(candidateConfigurations) { candidate in
+                            Text(modelSelectionLabel(candidate))
+                                .tag(Optional(candidate.id))
+                        }
+                    }
+                    .onChange(of: selectedConfigurationID) { _, newValue in
+                        _ = AIModelTuningStore.shared.setPreferredConfigurationID(newValue, for: scope)
+                    }
+                }
                 if let configuration {
                     LabeledContent("Provider", value: providerDisplayName(configuration.identity.providerID))
                     LabeledContent(
@@ -1769,6 +1799,11 @@ private struct AIAdvancedScopeSettingsView: View {
         case .openAICompatible: return "OpenAI-compatible"
         case .anthropic: return "Anthropic"
         }
+    }
+
+    private func modelSelectionLabel(_ configuration: AIModelConfiguration) -> String {
+        let provider = providerDisplayName(configuration.identity.providerID)
+        return "\(configuration.identity.displayName) · \(provider)"
     }
 
     private static func fallbackConfiguration(for scope: AIModelTuningScope) -> AIModelConfiguration? {

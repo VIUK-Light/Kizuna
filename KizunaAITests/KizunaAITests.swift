@@ -6671,9 +6671,16 @@ final class KizunaAITests: XCTestCase {
         XCTAssertTrue(store.setSimplePreset(.stable))
         XCTAssertTrue(store.setMode(.advanced))
 
+        let selectedConfigurationID = UUID()
+        XCTAssertTrue(store.setPreferredConfigurationID(selectedConfigurationID, for: .story))
+
         let reloaded = AIModelTuningStore(defaults: defaults)
         XCTAssertEqual(reloaded.preferences.mode, .advanced)
         XCTAssertEqual(reloaded.preferences.simplePreset, .stable)
+        XCTAssertEqual(
+            reloaded.preferredConfigurationID(for: .story),
+            selectedConfigurationID
+        )
     }
 
     func testAIModelTuningNormalizesAndDropsUnsupportedProviderValues() throws {
@@ -6837,10 +6844,9 @@ final class KizunaAITests: XCTestCase {
         )
         XCTAssertTrue(registry.register(configuration))
 
-        let router = AIModelRouter(
-            registry: registry,
-            tuningStore: AIModelTuningStore(defaults: defaults)
-        )
+        let tuningStore = AIModelTuningStore(defaults: defaults)
+        XCTAssertTrue(tuningStore.setPreferredConfigurationID(configuration.id, for: .persona))
+        let router = AIModelRouter(registry: registry, tuningStore: tuningStore)
         router.register(RegistryTestProvider())
         var resolvedIdentity: AIModelIdentity?
         var preview = ""
@@ -6858,7 +6864,7 @@ final class KizunaAITests: XCTestCase {
                 }
             ),
             role: .persona,
-            preferredConfigurationID: configuration.id
+            preferredConfigurationID: nil
         )
 
         XCTAssertEqual(response.text, "stub response")
