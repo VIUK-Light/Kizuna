@@ -7341,6 +7341,22 @@ final class KizunaAITests: XCTestCase {
         )
     }
 
+    func testAdvancedPersonaSelectionPreservesProviderBoundary() {
+        let suiteName = "KizunaAIPersonaRoutingBoundary." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = AIModelTuningStore(defaults: defaults)
+
+        XCTAssertFalse(
+            LocalAssistantRuntimeBridge.preservesAdvancedProviderBoundary(store.preferences)
+        )
+        XCTAssertTrue(store.setMode(.advanced))
+        XCTAssertTrue(store.setPreferredConfigurationID(UUID(), for: .persona))
+        XCTAssertTrue(
+            LocalAssistantRuntimeBridge.preservesAdvancedProviderBoundary(store.preferences)
+        )
+    }
+
     func testSafetyPipelineRejectsRewriteLessSoftening() async {
         let pipeline = SafetyPipeline(
             policyProvider: { EffectiveSafetyPolicy.make(for: .selfDeclared(.adult)) }
