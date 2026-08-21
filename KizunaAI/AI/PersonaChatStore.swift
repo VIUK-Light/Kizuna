@@ -302,6 +302,24 @@ private struct PersonaThreadIndexEntry: Codable, Sendable {
         lastMessage = try container.decodeIfPresent(PersonaMessage.self, forKey: .lastMessage)
     }
 
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(personaIndex, forKey: .personaIndex)
+        try container.encodeIfPresent(characterID, forKey: .characterID)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(lastUsedModelIdentity, forKey: .lastUsedModelIdentity)
+        try container.encodeIfPresent(preferredGenerationModel, forKey: .preferredGenerationModel)
+        try container.encodeIfPresent(
+            preferredGenerationConfigurationID,
+            forKey: .preferredGenerationConfigurationID
+        )
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(messageCount, forKey: .messageCount)
+        try container.encodeIfPresent(lastMessage, forKey: .lastMessage)
+    }
+
     nonisolated func makePlaceholder() -> PersonaThread {
         var thread = PersonaThread(
             id: id,
