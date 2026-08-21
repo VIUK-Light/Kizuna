@@ -7346,6 +7346,55 @@ final class KizunaAITests: XCTestCase {
         XCTAssertEqual(addable.map(\.id), [general.id])
     }
 
+    func testCharacterSafetyClassificationRaisesButNeverLowersRating() {
+        let sensitive = CharacterSafetyClassification.from(
+            SafetyDecision(action: .warn, riskDomains: [.sexual])
+        )
+        let neutral = CharacterSafetyClassification.from(SafetyDecision())
+
+        XCTAssertEqual(sensitive.recommendedRating, .sensitive)
+        XCTAssertEqual(
+            CharacterSafetyClassification.preserveStrictest(
+                current: .general,
+                recommended: sensitive.recommendedRating
+            ),
+            .sensitive
+        )
+        XCTAssertEqual(
+            CharacterSafetyClassification.preserveStrictest(
+                current: .sensitive,
+                recommended: neutral.recommendedRating
+            ),
+            .sensitive
+        )
+    }
+
+    @MainActor
+    func testCharacterCreateForceSavePersistsRaisedSafetyRating() async {
+        let character = CharacterProfile(
+            name: "Adult draft",
+            displayName: "Adult draft",
+            shortDescription: "裸の表現を含む設定",
+            category: .chatBuddy,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+        let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.adult))
+        let pipeline = SafetyPipeline(policyProvider: { policy })
+        let viewModel = CharacterCreateViewModel(
+            existing: character,
+            characterRepo: PersonaTestCharacterRepository(character: character),
+            safetyPipeline: pipeline
+        )
+
+        await viewModel.attemptSave(force: true)
+
+        guard case let .saved(saved) = viewModel.state else {
+            return XCTFail("Expected the warning acknowledgement to save the classified character")
+        }
+        XCTAssertEqual(saved.safetyRating, .sensitive)
+    }
+
     func testSafetyPipelineAppliesOneAgePolicyToInputAndOutput() async {
         let policy = EffectiveSafetyPolicy.make(for: .selfDeclared(.teen))
         let pipeline = SafetyPipeline(policyProvider: { policy })

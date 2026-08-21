@@ -808,14 +808,15 @@ final class StoryWorldCreateViewModel: ObservableObject {
         }
     }
 
-    func addCharacter(_ profile: CharacterProfile) {
-        guard !castDrafts.contains(where: { $0.characterId == profile.id }) else { return }
+    @discardableResult
+    func addCharacter(_ profile: CharacterProfile) -> Bool {
+        guard !castDrafts.contains(where: { $0.characterId == profile.id }) else { return false }
         guard ageSafetyPolicyProvider().allows(profile.safetyRating) else {
             saveError = KizunaCopy.text(
                 japanese: "現在の年齢設定ではこのキャラクターをStoryへ追加できません。",
                 english: "This character cannot be added to the Story under the current age settings."
             )
-            return
+            return false
         }
         if !availableCharacters.contains(where: { $0.id == profile.id }) {
             availableCharacters.append(profile)
@@ -834,6 +835,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         if sceneDraft.activeCharacterIds.isEmpty {
             sceneDraft.activeCharacterIds = [profile.id]
         }
+        return true
     }
 
     // Lorebookカードを1件追加する。キーワードは空白・読点区切りで受け取る。
@@ -885,12 +887,30 @@ final class StoryWorldCreateViewModel: ObservableObject {
             )
             return
         }
-        let brief = generationBrief.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !brief.isEmpty else {
+        let rawBrief = generationBrief.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawBrief.isEmpty else {
             generationError = KizunaCopy.text(
                 japanese: "作りたいストーリーの方向性を入力してください。",
                 english: "Describe the kind of story you want to create."
             )
+            return
+        }
+
+        let templateSafetyCharacter = Self.templateSafetyCharacter()
+        let inputDecision = await safetyPipeline.evaluateInput(
+            rawBrief,
+            character: templateSafetyCharacter
+        )
+        guard let brief = SafetyInputPolicy.acceptedText(
+            action: inputDecision.action,
+            original: rawBrief,
+            rewritten: inputDecision.rewrittenText
+        ) else {
+            generationError = KizunaCopy.text(
+                japanese: "現在の安全設定では、この内容から雛形を生成できません。入力を修正してください。",
+                english: "The current safety settings do not allow a template to be generated from this brief. Edit the input and try again."
+            )
+            generationStatus = nil
             return
         }
 
@@ -917,7 +937,13 @@ final class StoryWorldCreateViewModel: ObservableObject {
             generationTask = nil
         }
 
-        let systemPrompt = Self.storyTemplateSystemPrompt + "\n\n" + (KizunaCopy.language == .english
+        let safetyRules = Array(Set(
+            EffectiveSafetyPolicy.current.promptRules + inputDecision.addedPromptRules
+        ))
+        let safetyPrompt = safetyRules.isEmpty
+            ? ""
+            : "Safety rules for this template:\n" + safetyRules.map { "- " + $0 }.joined(separator: "\n")
+        let systemPrompt = Self.storyTemplateSystemPrompt + "\n\n" + safetyPrompt + "\n\n" + (KizunaCopy.language == .english
             ? "All human-readable string values in the JSON (title, descriptions, settings, scenes, character text, tags, and rules) must be written in English. Keep enum values exactly as specified. If the request asks for multiple characters, set castMode to ensemble, set characterCount to the number of generated characters, and include every requested character in characters."
             : "JSON内のタイトル、説明、設定、シーン、キャラクター本文、タグ、ルールは日本語で書いてください。enum値はschemaの表記をそのまま使ってください。複数キャラの指定がある場合はcastModeをensembleにし、characterCountを生成キャラ数に合わせ、指定したキャラをcharactersへすべて含めてください。")
         let reply: String
@@ -983,6 +1009,10 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 japanese: "雛形をフォームへ反映しました。",
                 english: "The template was applied to the form."
             )
+        } catch let error as StoryTemplateSafetyError {
+            AppLog.error("[StoryWorldCreateVM] template safety rejected: %@", error.localizedDescription)
+            generationError = error.localizedDescription
+            generationStatus = nil
         } catch {
             AppLog.error("[StoryWorldCreateVM] template decode/apply failed: %@", error.localizedDescription)
             generationError = KizunaCopy.text(
@@ -1373,6 +1403,14 @@ final class StoryWorldCreateViewModel: ObservableObject {
 
     private func applyGeneratedTemplate(_ template: GeneratedStoryTemplate) async throws {
         await discardPendingGeneratedCharacters()
+        let templateOutputDecision = await safetyPipeline.evaluateOutput(
+            Self.templateSafetyText(template),
+            character: Self.templateSafetyCharacter()
+        )
+        guard templateOutputDecision.action != .block,
+              templateOutputDecision.action != .requireEdit else {
+            throw StoryTemplateSafetyError.outputRejected(templateOutputDecision)
+        }
         let story = template.story
         draft.title = story.title
         draft.shortDescription = story.shortDescription
@@ -1384,7 +1422,7 @@ final class StoryWorldCreateViewModel: ObservableObject {
         draft.openingScene = story.openingScene
         draft.storyGoal = story.storyGoal
         draft.mood = story.mood
-        draft.safetyRules = template.generationRules
+        draft.safetyRules = template.generationRules + templateOutputDecision.addedPromptRules
         draft = draft.normalizedForPersistence
 
         let scene = template.initialScene
@@ -1435,10 +1473,9 @@ final class StoryWorldCreateViewModel: ObservableObject {
         let wantsEnsemble = generatedMultipleCharacters || templateRequestsEnsemble || briefRequestsEnsemble
         draft.castMode = wantsEnsemble ? .ensemble : .solo
         let generatedCharacters = template.characters.prefix(wantsEnsemble ? 4 : 1)
-        var generatedCharactersByName: [String: Set<UUID>] = [:]
-        var generatedOpeningCharacterIDs: [UUID] = []
+        var classifiedGeneratedCharacters: [(GeneratedStoryTemplate.Character, CharacterProfile)] = []
         for generated in generatedCharacters {
-            let profile = CharacterProfile(
+            let draftProfile = CharacterProfile(
                 name: generated.name,
                 displayName: generated.displayName.isEmpty ? generated.name : generated.displayName,
                 shortDescription: generated.shortDescription,
@@ -1457,10 +1494,55 @@ final class StoryWorldCreateViewModel: ObservableObject {
                 visibility: .private,
                 safetyRating: .general
             )
+            let decision = await safetyPipeline.evaluateCharacter(draftProfile)
+            guard decision.action != .block,
+                  decision.action != .requireEdit else {
+                throw StoryTemplateSafetyError.characterRejected(
+                    name: draftProfile.visibleName,
+                    decision: decision
+                )
+            }
+            var profile = draftProfile
+            let classification = CharacterSafetyClassification.from(decision)
+            profile.safetyRating = CharacterSafetyClassification.preserveStrictest(
+                current: profile.safetyRating,
+                recommended: classification.recommendedRating
+            )
+            guard ageSafetyPolicyProvider().allows(profile.safetyRating) else {
+                throw StoryTemplateSafetyError.characterRejected(
+                    name: profile.visibleName,
+                    decision: SafetyDecision(
+                        action: .block,
+                        reasons: [KizunaCopy.text(
+                            japanese: "現在の年齢設定ではこのキャラクターを利用できません。",
+                            english: "This character is unavailable under the current age settings."
+                        )],
+                        riskDomains: classification.riskDomains,
+                        severity: .block
+                    )
+                )
+            }
+            classifiedGeneratedCharacters.append((generated, profile))
+        }
+        var generatedCharactersByName: [String: Set<UUID>] = [:]
+        var generatedOpeningCharacterIDs: [UUID] = []
+        for (generated, profile) in classifiedGeneratedCharacters {
             // 保存は世界全体のSaveが成功する直前まで遅延する。
             // ここで即時保存すると、雛形の再生成/キャンセルだけでキャラが
             // キャラクターライブラリーへ残ってしまう。
-            addCharacter(profile)
+            guard addCharacter(profile) else {
+                throw StoryTemplateSafetyError.characterRejected(
+                    name: profile.visibleName,
+                    decision: SafetyDecision(
+                        action: .block,
+                        reasons: [KizunaCopy.text(
+                            japanese: "現在の年齢設定ではこのキャラクターをStoryへ追加できません。",
+                            english: "This character cannot be added to the Story under the current age settings."
+                        )],
+                        severity: .block
+                    )
+                )
+            }
             pendingGeneratedCharacters[profile.id] = profile
             generatedCharactersByName[profile.visibleName, default: []].insert(profile.id)
             generatedCharactersByName[profile.name, default: []].insert(profile.id)
@@ -1502,6 +1584,56 @@ final class StoryWorldCreateViewModel: ObservableObject {
             )
         }
         hasAppliedGeneratedTemplate = true
+    }
+
+    private static func templateSafetyCharacter() -> CharacterProfile {
+        CharacterProfile(
+            name: "Story template",
+            displayName: "Story template",
+            category: .originalFreeform,
+            relationshipGenre: .none,
+            safetyRating: .general
+        )
+    }
+
+    private static func templateSafetyText(_ template: GeneratedStoryTemplate) -> String {
+        let story = template.story
+        let scene = template.initialScene
+        let characters = template.characters.map { character in
+            [
+                character.name,
+                character.displayName,
+                character.shortDescription,
+                character.personality,
+                character.speakingStyle,
+                character.background,
+                character.relationshipToUser,
+                character.scenario,
+                character.firstMessage,
+                character.tags.joined(separator: ","),
+                character.rules.joined(separator: "\n"),
+                character.safetyRules.joined(separator: "\n")
+            ].joined(separator: "\n")
+        }.joined(separator: "\n---\n")
+        return [
+            story.title,
+            story.shortDescription,
+            story.worldSetting,
+            story.userRole,
+            story.openingScene,
+            story.storyGoal,
+            story.mood,
+            story.tags.joined(separator: ","),
+            scene.title,
+            scene.location,
+            scene.timeOfDay,
+            scene.mood,
+            scene.sceneGoal,
+            scene.conflict ?? "",
+            scene.summary,
+            template.generationRules.joined(separator: "\n"),
+            characters
+        ].joined(separator: "\n")
     }
 
     private static let storyTemplateSystemPrompt = """
@@ -1715,6 +1847,26 @@ private struct GeneratedStoryTemplate: Decodable {
     /// Gemma4が英語で返す構造化ヒント。旧プロンプトには存在しないため任意。
     var castMode: String?
     var characterCount: Int?
+}
+
+private enum StoryTemplateSafetyError: LocalizedError {
+    case outputRejected(SafetyDecision)
+    case characterRejected(name: String, decision: SafetyDecision)
+
+    var errorDescription: String? {
+        switch self {
+        case .outputRejected:
+            return KizunaCopy.text(
+                japanese: "生成されたStoryのWorld/Scene内容は現在の安全設定では利用できません。入力や生成条件を修正してください。",
+                english: "The generated Story world or scene is unavailable under the current safety settings. Edit the brief or generation conditions and try again."
+            )
+        case let .characterRejected(name, _):
+            return KizunaCopy.text(
+                japanese: "生成されたキャラクター「\(name)」は現在の安全設定では利用できません。内容を編集してください。",
+                english: "The generated character \"\(name)\" is unavailable under the current safety settings. Edit the character content."
+            )
+        }
+    }
 }
 
 // MARK: - Detail

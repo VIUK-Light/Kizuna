@@ -402,6 +402,44 @@ struct SafetyDecision: Equatable, Hashable {
     }
 }
 
+struct CharacterSafetyClassification: Equatable, Sendable {
+    let recommendedRating: SafetyRating
+    let riskDomains: [SafetyDomain]
+
+    static func from(_ decision: SafetyDecision) -> CharacterSafetyClassification {
+        let domains = Set(decision.riskDomains)
+        let recommendedRating: SafetyRating
+        if domains.contains(where: {
+            [.crime, .sexual, .selfHarm, .violence, .minors].contains($0)
+        }) {
+            recommendedRating = .sensitive
+        } else if !domains.isEmpty {
+            recommendedRating = .teen
+        } else {
+            recommendedRating = .general
+        }
+        return CharacterSafetyClassification(
+            recommendedRating: recommendedRating,
+            riskDomains: decision.riskDomains
+        )
+    }
+
+    static func preserveStrictest(
+        current: SafetyRating,
+        recommended: SafetyRating
+    ) -> SafetyRating {
+        func rank(_ rating: SafetyRating) -> Int {
+            switch rating {
+            case .general: return 0
+            case .teen: return 1
+            case .sensitive: return 2
+            case .restricted: return 3
+            }
+        }
+        return rank(current) >= rank(recommended) ? current : recommended
+    }
+}
+
 /// Decide which user input may cross into a generation prompt. Input and
 /// output use the same `.soften` contract: rewrite is required, and an
 /// incomplete decision never falls back to the original text.
