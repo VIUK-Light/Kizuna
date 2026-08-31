@@ -35,7 +35,7 @@ See the [AI pipeline implementation status](docs/AI_PIPELINE_STATUS.md) for prod
 
 ## Project status
 
-Kizuna is under active development. Feature proposals, bug reports, documentation improvements, and Pull Requests are welcome.
+Kizuna is currently in **Maintenance**. New feature development is minimal, with work focused mainly on serious bugs and security issues. Bug reports, documentation improvements, and maintenance-related Pull Requests remain welcome.
 
 ## Supported platforms and installation
 
